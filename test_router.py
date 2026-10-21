@@ -150,6 +150,20 @@ class RouterTests(unittest.TestCase):
             self.assertEqual(ensure_entry(options, {"port": self.router.port}), self.router.port)
         launch.assert_not_called()
 
+    def test_second_entry_cannot_bind_a_running_entry_port(self):
+        with self.assertRaises(OSError):
+            RouterServer(("127.0.0.1", self.router.port), self.data, self.config)
+        self.assertEqual(self.api("/api/status")[1]["worker_id"], self.first.worker_id)
+
+    def test_launcher_recovers_when_closed_port_probe_times_out(self):
+        options = SimpleNamespace(data_dir=self.data, config=self.config, port=47923)
+        replies = [TimeoutError(), {"app": "codex-packet-inspector", "router_protocol": 1},
+                   {"data_dir": str(self.data), "profile": {"config_path": str(self.config)}}]
+        with patch("packet_inspector.router.local_json", side_effect=replies), \
+                patch("packet_inspector.router.subprocess.Popen") as launch:
+            self.assertEqual(ensure_entry(options, {"port": self.router.port}), 47923)
+        self.assertIn("--background", launch.call_args.args[0])
+
     def test_cold_foreground_launch_restores_router_at_configured_port(self):
         options = SimpleNamespace(data_dir=self.data, config=self.config, port=None)
         atomic_json(self.data / "entry-port.json", {"port": 47920})
