@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import re
 import secrets
+import socket
 import subprocess
 import sys
 import threading
@@ -118,7 +119,12 @@ def process_alive(pid):
 
 class RouterServer(ThreadingHTTPServer):
     daemon_threads = True
-    allow_reuse_address = True
+    allow_reuse_address = os.name != "nt"
+
+    def server_bind(self):
+        if os.name == "nt" and hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        super().server_bind()
 
     def __init__(self, address, data_dir, config):
         self.data_dir, self.config = Path(data_dir), Path(config)
@@ -480,7 +486,7 @@ def ensure_entry(args, state):
         return port
     try:
         return ready(state["port"])
-    except ConnectionRefusedError:
+    except (OSError, http.client.HTTPException):
         pass
     port = startup_port(args, state)
     command = [sys.executable] if getattr(sys, "frozen", False) else [sys.executable, "-m", "packet_inspector.router"]
@@ -575,7 +581,13 @@ if __name__ == "__main__":
     try:
         raise SystemExit(main())
     except Exception as error:
-        if getattr(sys, "frozen", False):
+        try:
+            folder = Path(sys.argv[sys.argv.index("--data-dir") + 1]) if "--data-dir" in sys.argv else Path.home() / ".codex-packet-inspector"
+            folder.mkdir(parents=True, exist_ok=True)
+            (folder / "router-error.txt").write_text(type(error).__name__ + ": " + str(error), encoding="utf8")
+        except (OSError, ValueError, IndexError):
+            pass
+        if getattr(sys, "frozen", False) and "--background" not in sys.argv:
             import ctypes
-            ctypes.windll.user32.MessageBoxW(0, "入口服务启动失败：" + type(error).__name__, "Codex Request Optimizer", 0x10)
+            ctypes.windll.user32.MessageBoxW(0, "入口服务启动失败：" + str(error)[:350], "Codex Request Optimizer", 0x10)
         raise
