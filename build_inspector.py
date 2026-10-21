@@ -103,7 +103,7 @@ def main():
     sources.extend(p for p in (ROOT/"packet_inspector").rglob("*")
                    if p.is_file() and p.suffix in {".py",".txt",".html",".js",".css",".ps1",".json"}
                    and "__pycache__" not in p.parts and "data" not in p.parts)
-    sources.extend([ROOT/"test_capacity_retry.py", ROOT/"test_runtime_settings.py", ROOT/"test_entry_port.py",
+    sources.extend([ROOT/"test_image_isolation.py", ROOT/"test_capacity_retry.py", ROOT/"test_runtime_settings.py", ROOT/"test_entry_port.py",
                     ROOT/"test_router.py",ROOT/"test_updates.py",ROOT/"test_upgrade.py",ROOT/"verify_upgrade_exe.py",ROOT/"test_frontend_dev.py"])
     archive=release/"CodexPacketInspector-source.zip"
     with zipfile.ZipFile(archive,"w",zipfile.ZIP_DEFLATED) as zipped:

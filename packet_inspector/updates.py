@@ -98,6 +98,10 @@ class Updates:
 
     def status(self):
         cached = self.cached()
+        if cached.get("state") == "available" and version_tuple(cached["latest_version"]) <= version_tuple(self.current_version):
+            cached = {key: value for key, value in cached.items() if key != "asset"}
+            cached["state"] = "current"
+            atomic_json(self.state_path, cached)
         result_path = self.directory / "upgrade-result.json"
         if cached.get("state") == "upgrading" and result_path.exists():
             result = json.loads(result_path.read_text(encoding="utf8"))
@@ -174,7 +178,8 @@ class Updates:
         cached = self.cached()
         if cached.get("repository") != self.settings()["repository"] or cached.get("state") not in {"available", "downloading"}:
             raise ValueError("请先检查更新。")
-        version_tuple(cached["latest_version"])
+        if version_tuple(cached["latest_version"]) <= version_tuple(self.current_version):
+            raise ValueError("当前版本无需升级，请重新检查。")
         asset = cached["asset"]
         folder = self.directory / "updates" / cached["latest_version"]
         folder.mkdir(parents=True, exist_ok=True)

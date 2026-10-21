@@ -460,6 +460,45 @@ class RouterHandler(BaseHTTPRequestHandler):
     do_GET = do_POST = do_PUT = do_PATCH = do_DELETE = do_HEAD = do_OPTIONS = _handle
 
 
+def startup_port(args, state):
+    path = args.data_dir / "entry-port.json"
+    port = args.port if args.port is not None else (json.loads(path.read_text(encoding="utf-8-sig"))["port"] if path.exists() else state["port"])
+    if type(port) is not int or not 1024 <= port <= 65535:
+        raise ValueError("invalid entry port")
+    return port
+
+
+def ensure_entry(args, state):
+    """A foreground launch must restore the router, never start a direct backend."""
+    def ready(port):
+        health = local_json(port, "/health", timeout=2)
+        status = local_json(port, "/api/status", timeout=3)
+        if (health.get("app") != "codex-packet-inspector" or health.get("router_protocol") != PROTOCOL
+                or Path(status["data_dir"]).resolve() != args.data_dir.resolve()
+                or Path(status["profile"]["config_path"]).resolve() != args.config.resolve()):
+            raise ValueError("entry port belongs to another service; run the upgrade EXE")
+        return port
+    try:
+        return ready(state["port"])
+    except ConnectionRefusedError:
+        pass
+    port = startup_port(args, state)
+    command = [sys.executable] if getattr(sys, "frozen", False) else [sys.executable, "-m", "packet_inspector.router"]
+    child = subprocess.Popen(command + ["--background", "--tray", "--port", str(port),
+                                       "--data-dir", str(args.data_dir), "--config", str(args.config)],
+                             env={**os.environ, "PYINSTALLER_RESET_ENVIRONMENT": "1"},
+                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    deadline = time.monotonic() + 35
+    while time.monotonic() < deadline:
+        try:
+            return ready(port)
+        except (OSError, http.client.HTTPException):
+            if child.poll() not in {None, 0}:
+                raise RuntimeError("entry startup failed") from None
+            time.sleep(.1)
+    raise RuntimeError("entry startup timed out")
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--data-dir", type=Path, default=Path.home() / ".codex-packet-inspector")
@@ -470,13 +509,14 @@ def main(argv=None):
     args = parser.parse_args(argv)
     state = json.loads((args.data_dir / "router-state.json").read_text(encoding="utf8"))
     if not args.background:
+        port = ensure_entry(args, state)
+        state = json.loads((args.data_dir / "router-state.json").read_text(encoding="utf8"))
         worker = worker_info(args.data_dir, state["active"])
         subprocess.Popen([worker["executable"], "--data-dir", str(args.data_dir), "--config", str(args.config),
-                          "--port", str(state["port"])], env={**os.environ, "PYINSTALLER_RESET_ENVIRONMENT": "1"},
+                          "--port", str(port)], env={**os.environ, "PYINSTALLER_RESET_ENVIRONMENT": "1"},
                          creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         return 0
-    port_file = args.data_dir / "entry-port.json"
-    port = args.port if args.port is not None else (json.loads(port_file.read_text(encoding="utf-8-sig"))["port"] if port_file.exists() else state["port"])
+    port = startup_port(args, state)
     try:
         server = RouterServer(("127.0.0.1", port), args.data_dir, args.config)
     except OSError:
