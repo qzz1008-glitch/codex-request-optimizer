@@ -6,11 +6,12 @@ from pathlib import Path
 import tempfile
 import threading
 import time
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
 from packet_inspector import VERSION
-from packet_inspector.router import RouterServer, atomic_json
+from packet_inspector.router import RouterServer, atomic_json, ensure_entry
 from packet_inspector.server import InspectorServer
 
 
@@ -142,6 +143,47 @@ class RouterTests(unittest.TestCase):
         self.assertEqual(self.router.state["active"], self.first.worker_id)
         self.assertEqual(self.api("/api/status")[1]["worker_id"], self.first.worker_id)
         self.assertTrue(self.first.maintenance_enabled)
+
+    def test_foreground_launch_reuses_healthy_entry(self):
+        options = SimpleNamespace(data_dir=self.data, config=self.config, port=None)
+        with patch("packet_inspector.router.subprocess.Popen") as launch:
+            self.assertEqual(ensure_entry(options, {"port": self.router.port}), self.router.port)
+        launch.assert_not_called()
+
+    def test_cold_foreground_launch_restores_router_at_configured_port(self):
+        options = SimpleNamespace(data_dir=self.data, config=self.config, port=None)
+        atomic_json(self.data / "entry-port.json", {"port": 47920})
+        running = []
+        def api(_port, path, **_kwargs):
+            if not running:
+                raise ConnectionRefusedError()
+            if path == "/health":
+                return {"app": "codex-packet-inspector", "router_protocol": 1}
+            return {"data_dir": str(self.data), "profile": {"config_path": str(self.config)}}
+        def launched(*_args, **_kwargs):
+            running.append(True)
+            return SimpleNamespace(poll=lambda: None)
+        with patch("packet_inspector.router.local_json", side_effect=api), \
+                patch("packet_inspector.router.sys.frozen", True, create=True), \
+                patch("packet_inspector.router.sys.executable", "installed-router.exe"), \
+                patch("packet_inspector.router.subprocess.Popen", side_effect=launched) as launch:
+            self.assertEqual(ensure_entry(options, {"port": self.router.port}), 47920)
+        command = launch.call_args.args[0]
+        self.assertEqual(command[0], "installed-router.exe")
+        self.assertIn("--background", command)
+        self.assertIn("--tray", command)
+        self.assertEqual(command[command.index("--port") + 1], "47920")
+        self.assertEqual(launch.call_args.kwargs["env"]["PYINSTALLER_RESET_ENVIRONMENT"], "1")
+
+    def test_foreground_launcher_never_accepts_a_direct_backend_as_router(self):
+        options = SimpleNamespace(data_dir=self.data, config=self.config, port=None)
+        with patch("packet_inspector.router.local_json", side_effect=[
+                {"app": "codex-packet-inspector"},
+                {"data_dir": str(self.data), "profile": {"config_path": str(self.config)}}]), \
+                patch("packet_inspector.router.subprocess.Popen") as launch:
+            with self.assertRaises(ValueError):
+                ensure_entry(options, {"port": self.router.port})
+        launch.assert_not_called()
 
     def test_administration_and_worker_controls_cannot_be_reached_without_capability(self):
         self.assertEqual(self.api("/__router__/status", headers={"X-Inspector-Control": "wrong"})[0], 403)

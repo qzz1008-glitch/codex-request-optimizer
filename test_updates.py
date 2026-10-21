@@ -79,6 +79,16 @@ class UpdateTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 self.updates.configure(data)
 
+    def test_local_upgrade_cannot_be_downgraded_by_old_available_state(self):
+        self.opener.open.return_value = self.release_reply()
+        self.updates.check()
+        self.updates.current_version = "9.2.0"
+        with patch("packet_inspector.updates.subprocess.Popen") as launch:
+            with self.assertRaises(ValueError):
+                self.updates.install()
+        launch.assert_not_called()
+        self.assertEqual(self.updates.status()["state"], "current")
+
     def test_redirect_rejects_non_github_host_and_removes_credential_for_download_host(self):
         handler = GitHubRedirect()
         request = Request("https://api.github.com/repos/owner/repo/releases/assets/1", headers={"Authorization": "Bearer fixture"})

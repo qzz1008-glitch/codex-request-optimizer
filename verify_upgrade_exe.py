@@ -162,11 +162,28 @@ def main():
         wait_for(lambda: not local_json(port, "/__router__/status", token=state["token"])["draining"], seconds=50)
         packets = api("/api/packets?limit=5")
         assert all(packet["state"] == "complete" for packet in packets)
+        if options.desktop:
+            print(json.dumps({"phase": "cold_start_restores_stable_entry"}), flush=True)
+            state = json.loads((data / "router-state.json").read_text(encoding="utf8"))
+            local_json(port, "/__router__/stop", {}, state["token"])
+            wait_for(lambda: not process_alive(root_pid), seconds=12)
+            worker_runtime = json.loads((data / "router-workers" / (state["active"] + ".runtime.json")).read_text(encoding="utf8"))
+            control_worker(data, state["active"], "stop")
+            wait_for(lambda: not process_alive(worker_runtime["pid"]), seconds=12)
+            launcher = subprocess.Popen([str(canonical), "--port", str(port), "--data-dir", str(data), "--config", str(config)],
+                                        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            wait_for(lambda: api("/health").get("router_protocol") == 1)
+            assert api("/api/status")["router_supported"]
+            reopened = wait_for(observer._application_windows, seconds=30)
+            time.sleep(3)
+            observer._close_windows(reopened)
+            launcher.wait(timeout=10)
         print(json.dumps({"packaged_upgrade": "ok", "version": current["version"],
                           "entry_pid_preserved": True, "port_preserved": True,
                           "open_response_preserved": True, "new_requests_use_new_worker": True,
                           "old_worker_retired": True, "inference_requests": len(requests),
                           "running_desktop_reopened": bool(options.desktop),
+                          "cold_start_uses_router": bool(options.desktop),
                           "provider_config_unchanged_during_upgrade": True, "production_untouched": True}), flush=True)
     finally:
         finish.set()
