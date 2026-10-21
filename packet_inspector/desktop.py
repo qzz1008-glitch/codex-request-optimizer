@@ -1,0 +1,191 @@
+"""Windows WebView2 window; the forwarding service runs in a separate process."""
+from __future__ import annotations
+
+import ctypes
+from ctypes import wintypes
+import hashlib
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import threading
+import time
+from urllib.error import URLError
+from urllib.request import Request, ProxyHandler, build_opener
+
+from .server import argument_parser, default_data_dir
+from .desktop_ui import DesktopUI, ui_build_id, window_geometry
+from .frontend_dev import CONFIG_NAME
+
+
+def app_command():
+    return [sys.executable] if getattr(sys, "frozen", False) else [sys.executable, "-m", "packet_inspector"]
+
+
+def service_arguments(options):
+    args = ["--port", str(options.port), "--data-dir", str(options.data_dir.resolve()),
+            "--config", str(options.config.resolve())]
+    if options.upstream:
+        args += ["--upstream", options.upstream]
+    return args
+
+
+def local_api(port, path, data=None, timeout=2):
+    request = Request(f"http://127.0.0.1:{port}" + path,
+                      data=None if data is None else json.dumps(data).encode(),
+                      headers={} if data is None else {"Content-Type": "application/json"})
+    with build_opener(ProxyHandler({})).open(request, timeout=timeout) as response:
+        return json.load(response)
+
+
+def start_process(arguments):
+    # A UI or background service can outlive its launcher. Give every frozen
+    # instance its own extraction directory instead of sharing the launcher's.
+    return subprocess.Popen(app_command() + arguments,
+                            cwd=None if getattr(sys, "frozen", False) else str(Path(__file__).resolve().parent.parent),
+                            env={**os.environ, "PYINSTALLER_RESET_ENVIRONMENT": "1"},
+                            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+
+
+def ensure_service(options):
+    child = None
+    deadline = time.monotonic() + 20
+    while time.monotonic() < deadline:
+        try:
+            health = local_api(options.port, "/health")
+            if health.get("app") != "codex-packet-inspector":
+                raise RuntimeError("此端口被其他程序占用，请先释放端口。")
+            status = local_api(options.port, "/api/status")
+            if Path(status["data_dir"]).resolve() != options.data_dir.resolve():
+                raise RuntimeError("此端口正在使用另一个数据目录。")
+            if Path(status["profile"]["config_path"]).resolve() != options.config.resolve():
+                raise RuntimeError("此端口正在使用另一份 Codex 配置。")
+            if status.get("provider_routing_supported") and status.get("auto_detect_providers"):
+                local_api(options.port, "/api/providers/sync", {}, timeout=10)
+                status = local_api(options.port, "/api/status")
+            return status
+        except (URLError, TimeoutError, ConnectionError, OSError):
+            if child is None:
+                child = start_process(["--background", "--tray"] + service_arguments(options))
+            elif child.poll() is not None:
+                # A concurrent launcher may have started the same service.
+                time.sleep(.2)
+            time.sleep(.15)
+    raise RuntimeError("后台服务未能启动，请查看数据目录中的 startup-error.txt。")
+
+
+class SingleWindow:
+    """One UI per local profile. Repeated launches signal the existing window."""
+
+    def __init__(self, data_dir, port, frontend_id=""):
+        self.kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        self.kernel.CreateEventW.argtypes = [ctypes.c_void_p, wintypes.BOOL, wintypes.BOOL, wintypes.LPCWSTR]
+        self.kernel.CreateEventW.restype = wintypes.HANDLE
+        self.kernel.CreateMutexW.argtypes = [ctypes.c_void_p, wintypes.BOOL, wintypes.LPCWSTR]
+        self.kernel.CreateMutexW.restype = wintypes.HANDLE
+        self.kernel.SetEvent.argtypes = [wintypes.HANDLE]
+        self.kernel.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+        self.kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+        identity = hashlib.sha256((str(Path(data_dir).resolve()).casefold() + ":" + str(port) + ":" + frontend_id).encode()).hexdigest()[:20]
+        prefix = "Local\\CodexPacketInspector-" + identity
+        self.event = self.kernel.CreateEventW(None, False, False, prefix + "-show")
+        ctypes.set_last_error(0)
+        self.mutex = self.kernel.CreateMutexW(None, False, prefix + "-window")
+        error = ctypes.get_last_error()
+        if not self.event or not self.mutex:
+            self.close()
+            raise OSError("无法创建桌面窗口标识。")
+        self.existing = error == 183  # ERROR_ALREADY_EXISTS
+        self.activations = 0
+        self.stop = threading.Event()
+
+    def signal(self):
+        self.kernel.SetEvent(self.event)
+
+    def watch(self, show):
+        while not self.stop.is_set():
+            if self.kernel.WaitForSingleObject(self.event, 250) == 0:
+                self.activations += 1
+                show()
+
+    def close(self):
+        if hasattr(self, "stop"):
+            self.stop.set()
+        for name in ("event", "mutex"):
+            handle = getattr(self, name, None)
+            if handle:
+                self.kernel.CloseHandle(handle)
+                setattr(self, name, None)
+
+
+def run(arguments):
+    if os.name != "nt":
+        raise RuntimeError("桌面窗口当前支持 Windows。其他平台可使用 --background 启动服务。")
+    parser = argument_parser()
+    parser.add_argument("--desktop-check", type=Path, help="isolated packaged UI verification report")
+    options = parser.parse_args(arguments)
+    if options.desktop_check:
+        report = options.desktop_check.resolve()
+        if (options.data_dir.resolve() == default_data_dir().resolve()
+                or not report.is_relative_to(options.data_dir.resolve())):
+            raise ValueError("桌面验证只允许使用隔离的数据目录。")
+    instance = SingleWindow(options.data_dir, options.port, ui_build_id())
+    ui = None
+    try:
+        if instance.existing:
+            instance.signal()
+            return 0
+        ensure_service(options)
+        ui = DesktopUI(options.port, development_config=options.data_dir / CONFIG_NAME).start()
+        import webview
+
+        webview.settings["ALLOW_DOWNLOADS"] = True
+        # Explicitly require Chromium. Do not fall back to an external browser or IE.
+        window = webview.create_window("Codex 请求优化器", ui.ui_url,
+                                       **window_geometry(), maximized=False,
+                                       text_select=True, background_color="#f5f7fb", hidden=bool(options.desktop_check))
+        loaded = threading.Event()
+        closed = threading.Event()
+        window.events.loaded += loaded.set
+        window.events.closed += closed.set
+
+        def show():
+            if closed.is_set():
+                return
+            try:
+                if str(window.native.WindowState) == "Minimized":
+                    window.restore()
+                window.show()
+            except Exception:
+                pass
+
+        def workers():
+            if not loaded.wait(25):
+                if options.desktop_check:
+                    options.desktop_check.write_text(json.dumps({"passed": False, "error": "page_load_timeout"}), encoding="utf-8")
+                    window.destroy()
+                return
+            threading.Thread(target=instance.watch, args=(show,), daemon=True).start()
+            if options.desktop_check:
+                from .desktop_check import check_window
+                check_window(window, options, instance)
+                return
+            # The UI only owns its disposable localhost listener. Forwarding
+            # continues in the existing service when this window closes.
+            while not closed.wait(1):
+                try:
+                    local_api(options.port, "/health")
+                except (OSError, ValueError):
+                    window.destroy()
+                    return
+
+        webview.start(workers, gui="edgechromium", private_mode=True, debug=False)
+        return 0
+    finally:
+        if ui is not None:
+            ui.close()
+        instance.stop.set()
+        # Let the wait complete before closing its Windows handle.
+        time.sleep(.27)
+        instance.close()

@@ -1,0 +1,26 @@
+Codex Packet Inspector bundles these third-party components in its Windows EXE:
+
+Text compaction templates and text retention adapted from OpenAI Codex,
+Copyright OpenAI. Apache License 2.0.
+https://github.com/openai/codex/tree/e18a20d6eb6f5ede32a69fb56e3fe276d5e9d914
+The corresponding license is included as THIRD_PARTY_LICENSES/Codex-LICENSE.txt.
+
+Python: Python Software Foundation License and included component licenses.
+https://docs.python.org/3/license.html
+
+python-zstandard: BSD 3-Clause License.
+https://github.com/indygreg/python-zstandard
+
+Zstandard: BSD 3-Clause License (the BSD licensing option).
+https://github.com/facebook/zstd
+
+TOML Kit: MIT License.
+https://github.com/python-poetry/tomlkit
+
+PyInstaller bootloader: GPL with the PyInstaller bootloader exception,
+which permits distributing bundled applications under their own licenses.
+https://pyinstaller.org/en/stable/license.html
+
+The build includes available license texts from the installed Python,
+python-zstandard, TOML Kit and PyInstaller distributions in THIRD_PARTY_LICENSES/.
+No Codex desktop resources or OpenAI executable are redistributed.
