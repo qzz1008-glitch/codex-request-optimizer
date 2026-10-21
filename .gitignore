@@ -1,0 +1,15 @@
+.upstream/
+.local/
+__pycache__/
+*.pyc
+.pytest_cache/
+packet_inspector/data/
+release/
+build/
+*.spec
+.venv/
+evidence/
+PAYLOAD_NOTES.txt
+*.backup-*
+native_patch/
+repair_thread_history.py

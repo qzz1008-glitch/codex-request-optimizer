@@ -1,0 +1,52 @@
+name: Windows build
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    tags: ['v*']
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          architecture: x64
+          cache: pip
+          cache-dependency-path: |
+            requirements-dev.txt
+            packet_inspector/requirements.txt
+      - run: python -m pip install -r requirements-dev.txt
+      - run: python -m unittest -q test_packet_inspector test_overflow_compaction test_cache_maintenance test_desktop_ui test_token_window test_session_summary test_providers test_runtime_settings test_entry_port test_router test_updates test_upgrade test_capacity_retry test_frontend_dev
+      - run: python build_inspector.py --output-dir release/ci
+      - run: python verify_inspector_exe.py --release-dir release/ci
+      - run: python verify_overflow_exe.py --release-dir release/ci
+      - run: python verify_upgrade_exe.py --release-dir release/ci
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CodexRequestOptimizer-Windows-x64
+          path: release/ci/*
+  publish:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: CodexRequestOptimizer-Windows-x64
+          path: release
+      - name: Verify tag matches source version
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: python -c "import os; from packet_inspector import VERSION; assert os.environ['RELEASE_TAG'] == 'v' + VERSION"
+      - name: Publish verified release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: gh release create "$RELEASE_TAG" release/* --verify-tag --title "Codex Request Optimizer $RELEASE_TAG" --generate-notes
