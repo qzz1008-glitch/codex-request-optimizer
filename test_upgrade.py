@@ -46,7 +46,7 @@ class UpgradeTests(unittest.TestCase):
         api.assert_not_called()
         self.engine._start_candidate.assert_not_called()
         self.engine._stop_candidate.assert_not_called()
-        self.assertEqual(json.loads((self.data / "upgrade-result.json").read_text())["state"], "failed")
+        self.assertEqual(json.loads((self.data / "upgrade-result.json").read_text(encoding="utf8"))["state"], "failed")
 
     def test_unresponsive_but_occupied_entry_is_never_migrated(self):
         with patch("packet_inspector.upgrade.local_json", side_effect=TimeoutError), \
@@ -93,7 +93,7 @@ class UpgradeTests(unittest.TestCase):
         with file_lock(self.data / "upgrade.lock"):
             with self.assertRaises(BlockingIOError):
                 self.engine.run()
-        self.assertEqual(json.loads((self.data / "upgrade-result.json").read_text()), {"state": "running", "started": 123})
+        self.assertEqual(json.loads((self.data / "upgrade-result.json").read_text(encoding="utf8")), {"state": "running", "started": 123})
         self.engine._start_candidate.assert_not_called()
 
 

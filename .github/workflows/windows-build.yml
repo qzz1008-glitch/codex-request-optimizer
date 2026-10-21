@@ -9,6 +9,8 @@ permissions:
 jobs:
   build:
     runs-on: windows-latest
+    env:
+      PYTHONUTF8: '1'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -20,7 +22,7 @@ jobs:
             requirements-dev.txt
             packet_inspector/requirements.txt
       - run: python -m pip install -r requirements-dev.txt
-      - run: python -m unittest -q test_packet_inspector test_overflow_compaction test_cache_maintenance test_desktop_ui test_token_window test_session_summary test_providers test_runtime_settings test_entry_port test_router test_updates test_upgrade test_capacity_retry test_frontend_dev
+      - run: python -m unittest discover -s . -p "test_*.py" -q
       - run: python build_inspector.py --output-dir release/ci
       - run: python verify_inspector_exe.py --release-dir release/ci
       - run: python verify_overflow_exe.py --release-dir release/ci

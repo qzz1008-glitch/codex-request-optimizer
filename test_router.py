@@ -63,9 +63,16 @@ class RouterTests(unittest.TestCase):
 
     def stop(self):
         self.release.set()
-        for server in [self.router, *self.workers, self.upstream]:
+        self.router.shutdown()
+        self.router.server_close()
+        deadline = time.monotonic() + 10
+        while any(worker.active_requests for worker in self.workers) and time.monotonic() < deadline:
+            time.sleep(.01)
+        for server in [*self.workers, self.upstream]:
             server.shutdown()
             server.server_close()
+            if hasattr(server, "analysis_thread"):
+                server.analysis_thread.join(timeout=12)
 
     def worker(self, identity):
         worker = InspectorServer(("127.0.0.1", 0), self.data, self.config,
