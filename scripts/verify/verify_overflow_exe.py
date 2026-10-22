@@ -11,9 +11,9 @@ import threading
 import time
 from urllib.request import ProxyHandler, Request, build_opener
 
-from test_overflow_compaction import FakeModel, complete, make_body, message
+from tests.test_overflow_compaction import FakeModel, complete, make_body, message
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parents[2]
 
 
 def main():

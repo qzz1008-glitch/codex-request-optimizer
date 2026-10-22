@@ -14,8 +14,8 @@ import threading
 import unittest
 from unittest.mock import patch
 
-from build_inspector import output_directory
-import dev_inspector_ui
+from scripts.build_inspector import output_directory
+from scripts import dev_inspector_ui
 from packet_inspector import VERSION
 from packet_inspector.desktop_ui import DesktopUI
 
@@ -244,7 +244,7 @@ class DevelopmentSafetyTests(unittest.TestCase):
 
     @unittest.skipUnless(os.name == "nt", "Windows installation helper")
     def test_installer_rejects_plain_app_exe_without_mutating_running_services_or_tasks(self):
-        helper = Path(__file__).with_name("install_inspector_service.ps1").resolve()
+        helper = Path(__file__).resolve().parents[1] / "scripts" / "windows" / "install_inspector_service.ps1"
         wrapper = r'''
 param($Helper, $Executable, $Case)
 [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)

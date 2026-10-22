@@ -17,7 +17,7 @@ import unittest
 from unittest.mock import patch
 from urllib.request import Request
 
-sys.path.insert(0, str(Path(__file__).parent / ".local" / "builddeps"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / ".local" / "builddeps"))
 import zstandard
 
 from packet_inspector.analyzer import (JsonBytes, compare_packets, describe_node,

@@ -10,9 +10,9 @@ import threading
 import time
 from urllib.request import ProxyHandler, Request, build_opener
 
-from test_usage_trigger import Upstream, USAGE, DELTA, request_body, sse, completed
+from tests.test_usage_trigger import Upstream, USAGE, DELTA, request_body, sse, completed
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parents[2]
 
 
 def main():
@@ -86,7 +86,7 @@ def main():
         assert custom["native_compact_trigger_bytes"] == 650000
         changed = post(request_body(text_bytes=1_300_000))
         assert json.loads(changed[len(DELTA):].split(b"data: ", 1)[1].strip())["response"]["usage"]["input_tokens"] == 500000
-        from test_overflow_compaction import message
+        from tests.test_overflow_compaction import message
         items = [message(i, 140000) for i in range(18)]
         for cached in (False, True):
             body = json.dumps({"model": "test", "stream": True, "input": items,

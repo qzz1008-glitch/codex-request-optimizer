@@ -4,8 +4,8 @@ import unittest
 import tempfile
 from unittest.mock import patch
 
-import test_packet_inspector as fixtures
-from test_capacity_retry import CREATED, FAILED, SUCCESS, Response
+from tests import test_packet_inspector as fixtures
+from tests.test_capacity_retry import CREATED, FAILED, SUCCESS, Response
 from packet_inspector.startup import configure_startup, startup_supported
 from packet_inspector.server import InspectorServer
 

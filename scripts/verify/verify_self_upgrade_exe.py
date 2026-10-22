@@ -16,15 +16,15 @@ from packet_inspector.frontend_dev import DESKTOP_PROFILE, RESOURCES
 from packet_inspector.router import control_worker, local_json, process_alive, worker_info
 from packet_inspector.updates import ASSET
 from packet_inspector.upgrade import Upgrade, free_port
-from verify_upgrade_exe import wait_for
+from scripts.verify.verify_upgrade_exe import wait_for
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parents[2]
 
 
 def legacy_updater():
     # Preserve the old asset selection and command unchanged. __file__ resolves
     # the shared release channel, just as it did in the original application.
-    source = ROOT / "test_fixtures" / "updates_v0_6_9.py"
+    source = ROOT / "tests" / "fixtures" / "updates_v0_6_9.py"
     module = types.ModuleType("packet_inspector.legacy_updates_fixture")
     module.__package__ = "packet_inspector"
     module.__file__ = str(ROOT / "packet_inspector" / "updates.py")

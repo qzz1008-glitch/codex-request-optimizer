@@ -8,7 +8,7 @@ import zlib
 
 from packet_inspector.session_summary import INDEX_TASK_PREFIX, SessionSummaries
 from packet_inspector.token_window import TokenWindows
-from test_token_window import THREAD, event
+from tests.test_token_window import THREAD, event
 
 
 class SessionSummaryTests(unittest.TestCase):
