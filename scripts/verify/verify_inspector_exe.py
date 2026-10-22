@@ -15,11 +15,11 @@ import zipfile
 from http.server import ThreadingHTTPServer
 from urllib.request import Request, urlopen
 
-from test_packet_inspector import Upstream, zstandard
-from test_image_isolation import request_body
+from tests.test_packet_inspector import Upstream, zstandard
+from tests.test_image_isolation import request_body
 from packet_inspector.image_config import find_codex_cli
 
-ROOT=Path(__file__).resolve().parent
+ROOT=Path(__file__).resolve().parents[2]
 
 
 def main():
@@ -145,6 +145,8 @@ def main():
         with zipfile.ZipFile(release/"CodexPacketInspector-source.zip") as source:
             names=source.namelist()
             assert {"README.md","LICENSE","packet_inspector/transport.py","packet_inspector/windows_install.ps1",".github/workflows/windows-build.yml"}<=set(names)
+            assert {"scripts/__init__.py", "scripts/build_inspector.py", "scripts/verify/verify_self_upgrade_exe.py",
+                    "tests/__init__.py", "tests/fixtures/updates_v0_6_9.py", "docs/usage.md", "docs/development.md"}<=set(names)
             assert "THIRD_PARTY_LICENSES/Codex-LICENSE.txt" in names
             assert not any(n.startswith(("evidence/",".local/",".upstream/","build/")) or n.endswith(("settings.json","auth.json",".sqlite")) for n in names)
             assert not {"install_gate_observer.py","test_gate_observer.py","packet_inspector/observer.py","payload_patch.py","payload_transport.py"}.intersection(names)

@@ -16,7 +16,22 @@ from packet_inspector import VERSION
 from packet_inspector.app_icon import APP_ICON
 from packet_inspector.frontend_dev import PROFILE_NAME, PORTABLE_UI
 
-ROOT=Path(__file__).resolve().parent
+ROOT=Path(__file__).resolve().parents[1]
+
+
+def source_files(root=None):
+    """Collect redistributable sources while excluding local runtime data."""
+    root = Path(root or ROOT).resolve()
+    files = [root / name for name in ("README.md", "LICENSE", "AGENTS.md", ".gitignore", "requirements-dev.txt",
+             ".github/RELEASE_NOTES.md", ".github/workflows/windows-build.yml")]
+    suffixes = {".py", ".txt", ".md", ".html", ".js", ".css", ".ps1", ".json", ".ico", ".png", ".svg"}
+    excluded = {"__pycache__", "data", ".local", ".venv", "build", "release", "node_modules"}
+    for folder in ("packet_inspector", "scripts", "tests", "docs"):
+        for path in (root / folder).rglob("*"):
+            if (path.is_file() and not path.is_symlink() and path.suffix in suffixes
+                    and not excluded.intersection(path.relative_to(root).parts)):
+                files.append(path)
+    return sorted(set(files))
 
 
 def output_directory(requested=None, mode="release"):
@@ -100,32 +115,21 @@ def main(argv=None):
     dev_output=work/"development-package"
     dev_log=work/"development-package.log"
     with dev_log.open("w",encoding="utf8") as output:
-        dev_result=subprocess.run([sys.executable,str(ROOT/"build_inspector.py"),"--mode","dev","--portable-dev",
+        dev_result=subprocess.run([sys.executable,"-m","scripts.build_inspector","--mode","dev","--portable-dev",
                                    "--output-dir",str(dev_output)],cwd=ROOT,env=env,stdout=output,stderr=subprocess.STDOUT)
     if dev_result.returncode:
         print(json.dumps({"build":"failed","component":"development","log":str(dev_log)}))
         return dev_result.returncode
     shutil.copy2(dev_output/"CodexPacketInspector-Dev.exe",release/"CodexPacketInspector-Dev.exe")
-    shutil.copyfile(ROOT/"install_inspector_service.ps1",release/"install_inspector_service.ps1")
-    shutil.copyfile(ROOT/"update_inspector_service.ps1",release/"update_inspector_service.ps1")
-    for name in ["README.md","LICENSE","THIRD_PARTY_NOTICES.txt"]:
+    for name in ("install_inspector_service.ps1", "update_inspector_service.ps1"):
+        shutil.copyfile(ROOT/"scripts"/"windows"/name, release/name)
+    for name in ["README.md","LICENSE"]:
         shutil.copyfile(ROOT/name,release/name)
-    sources=[ROOT/"build_inspector.py",ROOT/"dev_inspector_ui.py",ROOT/"test_packet_inspector.py",ROOT/"test_providers.py",ROOT/"test_overflow_compaction.py",ROOT/"test_cache_maintenance.py",ROOT/"test_desktop_ui.py",ROOT/"test_token_window.py",ROOT/"test_session_summary.py",ROOT/"verify_inspector_exe.py",ROOT/"verify_overflow_exe.py",
-              ROOT/"install_inspector_service.ps1",ROOT/"update_inspector_service.ps1",ROOT/"README.md",ROOT/"LICENSE",ROOT/"THIRD_PARTY_NOTICES.txt",
-              ROOT/"requirements-dev.txt",ROOT/"AGENTS.md",ROOT/".gitignore",ROOT/".github"/"workflows"/"windows-build.yml"]
-    sources.extend(p for p in (ROOT/"packet_inspector").rglob("*")
-                   if p.is_file() and p.suffix in {".py",".txt",".html",".js",".css",".ps1",".json",".ico",".png",".svg"}
-                   and "__pycache__" not in p.parts and "data" not in p.parts)
-    sources.extend([ROOT/"build_app_icon.ps1", ROOT/"test_self_upgrade.py", ROOT/"verify_self_upgrade_exe.py",
-                    ROOT/"test_usage_trigger.py", ROOT/"verify_usage_exe.py",
-                    ROOT/"test_response_integrity.py", ROOT/"test_desktop_instance.py", ROOT/"test_window_lifecycle.py",
-                    ROOT/"test_fixtures"/"updates_v0_6_9.py",
-                    ROOT/".github"/"RELEASE_NOTES.md"])
-    sources.extend([ROOT/"test_image_isolation.py", ROOT/"test_capacity_retry.py", ROOT/"test_runtime_settings.py", ROOT/"test_entry_port.py",
-                    ROOT/"test_router.py",ROOT/"test_updates.py",ROOT/"test_upgrade.py",ROOT/"verify_upgrade_exe.py",ROOT/"test_frontend_dev.py",ROOT/"test_launch.py"])
+    shutil.copytree(ROOT/"docs", release/"docs")
+    shutil.copyfile(ROOT/"docs"/"THIRD_PARTY_NOTICES.txt", release/"THIRD_PARTY_NOTICES.txt")
     archive=release/"CodexPacketInspector-source.zip"
     with zipfile.ZipFile(archive,"w",zipfile.ZIP_DEFLATED) as zipped:
-        for path in sorted(sources):
+        for path in source_files():
             zipped.write(path,path.relative_to(ROOT))
         for path in sorted(licenses.iterdir()):
             if path.is_file():zipped.write(path,"THIRD_PARTY_LICENSES/"+path.name)
@@ -133,6 +137,8 @@ def main(argv=None):
     with zipfile.ZipFile(portable,"w",zipfile.ZIP_DEFLATED) as zipped:
         for name in ["CodexPacketInspector.exe","README.md","LICENSE","THIRD_PARTY_NOTICES.txt"]:
             zipped.write(release/name,name)
+        for path in sorted((release/"docs").rglob("*")):
+            if path.is_file():zipped.write(path,path.relative_to(release))
         for path in sorted(licenses.iterdir()):
             if path.is_file():zipped.write(path,"THIRD_PARTY_LICENSES/"+path.name)
     summary=[]

@@ -6,8 +6,8 @@ from pathlib import Path
 import tempfile
 import unittest
 
-import build_inspector
-import test_desktop_ui as desktop_tests
+from scripts import build_inspector
+from tests import test_desktop_ui as desktop_tests
 from packet_inspector.desktop_ui import DesktopUI
 from packet_inspector.frontend_dev import BuildProfile, RESOURCES, load_profile
 

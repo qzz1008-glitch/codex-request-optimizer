@@ -7,7 +7,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 from packet_inspector.window_lifecycle import WindowLifecycle
-import test_router
+from tests import test_router
 
 
 class Callbacks(list):

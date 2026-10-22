@@ -1,0 +1,1 @@
+"""Frozen application smoke checks."""

@@ -14,7 +14,7 @@ import unittest
 from unittest.mock import patch
 from types import SimpleNamespace
 
-import test_packet_inspector as fixtures
+from tests import test_packet_inspector as fixtures
 import zstandard
 
 from packet_inspector.analyzer import decode_body, encode

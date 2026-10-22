@@ -13,7 +13,7 @@ import threading
 import unittest
 from unittest.mock import patch
 
-sys.path.insert(0, str(Path(__file__).parent / ".local" / "builddeps"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / ".local" / "builddeps"))
 from packet_inspector.analyzer import decode_body
 from packet_inspector.server import InspectorServer
 from packet_inspector.token_window import TokenWindows
@@ -229,7 +229,7 @@ class UsageRelayTests(unittest.TestCase):
             self.assertEqual(self.up.requests[-1][0], body)
 
     def test_real_summary_and_cache_reuse_still_rewrite_usage_using_original_size(self):
-        from test_overflow_compaction import message
+        from tests.test_overflow_compaction import message
         self.assertEqual(self.api({"packet_size_protection_enabled": True, "budget_bytes": 700000})[0], 200)
         items = [message(i, 140000) for i in range(18)]
         for cached in (False, True):

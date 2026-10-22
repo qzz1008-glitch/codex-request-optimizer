@@ -15,7 +15,7 @@ from packet_inspector.analyzer import encode
 from packet_inspector.maintenance import SQLiteReclaimer
 from packet_inspector.overflow import OverflowCompactor
 from packet_inspector.server import InspectorServer
-from test_overflow_compaction import complete, make_body, message
+from tests.test_overflow_compaction import complete, make_body, message
 
 
 class CacheMaintenanceTests(unittest.TestCase):

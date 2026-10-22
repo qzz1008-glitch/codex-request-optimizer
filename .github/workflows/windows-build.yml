@@ -22,13 +22,13 @@ jobs:
             requirements-dev.txt
             packet_inspector/requirements.txt
       - run: python -m pip install -r requirements-dev.txt
-      - run: python -m unittest discover -s . -p "test_*.py" -q
-      - run: python build_inspector.py --output-dir release/ci
-      - run: python verify_inspector_exe.py --release-dir release/ci
-      - run: python verify_overflow_exe.py --release-dir release/ci
-      - run: python verify_usage_exe.py --release-dir release/ci
-      - run: python verify_upgrade_exe.py --release-dir release/ci --desktop
-      - run: python verify_self_upgrade_exe.py --release-dir release/ci
+      - run: python -m unittest discover -s tests -t . -p "test_*.py" -q
+      - run: python -m scripts.build_inspector --output-dir release/ci
+      - run: python -m scripts.verify.verify_inspector_exe --release-dir release/ci
+      - run: python -m scripts.verify.verify_overflow_exe --release-dir release/ci
+      - run: python -m scripts.verify.verify_usage_exe --release-dir release/ci
+      - run: python -m scripts.verify.verify_upgrade_exe --release-dir release/ci --desktop
+      - run: python -m scripts.verify.verify_self_upgrade_exe --release-dir release/ci
       - uses: actions/upload-artifact@v4
         with:
           name: CodexRequestOptimizer-Windows-x64

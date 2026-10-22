@@ -41,7 +41,7 @@ raise SystemExit(desktop.run(sys.argv[2:]))
                 child = subprocess.run(
                     [sys.executable, "-c", launch, mode, "--data-dir", str(self.folder),
                      "--config", str(self.folder / "config.toml"), "--port", str(port)],
-                    cwd=Path(__file__).resolve().parent, capture_output=True, text=True, timeout=25,
+                    cwd=Path(__file__).resolve().parents[1], capture_output=True, text=True, timeout=25,
                 )
                 self.assertEqual(child.returncode, 0, child.stderr[-1500:])
                 self.assertEqual(owner.kernel.WaitForSingleObject(owner.event, 1000), 0)

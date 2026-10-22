@@ -1,6 +1,6 @@
 param(
-    [string]$InputPath = (Join-Path $PSScriptRoot 'packet_inspector\assets\request-optimizer-logo.png'),
-    [string]$OutputPath = (Join-Path $PSScriptRoot 'packet_inspector\assets\request-optimizer-logo.ico')
+    [string]$InputPath = (Join-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) 'packet_inspector\assets\request-optimizer-logo.png'),
+    [string]$OutputPath = (Join-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) 'packet_inspector\assets\request-optimizer-logo.ico')
 )
 # Preserve the artwork while converting it to Windows icon sizes.
 $ErrorActionPreference = 'Stop'

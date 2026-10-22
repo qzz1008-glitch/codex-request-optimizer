@@ -16,7 +16,7 @@ import time
 from packet_inspector.router import control_worker, local_json, process_alive, worker_info
 from packet_inspector.upgrade import Upgrade, digest, free_port
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parents[2]
 
 
 def wait_for(function, seconds=45):
