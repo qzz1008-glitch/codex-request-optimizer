@@ -1,4 +1,4 @@
-"""User-facing application upgrade; the protocol 1 entry binary stays installed."""
+"""Upgrade application workers while retaining the installed protocol 1 entry."""
 from __future__ import annotations
 
 import argparse
@@ -15,9 +15,13 @@ import subprocess
 import sys
 import threading
 import time
+import tempfile
 
 from packet_inspector.entry_port import configured_port
+from packet_inspector.app_icon import APP_ICON
 from packet_inspector.locking import file_lock
+from packet_inspector.window_lifecycle import EXIT_PROPERTY
+from packet_inspector.frontend_dev import BuildProfile, load_profile, installed_profile, remember_upgrade_profile
 from packet_inspector.router import (PROTOCOL, atomic_json, control_worker, healthy_worker,
                                      local_json, process_alive, start_worker, worker_info)
 
@@ -34,13 +38,14 @@ def free_port():
 
 
 class Upgrade:
-    def __init__(self, payload, data_dir, config, port=None, progress=None):
+    def __init__(self, payload, data_dir, config, port=None, progress=None, default_profile=None):
         self.payload, self.data_dir, self.config = Path(payload), Path(data_dir).resolve(), Path(config).resolve()
         self.port = port
         self.progress = progress or (lambda message: None)
         self.canonical = self.data_dir / "bin" / "CodexPacketInspector.exe"
         self.candidate = ""
         self.candidate_process = None
+        self.default_profile = default_profile or BuildProfile()
 
     def _wait_worker(self, identity, seconds=30):
         deadline = time.monotonic() + seconds
@@ -102,18 +107,25 @@ class Upgrade:
         callback_type = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
         user.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
         user.PostMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+        user.SetPropW.argtypes = [wintypes.HWND, wintypes.LPCWSTR, wintypes.HANDLE]
+        user.SetPropW.restype = wintypes.BOOL
         @callback_type
         def close_window(handle, _parameter):
             pid = wintypes.DWORD()
             user.GetWindowThreadProcessId(handle, ctypes.byref(pid))
             if pid.value in pids:
-                user.PostMessageW(handle, 0x10, 0, 0)  # Graceful close; forwarding is independent.
+                # Ordinary close goes to the tray. Upgrades explicitly close only
+                # this managed optimizer window, leaving forwarding independent.
+                if user.SetPropW(handle, EXIT_PROPERTY, 1):
+                    user.PostMessageW(handle, 0x10, 0, 0)
             return True
         user.EnumWindows.argtypes = [callback_type, wintypes.LPARAM]
-        user.EnumWindows(close_window, 0)
-        deadline = time.monotonic() + 10
+        deadline = time.monotonic() + 25
         while any(process_alive(pid) for pid in pids) and time.monotonic() < deadline:
-            time.sleep(.1)
+            # A bootloader can be visible in the process list before WebView
+            # creates its native window. Revisit new handles until it exits.
+            user.EnumWindows(close_window, 0)
+            time.sleep(.2)
         if any(process_alive(pid) for pid in pids):
             raise RuntimeError("旧版优化器窗口未退出，请关闭窗口后再升级。中转仍在运行。")
 
@@ -125,12 +137,31 @@ class Upgrade:
     def _application_windows(self):
         if os.name != "nt":
             return []
-        code = ("$taskVersions=$env:INSPECTOR_UPGRADE_VERSIONS; Get-CimInstance Win32_Process | "
-                "Where-Object {$_.ExecutablePath -and $_.ExecutablePath.StartsWith($taskVersions,[StringComparison]::OrdinalIgnoreCase) "
-                "-and $_.Name -eq 'CodexPacketInspector.exe' -and $_.CommandLine -notmatch '--background'} | "
-                "ForEach-Object {[pscustomobject]@{pid=$_.ProcessId; background=$false}} | ConvertTo-Json -Compress")
+        profile = installed_profile(self.data_dir)
+        code = ("$taskVersions=$env:INSPECTOR_UPGRADE_VERSIONS; $taskData=$env:INSPECTOR_UPGRADE_DATA; "
+                "$taskPattern='--data-dir\\s+\"?'+[regex]::Escape($taskData)+'\"?(?:\\s|$)'; "
+                "Get-CimInstance Win32_Process | Where-Object {$_.ExecutablePath "
+                "-and $_.Name -in @('CodexPacketInspector.exe','CodexPacketInspector-Dev.exe') "
+                "-and $_.ExecutablePath -ne $env:INSPECTOR_UPGRADE_SELF "
+                "-and $_.ExecutablePath -ne $env:INSPECTOR_UPGRADE_ENTRY "
+                "-and $_.CommandLine -notmatch '--background' -and ("
+                "$_.ExecutablePath.StartsWith($taskVersions,[StringComparison]::OrdinalIgnoreCase) "
+                "-or ($_.ProcessId -eq $env:INSPECTOR_UPGRADE_PID -and $_.ExecutablePath -eq $env:INSPECTOR_UPGRADE_GUI) "
+                "-or $_.CommandLine -match $taskPattern "
+                "-or ($env:INSPECTOR_UPGRADE_DEFAULT -eq '1' -and $_.CommandLine -notmatch '--data-dir' "
+                "-and $_.Name -eq 'CodexPacketInspector-Dev.exe'))} | "
+                "ForEach-Object {[pscustomobject]@{pid=$_.ProcessId; background=$false; executable=$_.ExecutablePath; "
+                "mode=$(if($_.Name -eq 'CodexPacketInspector-Dev.exe'){'dev'}else{$env:INSPECTOR_UPGRADE_MODE})}} "
+                "| ConvertTo-Json -Compress")
         result = subprocess.run(["powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", code],
-                                env={**os.environ, "INSPECTOR_UPGRADE_VERSIONS": str(self.data_dir / "bin" / "versions") + os.sep},
+                                env={**os.environ, "INSPECTOR_UPGRADE_VERSIONS": str(self.data_dir / "bin" / "versions") + os.sep,
+                                     "INSPECTOR_UPGRADE_DATA": str(self.data_dir),
+                                     "INSPECTOR_UPGRADE_SELF": str(Path(sys.executable).resolve()),
+                                     "INSPECTOR_UPGRADE_ENTRY": str(self.canonical) if (self.data_dir / "router-state.json").is_file() else "",
+                                     "INSPECTOR_UPGRADE_PID": str(profile.get("pid", 0)),
+                                     "INSPECTOR_UPGRADE_GUI": str(profile.get("executable", "")),
+                                     "INSPECTOR_UPGRADE_MODE": profile.get("mode", "release"),
+                                     "INSPECTOR_UPGRADE_DEFAULT": "1" if self.data_dir == (Path.home() / ".codex-packet-inspector").resolve() else "0"},
                                 capture_output=True, encoding="utf8", errors="replace", timeout=15,
                                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         if result.returncode:
@@ -184,7 +215,7 @@ class Upgrade:
             time.sleep(.1)
         raise RuntimeError("入口服务健康检查超时。")
 
-    def _migrate(self, router_payload, legacy):
+    def _migrate(self, entry_payload, legacy):
         processes = self._legacy_processes() if legacy else []
         had_window = any(not item["background"] for item in processes)
         if had_window:
@@ -224,7 +255,7 @@ class Upgrade:
                 else:
                     raise RuntimeError("旧监听端口未释放，取消替换。")
             self.canonical.parent.mkdir(parents=True, exist_ok=True)
-            self._copy_retry(router_payload, self.canonical)
+            self._copy_retry(entry_payload, self.canonical)
             atomic_json(self.data_dir / "router-state.json", {"protocol": PROTOCOL, "port": self.port,
                         "token": secrets.token_urlsafe(32), "config": str(self.config),
                         "active": self.candidate, "draining": []})
@@ -271,8 +302,13 @@ class Upgrade:
         manifest = json.loads((self.payload / "manifest.json").read_text(encoding="utf8"))
         if manifest.get("router_protocol") != PROTOCOL:
             raise ValueError("升级包的入口协议不兼容。")
-        app, router = self.payload / "CodexPacketInspector.exe", self.payload / "CodexInspectorRouter.exe"
-        for path in (app, router):
+        app = self.payload / "CodexPacketInspector.exe"
+        entry_mode = manifest.get("entry_mode", "standalone")
+        if entry_mode not in {"shared", "standalone"}:
+            raise ValueError("升级包的入口模式不兼容。")
+        # Existing upgrade payloads used a separate entry binary.
+        entry = app if entry_mode == "shared" else self.payload / "CodexInspectorRouter.exe"
+        for path in dict.fromkeys((app, entry)):
             if digest(path) != manifest["sha256"][path.name]:
                 raise ValueError("升级包校验失败。")
         self.progress("升级包校验通过，正在准备新版前后端…")
@@ -301,6 +337,8 @@ class Upgrade:
                 raise ValueError("旧版不支持安全排空，请先手动关闭旧中转再运行升级程序。")
             if not legacy and health.get("router_protocol") != PROTOCOL:
                 raise ValueError("入口协议不兼容，未修改正在运行的服务。")
+        windows = self._application_windows()
+        remember_upgrade_profile(self.data_dir, self.default_profile, windows)
         version_dir = self.data_dir / "bin" / "versions" / manifest["sha256"][app.name]
         version_dir.mkdir(parents=True, exist_ok=True)
         version_exe = version_dir / app.name
@@ -314,7 +352,6 @@ class Upgrade:
         try:
             self._start_candidate(version_exe, manifest["version"])
             if health and not legacy:
-                windows = self._application_windows()
                 if windows:
                     self.progress("正在更新桌面窗口，固定入口继续转发…")
                     self._close_windows(windows)
@@ -331,7 +368,7 @@ class Upgrade:
                     local_json(self.port, "/__router__/switch", {"worker_id": old, "expected_active": self.candidate}, state["token"], timeout=40)
                     raise
             else:
-                backup = self._migrate(router, legacy)
+                backup = self._migrate(entry, legacy)
             success = True
             self.progress("升级完成。旧服务会在请求结束后退出。")
             return {"state": "complete", "version": manifest["version"], "port": self.port,
@@ -356,7 +393,48 @@ class Upgrade:
                 raise
 
 
-def main(argv=None):
+def run_integrated(arguments, quiet=False, force=False):
+    """A downloaded application is also its own verified upgrade payload."""
+    from packet_inspector import VERSION
+    from packet_inspector.server import argument_parser
+    from packet_inspector.updates import version_tuple
+    options = argument_parser().parse_args(arguments)
+    directory = options.data_dir.resolve()
+    engine = Upgrade(directory, directory, options.config, options.port)
+    try:
+        health = local_json(options.port, "/health", timeout=2)
+        status = local_json(options.port, "/api/status", timeout=3)
+    except (ConnectionError, OSError, http.client.HTTPException):
+        pass
+    else:
+        if (health.get("app") != "codex-packet-inspector" or Path(status.get("data_dir", "")).resolve() != directory
+                or Path(status.get("profile", {}).get("config_path", "")).resolve() != options.config.resolve()):
+            raise ValueError("此端口未使用当前配置，未执行升级。")
+        current_version = version_tuple(status["version"])
+        if current_version >= version_tuple(VERSION) and not force and engine.canonical.is_file():
+            if not quiet:
+                engine._open_window()
+            return 0
+        if current_version > version_tuple(VERSION):
+            raise ValueError("已安装更新的版本，未执行降级。")
+    staging = directory / "updates" / "staging"
+    staging.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="application-", dir=staging) as name:
+        payload = Path(name).resolve()
+        if not payload.is_relative_to(staging.resolve()):
+            raise ValueError("升级暂存目录无效。")
+        app = payload / "CodexPacketInspector.exe"
+        shutil.copy2(sys.executable, app)
+        atomic_json(payload / "manifest.json", {"version": VERSION, "router_protocol": PROTOCOL,
+                    "entry_mode": "shared", "sha256": {app.name: digest(app)}})
+        args = ["--payload-dir", str(payload), "--data-dir", str(directory), "--config", str(options.config.resolve()),
+                "--port", str(options.port)]
+        if quiet:
+            args.append("--quiet")
+        return main(args, default_profile=load_profile(), open_after=not quiet)
+
+
+def main(argv=None, *, default_profile=None, open_after=False):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--data-dir", type=Path, default=Path.home() / ".codex-packet-inspector")
     parser.add_argument("--config", type=Path, default=Path.home() / ".codex/config.toml")
@@ -367,7 +445,7 @@ def main(argv=None):
     payload = args.payload_dir or Path(getattr(sys, "_MEIPASS", Path(__file__).parent.parent)) / "upgrade-payload"
     if args.quiet:
         try:
-            result = Upgrade(payload, args.data_dir, args.config, args.port).run()
+            result = Upgrade(payload, args.data_dir, args.config, args.port, default_profile=default_profile).run()
             if sys.stdout is not None:
                 print(json.dumps(result, ensure_ascii=False))
             return 0
@@ -376,6 +454,10 @@ def main(argv=None):
     import tkinter as tk
     from tkinter import ttk
     window = tk.Tk()
+    try:
+        window.iconbitmap(str(APP_ICON))
+    except tk.TclError:
+        pass
     window.title("Codex 请求优化器 · 安装与升级")
     window.geometry("540x230")
     window.resizable(False, False)
@@ -387,7 +469,7 @@ def main(argv=None):
     bar = ttk.Progressbar(frame, mode="indeterminate")
     bar.pack(fill="x")
     bar.start(12)
-    engine = Upgrade(payload, args.data_dir, args.config, args.port)
+    engine = Upgrade(payload, args.data_dir, args.config, args.port, default_profile=default_profile)
     open_app = ttk.Button(frame, text="打开优化器", command=engine._open_window, state="disabled")
     open_app.pack(side="left", pady=18)
     close = ttk.Button(frame, text="关闭", command=window.destroy, state="disabled")
@@ -399,6 +481,8 @@ def main(argv=None):
     def work():
         try:
             engine.run()
+            if open_after:
+                engine._open_window()
             succeeded.set()
         except Exception as exc:
             updates.put("升级未完成：" + str(exc))
@@ -408,6 +492,9 @@ def main(argv=None):
         while not updates.empty():
             message.set(updates.get_nowait())
         if finished.is_set():
+            if succeeded.is_set() and open_after:
+                window.destroy()
+                return
             bar.stop()
             close.configure(state="normal")
             if succeeded.is_set():

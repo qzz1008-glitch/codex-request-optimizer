@@ -41,10 +41,11 @@ def main():
     def api(path, data=None):
         return json.load(opener.open(Request(base + path, None if data is None else json.dumps(data).encode()), timeout=10))
 
-    def post(items, session="exe-overflow-test"):
+    def post(items, session="exe-overflow-test", headers=None, **fields):
         client = http.client.HTTPConnection("127.0.0.1", runtime["port"], timeout=30)
-        client.request("POST", "/relay/" + settings["relay_token"] + "/responses", make_body(items),
-                       {"Content-Type": "application/json", "session_id": session, "Authorization": "Bearer fake-do-not-cache"})
+        client.request("POST", "/relay/" + settings["relay_token"] + "/responses", make_body(items, **fields),
+                       {"Content-Type": "application/json", "session_id": session,
+                        "Authorization": "Bearer fake-do-not-cache", **(headers or {})})
         response = client.getresponse()
         status, body = response.status, response.read()
         client.close()
@@ -65,11 +66,11 @@ def main():
         else:
             raise RuntimeError("Packaged overflow test startup timed out")
         original_config = config.read_bytes()
-        assert initial["overflow_compaction_enabled"] is False
+        assert initial["packet_size_protection_enabled"] is False
         assert initial["overflow_cache"]["ttl_seconds"] == 7 * 86400
         assert initial["overflow_cache"]["max_entries"] == 256
         assert initial["overflow_cache"]["max_bytes"] == 64 * 1024 * 1024
-        assert api("/api/settings", {"overflow_compaction_enabled": True})["overflow_compaction_enabled"]
+        assert api("/api/settings", {"packet_size_protection_enabled": True})["packet_size_protection_enabled"]
         items = [message(i, 140000) for i in range(18)]
         assert post(items) == (200, complete())
         first_compactions = sum(compact for _, compact, _ in upstream.requests)
@@ -90,6 +91,31 @@ def main():
         packets = api("/api/packets?limit=4")
         assert any(p.get("overflow_cache_hit") for p in packets)
         assert any(p.get("overflow_cache_reset") for p in packets)
+        # Exercise the frozen app, not the source imported by this verifier.
+        # A version label alone must not hide an old checkpoint implementation.
+        upstream.fail = False
+        marker = len(upstream.requests)
+        reasoning = {"effort": "max", "summary": "detailed", "context": "all_turns"}
+        native_fields = {"reasoning": reasoning, "include": ["reasoning.encrypted_content"],
+                         "future_protocol": {"preserve": True},
+                         "client_metadata": {"native_extension": "preserve"}}
+        assert post(items, "exe-lite-test", headers={"X-OpenAI-Internal-Codex-Responses-Lite": "1"},
+                    **native_fields) == (200, complete())
+        native_requests = upstream.requests[marker:]
+        assert any(compact for _, compact, _ in native_requests)
+        assert sum(not compact for _, compact, _ in native_requests) == 1
+        assert all(size <= 1_000_000 for size, _, _ in native_requests)
+        for _, _, value in native_requests:
+            assert value["reasoning"] == reasoning
+            assert value["include"] == native_fields["include"]
+            assert value["future_protocol"] == native_fields["future_protocol"]
+            assert value["client_metadata"]["native_extension"] == "preserve"
+        marker = len(upstream.requests)
+        status, body = post(items, "exe-upstream-error-test",
+                            headers={"X-OpenAI-Internal-Codex-Responses-Lite": "1"})
+        assert status == 502
+        assert "reasoning.context=all_turns" in json.loads(body)["error"]["message"]
+        assert all(compact for _, compact, _ in upstream.requests[marker:])
         assert api("/api/status")["maintenance_errors"] == 0
         assert config.read_bytes() == original_config
         assert b"fake-do-not-cache" not in (folder / "overflow-context.sqlite").read_bytes()
@@ -97,6 +123,8 @@ def main():
                           "budget_bytes": 1_000_000, "compaction_calls": first_compactions,
                           "cache_reused": True, "cache_reset": True,
                           "cache_retention_policy_verified": True,
+                          "native_template_in_frozen_app_verified": True,
+                          "upstream_error_detail_verified": True,
                           "failed_compaction_did_not_send_turn": True, "real_config_changed": False}), flush=True)
     finally:
         if base:

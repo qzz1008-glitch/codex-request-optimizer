@@ -1,19 +1,44 @@
 """Entry point for the desktop window and its independent background service."""
 import ctypes
 import json
+from pathlib import Path
 import sys
 from urllib.error import HTTPError
 
 from packet_inspector.server import main as service_main, default_data_dir, argument_parser
 
 
+def installed_entry(arguments):
+    """The installed stable path shares the application binary with workers."""
+    if not getattr(sys, "frozen", False):
+        return False
+    options = argument_parser().parse_known_args(arguments)[0]
+    data = options.data_dir.resolve()
+    return (Path(sys.executable).resolve() == data / "bin" / "CodexPacketInspector.exe"
+            and (data / "router-state.json").is_file())
+
+
 def main(argv=None):
     provided = list(sys.argv[1:] if argv is None else argv)
+    upgrade_requested = "--upgrade" in provided
+    quiet = "--quiet" in provided
+    provided = [arg for arg in provided if arg not in {"--upgrade", "--quiet"}]
     background, use_tray = "--background" in provided, "--tray" in provided
     arguments = [arg for arg in provided if arg not in {"--background", "--tray"}]
     tray = None
     try:
+        if upgrade_requested:
+            from packet_inspector.upgrade import run_integrated
+            return run_integrated(arguments, quiet=quiet, force=True)
+        if installed_entry(arguments):
+            from packet_inspector.router import main as entry_main
+            return entry_main(provided)
         if not background:
+            if getattr(sys, "frozen", False) and "--desktop-check" not in arguments:
+                options = argument_parser().parse_known_args(arguments)[0]
+                if not Path(sys.executable).resolve().is_relative_to(options.data_dir.resolve() / "bin" / "versions"):
+                    from packet_inspector.upgrade import run_integrated
+                    return run_integrated(arguments, quiet=quiet)
             from packet_inspector.desktop import run
             return run(arguments)
 
@@ -32,9 +57,11 @@ def main(argv=None):
                     local_api(server.port, "/api/stop", {}, timeout=5)
                 except HTTPError as exc:
                     try:
-                        reason = json.load(exc).get("error", "请先恢复原出口，再退出程序。")
+                        reason = json.load(exc).get("error", "退出未完成，请稍后重试。")
                     except Exception:
-                        reason = "请先恢复原出口，再退出程序。"
+                        reason = "退出未完成，请稍后重试。"
+                    if reason == "requests_in_flight":
+                        reason = "仍有请求正在转发，服务继续运行。请在请求完成后从托盘退出。"
                     open_window()
                     ctypes.windll.user32.MessageBoxW(0, str(reason), "Codex 请求优化器", 0x40)
                 except OSError:

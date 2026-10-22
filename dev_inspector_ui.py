@@ -4,12 +4,10 @@ from __future__ import annotations
 import argparse
 import http.client
 import json
-from pathlib import Path
 import threading
 import webbrowser
 
 from packet_inspector.desktop_ui import DesktopUI
-from packet_inspector.frontend_dev import register
 
 
 def check_relay(port):
@@ -30,14 +28,7 @@ def main(argv=None):
     parser.add_argument("--port", type=int, default=47845, help="frontend preview port")
     parser.add_argument("--relay-port", type=int, default=47844, help="existing forwarding service port")
     parser.add_argument("--open", action="store_true")
-    parser.add_argument("--desktop-mode", choices=("on", "off"), help="configure local desktop frontend development")
-    parser.add_argument("--data-dir", type=Path, default=Path.home() / ".codex-packet-inspector")
     args = parser.parse_args(argv)
-    if args.desktop_mode:
-        path = register(args.data_dir, Path(__file__).resolve().parent / "packet_inspector" / "ui",
-                        args.desktop_mode == "on")
-        print(json.dumps({"desktop_development": args.desktop_mode == "on", "local_config": str(path)}))
-        return 0
     if not 1 <= args.port <= 65535 or not 1 <= args.relay_port <= 65535 or args.port == args.relay_port:
         parser.error("Preview and forwarding service require different valid ports.")
     try:

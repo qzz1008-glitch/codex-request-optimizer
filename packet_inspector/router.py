@@ -135,6 +135,7 @@ class RouterServer(ThreadingHTTPServer):
         self.guard, self.change_guard = threading.RLock(), threading.RLock()
         self.counts, self.relay_counts = {}, {}
         self.stopping = False
+        self.exit_requested = False
         self.monitor_stop = threading.Event()
         self.monitor_thread = None
         self.retiring = set()
@@ -292,6 +293,15 @@ class RouterServer(ThreadingHTTPServer):
         self.monitor_stop.set()
         if self.monitor_thread:
             self.monitor_thread.join(timeout=2)
+        if self.exit_requested:
+            self.exit_requested = False
+            with self.guard:
+                workers = {self.state["active"], *self.state.get("draining", [])}
+            for identity in workers:
+                try:
+                    control_worker(self.data_dir, identity, "stop")
+                except (OSError, ValueError, http.client.HTTPException):
+                    pass
         super().server_close()
 
 
@@ -427,6 +437,7 @@ class RouterHandler(BaseHTTPRequestHandler):
                         self.wfile.write(chunk)
                         self.wfile.flush()
                 if path == "/api/stop" and response.status == 200:
+                    self.server.exit_requested = True
                     threading.Thread(target=self.server.shutdown, daemon=True).start()
             except (OSError, ValueError, http.client.HTTPException):
                 if not sent:
@@ -566,8 +577,12 @@ def main(argv=None):
             def exit_app():
                 try:
                     local_json(server.port, "/api/stop", {})
-                except (OSError, ValueError, http.client.HTTPException):
+                except (OSError, ValueError, http.client.HTTPException) as error:
                     open_window()
+                    import ctypes
+                    message = ("仍有请求正在转发，服务继续运行。请在请求完成后从托盘退出。"
+                               if str(error) == "control HTTP 409" else "退出未完成，中转服务继续运行。请稍后重试。")
+                    ctypes.windll.user32.MessageBoxW(0, message, "Codex 请求优化器", 0x40)
             tray = NativeTray(open_window, exit_app).start()
         server.serve_forever(poll_interval=.1)
     finally:

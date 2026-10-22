@@ -39,4 +39,4 @@ def check_window(window, options, instance):
         report.write_text(json.dumps({"passed": False, "error": type(exc).__name__}), encoding="utf8")
     finally:
         if not closed.is_set():
-            window.destroy()
+            getattr(window, "_optimizer_exit", window.destroy)()

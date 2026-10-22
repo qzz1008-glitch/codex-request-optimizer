@@ -125,7 +125,7 @@ class RouterTests(unittest.TestCase):
         self.router.state["draining"][0]["not_before"] = 0
         self.router.start_monitor()
         deadline = time.monotonic() + 4
-        while self.router.state["draining"] and time.monotonic() < deadline:
+        while (self.router.state["draining"] or not second.maintenance_enabled) and time.monotonic() < deadline:
             time.sleep(.05)
         self.assertEqual(self.router.state["draining"], [])
         self.assertTrue(second.maintenance_enabled)

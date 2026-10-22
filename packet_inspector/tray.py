@@ -6,6 +6,8 @@ from ctypes import wintypes
 import os
 import threading
 
+from .app_icon import APP_ICON
+
 
 class NativeTray:
     def __init__(self, open_window, exit_app):
@@ -14,6 +16,7 @@ class NativeTray:
         self.error = None
         self.hwnd = None
         self.thread = None
+        self.owned_icon = None
 
     def start(self):
         self.thread = threading.Thread(target=self._run, name="inspector-tray", daemon=True)
@@ -78,6 +81,13 @@ class NativeTray:
         user.DefWindowProcW.restype = result_type
         user.LoadIconW.argtypes = [wintypes.HINSTANCE, ctypes.c_void_p]
         user.LoadIconW.restype = wintypes.HICON
+        user.LoadImageW.argtypes = [wintypes.HINSTANCE, wintypes.LPCWSTR, wintypes.UINT,
+                                   ctypes.c_int, ctypes.c_int, wintypes.UINT]
+        user.LoadImageW.restype = wintypes.HANDLE
+        user.GetSystemMetrics.argtypes = [ctypes.c_int]
+        user.GetSystemMetrics.restype = ctypes.c_int
+        user.DestroyIcon.argtypes = [wintypes.HICON]
+        user.DestroyIcon.restype = wintypes.BOOL
         user.PostMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
         user.DestroyWindow.argtypes = [wintypes.HWND]
         user.GetMessageW.argtypes = [ctypes.POINTER(wintypes.MSG), wintypes.HWND, wintypes.UINT, wintypes.UINT]
@@ -112,6 +122,8 @@ class NativeTray:
                     point = wintypes.POINT()
                     user.GetCursorPos(ctypes.byref(point))
                     menu = user.CreatePopupMenu()
+                    user.AppendMenuW(menu, 0x3, 0, "中转服务运行中")
+                    user.AppendMenuW(menu, 0x800, 0, None)
                     user.AppendMenuW(menu, 0, 1, "打开主窗口")
                     user.AppendMenuW(menu, 0x800, 0, None)
                     user.AppendMenuW(menu, 0, 2, "退出程序")
@@ -132,6 +144,9 @@ class NativeTray:
                 return 0
             if message == 2:  # WM_DESTROY
                 shell.Shell_NotifyIconW(2, ctypes.byref(self.icon))
+                if self.owned_icon:
+                    user.DestroyIcon(self.owned_icon)
+                    self.owned_icon = None
                 user.PostQuitMessage(0)
                 return 0
             return user.DefWindowProcW(hwnd, message, wparam, lparam)
@@ -154,8 +169,10 @@ class NativeTray:
         self.icon.cbSize = ctypes.sizeof(NotifyIcon)
         self.icon.hWnd, self.icon.uID = self.hwnd, 1
         self.icon.uFlags, self.icon.uCallbackMessage = 7, callback_message
-        self.icon.hIcon = user.LoadIconW(None, ctypes.c_void_p(32516))
-        self.icon.szTip = "Codex 请求优化器 · 后台采集运行中"
+        self.owned_icon = user.LoadImageW(None, str(APP_ICON), 1,
+                                         user.GetSystemMetrics(49), user.GetSystemMetrics(50), 0x10)
+        self.icon.hIcon = self.owned_icon or user.LoadIconW(None, ctypes.c_void_p(32512))
+        self.icon.szTip = "Codex 请求优化器 · 中转服务运行中"
         if not shell.Shell_NotifyIconW(0, ctypes.byref(self.icon)):
             user.DestroyWindow(self.hwnd)
             raise ctypes.WinError(ctypes.get_last_error())

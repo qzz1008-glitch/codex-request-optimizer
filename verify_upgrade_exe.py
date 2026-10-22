@@ -14,7 +14,7 @@ import threading
 import time
 
 from packet_inspector.router import control_worker, local_json, process_alive, worker_info
-from packet_inspector.upgrade import Upgrade, free_port
+from packet_inspector.upgrade import Upgrade, digest, free_port
 
 ROOT = Path(__file__).resolve().parent
 
@@ -32,12 +32,48 @@ def wait_for(function, seconds=45):
     raise RuntimeError("Packaged upgrade verification timed out")
 
 
+def verify_fresh_install(release, directory):
+    data, config = directory / "fresh-data", directory / "fresh-config.toml"
+    config.write_text('model="test-only"\n', encoding="utf8")
+    port = free_port()
+    process = subprocess.Popen([str(release / "CodexPacketInspector.exe"), "--upgrade", "--quiet",
+                                "--port", str(port), "--data-dir", str(data), "--config", str(config)],
+                               creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    try:
+        assert process.wait(timeout=100) == 0
+        result = json.loads((data / "upgrade-result.json").read_text(encoding="utf8"))
+        assert result["state"] == "complete" and result["entry_migrated"]
+        assert local_json(port, "/health")["router_protocol"] == 1
+        canonical = data / "bin" / "CodexPacketInspector.exe"
+        assert digest(canonical) == digest(release / "CodexPacketInspector.exe")
+        print(json.dumps({"phase": "fresh_install_with_shared_application", "result": "ok"}), flush=True)
+    finally:
+        state_path = data / "router-state.json"
+        if state_path.exists():
+            state = json.loads(state_path.read_text(encoding="utf8"))
+            runtime = json.loads((data / "runtime.json").read_text(encoding="utf8"))
+            local_json(port, "/__router__/stop", {}, state["token"])
+            wait_for(lambda: not process_alive(runtime["pid"]), seconds=12)
+        for descriptor in (data / "router-workers").glob("*.json"):
+            if descriptor.name.endswith(".runtime.json"):
+                continue
+            runtime_path = descriptor.with_suffix(".runtime.json")
+            try:
+                control_worker(data, descriptor.stem, "stop")
+                runtime = json.loads(runtime_path.read_text(encoding="utf8"))
+                wait_for(lambda: not process_alive(runtime["pid"]), seconds=12)
+            except (OSError, ValueError, http.client.HTTPException):
+                pass
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--release-dir", type=Path, required=True)
     parser.add_argument("--desktop", action="store_true", help="also verify an open Windows desktop window")
     options = parser.parse_args()
     release = options.release_dir.resolve()
+    assert {path.name for path in release.glob("*.exe")} == {
+        "CodexPacketInspector.exe", "CodexPacketInspector-Dev.exe"}
     local = ROOT / ".local"
     local.mkdir(exist_ok=True)
     temporary = tempfile.TemporaryDirectory(prefix="upgrade-exe-smoke-", dir=local)
@@ -87,7 +123,7 @@ def main():
 
     def upgrade():
         nonlocal updater
-        updater = subprocess.Popen([str(release / "CodexRequestOptimizer-Upgrade.exe"), "--quiet",
+        updater = subprocess.Popen([str(release / "CodexPacketInspector.exe"), "--upgrade", "--quiet",
                                     "--port", str(port), "--data-dir", str(data), "--config", str(config)],
                                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         code = updater.wait(timeout=100)
@@ -97,12 +133,14 @@ def main():
         return result
 
     try:
+        verify_fresh_install(release, directory)
         wait_for(lambda: api("/api/status"))
         api("/api/settings", {"request_compression": "off"})
         original_config = config.read_bytes()
         print(json.dumps({"phase": "legacy_to_stable_entry"}), flush=True)
         migrated = upgrade()
         assert migrated["entry_migrated"] is True
+        assert digest(canonical) == digest(release / "CodexPacketInspector.exe")
         assert api("/health")["router_protocol"] == 1
         first = api("/api/status")
         root_pid = json.loads((data / "runtime.json").read_text(encoding="utf8"))["pid"]
@@ -162,18 +200,20 @@ def main():
         wait_for(lambda: not local_json(port, "/__router__/status", token=state["token"])["draining"], seconds=50)
         packets = api("/api/packets?limit=5")
         assert all(packet["state"] == "complete" for packet in packets)
+        print(json.dumps({"phase": "cold_start_restores_stable_entry"}), flush=True)
+        state = json.loads((data / "router-state.json").read_text(encoding="utf8"))
+        local_json(port, "/__router__/stop", {}, state["token"])
+        wait_for(lambda: not process_alive(root_pid), seconds=12)
+        worker_runtime = json.loads((data / "router-workers" / (state["active"] + ".runtime.json")).read_text(encoding="utf8"))
+        control_worker(data, state["active"], "stop")
+        wait_for(lambda: not process_alive(worker_runtime["pid"]), seconds=12)
+        launcher = subprocess.Popen([str(canonical), *([] if options.desktop else ["--background"]),
+                                     "--port", str(port), "--data-dir", str(data), "--config", str(config)],
+                                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        wait_for(lambda: api("/health").get("router_protocol") == 1)
+        assert api("/api/status")["router_supported"]
+        assert config.read_bytes() == original_config
         if options.desktop:
-            print(json.dumps({"phase": "cold_start_restores_stable_entry"}), flush=True)
-            state = json.loads((data / "router-state.json").read_text(encoding="utf8"))
-            local_json(port, "/__router__/stop", {}, state["token"])
-            wait_for(lambda: not process_alive(root_pid), seconds=12)
-            worker_runtime = json.loads((data / "router-workers" / (state["active"] + ".runtime.json")).read_text(encoding="utf8"))
-            control_worker(data, state["active"], "stop")
-            wait_for(lambda: not process_alive(worker_runtime["pid"]), seconds=12)
-            launcher = subprocess.Popen([str(canonical), "--port", str(port), "--data-dir", str(data), "--config", str(config)],
-                                        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-            wait_for(lambda: api("/health").get("router_protocol") == 1)
-            assert api("/api/status")["router_supported"]
             reopened = wait_for(observer._application_windows, seconds=30)
             time.sleep(3)
             observer._close_windows(reopened)
@@ -182,8 +222,9 @@ def main():
                           "entry_pid_preserved": True, "port_preserved": True,
                           "open_response_preserved": True, "new_requests_use_new_worker": True,
                           "old_worker_retired": True, "inference_requests": len(requests),
+                           "shared_application_entry": True, "fresh_install_verified": True,
                           "running_desktop_reopened": bool(options.desktop),
-                          "cold_start_uses_router": bool(options.desktop),
+                           "cold_start_uses_router": True,
                           "provider_config_unchanged_during_upgrade": True, "production_untouched": True}), flush=True)
     finally:
         finish.set()

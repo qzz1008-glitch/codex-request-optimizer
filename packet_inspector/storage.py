@@ -195,6 +195,7 @@ class Store:
             "created": "created",
             "wire_bytes": "wire_bytes",
             "upload_bytes": "coalesce(json_extract(meta,'$.outbound_wire_bytes'),-1)",
+            "decoded_bytes": "coalesce(json_extract(meta,'$.decoded_bytes'),-1)",
             "kind": "CASE WHEN json_extract(meta,'$.is_compaction') THEN '上下文压缩' WHEN json_extract(meta,'$.method')='POST' THEN '对话生成' ELSE coalesce(json_extract(meta,'$.method'),'未知') END",
             "status": "coalesce(status,-1)",
             "thread": "thread",

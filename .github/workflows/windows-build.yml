@@ -26,11 +26,12 @@ jobs:
       - run: python build_inspector.py --output-dir release/ci
       - run: python verify_inspector_exe.py --release-dir release/ci
       - run: python verify_overflow_exe.py --release-dir release/ci
-      - run: python verify_upgrade_exe.py --release-dir release/ci
+      - run: python verify_upgrade_exe.py --release-dir release/ci --desktop
+      - run: python verify_self_upgrade_exe.py --release-dir release/ci
       - uses: actions/upload-artifact@v4
         with:
           name: CodexRequestOptimizer-Windows-x64
-          path: release/ci/*
+          path: release/ci/CodexPacketInspector.exe
   publish:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: build
@@ -51,4 +52,4 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.ref_name }}
-        run: gh release create "$RELEASE_TAG" release/* --verify-tag --title "Codex Request Optimizer $RELEASE_TAG" --generate-notes
+        run: gh release create "$RELEASE_TAG" release/CodexPacketInspector.exe --verify-tag --title "Codex Request Optimizer $RELEASE_TAG" --notes-file .github/RELEASE_NOTES.md
