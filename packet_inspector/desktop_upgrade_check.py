@@ -27,8 +27,10 @@ def check_window(window, options, instance):
                 break
             time.sleep(.2)
         passed = bool(result and result["settings"] and result["check"] and result["install"]
-                      and VERSION in result["versions"] and result["title"] == "Codex 请求优化器")
+                      and VERSION in result["versions"]
+                      and result["title"] in {"Codex 请求优化器", "Codex 请求优化器 · 开发版"})
         report.write_text(json.dumps({"passed": passed, "version": VERSION, "pid": os.getpid(),
+                                      "development": window.title.endswith(" · 开发版"),
                                       "updates_ui": passed}), encoding="utf8")
         if passed:
             deadline = time.monotonic() + 120

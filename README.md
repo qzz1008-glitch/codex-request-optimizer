@@ -8,7 +8,7 @@ Windows 上的 Codex 请求分析与无损传输压缩工具。双击一个 EXE 
 
 ## 使用
 
-1. 从 [Releases](https://github.com/qzz1008-glitch/codex-request-optimizer/releases/latest) 下载 **`CodexPacketInspector.exe`**，双击安装或升级。一个 EXE 已内置前端、后台和首次安装所需的固定入口，无需 Python 或管理员权限。
+1. 从 [Releases](https://github.com/qzz1008-glitch/codex-request-optimizer/releases/latest) 下载 **`CodexRequestOptimizer-Upgrade.exe`**，双击安装或升级。这就是完整主程序，文件名保留旧版设置的升级兼容入口。一个 EXE 已内置前端、后台和首次安装所需的固定入口，无需 Python 或管理员权限。
 2. 安装或升级完成后自动打开优化器，也可从开始菜单打开。后台会检测用户配置及独立 profile 的 HTTP provider，备份后统一接入默认 47844 入口，各 provider 的名称、认证、附加请求头和上游保持对应。
 3. 首次接入或更改入口端口后，**重启 ChatGPT App 生效**。运行中的聊天可能仍缓存旧出口；固定端口下的后续优化器升级不需要重启 ChatGPT App。
 
@@ -17,9 +17,11 @@ Windows 上的 Codex 请求分析与无损传输压缩工具。双击一个 EXE 
 ## 两种升级方式
 
 - **本地代码升级**：运行 `python build_inspector.py --output-dir release/<新的目录名>`，将生成的 `CodexPacketInspector.exe` 交给用户。EXE 内置这一次构建的代码，双击后同时升级已经运行的后台和优化器桌面窗口。
-- **GitHub 在线升级**：在设置的“版本与升级”中点击“检查更新”→“立即升级”。下载使用 GitHub API 返回的大小和 SHA-256 校验，验证通过后使用主程序内置的升级流程。
+- **GitHub 在线升级**：在设置的“版本与升级”中点击“检查更新”→“立即升级”。下载使用 GitHub API 返回的大小和 SHA-256 校验，验证通过后使用主程序内置的升级流程，自动关闭旧界面并打开新版。旧版设置使用原下载入口即可完成升级，无需先手动安装。
 
 仓库当前为私有；读取私有 Release 需要有访问权限，并已通过 GitHub CLI 登录，或在启动环境中设置 `GH_TOKEN`。凭据只在内存中使用，不写入源码、升级包或更新状态。公开仓库的 Release 无需登录。预发布版和草稿不作为自动升级目标。
+
+程序版本分别存放，采集记录与统计始终沿用原数据目录下的同一个 `packets.sqlite`。兼容的历史记录、详情和统计随升级继续可用。
 
 固定入口由主程序以入口模式运行，不再单独构建路由 EXE；入口进程与后台进程共享同一种主程序。每次升级先把新版后台放入带哈希的版本目录，在随机本机端口启动并验证，再将新请求切到新版。已经转发的请求继续由旧后台完成；旧后台排空后退出。正常升级保留入口进程和公共端口，不覆盖正在使用的 EXE，也不重放推理请求。优化器桌面窗口会关闭并重新打开，以加载新版前端。
 
@@ -142,7 +144,7 @@ python verify_overflow_exe.py --release-dir release/local-build
 python verify_upgrade_exe.py --release-dir release/local-build
 ```
 
-结果位于指定的全新目录，包含正式主程序、仅供本地验证的开发程序和构建验证资料。GitHub Release 仅上传 `CodexPacketInspector.exe`，不发布开发版、独立升级器、脚本、源码归档或校验文件。主程序同时承载界面、后台、固定入口和安装升级功能。开发版的设置页使用同一更新来源，升级后继续保持开发模式。已有发布目录不覆盖。源码包使用文件白名单，不包含本机配置、请求数据库、认证、调查记录或原 App 资源。GitHub Actions 在 Windows 上运行测试、构建与 EXE 升级验证；推送与源码版本一致的 `vX.Y.Z` 标签会在全部验证通过后发布 GitHub Release。
+结果位于指定的全新目录，包含正式主程序、仅供本地验证的开发程序和构建验证资料。GitHub Release 仅上传一个完整主程序，下载名为 `CodexRequestOptimizer-Upgrade.exe`，与本地构建的 `CodexPacketInspector.exe` 内容相同；保留该文件名使旧版设置可直接升级。不发布开发版、独立升级器、脚本、源码归档或校验文件。主程序同时承载界面、后台、固定入口和安装升级功能。开发版的设置页使用同一更新来源，升级后继续保持开发模式。已有发布目录不覆盖。源码包使用文件白名单，不包含本机配置、请求数据库、认证、调查记录或原 App 资源。GitHub Actions 在 Windows 上运行测试、构建与 EXE 升级验证；推送与源码版本一致的 `vX.Y.Z` 标签会在全部验证通过后发布 GitHub Release。
 
 测试只向临时本机后端发送合成请求，不使用真实认证，不调用云端模型。安装入口需要正式 EXE 和默认数据目录，测试实例不能更改登录任务。
 

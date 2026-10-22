@@ -52,4 +52,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.ref_name }}
-        run: gh release create "$RELEASE_TAG" release/CodexPacketInspector.exe --verify-tag --title "Codex Request Optimizer $RELEASE_TAG" --notes-file .github/RELEASE_NOTES.md
+        run: |
+          cp release/CodexPacketInspector.exe release/CodexRequestOptimizer-Upgrade.exe
+          gh release create "$RELEASE_TAG" release/CodexRequestOptimizer-Upgrade.exe --verify-tag --title "Codex Request Optimizer $RELEASE_TAG" --notes-file .github/RELEASE_NOTES.md
