@@ -6,9 +6,11 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 
 from packet_inspector.desktop import SingleWindow
+from packet_inspector.window_lifecycle import request_window_exit
 
 
 @unittest.skipUnless(os.name == "nt", "Windows named window handles")
@@ -55,6 +57,18 @@ raise SystemExit(desktop.run(sys.argv[2:]))
         reopened = SingleWindow(self.folder)
         self.addCleanup(reopened.close)
         self.assertFalse(reopened.existing)
+
+    def test_upgrade_exit_signal_targets_only_the_same_profile(self):
+        owner = SingleWindow(self.folder)
+        self.addCleanup(owner.close)
+        closed = threading.Event()
+        watcher = threading.Thread(target=owner.watch, args=(lambda: None, closed.set), daemon=True)
+        watcher.start()
+        self.assertFalse(request_window_exit(self.folder / "other"))
+        self.assertFalse(closed.wait(.1))
+        self.assertTrue(request_window_exit(self.folder))
+        self.assertTrue(closed.wait(2))
+        watcher.join(2)
 
 
 if __name__ == "__main__":

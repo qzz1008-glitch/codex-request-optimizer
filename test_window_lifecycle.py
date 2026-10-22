@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+import threading
 import unittest
 from unittest.mock import Mock, patch
 
@@ -57,6 +58,23 @@ class WindowLifecycleTests(unittest.TestCase):
         self.assertTrue(self.lifecycle.on_closing())
         self.window.hide.assert_not_called()
         self.window.minimize.assert_not_called()
+
+    def test_exit_cancels_loading_wait_so_a_starting_window_can_upgrade(self):
+        result = []
+        loading = threading.Event()
+        waiter = threading.Thread(target=lambda: result.append(self.lifecycle.wait_loaded(loading)), daemon=True)
+        waiter.start()
+        self.lifecycle.exit()
+        waiter.join(1)
+        self.assertFalse(waiter.is_alive())
+        self.assertEqual(result, [False])
+
+    def test_loading_wait_accepts_a_ready_page_but_not_a_closed_window(self):
+        loaded = threading.Event()
+        loaded.set()
+        self.assertTrue(self.lifecycle.wait_loaded(loaded))
+        self.window.events.closed[0]()
+        self.assertFalse(self.lifecycle.wait_loaded(loaded))
 
 
 class TrayServiceExitTests(unittest.TestCase):
