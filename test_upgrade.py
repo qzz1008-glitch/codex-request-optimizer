@@ -1,11 +1,15 @@
 """Protect live services when a payload, endpoint, or post-switch check fails."""
 import hashlib
 import json
+import os
 from pathlib import Path
+import shutil
+import subprocess
 import tempfile
 import unittest
 from unittest.mock import Mock, patch
 
+from packet_inspector.frontend_dev import DESKTOP_PROFILE
 from packet_inspector.locking import file_lock
 from packet_inspector.router import atomic_json
 from packet_inspector.upgrade import Upgrade
@@ -121,6 +125,48 @@ class UpgradeTests(unittest.TestCase):
                 self.engine.run()
         self.assertEqual(json.loads((self.data / "upgrade-result.json").read_text(encoding="utf8")), {"state": "running", "started": 123})
         self.engine._start_candidate.assert_not_called()
+
+
+@unittest.skipUnless(os.name == "nt", "Windows process discovery")
+class LegacyWindowDiscoveryTests(unittest.TestCase):
+    def test_default_launches_are_found_without_including_custom_profiles_or_backgrounds(self):
+        compiler = Path(os.environ.get("WINDIR", r"C:\Windows")) / "Microsoft.NET/Framework64/v4.0.30319/csc.exe"
+        if not compiler.is_file():
+            self.skipTest("Windows .NET compiler unavailable")
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name).resolve()
+        source = root / "LegacyWindowFixture.cs"
+        source.write_text("class LegacyWindowFixture { static void Main() { System.Threading.Thread.Sleep(60000); } }", encoding="utf8")
+        formal, development = root / "CodexPacketInspector.exe", root / "CodexPacketInspector-Dev.exe"
+        compiled = subprocess.run([str(compiler), "/nologo", "/target:winexe", "/out:" + str(formal), str(source)],
+                                  capture_output=True, text=True, timeout=30,
+                                  creationflags=subprocess.CREATE_NO_WINDOW)
+        self.assertEqual(compiled.returncode, 0, compiled.stdout + compiled.stderr)
+        shutil.copy2(formal, development)
+        data = root / ".codex-packet-inspector"
+        engine = Upgrade(root, data, root / "config.toml")
+        processes = []
+        def launch(executable, *arguments):
+            process = subprocess.Popen([str(executable), *map(str, arguments)], creationflags=subprocess.CREATE_NO_WINDOW)
+            processes.append(process)
+            return process.pid
+        def stop_fixtures():
+            for process in processes:
+                if process.poll() is None:
+                    process.terminate()
+                process.wait(timeout=5)
+        self.addCleanup(stop_fixtures)
+        expected = {launch(formal), launch(development), launch(formal, "--data-dir", data)}
+        background = launch(formal, "--background")
+        excluded = {launch(formal, "--data-dir", root / "another-profile"), background}
+        # A stale foreground identity must not turn a background into a GUI.
+        atomic_json(data / DESKTOP_PROFILE, {"mode": "release", "pid": background, "executable": str(formal)})
+        with patch("packet_inspector.upgrade.Path.home", return_value=root):
+            found = {item["pid"]: item for item in engine._application_windows()}
+        self.assertTrue(expected <= found.keys())
+        self.assertTrue(excluded.isdisjoint(found))
+        self.assertEqual({found[pid]["mode"] for pid in expected}, {"release", "dev"})
 
 
 if __name__ == "__main__":
