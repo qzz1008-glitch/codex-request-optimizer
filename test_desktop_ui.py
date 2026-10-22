@@ -148,6 +148,18 @@ class DesktopUITests(unittest.TestCase):
         self.assertEqual(self.request("/api/status", headers={"Host": "outside.invalid"})[0], 403)
         self.assertEqual(len(self.backend.requests), 1)
 
+    def test_rejected_request_does_not_wait_for_a_missing_body(self):
+        connection = http.client.HTTPConnection("127.0.0.1", self.ui.port, timeout=2)
+        self.addCleanup(connection.close)
+        connection.putrequest("POST", "/api/settings")
+        connection.putheader("Origin", "https://outside.invalid")
+        connection.putheader("Content-Length", "4096")
+        connection.endheaders()
+        response = connection.getresponse()
+        self.assertEqual(response.status, 403)
+        self.assertEqual(json.loads(response.read()), {"error": "local_origin_required"})
+        self.assertEqual(self.backend.requests, [])
+
     def test_lifecycle_and_business_paths_are_not_proxied(self):
         for path in ["/api/stop", "/api/installation", "/relay/fake/responses", "/business-stream"]:
             self.assertEqual(self.request(path, "POST", b"{}")[0], 404)

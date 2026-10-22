@@ -17,6 +17,8 @@ import threading
 import time
 from urllib.parse import urlsplit
 
+from .http_io import discard_small_body
+
 ROUTER_VERSION = "1.0.0"
 PROTOCOL = 1
 MAX_BODY = 128 * 1024 * 1024
@@ -322,9 +324,13 @@ class RouterHandler(BaseHTTPRequestHandler):
         self.wfile.write(raw)
         self.close_connection = True
 
+    def reject(self, code, data):
+        discard_small_body(self)
+        self.json(code, data)
+
     def _control(self, path):
         if not secrets.compare_digest(self.headers.get("X-Inspector-Control", ""), self.server.state["token"]):
-            self.json(403, {"error": "router_control_required"})
+            self.reject(403, {"error": "router_control_required"})
             return
         if path == "/__router__/status" and self.command == "GET":
             self.json(200, self.server.status())
@@ -360,7 +366,7 @@ class RouterHandler(BaseHTTPRequestHandler):
         write_guard = self.server.change_guard if self.command not in {"GET", "HEAD"} and not relay else nullcontext()
         with write_guard:
             if path == "/api/stop" and self.server.status()["relay_requests"]:
-                self.json(409, {"error": "requests_in_flight"})
+                self.reject(409, {"error": "requests_in_flight"})
                 return
             identity, worker = self.server.acquire(relay)
             connection = http.client.HTTPConnection("127.0.0.1", worker["port"], timeout=600)
@@ -453,18 +459,18 @@ class RouterHandler(BaseHTTPRequestHandler):
         hosts = {f"127.0.0.1:{self.server.port}", f"localhost:{self.server.port}"}
         origin = self.headers.get("Origin")
         if self.headers.get("Host") not in hosts or (origin and origin not in {"http://" + host for host in hosts}):
-            self.json(403, {"error": "local_origin_required"})
+            self.reject(403, {"error": "local_origin_required"})
             return
         target = urlsplit(self.path)
         if target.scheme or target.netloc or target.fragment or not self.path.startswith("/") or self.path.startswith("//"):
-            self.json(400, {"error": "invalid_request_path"})
+            self.reject(400, {"error": "invalid_request_path"})
             return
         path = target.path
         try:
             if path.startswith("/__router__/"):
                 self._control(path)
             elif path.startswith("/__worker__/") or path == "/api/upgrade/stop":
-                self.json(403, {"error": "use_upgrade_executable"})
+                self.reject(403, {"error": "use_upgrade_executable"})
             elif path == "/health" and self.command == "GET":
                 worker = worker_info(self.server.data_dir, self.server.state["active"])
                 self.json(200, {"app": "codex-packet-inspector", "ok": True, "version": worker["version"],

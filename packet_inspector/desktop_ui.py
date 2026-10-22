@@ -16,6 +16,7 @@ from .token_window import TokenWindows
 from .session_summary import SessionSummaries
 from .entry_port import port_status, save_port
 from .updates import Updates
+from .http_io import discard_small_body
 
 UI_DIR = Path(__file__).with_name("ui")
 UI_FILES = {"/": ("index.html", "text/html; charset=utf-8"),
@@ -108,6 +109,10 @@ class UIHandler(BaseHTTPRequestHandler):
 
     def _json(self, status, value):
         self._bytes(status, json.dumps(value, ensure_ascii=False).encode(), "application/json; charset=utf-8")
+
+    def _reject_json(self, status, value):
+        discard_small_body(self)
+        self._json(status, value)
 
     def _relay_json(self, path):
         connection = http.client.HTTPConnection("127.0.0.1", self.server.relay_port, timeout=5)
@@ -219,11 +224,11 @@ class UIHandler(BaseHTTPRequestHandler):
         allowed_hosts = {f"127.0.0.1:{self.server.port}", f"localhost:{self.server.port}"}
         origin = self.headers.get("Origin")
         if self.headers.get("Host") not in allowed_hosts or (origin and origin not in {"http://" + host for host in allowed_hosts}):
-            self._json(403, {"error": "local_origin_required"})
+            self._reject_json(403, {"error": "local_origin_required"})
             return
         target = urlsplit(self.path)
         if target.scheme or target.netloc or target.fragment:
-            self._json(400, {"error": "invalid_ui_path"})
+            self._reject_json(400, {"error": "invalid_ui_path"})
             return
         path = target.path
         if path == "/api/updates" and self.command in {"GET", "POST"}:
@@ -292,7 +297,7 @@ class UIHandler(BaseHTTPRequestHandler):
             return
         allowed = (self.command == "GET" and (path in GET_PATHS or path.startswith("/api/packets/"))) or (self.command == "POST" and path in POST_PATHS)
         if not allowed:
-            self._json(404, {"error": "ui_route_not_found"})
+            self._reject_json(404, {"error": "ui_route_not_found"})
             return
         body = None
         if self.command == "POST":
