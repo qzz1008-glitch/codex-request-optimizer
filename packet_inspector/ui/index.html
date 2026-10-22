@@ -81,7 +81,7 @@
     </section>
     <section><h3>包大小保护</h3><label class="overflow-toggle"><input id="packet-size-protection" type="checkbox">启用包大小保护</label>
       <div class="packet-size-controls"><label for="budget">包大小上限（kB）<input id="budget" type="number" min="1.024" max="134217.728" step="0.001" value="1000" required></label></div>
-      <p class="muted help">超过上传上限时压缩旧上下文；同一会话复用摘要，原始请求回到上限内时清理缓存。</p>
+      <p class="muted help">接近上传上限时，提高回传 Token 用量以触发 Codex 原生压缩；超过上限时先压缩旧上下文。摘要复用期间仍检查预测保护。</p>
       <p id="packet-size-message" class="help" role="status" hidden></p>
     </section>
     <section><h3>运行设置</h3>

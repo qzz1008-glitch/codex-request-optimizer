@@ -117,6 +117,7 @@ def main(argv=None):
                    if p.is_file() and p.suffix in {".py",".txt",".html",".js",".css",".ps1",".json",".ico",".png",".svg"}
                    and "__pycache__" not in p.parts and "data" not in p.parts)
     sources.extend([ROOT/"build_app_icon.ps1", ROOT/"test_self_upgrade.py", ROOT/"verify_self_upgrade_exe.py",
+                    ROOT/"test_usage_trigger.py", ROOT/"verify_usage_exe.py",
                     ROOT/"test_response_integrity.py", ROOT/"test_desktop_instance.py", ROOT/"test_window_lifecycle.py",
                     ROOT/"test_fixtures"/"updates_v0_6_9.py",
                     ROOT/".github"/"RELEASE_NOTES.md"])

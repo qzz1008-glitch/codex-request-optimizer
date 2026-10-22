@@ -114,6 +114,7 @@ class SessionSummaries:
     def read(self, data_dir):
         path = (Path(data_dir) / "packets.sqlite").resolve()
         records = []
+        reported_packets = {}
         with closing(sqlite3.connect(path.as_uri() + "?mode=ro", uri=True, timeout=.2)) as db:
             db.execute("PRAGMA query_only=ON")
             db.execute("BEGIN")
@@ -129,6 +130,8 @@ class SessionSummaries:
                 try:
                     meta = json.loads(row[2])
                     size = meta.get("outbound_wire_bytes")
+                    if meta.get("usage_override_applied") or meta.get("upstream_usage"):
+                        reported_packets[thread] = meta
                 except (ValueError, TypeError, AttributeError):
                     size = None
                 records.append({"thread_id": thread, "packet_count": count, "updated_at": created,
@@ -169,6 +172,20 @@ class SessionSummaries:
                 if number(updated):
                     record["updated_at"] = max(record["updated_at"], updated)
                 record["token_window"] = self._token_states.get(record["thread_id"], {"state": "loading" if record["thread_id"] else "unavailable"})
+                packet = reported_packets.get(record["thread_id"], {})
+                usage = packet.get("upstream_usage")
+                if (isinstance(usage, dict) and packet.get("status") == 200
+                        and packet.get("state") in {"streaming", "complete"}
+                        and all(type(usage.get(k)) is int and usage[k] >= 0
+                                for k in ("input_tokens", "output_tokens", "total_tokens"))):
+                    window = record["token_window"].get("window_tokens")
+                    record["token_window"] = {"state": "available", "source": "upstream_response",
+                        "input_tokens": usage["input_tokens"], "output_tokens": usage["output_tokens"],
+                        "used_tokens": usage["total_tokens"], "window_tokens": window,
+                        "recorded_at": record["latest_packet"]["created"],
+                        "usage_override_applied": bool(packet.get("usage_override_applied"))}
+                elif packet.get("usage_override_applied"):
+                    record["token_window"] = {"state": "unavailable"}
         records.sort(key=lambda r: (-r["updated_at"], r["thread_id"]))
         return {"state": "available", "sessions": records}
 

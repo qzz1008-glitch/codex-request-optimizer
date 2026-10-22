@@ -55,6 +55,27 @@ class SessionSummaryTests(unittest.TestCase):
         self.assertIsNone(row["title"])
         self.assertEqual(row["token_window"]["state"], "unavailable")
 
+    def test_predictive_usage_does_not_replace_real_sidebar_usage(self):
+        meta = {"status": 200, "state": "complete", "usage_override_applied": True,
+                "upstream_usage": {"input_tokens": 123456, "output_tokens": 73, "total_tokens": 123529},
+                "reported_usage": {"input_tokens": 500000, "output_tokens": 73, "total_tokens": 500073}}
+        with closing(sqlite3.connect(self.capture / "packets.sqlite")) as db:
+            db.execute("UPDATE packet_summaries SET meta=? WHERE id='b'", (json.dumps(meta),))
+            db.commit()
+        row = self.reader.read(self.capture)["sessions"][0]
+        self.assertEqual(row["token_window"]["input_tokens"], 123456)
+        self.assertEqual(row["token_window"]["used_tokens"], 123529)
+        self.assertEqual(row["token_window"]["window_tokens"], 270000)
+        self.assertEqual(row["token_window"]["source"], "upstream_response")
+
+    def test_missing_real_sidebar_usage_never_falls_back_to_override(self):
+        with closing(sqlite3.connect(self.capture / "packets.sqlite")) as db:
+            db.execute("UPDATE packet_summaries SET meta=? WHERE id='b'",
+                       (json.dumps({"usage_override_applied": True}),))
+            db.commit()
+        row = self.reader.read(self.capture)["sessions"][0]
+        self.assertEqual(row["token_window"], {"state": "unavailable"})
+
     def test_renames_and_updated_packet_values_refresh_without_history_writes(self):
         before = self.rollout.read_bytes(), self.rollout.stat().st_mtime_ns
         self.reader.read(self.capture)

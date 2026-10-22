@@ -353,6 +353,15 @@ def search_body(value, needle, limit=60):
     return found
 
 
+def compressed_packet_size(meta):
+    """Transport-encoded request size before any summary replacement."""
+    for key in ("overflow_original_wire_bytes", "usage_override_request_bytes", "outbound_wire_bytes"):
+        value = meta.get(key)
+        if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+            return value
+    return None
+
+
 def compare_packets(previous, current):
     old = previous.get("input_items", [])
     new = current.get("input_items", [])
@@ -370,7 +379,10 @@ def compare_packets(previous, current):
     right = {r["name"]: r["bytes"] for r in current.get("top_fields", [])}
     old_upload = previous.get("outbound_wire_bytes")
     new_upload = current.get("outbound_wire_bytes")
+    old_compressed = compressed_packet_size(previous)
+    new_compressed = compressed_packet_size(current)
     return {"upload_delta": new_upload - old_upload if old_upload is not None and new_upload is not None else None,
+            "compressed_delta": new_compressed - old_compressed if old_compressed is not None and new_compressed is not None else None,
             "wire_delta": current.get("wire_bytes", 0) - previous.get("wire_bytes", 0),
             "decoded_delta": current.get("decoded_bytes", 0) - previous.get("decoded_bytes", 0),
             "added": unmatched(new, old), "removed": unmatched(old, new),

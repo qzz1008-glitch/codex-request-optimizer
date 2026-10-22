@@ -763,6 +763,8 @@ function renderCompression(m) {
   if(original>0 && upload!==null)fact(sizes,t("总体减小"),(100*(1-upload/original)).toFixed(1)+"%");
   root.append(sizes);
   const steps=panel(t("压缩与触发记录"));
+  fact(steps,t("预测保护"),(m.usage_override_applied||m.reported_usage?.input_tokens>=500000)?t("已触发"):m.usage_override_request_bytes!=null?t("等待有效用量"):t("未触发"));
+  if(m.usage_override_trigger_bytes!=null)fact(steps,t("预测阈值"),bytes(m.usage_override_trigger_bytes));
   fact(steps,t("Codex 原生 compact 请求"),m.is_compaction?t("是"):t("否"));
   fact(steps,t("中转生成摘要"),nf.format(m.overflow_compaction_calls||0)+t(" 次"));
   fact(steps,t("中转复用摘要"),m.overflow_cache_hit?t("是"):t("否"));

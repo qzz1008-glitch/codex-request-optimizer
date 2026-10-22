@@ -36,6 +36,8 @@ from .transport import prepare_request
 from .installation import manage_installation
 from .startup import configure_startup, startup_supported
 from .capacity_retry import open_response
+from .usage_trigger import (UsageStream, raw_chunks, request_size as usage_trigger_size,
+                            trigger_threshold, DEFAULT_BUDGET_BYTES, MIN_BUDGET_BYTES)
 from .overflow import CheckpointStream, OverflowCompactor, OverflowFailure
 from .image_config import ImageToolConfig, WORKER_HEADER
 from .image_isolation import ImageIsolation, ImageIsolationFailure, check_image_directory, resolve_image_directory
@@ -64,14 +66,12 @@ def outbound_proxies():
     return proxies
 
 
-DEFAULT_BUDGET_BYTES = 1_000_000
-MIN_BUDGET_BYTES = 1024
-
-def protection_settings(saved):
+def protection_settings(saved, *, default_enabled=False):
     values = dict(saved)
     if "packet_size_protection_enabled" not in values:
-        values["packet_size_protection_enabled"] = any(
-            values.get(key) is True for key in ("overflow_compaction_enabled",))
+        legacy = ("overflow_compaction_enabled", "native_compact_trigger_enabled")
+        values["packet_size_protection_enabled"] = (any(values.get(key) is True for key in legacy)
+                                                    if any(key in values for key in legacy) else default_enabled)
     for key in ("overflow_compaction_enabled", "native_compact_trigger_enabled"):
         values.pop(key, None)
     budget = values.get("budget_bytes", DEFAULT_BUDGET_BYTES)
@@ -90,14 +90,16 @@ class InspectorServer(ThreadingHTTPServer):
         self.settings_path = self.data_dir / "settings.json"
         self.link = ConfigLink(Path(config_path), self.data_dir / "codex-link.json")
         self.guard = threading.RLock()
-        saved = json.loads(self.settings_path.read_text(encoding="utf8")) if self.settings_path.exists() else {}
+        settings_exist = self.settings_path.exists()
+        saved = json.loads(self.settings_path.read_text(encoding="utf8")) if settings_exist else {}
         self.settings = {"relay_token": secrets.token_urlsafe(32),
                          "capture_enabled": True, "budget_bytes": DEFAULT_BUDGET_BYTES,
                          "max_storage_mb": 512, "max_packets": 2000,
-                         "request_compression": "zstd", "packet_size_protection_enabled": False,
+                         "request_compression": "zstd", "packet_size_protection_enabled": True,
                          "start_on_login": False, "capacity_retry_enabled": False,
                          "image_isolation_enabled": False, "image_save_dir": "",
-                         "auto_detect_providers": True, "provider_routes": {}, **protection_settings(saved)}
+                         "auto_detect_providers": True, "provider_routes": {},
+                         **protection_settings(saved, default_enabled=not settings_exist)}
         self.settings.pop("ui_token", None)
         if upstream:
             self.settings["upstream"] = validate_upstream(upstream)
@@ -279,6 +281,8 @@ class InspectorServer(ThreadingHTTPServer):
                 "request_compression": self.settings["request_compression"],
                 "packet_size_protection_enabled": self.settings["packet_size_protection_enabled"],
                 "overflow_compaction_enabled": self.settings["packet_size_protection_enabled"],
+                "native_compact_trigger_enabled": self.settings["packet_size_protection_enabled"],
+                "native_compact_trigger_bytes": trigger_threshold(self.settings["budget_bytes"]),
                 "packet_size_min_bytes": MIN_BUDGET_BYTES, "packet_size_max_bytes": MAX_BODY,
                 "start_on_login": self.settings["start_on_login"],
                 "start_on_login_supported": startup_supported(self.data_dir),
@@ -543,7 +547,7 @@ class Handler(BaseHTTPRequestHandler):
                         raise ValueError("invalid request compression mode")
                     candidate["request_compression"] = data["request_compression"]
                 protection_values = []
-                for key in ("packet_size_protection_enabled", "overflow_compaction_enabled"):
+                for key in ("packet_size_protection_enabled", "overflow_compaction_enabled", "native_compact_trigger_enabled"):
                     if key in data:
                         if not isinstance(data[key], bool):
                             raise ValueError("invalid boolean setting: " + key)
@@ -768,6 +772,7 @@ class Handler(BaseHTTPRequestHandler):
             image_isolation = self.server.image_isolation
             image_configured = self.server.image_config.state.get("enabled", False)
             image_worker = self.server.image_config.is_worker(self.headers.get(WORKER_HEADER, ""))
+        trigger_size = None
         try:
             if image_enabled and not image_configured:
                 raise ImageIsolationFailure("image_configuration_missing", "图片隔离配置不完整，请在设置中重新启用。", 503)
@@ -788,6 +793,10 @@ class Handler(BaseHTTPRequestHandler):
                 headers["Content-Encoding"] = outbound_encoding
             else:
                 outbound_body, outbound_encoding = prepare_request(body, headers, self.command, suffix, compression)
+            if protection_enabled and not image_worker:
+                trigger_size = usage_trigger_size(body, dict(self.headers.items()), self.command, suffix, len(outbound_body), budget)
+                if trigger_size is not None:
+                    update(usage_override_request_bytes=trigger_size, usage_override_trigger_bytes=trigger_threshold(budget))
             if image_worker:
                 update(image_isolation_worker=True)
             if protection_enabled and not image_worker and self.command == "POST" and urlsplit(suffix).path.rstrip("/").endswith("/responses"):
@@ -822,7 +831,7 @@ class Handler(BaseHTTPRequestHandler):
         local_upstream = urlsplit(upstream).hostname in {"localhost", "127.0.0.1", "::1"}
         capacity_retry = (self.server.settings["capacity_retry_enabled"] and self.command == "POST"
                           and urlsplit(suffix).path.rstrip("/").endswith("/responses"))
-        if capacity_retry:
+        if capacity_retry or trigger_size is not None:
             headers = {key: value for key, value in headers.items() if key.lower() != "accept-encoding"}
             headers["Accept-Encoding"] = "identity"
         request = Request(upstream + suffix,
@@ -849,24 +858,23 @@ class Handler(BaseHTTPRequestHandler):
                 response = exc
             with response:
                 status = response.status
+                usage_stream = UsageStream(response, update) if trigger_size is not None else None
+                rewrite_response = usage_stream is not None and usage_stream.enabled
                 update(status=status, state="streaming", response_type=response.headers.get("Content-Type", ""),
                        headers_ms=round((time.monotonic() - started) * 1000, 1))
                 self.send_response(status, response.reason)
                 response_tokens = {s.strip().lower() for s in response.headers.get("Connection", "").split(",")}
+                changed_headers = {"content-md5", "digest", "etag"} if rewrite_response else set()
                 for key, value in response.headers.items():
-                    if key.lower() not in HOP | response_tokens | {"content-length"}:
+                    if key.lower() not in HOP | response_tokens | {"content-length"} | changed_headers:
                         self.send_header(key, value)
-                if response.headers.get("Content-Length") is not None:
+                if response.headers.get("Content-Length") is not None and not rewrite_response:
                     self.send_header("Content-Length", response.headers["Content-Length"])
                 self.send_header("Connection", "close")
                 self.end_headers()
                 sent_headers = True
                 if self.command != "HEAD":
-                    reader = getattr(response, "read1", response.read)
-                    while True:
-                        chunk = reader(65536)
-                        if not chunk:
-                            break
+                    for chunk in usage_stream.chunks() if usage_stream is not None else raw_chunks(response):
                         self.wfile.write(chunk)
                         self.wfile.flush()
                         received += len(chunk)

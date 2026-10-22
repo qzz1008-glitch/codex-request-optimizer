@@ -2,6 +2,12 @@
 
 const uiI18n = (() => {
   const english = {
+    "预测保护":"Predictive protection",
+    "预测阈值":"Prediction threshold",
+    "已触发":"Triggered",
+    "未触发":"Not triggered",
+    "等待有效用量":"Waiting for valid usage",
+    "接近上传上限时，提高回传 Token 用量以触发 Codex 原生压缩；超过上限时先压缩旧上下文。摘要复用期间仍检查预测保护。":"Near the upload limit, reported token usage is raised to trigger native Codex compaction. Over-limit requests summarize old context first. Prediction remains active when summaries are reused.",
     "变化明细":"Change details",
     "所属字段":"Parent field",
     "条目":"Item",
