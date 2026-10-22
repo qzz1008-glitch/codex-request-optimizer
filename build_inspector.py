@@ -118,6 +118,7 @@ def main(argv=None):
                    and "__pycache__" not in p.parts and "data" not in p.parts)
     sources.extend([ROOT/"build_app_icon.ps1", ROOT/"test_self_upgrade.py", ROOT/"verify_self_upgrade_exe.py",
                     ROOT/"test_response_integrity.py", ROOT/"test_desktop_instance.py", ROOT/"test_window_lifecycle.py",
+                    ROOT/"test_fixtures"/"updates_v0_6_9.py",
                     ROOT/".github"/"RELEASE_NOTES.md"])
     sources.extend([ROOT/"test_image_isolation.py", ROOT/"test_capacity_retry.py", ROOT/"test_runtime_settings.py", ROOT/"test_entry_port.py",
                     ROOT/"test_router.py",ROOT/"test_updates.py",ROOT/"test_upgrade.py",ROOT/"verify_upgrade_exe.py",ROOT/"test_frontend_dev.py",ROOT/"test_launch.py"])

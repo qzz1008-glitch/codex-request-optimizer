@@ -38,7 +38,7 @@ def main(argv=None):
                 options = argument_parser().parse_known_args(arguments)[0]
                 if not Path(sys.executable).resolve().is_relative_to(options.data_dir.resolve() / "bin" / "versions"):
                     from packet_inspector.upgrade import run_integrated
-                    return run_integrated(arguments, quiet=quiet)
+                    return run_integrated(arguments, quiet=quiet, force=quiet)
             from packet_inspector.desktop import run
             return run(arguments)
 

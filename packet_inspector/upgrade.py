@@ -96,8 +96,7 @@ class Upgrade:
         values = json.loads(result.stdout or "[]")
         return values if isinstance(values, list) else [values]
 
-    @staticmethod
-    def _close_windows(processes):
+    def _close_windows(self, processes):
         if os.name != "nt" or not processes:
             return
         import ctypes
@@ -106,6 +105,7 @@ class Upgrade:
         user = ctypes.WinDLL("user32", use_last_error=True)
         callback_type = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
         user.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+        user.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
         user.PostMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
         user.SetPropW.argtypes = [wintypes.HWND, wintypes.LPCWSTR, wintypes.HANDLE]
         user.SetPropW.restype = wintypes.BOOL
@@ -114,6 +114,10 @@ class Upgrade:
             pid = wintypes.DWORD()
             user.GetWindowThreadProcessId(handle, ctypes.byref(pid))
             if pid.value in pids:
+                title = ctypes.create_unicode_buffer(256)
+                user.GetWindowTextW(handle, title, len(title))
+                if not title.value.startswith("Codex"):
+                    return True  # Leave bootloader and message-only windows alone.
                 # Ordinary close goes to the tray. Upgrades explicitly close only
                 # this managed optimizer window, leaving forwarding independent.
                 if user.SetPropW(handle, EXIT_PROPERTY, 1):
@@ -121,9 +125,13 @@ class Upgrade:
             return True
         user.EnumWindows.argtypes = [callback_type, wintypes.LPARAM]
         deadline = time.monotonic() + 25
+        refresh_at = 0
         while any(process_alive(pid) for pid in pids) and time.monotonic() < deadline:
-            # A bootloader can be visible in the process list before WebView
-            # creates its native window. Revisit new handles until it exits.
+            if time.monotonic() >= refresh_at:
+                # Onefile parents appear before their GUI children. Discover the
+                # child as it starts instead of sending WM_CLOSE to the loader.
+                pids.update(item["pid"] for item in self._application_windows() if not item["background"])
+                refresh_at = time.monotonic() + 1
             user.EnumWindows(close_window, 0)
             time.sleep(.2)
         if any(process_alive(pid) for pid in pids):

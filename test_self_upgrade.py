@@ -108,8 +108,15 @@ class SelfUpgradeTests(unittest.TestCase):
                 patch("packet_inspector.upgrade.run_integrated", return_value=0) as install, \
                 patch("packet_inspector.desktop.run") as desktop:
             self.assertEqual(launch.main(self.arguments), 0)
-        install.assert_called_once_with(self.arguments, quiet=False)
+        install.assert_called_once_with(self.arguments, quiet=False, force=False)
         desktop.assert_not_called()
+
+    def test_legacy_settings_command_uses_integrated_upgrade(self):
+        with patch.object(launch.sys, "frozen", True, create=True), \
+                patch.object(launch.sys, "executable", str(self.executable)), \
+                patch("packet_inspector.upgrade.run_integrated", return_value=0) as install:
+            self.assertEqual(launch.main(["--quiet", *self.arguments]), 0)
+        install.assert_called_once_with(self.arguments, quiet=True, force=True)
 
     def test_installed_worker_does_not_upgrade_recursively(self):
         executable = self.data / "bin/versions/fixture/CodexPacketInspector.exe"

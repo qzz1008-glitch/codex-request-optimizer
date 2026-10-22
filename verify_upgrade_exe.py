@@ -137,12 +137,27 @@ def main():
         wait_for(lambda: api("/api/status"))
         api("/api/settings", {"request_compression": "off"})
         original_config = config.read_bytes()
+        settings = json.loads((data / "settings.json").read_text(encoding="utf8"))
+        path = "/relay/" + settings["relay_token"] + "/responses?fixture=upgrade"
+        body = b'{"model":"fixture","input":[]}'
+        seed = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+        seed.request("POST", path, body, {"Authorization": "Bearer test-upgrade"})
+        seed_response = seed.getresponse()
+        assert seed_response.status == 200 and seed_response.read() == b"complete"
+        seed.close()
+        historic = wait_for(lambda: next((p for p in api("/api/packets?limit=5") if p["state"] == "complete"), None))
+        historic_view = api("/api/packets/" + historic["id"] + "/export")["view"]
+        database = data / "packets.sqlite"
+        database_identity = (database.stat().st_dev, database.stat().st_ino)
         print(json.dumps({"phase": "legacy_to_stable_entry"}), flush=True)
         migrated = upgrade()
         assert migrated["entry_migrated"] is True
         assert digest(canonical) == digest(release / "CodexPacketInspector.exe")
         assert api("/health")["router_protocol"] == 1
         first = api("/api/status")
+        assert first["storage"]["count"] == 1
+        assert Path(first["data_dir"]).resolve() == data
+        assert api("/api/packets/" + historic["id"] + "/export")["view"] == historic_view
         root_pid = json.loads((data / "runtime.json").read_text(encoding="utf8"))["pid"]
         first_worker = first["worker_id"]
         if options.desktop:
@@ -192,13 +207,17 @@ def main():
         held.close()
         held = None
         wait_for(lambda: api("/api/status")["relay_active_requests"] == 0)
-        assert len(requests) == 2
+        assert len(requests) == 3
         assert all(item == ("/responses?fixture=upgrade", body, "Bearer test-upgrade") for item in requests)
         assert config.read_bytes() == original_config
         print(json.dumps({"phase": "waiting_for_old_worker_retirement"}), flush=True)
         state = json.loads((data / "router-state.json").read_text(encoding="utf8"))
         wait_for(lambda: not local_json(port, "/__router__/status", token=state["token"])["draining"], seconds=50)
         packets = api("/api/packets?limit=5")
+        assert {p["id"] for p in packets} >= {historic["id"], original_packet["id"]}
+        assert api("/api/status")["storage"]["count"] == 3
+        assert (database.stat().st_dev, database.stat().st_ino) == database_identity
+        assert api("/api/packets/" + historic["id"] + "/export")["view"] == historic_view
         assert all(packet["state"] == "complete" for packet in packets)
         print(json.dumps({"phase": "cold_start_restores_stable_entry"}), flush=True)
         state = json.loads((data / "router-state.json").read_text(encoding="utf8"))
@@ -223,6 +242,7 @@ def main():
                           "open_response_preserved": True, "new_requests_use_new_worker": True,
                           "old_worker_retired": True, "inference_requests": len(requests),
                            "shared_application_entry": True, "fresh_install_verified": True,
+                          "same_database_file": True, "historic_records_and_statistics_preserved": True,
                           "running_desktop_reopened": bool(options.desktop),
                            "cold_start_uses_router": True,
                           "provider_config_unchanged_during_upgrade": True, "production_untouched": True}), flush=True)
