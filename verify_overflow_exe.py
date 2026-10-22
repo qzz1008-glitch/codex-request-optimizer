@@ -66,7 +66,7 @@ def main():
         else:
             raise RuntimeError("Packaged overflow test startup timed out")
         original_config = config.read_bytes()
-        assert initial["packet_size_protection_enabled"] is False
+        assert initial["packet_size_protection_enabled"] is True
         assert initial["overflow_cache"]["ttl_seconds"] == 7 * 86400
         assert initial["overflow_cache"]["max_entries"] == 256
         assert initial["overflow_cache"]["max_bytes"] == 64 * 1024 * 1024

@@ -224,6 +224,23 @@ class TokenWindows:
 
     def lookup_ready(self, packet, next_created=None):
         """Read consecutive bounded chunks without waiting for the browser's next poll."""
+        usage = packet.get("upstream_usage")
+        if (isinstance(usage, dict) and packet.get("status") == 200
+                and packet.get("state") in {"streaming", "complete"}
+                and all(type(usage.get(k)) is int and usage[k] >= 0
+                        for k in ("input_tokens", "output_tokens", "total_tokens"))):
+            # Native history may contain the deliberately elevated client value.
+            # Use it only to resolve the window, never to replace actual usage.
+            native = self.lookup(packet, next_created)
+            return {"state": "available", "source": "upstream_response",
+                    "input_tokens": usage["input_tokens"], "output_tokens": usage["output_tokens"],
+                    "used_tokens": usage["total_tokens"], "window_tokens": native.get("window_tokens"),
+                    "recorded_at": native.get("recorded_at"),
+                    "window_pending": native.get("state") in {"pending", "loading"},
+                    "usage_override_applied": bool(packet.get("usage_override_applied")),
+                    "reported_input_tokens": (packet.get("reported_usage") or {}).get("input_tokens")}
+        if packet.get("usage_override_applied"):
+            return {"state": "unavailable"}
         deadline = time.monotonic() + .12
         for _ in range(8):
             result = self.lookup(packet, next_created)

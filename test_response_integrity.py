@@ -1,4 +1,4 @@
-"""Packet protection must preserve authentic upstream response usage."""
+"""Below the predictive threshold, responses remain byte-for-byte intact."""
 import http.client
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
@@ -11,7 +11,7 @@ from packet_inspector.server import InspectorServer
 
 
 class ResponseIntegrityTests(unittest.TestCase):
-    def test_near_budget_json_and_stream_keep_authentic_usage(self):
+    def test_below_predictive_threshold_json_and_stream_keep_authentic_usage(self):
         received = []
 
         class Upstream(BaseHTTPRequestHandler):
@@ -36,7 +36,7 @@ class ResponseIntegrityTests(unittest.TestCase):
             relay = InspectorServer(("127.0.0.1", 0), root / "data", config,
                                     f"http://127.0.0.1:{upstream.server_port}")
             relay.settings.update(packet_size_protection_enabled=True,
-                                  budget_bytes=60_000, request_compression="off")
+                                  budget_bytes=120_000, request_compression="off")
             for server in (upstream, relay):
                 threading.Thread(target=server.serve_forever, daemon=True).start()
             try:

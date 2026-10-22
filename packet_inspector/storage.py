@@ -16,6 +16,7 @@ from .analyzer import CLASSIFICATION_VERSION, classify_request, encode, compare_
 from .maintenance import SQLiteReclaimer
 
 SUMMARY_COLUMNS = "id,created,thread,status,method,kind,status_key,state,capture_owner,wire_bytes,stored_bytes,meta"
+COMPRESSED_SIZE_SQL = "coalesce(json_extract(meta,'$.overflow_original_wire_bytes'),json_extract(meta,'$.usage_override_request_bytes'),json_extract(meta,'$.outbound_wire_bytes'),-1)"
 PENDING_CLASSIFICATION = f"coalesce(json_extract(meta,'$.classification_version'),0)<{CLASSIFICATION_VERSION}"
 
 
@@ -96,6 +97,7 @@ class Store:
             "created": "created DESC,id DESC",
             "size": "wire_bytes DESC,created DESC,id DESC",
             "upload_size": "coalesce(json_extract(meta,'$.outbound_wire_bytes'),-1) DESC,created DESC,id DESC",
+            "compressed_size": f"{COMPRESSED_SIZE_SQL} DESC,created DESC,id DESC",
             "thread": "thread,created DESC,id DESC",
             "kind": "kind,created DESC,id DESC",
             "status": "status_key,created DESC,id DESC",
@@ -195,6 +197,7 @@ class Store:
             "created": "created",
             "wire_bytes": "wire_bytes",
             "upload_bytes": "coalesce(json_extract(meta,'$.outbound_wire_bytes'),-1)",
+            "compressed_bytes": COMPRESSED_SIZE_SQL,
             "decoded_bytes": "coalesce(json_extract(meta,'$.decoded_bytes'),-1)",
             "kind": "CASE WHEN json_extract(meta,'$.is_compaction') THEN '上下文压缩' WHEN json_extract(meta,'$.method')='POST' THEN '对话生成' ELSE coalesce(json_extract(meta,'$.method'),'未知') END",
             "status": "coalesce(status,-1)",

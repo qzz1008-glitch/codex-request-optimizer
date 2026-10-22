@@ -26,6 +26,7 @@ jobs:
       - run: python build_inspector.py --output-dir release/ci
       - run: python verify_inspector_exe.py --release-dir release/ci
       - run: python verify_overflow_exe.py --release-dir release/ci
+      - run: python verify_usage_exe.py --release-dir release/ci
       - run: python verify_upgrade_exe.py --release-dir release/ci --desktop
       - run: python verify_self_upgrade_exe.py --release-dir release/ci
       - uses: actions/upload-artifact@v4
