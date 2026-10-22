@@ -3,11 +3,37 @@ from __future__ import annotations
 
 import ctypes
 from ctypes import wintypes
+import hashlib
 import os
+from pathlib import Path
 import threading
+import time
 
 
 EXIT_PROPERTY = "CodexRequestOptimizer.ExitWindow"
+
+
+def window_control_prefix(data_dir):
+    identity = hashlib.sha256(str(Path(data_dir).resolve()).casefold().encode()).hexdigest()[:20]
+    return "Local\\CodexPacketInspector-" + identity
+
+
+def request_window_exit(data_dir):
+    """Signal only this optimizer frontend; the forwarding process stays alive."""
+    if os.name != "nt":
+        return False
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.OpenEventW.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.LPCWSTR]
+    kernel.OpenEventW.restype = wintypes.HANDLE
+    kernel.SetEvent.argtypes = [wintypes.HANDLE]
+    kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+    handle = kernel.OpenEventW(0x0002, False, window_control_prefix(data_dir) + "-exit")
+    if not handle:
+        return False
+    try:
+        return bool(kernel.SetEvent(handle))
+    finally:
+        kernel.CloseHandle(handle)
 
 
 def window_exit_requested(window):
@@ -48,6 +74,16 @@ class WindowLifecycle:
             self.window.restore()
         self.window.show()
         self.hidden.clear()
+
+    def wait_loaded(self, loaded, timeout=25):
+        deadline = time.monotonic() + timeout
+        while not self.exiting.is_set() and not self.closed.is_set():
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
+            if loaded.wait(min(.1, remaining)):
+                return not self.exiting.is_set() and not self.closed.is_set()
+        return False
 
     def exit(self):
         self.exiting.set()

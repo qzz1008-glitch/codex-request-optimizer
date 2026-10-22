@@ -4,7 +4,6 @@ from __future__ import annotations
 import argparse
 import ctypes
 from ctypes import wintypes
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -19,7 +18,7 @@ from .server import argument_parser, default_data_dir
 from .desktop_ui import DesktopUI, window_geometry
 from .app_icon import APP_ICON
 from .frontend_dev import load_profile, validate_ui_dir, resolve_profile, remember_profile, installed_profile
-from .window_lifecycle import WindowLifecycle
+from .window_lifecycle import WindowLifecycle, window_control_prefix
 
 
 def app_command():
@@ -105,13 +104,13 @@ class SingleWindow:
         self.kernel.CloseHandle.argtypes = [wintypes.HANDLE]
         # Editing the entry port or switching EXEs must not open another UI for
         # the same settings and records. A repeated launch only raises its window.
-        identity = hashlib.sha256(str(Path(data_dir).resolve()).casefold().encode()).hexdigest()[:20]
-        prefix = "Local\\CodexPacketInspector-" + identity
+        prefix = window_control_prefix(data_dir)
         self.event = self.kernel.CreateEventW(None, False, False, prefix + "-show")
+        self.exit_event = self.kernel.CreateEventW(None, False, False, prefix + "-exit")
         ctypes.set_last_error(0)
         self.mutex = self.kernel.CreateMutexW(None, False, prefix + "-window")
         error = ctypes.get_last_error()
-        if not self.event or not self.mutex:
+        if not self.event or not self.exit_event or not self.mutex:
             self.close()
             raise OSError("无法创建桌面窗口标识。")
         self.existing = error == 183  # ERROR_ALREADY_EXISTS
@@ -121,8 +120,11 @@ class SingleWindow:
     def signal(self):
         self.kernel.SetEvent(self.event)
 
-    def watch(self, show):
+    def watch(self, show, exit_window=None):
         while not self.stop.is_set():
+            if exit_window and self.kernel.WaitForSingleObject(self.exit_event, 0) == 0:
+                exit_window()
+                return
             if self.kernel.WaitForSingleObject(self.event, 250) == 0:
                 self.activations += 1
                 show()
@@ -130,7 +132,7 @@ class SingleWindow:
     def close(self):
         if hasattr(self, "stop"):
             self.stop.set()
-        for name in ("event", "mutex"):
+        for name in ("event", "exit_event", "mutex"):
             handle = getattr(self, name, None)
             if handle:
                 self.kernel.CloseHandle(handle)
@@ -187,12 +189,12 @@ def run(arguments):
                 pass
 
         def workers():
-            if not loaded.wait(25):
-                if options.desktop_check:
+            threading.Thread(target=instance.watch, args=(show, lifecycle.exit), daemon=True).start()
+            if not lifecycle.wait_loaded(loaded):
+                if options.desktop_check and not lifecycle.exiting.is_set() and not lifecycle.closed.is_set():
                     options.desktop_check.write_text(json.dumps({"passed": False, "error": "page_load_timeout"}), encoding="utf-8")
                     lifecycle.exit()
                 return
-            threading.Thread(target=instance.watch, args=(show,), daemon=True).start()
             if options.desktop_check:
                 if options.desktop_check.with_suffix(".hold").exists():
                     from .desktop_upgrade_check import check_window

@@ -20,7 +20,7 @@ import tempfile
 from packet_inspector.entry_port import configured_port
 from packet_inspector.app_icon import APP_ICON
 from packet_inspector.locking import file_lock
-from packet_inspector.window_lifecycle import EXIT_PROPERTY
+from packet_inspector.window_lifecycle import EXIT_PROPERTY, request_window_exit
 from packet_inspector.frontend_dev import BuildProfile, load_profile, installed_profile, remember_upgrade_profile
 from packet_inspector.router import (PROTOCOL, atomic_json, control_worker, healthy_worker,
                                      local_json, process_alive, start_worker, worker_info)
@@ -102,10 +102,13 @@ class Upgrade:
         import ctypes
         from ctypes import wintypes
         pids = {item["pid"] for item in processes if not item["background"]}
+        requested = set()
+        controlled_pid = None
         user = ctypes.WinDLL("user32", use_last_error=True)
         callback_type = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
         user.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
         user.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+        user.GetClassNameW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
         user.PostMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
         user.SetPropW.argtypes = [wintypes.HWND, wintypes.LPCWSTR, wintypes.HANDLE]
         user.SetPropW.restype = wintypes.BOOL
@@ -116,17 +119,27 @@ class Upgrade:
             if pid.value in pids:
                 title = ctypes.create_unicode_buffer(256)
                 user.GetWindowTextW(handle, title, len(title))
-                if not title.value.startswith("Codex"):
+                window_class = ctypes.create_unicode_buffer(256)
+                user.GetClassNameW(handle, window_class, len(window_class))
+                if not title.value.startswith("Codex") or not window_class.value.startswith("WindowsForms"):
                     return True  # Leave bootloader and message-only windows alone.
                 # Ordinary close goes to the tray. Upgrades explicitly close only
                 # this managed optimizer window, leaving forwarding independent.
                 if user.SetPropW(handle, EXIT_PROPERTY, 1):
+                    requested.add(pid.value)
                     user.PostMessageW(handle, 0x10, 0, 0)
             return True
         user.EnumWindows.argtypes = [callback_type, wintypes.LPARAM]
         deadline = time.monotonic() + 25
         refresh_at = 0
         while any(process_alive(pid) for pid in pids) and time.monotonic() < deadline:
+            profile = installed_profile(self.data_dir)
+            if request_window_exit(self.data_dir) and process_alive(profile.get("pid")):
+                controlled_pid = profile["pid"]
+            if controlled_pid and not process_alive(controlled_pid):
+                return
+            if requested and all(not process_alive(pid) for pid in requested):
+                return  # Onefile loaders may finish cleaning up after the GUI.
             if time.monotonic() >= refresh_at:
                 # Onefile parents appear before their GUI children. Discover the
                 # child as it starts instead of sending WM_CLOSE to the loader.
@@ -134,6 +147,10 @@ class Upgrade:
                 refresh_at = time.monotonic() + 1
             user.EnumWindows(close_window, 0)
             time.sleep(.2)
+        if controlled_pid and not process_alive(controlled_pid):
+            return
+        if requested and all(not process_alive(pid) for pid in requested):
+            return
         if any(process_alive(pid) for pid in pids):
             raise RuntimeError("旧版优化器窗口未退出，请关闭窗口后再升级。中转仍在运行。")
 
@@ -152,7 +169,8 @@ class Upgrade:
                 "-and $_.Name -in @('CodexPacketInspector.exe','CodexPacketInspector-Dev.exe') "
                 "-and $_.ExecutablePath -ne $env:INSPECTOR_UPGRADE_SELF "
                 "-and $_.ExecutablePath -ne $env:INSPECTOR_UPGRADE_ENTRY "
-                "-and $_.CommandLine -notmatch '--background' -and ("
+                "-and (($_.CommandLine -and $_.CommandLine -notmatch '--background|--worker-id|--upgrade') "
+                "-or ($_.ProcessId -eq $env:INSPECTOR_UPGRADE_PID -and $_.ExecutablePath -eq $env:INSPECTOR_UPGRADE_GUI)) -and ("
                 "$_.ExecutablePath.StartsWith($taskVersions,[StringComparison]::OrdinalIgnoreCase) "
                 "-or ($_.ProcessId -eq $env:INSPECTOR_UPGRADE_PID -and $_.ExecutablePath -eq $env:INSPECTOR_UPGRADE_GUI) "
                 "-or $_.CommandLine -match $taskPattern "
