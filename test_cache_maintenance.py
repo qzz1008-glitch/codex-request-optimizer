@@ -242,7 +242,7 @@ class CleanupRelayTests(unittest.TestCase):
             upstream.waiting, upstream.release = threading.Event(), threading.Event()
             server = InspectorServer(("127.0.0.1", 0), root / "data", config,
                                      "http://127.0.0.1:" + str(upstream.server_port))
-            server.settings.update(overflow_compaction_enabled=True, request_compression="off", budget_bytes=4000)
+            server.settings.update(packet_size_protection_enabled=True, request_compression="off", budget_bytes=4000)
             server.overflow.max_entries = 0
             results = []
             def post():
@@ -295,7 +295,7 @@ class CleanupRelayTests(unittest.TestCase):
                     with closing(sqlite3.connect(server.overflow.path)) as db:
                         remaining = db.execute("SELECT count(*) FROM mappings").fetchone()[0]
                     time.sleep(.02)
-                self.assertFalse(server.settings["overflow_compaction_enabled"])
+                self.assertFalse(server.settings["packet_size_protection_enabled"])
                 self.assertEqual(remaining, 0)
                 self.assertEqual(server.maintenance_errors, 0)
             finally:

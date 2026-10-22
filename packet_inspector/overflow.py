@@ -7,6 +7,7 @@ this adapter requests a text handoff without exposing executable tools.
 from __future__ import annotations
 
 from collections import Counter
+from copy import deepcopy
 from contextlib import contextmanager
 import gzip
 import hashlib
@@ -481,19 +482,33 @@ class OverflowCompactor:
 
     @staticmethod
     def _checkpoint_request(original, prefix, key):
+        # Follow native protocol additions by inheriting the whole request.
+        # Change only fields tied to the summary's input, output or execution.
+        value = deepcopy(original)
+        for name in ("tools", "previous_response_id", "conversation", "max_output_tokens"):
+            value.pop(name, None)
         # Catalogs would expose executable tools during summarization. Keep them
         # unchanged in the replacement, but don't advertise them in this call.
-        value = {"model": original.get("model"), "stream": True, "store": False,
-                 "input": [i for i in prefix if i.get("type") not in CATALOG_TYPES] + [
+        value.update({"stream": True, "store": False,
+                 "input": deepcopy([i for i in prefix if i.get("type") not in CATALOG_TYPES]) + [
                      {"role": "user", "content": [{"type": "input_text", "text": CHECKPOINT_PROMPT}]}],
                  "tool_choice": "auto", "parallel_tool_calls": False,
-                 "include": [], "prompt_cache_key": "overflow-" + key[:32],
-                 "client_metadata": {"x-codex-turn-metadata": json.dumps({
-                     "request_kind": "compaction", "compaction": {"trigger": "upload_overflow", "implementation": "responses"}})}}
-        if isinstance(original.get("instructions"), str):
-            value["instructions"] = original["instructions"]
-        reasoning = original.get("reasoning")
-        if isinstance(reasoning, dict):
-            # Don't carry an opaque native context handle into a different input.
-            value["reasoning"] = {k: v for k, v in reasoning.items() if k in {"effort", "summary"}}
+                 "prompt_cache_key": "overflow-" + key[:32]})
+        if "background" in value:
+            value["background"] = False
+        if isinstance(value.get("text"), dict):
+            value["text"].pop("format", None)
+        metadata = value.get("client_metadata")
+        metadata = metadata if isinstance(metadata, dict) else {}
+        try:
+            turn = json.loads(metadata.get("x-codex-turn-metadata", "{}"))
+        except (TypeError, ValueError):
+            turn = {}
+        turn = turn if isinstance(turn, dict) else {}
+        compaction = turn.get("compaction")
+        compaction = compaction if isinstance(compaction, dict) else {}
+        compaction.update(trigger="upload_overflow", implementation="responses")
+        turn.update(request_kind="compaction", compaction=compaction)
+        metadata["x-codex-turn-metadata"] = json.dumps(turn)
+        value["client_metadata"] = metadata
         return value

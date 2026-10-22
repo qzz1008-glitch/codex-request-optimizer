@@ -3,9 +3,23 @@ const $ = (id) => document.getElementById(id);
 history.replaceState(null, "", "/");
 const state = { status: null, packets: [], sessions: [], selected: null, detail: null, tab: "overview", path: "", text: null, older: false, polling: false, detailVersion: "", detailRequest: 0, listVersion: "", sessionVersion: "", sort: "created", direction: "desc", filters: {kind:"",status:"",thread:""}, canLoadMore: false, listRequest: 0, listController: null, listRevision: null, filterRevision: null };
 const nf = new Intl.NumberFormat("zh-CN");
+let requestBodyCache=null, requestBodyDownloadUrl="", requestBodySequence=0;
 let contextSettings = null;
+let settingsEditing = false, settingsSaving = false, settingsOpening = false, settingsRevision = 0;
+let linkSaving = "", linkRevision = 0;
+let settingsBaseline = null, settingsLanguage = null;
+let compressionTarget = null, compressionSaving = false, compressionRevision = 0;
 let tokenWindow = null, tokenRequest = 0, tokenLoading = false, tokenTimer = null, tokenController = null, tokenPendingRetries = 0;
 const tokenCache = new Map();
+const listTokenCache = new Map(), listTokenRequests = new Map(), listTokenCells = new Map(), visibleTokenRows = new Set();
+let tokenSortCache = null;
+const listTokenObserver = new IntersectionObserver(entries=>{
+  for(const entry of entries) {
+    const id=entry.target.dataset.packetId;
+    if(entry.isIntersecting && entry.target.isConnected)visibleTokenRows.add(id);else visibleTokenRows.delete(id);
+  }
+  loadListTokens();
+},{root:$("packet-list"),rootMargin:"100px"});
 let sessionSummaries = [], sessionMetadataAt = 0, sessionMetadataProbeAt = 0, sessionMetadataLoading = false, sessionMetadataSupported = null;
 let sessionLegacyCursor = 0;
 const dateFormat = new Intl.DateTimeFormat("zh-CN",{month:"2-digit",day:"2-digit"});
@@ -16,12 +30,12 @@ const states = uiI18n.labels({captured:"待响应",streaming:"响应中",complet
 function el(tag, cls, text) { const n = document.createElement(tag); if (cls) n.className = cls; if (text !== undefined) n.textContent = text; return n; }
 function bytes(n) { return n === undefined || n === null ? "—" : nf.format(n) + " B"; }
 function uploadBytes(p) { return Number.isFinite(p.outbound_wire_bytes) && p.outbound_wire_bytes >= 0 ? p.outbound_wire_bytes : null; }
+function originalBytes(p) { return Number.isFinite(p.decoded_bytes) && p.decoded_bytes >= 0 ? p.decoded_bytes : null; }
 function compact(n) { if (n === undefined || n === null) return "—"; return n >= 1048576 ? (n/1048576).toFixed(2)+" MiB" : n >= 1024 ? (n/1024).toFixed(1)+" KiB" : n+" B"; }
 function renderStorageInfo() {
   const storage=state.status?.storage;if(!storage)return;
   const sessions=state.filterRevision!==null?nf.format(state.sessions.length):"—";
   $("storage-info").replaceChildren(
-    el("span","",compact(storage.stored)+" / "+compact(storage.max_bytes)),
     el("span","",t("{count} 会话").replace("{count}",sessions)),
     el("span","",t("{count} 请求").replace("{count}",nf.format(storage.count)))
   );
@@ -34,11 +48,12 @@ const filterLabels = uiI18n.labels({kind:"类型",status:"状态"});
 function statusLabel(value) { return value.startsWith("http:") ? "HTTP "+value.slice(5) : states[value.slice(6)] || t("未知状态"); }
 function setFilterOptions(key, options) {
   const select=$("filter-"+key), current=state.filters[key];
+  if(!select)return;
   if(current && !options.some(o=>o.value===current)) options.push({value:current,label:select.selectedOptions[0]?.textContent||current});
   const signature=JSON.stringify([current,options]);
   if(select.dataset.optionsVersion===signature || document.activeElement===select)return;
   select.dataset.optionsVersion=signature;
-  const entries=[{value:"",label:filterLabels[key]},...options];
+  const entries=[{value:"",label:key==="kind"?t("全部类型"):t("全部")},...options];
   select.replaceChildren(...entries.map(entry=>{const option=el("option","",entry.label);option.value=entry.value;option.title=entry.title||entry.label;return option;}));
   select.value=current;
   select.classList.toggle("filtered",!!current);
@@ -119,14 +134,12 @@ function renderSessions() {
     const updated=Number.isFinite(data.updated_at)?new Date(data.updated_at*1000):null;
     const meta=el("div","session-meta"), when=el("span","session-updated",t("更新 ")+(updated?dateFormat.format(updated)+" "+clockFormat.format(updated):"—"));
     if(updated)when.title=timestampFormat.format(updated);
-    const size=data.latest_packet?.wire_bytes, packetSize=el("span","session-size",t("包 ")+compact(size));
-    packetSize.title=size===undefined||size===null?t("尚未采集最终上传大小"):t("最终上传正文：")+bytes(size);
     const tokens=data.token_window, estimated=tokens?.estimated, used=estimated?tokens?.used_tokens:tokens?.input_tokens;
     const available=tokens?.state==="available"&&Number.isFinite(used)&&used>=0, capacity=tokens?.window_tokens;
     const tokenText=available?(estimated?"≈ ":"")+nf.format(used):"—";
     const usage=el("span","session-token","Token "+tokenText);
     usage.title=available?(estimated?t("压缩后上下文总量估算"):t("最近请求输入 Token"))+(capacity?t(" · 窗口 ")+nf.format(used)+" / "+nf.format(capacity)+(estimated?"":" · "+(used/capacity*100).toFixed(1)+"%"):"")+(tokens.recorded_at?" · "+timestampFormat.format(new Date(tokens.recorded_at*1000)):""):t("尚无可用的输入 Token 记录");
-    meta.append(usage,packetSize,when);item.append(meta);
+    meta.append(usage,when);item.append(meta);
     let pointerStart=null;
     item.addEventListener("pointerdown",event=>{pointerStart={x:event.clientX,y:event.clientY};});
     item.addEventListener("click",event=>{
@@ -150,6 +163,7 @@ async function selectSession(value) {
   state.filters.thread=value;
   state.detailRequest++;
   state.selected=null;state.detail=null;state.detailVersion="";state.text=null;
+  requestBodyCache=null;requestBodySequence++;clearJsonDownload();
   state.packets=[];state.older=false;state.canLoadMore=false;state.listRevision=null;
   $("packet-detail").hidden=true;$("empty-state").hidden=false;
   $("packet-list").scrollTop=0;
@@ -160,18 +174,6 @@ function message(text, error=false) { $("notice").textContent = text; $("notice"
 function fail(err) { message(err.message || String(err), true); }
 async function api(path, data, signal) { const r = await fetch(path, {method:data === undefined ? "GET" : "POST",headers:data === undefined ? {} : {"Content-Type":"application/json"},body:data === undefined ? undefined : JSON.stringify(data),signal}); const value = await r.json(); if (!r.ok) throw Error(value.error || ("HTTP "+r.status)); return value; }
 function action(id, fn) { $(id).addEventListener("click", () => Promise.resolve().then(fn).catch(fail)); }
-function metric(label, value, caption, cls="") { const n = el("div","metric"); n.append(el("small","",label),el("strong",cls,value),el("span","caption",caption)); return n; }
-function tokenMetric() {
-  const data=tokenWindow, available=data?.state==="available"&&!data.estimated&&Number.isFinite(data.input_tokens)&&data.input_tokens>=0;
-  const used=available?data.input_tokens:null, window=available?data.window_tokens:null;
-  const ratio=window?used/window:null;
-  const value=available?nf.format(used)+(window?" / "+nf.format(window):" tokens"):"—";
-  const caption=available?(ratio===null?t("窗口上限未记录"):(ratio*100).toFixed(1)+"%")+t(" · 输出 ")+nf.format(data.output_tokens):data?.state==="pending"?t("等待请求完成"):data?.state==="unsupported"?t("暂未读取到用量记录"):data?.state==="loading"||!data?t("正在读取 token 记录…"):t("暂无对应的输入 Token 记录");
-  const card=metric(t("输入上下文占用"),value,caption,ratio!==null&&ratio>=1?"danger":ratio!==null&&ratio>=.9?"warning":"");
-  card.id="token-window";
-  card.title=available?t("本次请求输入 Token / 窗口上限；输出单独展示，缓存 Token 已包含在输入中。"):t("请求完成并写入用量记录后显示，仅匹配本次请求。");
-  return card;
-}
 function tokenVersion(packet) { return [packet.state,packet.status,packet.duration_ms].join(":"); }
 function cancelTokenRead() {
   clearTimeout(tokenTimer);tokenTimer=null;
@@ -186,14 +188,14 @@ function cachedTokenWindow(packet) {
   return cached.data;
 }
 function cacheTokenWindow(packet,data) {
-  if(packet?.state!=="complete" || data.state!=="available")return;
+  if(packet?.state!=="complete" || data.state!=="available" || data.window_pending)return;
   tokenCache.delete(packet.id);
   tokenCache.set(packet.id,{version:tokenVersion(packet),expires:Date.now()+300000,data});
   while(tokenCache.size>256)tokenCache.delete(tokenCache.keys().next().value);
 }
 async function loadTokenWindow() {
   const id=state.selected;
-  if(!id || document.hidden || tokenLoading || (tokenWindow && !["loading","pending"].includes(tokenWindow.state)))return;
+  if(!id || document.hidden || tokenLoading || (tokenWindow && !tokenWindow.window_pending && !["loading","pending"].includes(tokenWindow.state)))return;
   clearTimeout(tokenTimer);tokenTimer=null;
   const request=++tokenRequest;tokenLoading=true;
   const controller=new AbortController();tokenController=controller;
@@ -201,7 +203,7 @@ async function loadTokenWindow() {
   try {
     const data=await api("/api/packets/"+id+"/token-window",undefined,controller.signal);
     if(request!==tokenRequest || state.selected!==id)return;
-    tokenWindow=data;cacheTokenWindow(state.detail,data);
+    tokenWindow=data;cacheTokenWindow(state.detail,data);cacheListTokens(state.detail,data);
   } catch(error) {
     if(request!==tokenRequest || state.selected!==id)return;
     tokenWindow={state:error.message==="unknown operation"?"unsupported":"unavailable"};
@@ -210,8 +212,7 @@ async function loadTokenWindow() {
     if(request===tokenRequest) {
       tokenLoading=false;tokenController=null;
       if(state.selected===id) {
-        $("token-window")?.replaceWith(tokenMetric());
-        const delay=tokenWindow?.state==="loading"?50:tokenWindow?.state==="pending"?(++tokenPendingRetries<=30?300:1000):null;
+        const delay=tokenWindow?.state==="loading"?50:(tokenWindow?.state==="pending"||tokenWindow?.window_pending)?(++tokenPendingRetries<=30?300:1000):null;
         if(delay!==null)tokenTimer=setTimeout(loadTokenWindow,delay);
       }
     }
@@ -221,14 +222,133 @@ function panel(title) { const n = el("section","panel"); n.append(el("h3","",tit
 function table(headings, rows) { const wrap = el("div","table-scroll"), t = el("table"), head=el("thead"), tr=el("tr"); for (const h of headings) tr.append(el("th","",h)); head.append(tr); t.append(head); const body=el("tbody"); for (const cells of rows) { const row=el("tr"); for (const cell of cells) {const td=el("td"); if (cell instanceof Node) td.append(cell); else td.textContent = cell; row.append(td);} body.append(row); } t.append(body); wrap.append(t); return wrap; }
 function link(text, fn) { const n=el("button","link-button",text); n.addEventListener("click",()=>Promise.resolve().then(fn).catch(fail)); return n; }
 function fact(n,label,value) { const r=el("div","fact-row"); r.append(el("span","",label),el("span","",value)); n.append(r); }
-function showTab(tab) { state.tab=tab; for (const b of document.querySelectorAll("[data-tab]")) b.classList.toggle("active",b.dataset.tab===tab); for (const t of ["overview","items","tree","diff","headers"]) $("tab-"+t).hidden=t!==tab; }
-function badge(p) { return el("span","badge "+(p.status>=400?"bad":p.status>=200?"good":"warn"),p.status?String(p.status):states[p.state]||p.state); }
+function showTab(tab) { state.tab=tab; for (const b of document.querySelectorAll("[data-tab]")) b.classList.toggle("active",b.dataset.tab===tab); for (const t of ["overview","compression","tree","diff"]) $("tab-"+t).hidden=t!==tab; }
+function packetStatus(p) {
+  if(p.state==="relay_error" || p.status>=400)return "failed";
+  if(["client_disconnected","interrupted"].includes(p.state))return "interrupted";
+  if(p.state==="streaming")return "streaming";
+  if(p.state==="complete")return "complete";
+  return "waiting";
+}
+function listTokens(p) {
+  const sorted=tokenSortCache?.entries.get(p.id);
+  if(sorted && sorted.version===tokenVersion(p) && sorted.expires>Date.now())return sorted.data;
+  const cached=cachedTokenWindow(p);
+  if(cached)return cached;
+  const entry=listTokenCache.get(p.id);
+  if(entry && entry.version===tokenVersion(p) && entry.expires>Date.now())return entry.data;
+  if(p.method!=="POST" || p.is_compaction || p.status!==200 || !["streaming","complete"].includes(p.state))return {state:p.state==="captured"?"pending":"unavailable"};
+  return null;
+}
+function renderListTokens(p) {
+  const cell=listTokenCells.get(p.id);if(!cell)return;
+  const data=listTokens(p), available=data?.state==="available" && !data.estimated && Number.isInteger(data.input_tokens) && data.input_tokens>=0;
+  cell.textContent=available?nf.format(data.input_tokens):"—";
+  cell.title=available?t("本次请求的真实输入 Token"):!data || ["loading","pending"].includes(data.state)?t("等待输入 Token 记录"):t("暂无对应的输入 Token 记录");
+}
+function cacheListTokens(p,data) {
+  if(!p)return;
+  listTokenCache.delete(p.id);
+  const lifetime=data.state==="available"?300000:["loading","pending"].includes(data.state)?1500:30000;
+  listTokenCache.set(p.id,{version:tokenVersion(p),expires:Date.now()+lifetime,data});
+  const sorted=tokenSortCache?.entries.get(p.id);
+  if(sorted && sorted.version===tokenVersion(p)) {
+    if(sortInputTokens(sorted.data)!==sortInputTokens(data)) {tokenSortCache.dirty=true;queueMicrotask(refreshTokenSort);}
+    sorted.data=data;sorted.expires=Date.now()+lifetime;
+  }
+  while(listTokenCache.size>512)listTokenCache.delete(listTokenCache.keys().next().value);
+  const current=state.packets.find(packet=>packet.id===p.id);
+  if(current)renderListTokens(current);
+}
+function loadListTokens() {
+  if(document.hidden)return;
+  for(const id of visibleTokenRows) {
+    const p=state.packets.find(packet=>packet.id===id);if(!p)continue;
+    renderListTokens(p);
+    if(listTokens(p) || listTokenRequests.has(id))continue;
+    if(listTokenRequests.size>=3)break;
+    const controller=new AbortController(), timeout=setTimeout(()=>controller.abort(),6000);
+    listTokenRequests.set(id,controller);
+    api("/api/packets/"+id+"/token-window",undefined,controller.signal)
+      .then(data=>{cacheTokenWindow(p,data);cacheListTokens(p,data);})
+      .catch(()=>cacheListTokens(p,{state:"unavailable"}))
+      .finally(()=>{clearTimeout(timeout);listTokenRequests.delete(id);loadListTokens();});
+  }
+}
 function renderSort() {
   for (const b of document.querySelectorAll("[data-sort]")) {
     const active=b.dataset.sort===state.sort;
     b.closest("th").setAttribute("aria-sort",active?(state.direction==="asc"?"ascending":"descending"):"none");
-    b.querySelector(".sort-arrow").textContent=active?(state.direction==="asc"?" ↑":" ↓"):"";
+    b.querySelector(".sort-arrow").textContent=active?(state.direction==="asc"?"↑":"↓"):"";
   }
+}
+function sortInputTokens(data) {
+  return data?.state==="available" && !data.estimated && Number.isInteger(data.input_tokens) && data.input_tokens>=0?data.input_tokens:null;
+}
+function sortedTokenPackets(cache,direction) {
+  const counts=new Map(cache.records.map(p=>[p.id,sortInputTokens(listTokens(p))]));
+  return cache.records.slice().sort((a,b)=>{
+    const x=counts.get(a.id), y=counts.get(b.id);
+    if(x===null && y!==null)return 1;
+    if(y===null && x!==null)return -1;
+    return (x!==null && y!==null?(x-y)*(direction==="asc"?1:-1):0) || b.created-a.created || b.id.localeCompare(a.id);
+  });
+}
+function refreshTokenSort() {
+  const cache=tokenSortCache;
+  if(state.sort!=="input_tokens" || !cache?.dirty || state.listController)return;
+  cache.dirty=false;
+  state.packets=sortedTokenPackets(cache,state.direction).slice(0,state.packets.length);
+  state.canLoadMore=state.packets.length<cache.records.length;
+  renderList();
+}
+async function tokenSortedPackets(query,revision,signal) {
+  const filters=new URLSearchParams(query);
+  for(const key of ["limit","sort","direction","after"])filters.delete(key);
+  const key=filters.toString(), previous=tokenSortCache?.key===key?tokenSortCache:null;
+  let cache=previous;
+  if(!cache || (!query.has("after") && (cache.revision!==revision || cache.expires<=Date.now()))) {
+    let records=[];
+    if(previous?.revision===revision)records=previous.records;
+    else {
+      const scan=new URLSearchParams(filters);scan.set("limit","300");scan.set("sort","created");scan.set("direction","desc");
+      for(;;) {
+        const page=await api("/api/packets?"+scan,undefined,signal);
+        signal.throwIfAborted();records.push(...page);
+        if(page.length<300)break;
+        scan.set("after",page.at(-1).id);
+      }
+    }
+    const entries=new Map();let cursor=0;
+    const read=async()=>{
+      while(cursor<records.length) {
+        signal.throwIfAborted();const p=records[cursor++];let data=listTokens(p);
+        if(!data || ["loading","pending"].includes(data.state) && p.status===200 && ["streaming","complete"].includes(p.state)) {
+          const controller=new AbortController(), cancel=()=>controller.abort(), timeout=setTimeout(cancel,6000);
+          signal.addEventListener("abort",cancel,{once:true});
+          try {
+            const deadline=Date.now()+3000;
+            do {
+              data=await api("/api/packets/"+p.id+"/token-window",undefined,controller.signal);
+              if(data.state==="loading")await new Promise(resolve=>setTimeout(resolve,75));
+            } while(data.state==="loading" && Date.now()<deadline);
+            cacheTokenWindow(p,data);cacheListTokens(p,data);
+          } catch(error) {signal.throwIfAborted();data={state:"unavailable"};}
+          finally {clearTimeout(timeout);signal.removeEventListener("abort",cancel);}
+        }
+        const lifetime=["loading","pending"].includes(data?.state)?1500:sortInputTokens(data)===null?30000:300000;
+        entries.set(p.id,{version:tokenVersion(p),data,expires:Date.now()+lifetime});
+      }
+    };
+    await Promise.all(Array.from({length:Math.min(3,records.length)},read));signal.throwIfAborted();
+    cache={key,revision,records,entries,dirty:false,expires:Date.now()+300000};
+    for(const entry of entries.values())cache.expires=Math.min(cache.expires,entry.expires);
+    tokenSortCache=cache;
+  }
+  const sorted=sortedTokenPackets(cache,query.get("direction"));
+  cache.dirty=false;
+  const start=query.has("after")?sorted.findIndex(p=>p.id===query.get("after"))+1:0;
+  return sorted.slice(start,start+Number(query.get("limit")));
 }
 function renderList() {
   if(!state.status)return;
@@ -236,30 +356,36 @@ function renderList() {
   const sessionCount=state.status.storage.threads?.find(row=>(row.thread||"")===(state.filters.thread==="unknown"?"":state.filters.thread.slice(7)))?.count;
   const total=!filtered?state.status.storage.count:!state.filters.kind && !state.filters.status && state.filters.thread && Number.isFinite(sessionCount)?sessionCount:null;
   $("record-count").textContent=total===null?nf.format(state.packets.length)+(state.canLoadMore?"+":"")+t(" 包"):nf.format(total)+t(" 包");
-  const signature=JSON.stringify([state.selected,state.status.budget_bytes,state.older,state.canLoadMore,state.sort,state.direction,state.filters,state.packets.map(p=>[p.id,p.created,p.method,p.is_compaction,p.state,p.status,p.outbound_wire_bytes,p.outbound_content_encoding,p.thread_id,p.overflow_compaction_calls,p.overflow_cache_hit,p.overflow_original_wire_bytes])]);
+  const signature=JSON.stringify([state.selected,state.status.budget_bytes,state.older,state.canLoadMore,state.sort,state.direction,state.filters,state.packets.map(p=>[p.id,p.created,p.method,p.is_compaction,p.state,p.status,p.duration_ms,p.decoded_bytes,p.outbound_wire_bytes,p.outbound_content_encoding,p.thread_id,p.overflow_compaction_calls,p.overflow_cache_hit,p.overflow_original_wire_bytes])]);
   if(signature===state.listVersion)return;
   state.listVersion=signature;
   const root=$("packet-rows"), fragment=document.createDocumentFragment(); renderSort();
+  listTokenObserver.disconnect();visibleTokenRows.clear();listTokenCells.clear();
   $("list-empty").hidden=!!state.packets.length;
   $("list-empty").textContent=Object.values(state.filters).some(Boolean)?t("没有符合筛选条件的请求。"):t("暂无请求记录。");
   for (const p of state.packets) {
     const protection=[];
     if(p.overflow_compaction_calls>0)protection.push(t("压缩 ")+nf.format(p.overflow_compaction_calls)+t(" 次"));
     if(p.overflow_cache_hit===true)protection.push(t("复用摘要"));
-    const row=el("tr",[state.selected===p.id?"selected":"",protection.length?"overflow-protected":""].filter(Boolean).join(" ")), date=new Date(p.created*1000);
+    const row=el("tr",["request-"+packetStatus(p),state.selected===p.id?"selected":"",protection.length?"overflow-protected":""].filter(Boolean).join(" ")), date=new Date(p.created*1000);
     const time=el("button","packet-open");
     time.append(el("span","packet-date",dateFormat.format(date)),el("span","packet-clock",clockFormat.format(date)));
     time.title=timestampFormat.format(date);
     time.setAttribute("aria-label",t("查看 ")+time.title+t(" 的请求"));
     const type=requestKind(p);
-    const upload=uploadBytes(p);
-    const size=el("span","packet-size"+(upload!==null && (upload>1_000_000 || upload>=state.status.budget_bytes)?" danger":""),compact(upload)); size.title=upload===null?t("尚未采集出口大小"):bytes(upload);
-    row.dataset.session=p.thread_id||"";row.title=p.thread_id?"session_id: "+p.thread_id:t("会话未识别");
+    const original=originalBytes(p), upload=uploadBytes(p);
+    const before=el("span","packet-size",compact(original));
+    before.title=original===null?t("原始大小未记录"):t("压缩前：")+bytes(original);
+    const after=el("span","packet-size",compact(upload));
+    after.title=upload===null?t("尚未采集最终上传大小"):t("最终上传正文：")+bytes(upload)+" · "+(p.outbound_content_encoding||"identity");
+    row.dataset.packetId=p.id;row.dataset.session=p.thread_id||"";row.title=(states[p.state]||p.state)+(p.status?" · HTTP "+p.status:"")+"\n"+(p.thread_id?"session_id: "+p.thread_id:t("会话未识别"));
     if(protection.length)row.title+=t("\n已应用超限保护：")+protection.join(" · ")+(Number.isFinite(p.overflow_original_wire_bytes)?t(" · 原始上传 ")+compact(p.overflow_original_wire_bytes):"");
-    for (const value of [time,type,size,badge(p)]) {const td=el("td");if(value instanceof Node)td.append(value);else td.textContent=value;row.append(td);}
+    for (const value of [time,type,before,after]) {const td=el("td");if(value instanceof Node)td.append(value);else td.textContent=value;row.append(td);}
+    const tokens=el("td","packet-tokens");listTokenCells.set(p.id,tokens);renderListTokens(p);row.append(tokens);
     row.addEventListener("click",()=>selectPacket(p.id).catch(fail)); fragment.append(row);
   }
   root.replaceChildren(fragment);
+  for(const row of root.children)listTokenObserver.observe(row);
 }
 function loadMorePackets() {
   if(!state.canLoadMore || state.listController || document.hidden)return;
@@ -275,7 +401,8 @@ async function loadPackets(append=false,background=false) {
   const list=$("packet-list");
   if(!append && !background)list.scrollTop=0;
   list.setAttribute("aria-busy","true");
-  $("list-loading").hidden=!append;
+  $("list-loading").hidden=!append && state.sort!=="input_tokens";
+  $("list-loading").textContent=t(state.sort==="input_tokens"?"正在读取输入 Token…":"正在加载更多记录…");
   let loaded=false;
   const revision=state.status?.storage.revision;
   const q=new URLSearchParams({limit:"100",sort:state.sort,direction:state.direction});
@@ -285,14 +412,15 @@ async function loadPackets(append=false,background=false) {
   else if(state.filters.thread)q.set("thread",state.filters.thread.slice(7));
   if (append && state.packets.length) q.set("after",state.packets.at(-1).id);
   try {
-    const values=await api("/api/packets?"+q,undefined,controller.signal);
+    const values=state.sort==="input_tokens"?await tokenSortedPackets(q,revision,controller.signal):await api("/api/packets?"+q,undefined,controller.signal);
     if(requestId!==state.listRequest)return;
     state.listRevision=revision;
     state.canLoadMore=values.length===100;
     if (append) {state.packets.push(...values); state.older=true;} else {state.packets=values;state.older=false;}
     renderList();
     loaded=true;
-    if (state.selected) { const p=state.packets.find(p=>p.id===state.selected); if(p) {const ver=[p.state,p.status,p.duration_ms,p.outbound_wire_bytes,p.outbound_content_encoding].join(":");if(ver!==state.detailVersion) await selectPacket(state.selected,true);} }
+    if (!state.selected && state.packets.length) await selectPacket(state.packets[0].id,false,requestId);
+    else if (state.selected) { const p=state.packets.find(p=>p.id===state.selected); if(p) {const ver=[p.state,p.status,p.duration_ms,p.outbound_wire_bytes,p.outbound_content_encoding].join(":");if(ver!==state.detailVersion) await selectPacket(state.selected,true);} }
   } catch(e) {if(e.name!=="AbortError")throw e;}
   finally {
     if(state.listController===controller) {
@@ -303,13 +431,25 @@ async function loadPackets(append=false,background=false) {
   }
 }
 async function refreshStatus(fill=false) {
-  state.status=await api("/api/status");renderStatus(fill);
+  const revision=settingsRevision, connectionRevision=linkRevision, modeRevision=compressionRevision, status=await api("/api/status");
+  if(settingsSaving||compressionSaving||revision!==settingsRevision||connectionRevision!==linkRevision||modeRevision!==compressionRevision)return;
+  state.status=status;renderStatus(fill);
+}
+function renderConnectionActions() {
+  const s=state.status;if(!s)return;
+  const p=s.profile,disabled=!!(linkSaving||settingsSaving||compressionSaving||s.ui_read_only);
+  $("header-connect").hidden=!!p.active;
+  for(const id of ["header-connect","link-activate"]) {
+    const button=$(id);
+    button.disabled=disabled||!!p.active||!!p.config_error;
+    button.textContent=t(linkSaving==="activate"?"正在接入…":"接入 Codex");
+    button.setAttribute("aria-busy",String(linkSaving==="activate"));
+  }
+  $("link-restore").disabled=disabled||!p.can_restore;
+  renderCompressionMode();
 }
 function renderStatus(fill=false) {
   const s=state.status;if(!s)return;
-  const uiVersion=s.ui_version||s.version||t("未知"), relayVersion=s.version||t("未知");
-  $("app-version").textContent=uiVersion===relayVersion?t("版本 ")+uiVersion:t("界面 ")+uiVersion+t(" · 中转 ")+relayVersion;
-  $("app-version").title=uiVersion===relayVersion?t("当前界面与中转版本一致。"):t("界面已更新，正在使用原有中转；中转新功能需要单独升级后生效。");
   const preview=!!s.ui_live_reload && !!s.ui_read_only;
   $("ui-refresh").hidden=!s.ui_live_reload;
   $("preview-banner").hidden=!preview;
@@ -319,57 +459,125 @@ function renderStatus(fill=false) {
     const width=parseInt(style.getPropertyValue("--desktop-width")), height=parseInt(style.getPropertyValue("--desktop-height"));
     $("preview-banner").textContent=t("桌面窗口预览 · ")+width+" × "+height+t(s.ui_entry_port_editable?" · 保存后自动刷新":" · 保存后自动刷新 · 设置只读");
   }
-  $("capture-toggle").disabled=!!s.ui_read_only;
-  $("capture-status").textContent=s.capture_enabled?t("正在记录"):t("记录已暂停"); $("capture-status").classList.toggle("paused",!s.capture_enabled);
-  $("capture-toggle").textContent=s.capture_enabled?t("暂停记录"):t("继续记录");
+  const connection=$("codex-status"), unknown=!!(s.profile.config_error || s.provider_sync_error), connected=!!s.profile.active;
+  const connectionText=unknown?t("接入状态未知"):connected?t("已接入 Codex"):t("未接入 Codex");
+  if(connection.textContent!==connectionText)connection.textContent=connectionText;
+  connection.classList.toggle("disconnected",unknown || !connected);
+  connection.title=providerStatus(s);
+  renderConnectionActions();
   $("empty-connect").hidden=!!s.profile.active;
   renderStorageInfo();
-  if(fill) fillSettings();
+  if(fill) fillSettings();else {fillEntryPort();renderCompressionMode();renderLanguageSelection();}
   renderSessions();renderList();
 }
 function fillSettings() {
-  const s=state.status, p=s.profile;
-  const development=s.ui_development;
-  $("ui-development-settings").hidden=!development?.available;
-  $("ui-development").checked=!!development?.enabled;
-  $("ui-development").disabled=!!s.ui_read_only||!development?.available;
-  $("ui-development-message").textContent=t(development?.error||"");
-  $("ui-development-message").hidden=!development?.error;
+  const s=state.status,p=s.profile;
   fillEntryPort();
-  $("budget").value=s.budget_bytes; $("storage-limit").value=s.max_storage_mb; $("packet-limit").value=s.max_packets;
-  $("request-compression").value=s.request_compression; $("request-compression").disabled=!!s.ui_read_only;
-  const startupSupported=!!s.start_on_login_supported;
-  const retrySupported=!!s.capacity_retry_supported;
-  const imageSupported=!!s.image_isolation_supported;
-  $("start-on-login").checked=!!s.start_on_login;
-  $("start-on-login").disabled=!!s.ui_read_only||!startupSupported;
-  $("capacity-retry").checked=!!s.capacity_retry_enabled;
-  $("capacity-retry").disabled=!!s.ui_read_only||!retrySupported;
-  $("image-isolation").checked=!!s.image_isolation_enabled;
-  $("image-isolation").disabled=!!s.ui_read_only||!imageSupported;
-  $("image-isolation-hint").textContent=t(imageSupported?"关闭原生 view_image，保留独立解析工具。主会话只接收图片路径和解析文字；保存后需重新加载 Codex。":"当前中转暂不支持图片隔离，请升级中转后启用。");
-  $("startup-hint").textContent=t(startupSupported?(s.startup_state_known===false?"无法读取开机启动状态，请重新保存设置。":"登录 Windows 后在后台启动，可从托盘打开窗口。"):"开机启动仅支持已安装的 Windows 版本。");
-  $("runtime-settings-save").disabled=!!s.ui_read_only||(!startupSupported&&!retrySupported&&!imageSupported);
-  $("runtime-settings-message").hidden=retrySupported;
-  $("runtime-settings-message").textContent=retrySupported?"":t("当前中转暂不支持此功能。");
-  $("overflow-compaction").checked=!!s.overflow_compaction_enabled;
-  $("overflow-compaction").disabled=!!s.ui_read_only || !("overflow_compaction_enabled" in s);
-  if(!("overflow_compaction_enabled" in s)) {
-    $("overflow-message").textContent=t("当前中转暂不支持此功能。");$("overflow-message").hidden=false;
+  if(!settingsEditing) {
+    $("storage-limit").value=s.max_storage_mb;$("packet-limit").value=s.max_packets;
+    $("start-on-login").checked=!!s.start_on_login;
+    $("capacity-retry").checked=!!s.capacity_retry_enabled;
+    $("image-isolation").checked=!!s.image_isolation_enabled;
   }
-  $("link-activate").disabled=!!s.ui_read_only || !!p.active || !!p.config_error; $("link-restore").disabled=!!s.ui_read_only || !p.can_restore;
-  $("settings-save").disabled=!!s.ui_read_only;
-  $("link-status").textContent=providerStatus(s);
+  for(const id of ["storage-limit","packet-limit"])$(id).disabled=settingsSaving||!!s.ui_read_only;
+  $("start-on-login").disabled=settingsSaving||!!s.ui_read_only||!s.start_on_login_supported;
+  $("capacity-retry").disabled=settingsSaving||!!s.ui_read_only||!s.capacity_retry_supported;
+  $("image-isolation").disabled=settingsSaving||!!s.ui_read_only||!s.image_isolation_supported;
+  $("image-isolation-hint").textContent=t(s.image_isolation_supported?"勾选后自动安装缺少的独立图片工具，保留已有工具，并关闭原生 view_image。主请求只接收图片路径和解析文字；需重新加载 Codex。":"当前中转暂不支持此功能。");
+  $("startup-hint").textContent=t(s.start_on_login_supported?(s.startup_state_known===false?"无法读取开机启动状态，请重新保存设置。":"登录 Windows 后在后台启动，可从托盘打开窗口。"):"开机启动仅支持已安装的 Windows 版本。");
+  $("runtime-settings-message").hidden=!!s.capacity_retry_supported;
+  $("runtime-settings-message").textContent=s.capacity_retry_supported?"":t("当前中转暂不支持此功能。");
+  renderConnectionActions();
+  renderCompressionMode();renderLanguageSelection();fillImageDirectory();fillPacketProtection();syncContextDefaults();
+  updateSettingsSaveState(false);
+}
+function renderLanguageSelection() {
+  for(const button of document.querySelectorAll("#language-toggle button")) {
+    button.setAttribute("aria-pressed",String(button.dataset.language===(settingsEditing?settingsLanguage:uiI18n.language)));
+    button.disabled=settingsSaving;
+  }
+}
+function renderCompressionMode() {
+  const s=state.status;if(!s)return;
+  const mode=s.request_compression,connected=!!s.profile?.active;
+  const supported=["off","zstd"].includes(s.request_compression);
+  for(const button of document.querySelectorAll("#request-compression button")) {
+    button.setAttribute("aria-pressed",String(button.dataset.compression===mode));
+    button.disabled=compressionSaving||settingsSaving||!!linkSaving||!!s.ui_read_only||!supported||!connected;
+  }
+  $("request-compression").setAttribute("aria-busy",String(compressionSaving));
+  $("compression-hint").textContent=!connected?t("接入 Codex 后可切换传输模式。"):supported?t(mode==="zstd"?"无损压缩，减小上传体积，保留完整内容。":"不额外压缩，原样转发并分析请求。"):t("当前中转暂不支持此功能。");
+  $("request-compression").title=$("compression-hint").textContent;
+  $("compression-confirm-dialog").setAttribute("aria-busy",String(compressionSaving));
+  for(const id of ["compression-confirm-cancel","compression-confirm-apply"])$(id).disabled=compressionSaving;
+  $("compression-confirm-apply").textContent=t(compressionSaving?"正在切换…":"确认切换");
+  if(!connected&&!compressionSaving&&$("compression-confirm-dialog").open)cancelCompressionChange();
+}
+function requestCompressionChange(mode) {
+  const s=state.status,dialog=$("compression-confirm-dialog");
+  if(!s||!s.profile?.active||compressionSaving||settingsSaving||settingsOpening||settingsEditing||linkSaving||s.ui_read_only||dialog.open)return;
+  if(!["off","zstd"].includes(mode)||!["off","zstd"].includes(s.request_compression)||mode===s.request_compression)return;
+  compressionTarget=mode;
+  $("compression-confirm-description").textContent=t(mode==="zstd"?
+    "切换为「zstd 压缩」？将无损压缩请求正文，减小上传体积。":
+    "切换为「仅分析」？将关闭 zstd 传输压缩，继续记录和分析请求。");
+  $("compression-confirm-message").hidden=true;
+  dialog.showModal();
+}
+function cancelCompressionChange() {
+  if(compressionSaving)return;
+  $("compression-confirm-dialog").close();compressionTarget=null;
+}
+async function confirmCompressionChange() {
+  const s=state.status,mode=compressionTarget;
+  if(!s||!s.profile?.active||compressionSaving||settingsSaving||linkSaving||s.ui_read_only||!["off","zstd"].includes(mode)||!["off","zstd"].includes(s.request_compression))return;
+  if(mode===s.request_compression){cancelCompressionChange();return;}
+  compressionSaving=true;compressionRevision++;renderConnectionActions();
+  $("compression-confirm-message").hidden=true;
+  try {
+    const result=await api("/api/settings",{request_compression:mode});
+    if(result.request_compression!==mode)throw Error(t("传输模式未保存，请重试。"));
+    state.status={...state.status,...result};
+    $("compression-confirm-dialog").close();compressionTarget=null;
+    renderStatus();
+    message(t(mode==="zstd"?"已切换为 zstd 压缩。":"已切换为仅分析。"));
+  } catch(error) {
+    $("compression-confirm-message").textContent=error.message;
+    $("compression-confirm-message").hidden=false;
+  } finally {compressionSaving=false;compressionRevision++;renderConnectionActions();}
+}
+function imageDefaultDirectory() {
+  const s=state.status,dataDir=s.data_dir||"",separator=dataDir.includes("\\")?"\\":"/";
+  return s.image_save_dir_default||(dataDir?dataDir.replace(/[\\/]+$/,"")+separator+"image-attachments":"");
+}
+function fillImageDirectory() {
+  const s=state.status,input=$("image-save-dir"),supported=!!s.image_save_dir_supported;
+  const defaultPath=imageDefaultDirectory();
+  if(!settingsEditing)input.value=s.image_save_dir||defaultPath;
+  input.placeholder=defaultPath;
+  for(const id of ["image-save-dir","image-save-dir-reset"])$(id).disabled=settingsSaving||!!s.ui_read_only||!supported;
+  $("image-save-dir-hint").textContent=supported?
+    t("默认路径：{path}。修改后用于新保存的图片，原目录文件保留。",{path:defaultPath}):
+    t("当前中转暂不支持自定义图片目录，请升级中转后设置。");
 }
 function fillEntryPort() {
-  const s=state.status, port=s.entry_port;
-  const supported=!!s.entry_port_supported && !!port;
-  const editable=supported && (!s.ui_read_only || s.ui_entry_port_editable);
-  $("entry-port").value=port?.configured_port??port?.current_port??s.relay_port??47844;
-  $("entry-port").disabled=!editable;$("entry-port-save").disabled=!editable;
-  $("entry-port-current").textContent=supported?
-    t("当前端口：{port}").replace("{port}",port.current_port)+(port.pending?" · "+t("待生效端口：{port}").replace("{port}",port.configured_port):""):
-    t("入口端口暂不可用。");
+  const s=state.status,port=s.entry_port,supported=!!s.entry_port_supported&&!!port;
+  if(!settingsEditing)$("entry-port").value=port?.configured_port??port?.current_port??s.relay_port??47844;
+  $("entry-port").disabled=settingsSaving||!supported||!!s.ui_read_only&&!s.ui_entry_port_editable;
+  renderEntryPortStatus();
+}
+function renderEntryPortStatus() {
+  const s=state.status;if(!s)return;
+  const port=s.entry_port,node=$("link-status"),supported=!!s.entry_port_supported&&!!port;
+  let label="未接管",kind="inactive";
+  if(!supported)label="入口端口暂不可用。";
+  else if(port.error){label=port.error;kind="error";}
+  else if(s.profile?.config_error||s.provider_sync_error){label="无法读取 Codex 配置。";kind="error";}
+  else if(settingsEditing&&settingsBaseline&&$("entry-port").value!==settingsBaseline.entry_port){label="未保存";kind="unsaved";}
+  else if(port.pending){label="重启 ChatGPT App 生效";kind="pending";}
+  else if(s.profile?.active){label="已接管";kind="active";}
+  node.textContent=t(label);node.dataset.state=kind;
+  node.title=supported?t("当前端口：{port}").replace("{port}",port.current_port)+(port.pending?" · "+t("待生效端口：{port}").replace("{port}",port.configured_port)+"\n"+t("入口服务重新启动后应用新端口，重启 ChatGPT App 生效。"):""):"";
 }
 function providerStatus(s) {
   if(s.profile.config_error || s.provider_sync_error)return t("无法读取 Codex 配置。");
@@ -379,21 +587,25 @@ function providerStatus(s) {
 function contextMessage(text,error=false) { const node=$("context-message");node.textContent=text;node.className="help"+(error?" error":"");node.hidden=!text; }
 function syncContextDefaults() {
   for(const key of ["context","compact"]) {
-    const disabled=$(key+"-default").checked;
-    $(key+"-tokens").disabled=disabled;$(key+"-range").disabled=disabled;
+    const unavailable=settingsSaving||!contextSettings||!!state.status?.ui_read_only;
+    $(key+"-default").disabled=unavailable;
+    $(key+"-tokens").disabled=unavailable||$(key+"-default").checked;
+    $(key+"-range").disabled=$(key+"-tokens").disabled;
   }
+  $("context-reset").disabled=settingsSaving||!contextSettings||!!state.status?.ui_read_only;
 }
 function fillContextSettings(data) {
   contextSettings=data;
   const maximum=data.max_context_tokens/1000;
   renderContextModel();
   for(const [key,value,fallback] of [["context",data.context_tokens,data.default_context_tokens||240000],["compact",data.compact_tokens,220000]]) {
-    $(key+"-default").checked=value===null;
+    if(!settingsEditing)$(key+"-default").checked=value===null;
     $(key+"-tokens").max=String(maximum);$(key+"-range").max=String(Math.max(key==="context"?4:1,Math.floor(maximum)));
     const display=value??(key==="context"?data.default_context_tokens:null);
-    $(key+"-tokens").value=display===null?"":String(display/1000);$(key+"-tokens").placeholder=t("模型默认");$(key+"-range").value=String((value??fallback)/1000);
+    if(!settingsEditing){$(key+"-tokens").value=display===null?"":String(display/1000);$(key+"-range").value=String((value??fallback)/1000);}
+    $(key+"-tokens").placeholder=t("模型默认");
   }
-  syncContextDefaults();$("context-save").disabled=!!state.status?.ui_read_only;$("context-reset").disabled=!!state.status?.ui_read_only;
+  syncContextDefaults();
 }
 function renderContextModel() {
   const data=contextSettings;if(!data)return;
@@ -403,140 +615,278 @@ function renderContextModel() {
 async function loadContextSettings() {
   contextMessage("");
   try {fillContextSettings(await api("/api/context-settings"));}
-  catch(error) {contextSettings=null;$("context-save").disabled=true;$("context-reset").disabled=true;contextMessage(t("上下文配置读取失败：")+error.message,true);}
+  catch(error) {contextSettings=null;syncContextDefaults();contextMessage(t("上下文配置读取失败：")+error.message,true);}
 }
-async function saveContextSettings(reset=false) {
-  if(!contextSettings)return;
-  const values={};
-  for(const key of ["context","compact"]) {
-    const input=$(key+"-tokens"),useDefault=reset||$(key+"-default").checked;
-    if(!useDefault && !input.reportValidity())return;
-    values[key+"_tokens"]=useDefault?null:Math.round(Number(input.value)*1000);
+let updateStatus=null, updateBusy=false, updateAction="", updateFeedbackVisible=false;
+function readSettingsDraft() {
+  const draft={
+    entry_port:$("entry-port").value,
+    packet_size_protection_enabled:$("packet-size-protection").checked,
+    budget:$("budget").value,
+    start_on_login:$("start-on-login").checked,
+    capacity_retry_enabled:$("capacity-retry").checked,
+    image_isolation_enabled:$("image-isolation").checked,
+    image_save_dir:$("image-save-dir").value,
+    max_storage_mb:$("storage-limit").value,
+    max_packets:$("packet-limit").value,
+    language:settingsLanguage??uiI18n.language
+  };
+  for(const key of ["context","compact"])draft[key+"_tokens"]=$(key+"-default").checked?null:$(key+"-tokens").value;
+  return draft;
+}
+function changedSettings(draft=readSettingsDraft()) {
+  return settingsBaseline?Object.keys(draft).filter(key=>draft[key]!==settingsBaseline[key]):[];
+}
+function setSettingsMessage(text,error=false) {
+  const node=$("settings-message");node.textContent=text;node.className="help "+(error?"error":"muted");
+}
+function updateSettingsSaveState(clearMessage=true) {
+  const dirty=settingsEditing&&changedSettings().length>0;
+  $("settings-save").disabled=settingsSaving||!!linkSaving||!dirty;
+  $("settings-cancel").disabled=settingsSaving;$("settings-close").disabled=settingsSaving;
+  if(clearMessage&&settingsEditing&&!settingsSaving)setSettingsMessage(dirty?t("有未保存的修改"):"");
+  if(state.status)renderEntryPortStatus();
+}
+async function saveSettings() {
+  if(!settingsEditing||settingsSaving||linkSaving||!settingsBaseline)return;
+  const draft=readSettingsDraft(),changed=new Set(changedSettings(draft)),s=state.status;
+  if(!changed.size)return;
+  for(const input of $("settings-dialog").querySelectorAll(".settings-content input:not(:disabled)")) {
+    if(!input.reportValidity())return;
   }
+  const editable=!s.ui_read_only,protectionSupported="packet_size_protection_enabled" in s;
+  const entries=[
+    ["packet_size_protection_enabled","packet_size_protection_enabled",draft.packet_size_protection_enabled,protectionSupported],
+    ["budget","budget_bytes",Math.round(Number(draft.budget)*1000),protectionSupported],
+    ["start_on_login","start_on_login",draft.start_on_login,s.start_on_login_supported],
+    ["capacity_retry_enabled","capacity_retry_enabled",draft.capacity_retry_enabled,s.capacity_retry_supported],
+    ["image_isolation_enabled","image_isolation_enabled",draft.image_isolation_enabled,s.image_isolation_supported],
+    ["image_save_dir","image_save_dir",draft.image_save_dir===imageDefaultDirectory()?"":draft.image_save_dir,s.image_save_dir_supported],
+    ["max_storage_mb","max_storage_mb",Number(draft.max_storage_mb),true],
+    ["max_packets","max_packets",Number(draft.max_packets),true]
+  ].filter(([field,,,supported])=>editable&&supported&&changed.has(field));
+  const contextChanged=editable&&contextSettings&&["context_tokens","compact_tokens"].some(key=>changed.has(key));
+  const portChanged=s.entry_port_supported&&s.entry_port&&(!s.ui_read_only||s.ui_entry_port_editable)&&changed.has("entry_port");
+  const controls=new Map([...$("settings-dialog").querySelectorAll("input,button")].map(node=>[node,node.disabled]));
+  let saved=0,error=null,restartRequired=false;
+  settingsSaving=true;settingsRevision++;
+  for(const node of controls.keys())node.disabled=true;
+  $("settings-dialog").setAttribute("aria-busy","true");setSettingsMessage(t("正在保存设置…"));
   try {
-    const result=await api("/api/context-settings",values);fillContextSettings(result);
-    contextMessage(result.changed?t("已保存，重启 ChatGPT App 生效。"):t("设置未变化。"));
-  } catch(error) {contextMessage(error.message,true);}
+    if(entries.length) {
+      const values=Object.fromEntries(entries.map(([,key,value])=>[key,value]));
+      const result=await api("/api/settings",values);
+      state.status={...state.status,...result};
+      for(const [field] of entries)settingsBaseline[field]=draft[field];
+      restartRequired=entries.some(([field])=>field==="image_isolation_enabled");saved++;
+    }
+    if(contextChanged) {
+      const values=Object.fromEntries(["context_tokens","compact_tokens"].map(key=>[key,draft[key]===null?null:Math.round(Number(draft[key])*1000)]));
+      contextSettings=await api("/api/context-settings",values);
+      settingsBaseline.context_tokens=draft.context_tokens;settingsBaseline.compact_tokens=draft.compact_tokens;
+      restartRequired=restartRequired||contextSettings.changed;saved++;
+    }
+    if(portChanged) {
+      state.status.entry_port=await api("/api/entry-port",{port:Number(draft.entry_port)});
+      settingsBaseline.entry_port=draft.entry_port;restartRequired=restartRequired||state.status.entry_port.pending;saved++;
+    }
+    if(changed.has("language")) {
+      try {await setInterfaceLanguage(draft.language);}
+      finally {if(uiI18n.language===draft.language)settingsBaseline.language=draft.language;}
+      saved++;
+    }
+    if(changedSettings().length)throw Error(t("有未保存的修改"));
+  } catch(failure) {error=failure;}
+  finally {
+    settingsSaving=false;settingsRevision++;
+    for(const [node,disabled] of controls)if(node.isConnected)node.disabled=disabled;
+    $("settings-dialog").setAttribute("aria-busy","false");
+    fillSettings();renderContextModel();renderUpdates();renderStatus();updateSettingsSaveState(false);
+    if(error)setSettingsMessage(t(saved?"部分设置已保存，剩余修改未保存：":"保存失败：")+error.message,true);
+    else setSettingsMessage(t(restartRequired||state.status.entry_port?.pending?"设置已保存，重启 ChatGPT App 生效。":"设置已保存。"));
+  }
 }
-let updateStatus=null, updateBusy=false;
 function renderUpdates() {
-  if(!updateStatus)return;
-  const u=updateStatus, busy=updateBusy||["checking","downloading","upgrading"].includes(u.state);
-  $("updates-versions").textContent=t("当前版本：{version}").replace("{version}",u.current_version)+(u.latest_version?" · "+t("最新版本：{version}").replace("{version}",u.latest_version):"");
-  $("updates-source").textContent=u.repository;$("updates-source").href="https://github.com/"+u.repository;
-  $("automatic-updates").checked=!!u.automatic;$("automatic-updates").disabled=updateBusy;
-  $("updates-check").disabled=busy;$("updates-install").disabled=busy||u.state!=="available";
+  const u=updateStatus, busy=settingsSaving||updateBusy||["checking","downloading","upgrading"].includes(u?.state);
+  if(u?.current_version)$("updates-versions").textContent=t("当前版本：{version}").replace("{version}",u.current_version)+(u.latest_version?" · "+t("最新版本：{version}").replace("{version}",u.latest_version):"");
+  $("updates-check").disabled=busy;$("updates-install").disabled=busy||u?.state!=="available";
   const labels={idle:"可检查 GitHub 上的最新版本。",checking:"正在检查更新…",current:"已是最新版本。",available:"发现新版本，可以升级。",downloading:"正在下载并校验升级包…",upgrading:"正在升级，旧请求继续完成…",complete:"升级已完成。"};
-  $("updates-message").textContent=u.state==="error"?u.error:t(labels[u.state]||"可检查 GitHub 上的最新版本。");
-  $("updates-message").className="help"+(u.state==="error"?" error":"");
+  const displayedState=updateBusy?(updateAction==="check"?"checking":"downloading"):u?.state;
+  const message=$("updates-message");
+  message.hidden=!updateFeedbackVisible;
+  message.textContent=displayedState==="error"?u.error:t(labels[displayedState]||labels.idle);
+  message.classList.toggle("error",displayedState==="error");
 }
 async function loadUpdates() {
   try {updateStatus=await api("/api/updates");renderUpdates();}
-  catch(error){$("updates-message").textContent=error.message;}
+  catch(error){updateStatus={...updateStatus,state:"error",error:error.message};renderUpdates();}
 }
 async function performUpdate(which) {
-  updateBusy=true;renderUpdates();
+  if(settingsSaving||updateBusy)return;
+  updateBusy=true;updateAction=which;updateFeedbackVisible=true;renderUpdates();
   try {updateStatus=await api("/api/updates",{action:which});}
   catch(error){updateStatus={...updateStatus,state:"error",error:error.message};}
-  finally {updateBusy=false;renderUpdates();}
+  finally {updateBusy=false;updateAction="";renderUpdates();}
 }
 async function openSettings() {
-  await Promise.all([refreshStatus(true),loadContextSettings(),loadUpdates()]);
-  $("settings-dialog").showModal();
+  if(settingsOpening||compressionSaving||$("compression-confirm-dialog").open||$("settings-dialog").open)return;
+  settingsOpening=true;
+  try {
+    await Promise.all([refreshStatus(true),loadContextSettings(),loadUpdates()]);
+    settingsLanguage=uiI18n.language;
+    settingsBaseline=readSettingsDraft();settingsEditing=true;
+    renderLanguageSelection();renderCompressionMode();updateSettingsSaveState();
+    $("settings-dialog").showModal();
+  } finally {settingsOpening=false;}
 }
-async function selectPacket(id,refresh=false) {
+async function selectPacket(id,refresh=false,expectedListRequest=null) {
   const requestId=++state.detailRequest;
-  const m=await api("/api/packets/"+id); if(requestId!==state.detailRequest || (refresh && state.selected!==id)) return;
+  const m=await api("/api/packets/"+id); if(requestId!==state.detailRequest || (refresh && state.selected!==id) || (expectedListRequest!==null && expectedListRequest!==state.listRequest)) return;
   const changed=state.selected!==id, previousDetail=state.detail; state.selected=id; state.detail=m; state.detailVersion=[m.state,m.status,m.duration_ms,m.outbound_wire_bytes,m.outbound_content_encoding].join(":");
   $("empty-state").hidden=true; $("packet-detail").hidden=false; renderList();
   if(changed || tokenVersion(m)!==tokenVersion(previousDetail||{})) {cancelTokenRead();tokenWindow=cachedTokenWindow(m);}
   else if(tokenWindow?.state==="unavailable") tokenWindow=null;
-  renderMetrics(m);
   loadTokenWindow();
-  renderOverview(m); renderInputItems(m); renderHeaders(m);
-  if(changed) {state.path=""; state.text=null; $("body-results").hidden=true; $("text-viewer").hidden=true; await loadTree("");if(requestId===state.detailRequest)await loadDiff();}
+  renderOverview(m); renderCompression(m); renderHeaders(m);
+  if(changed)$("diff-content").replaceChildren(el("p","muted",t("加载中…")));
+  if(changed) {state.path=""; state.text=null; $("body-results").hidden=true; await loadTree("");if(requestId===state.detailRequest)await loadDiff();}
   else if(state.tab==="diff") await loadDiff();
 }
-function renderMetrics(m) {
-  const upload=uploadBytes(m);
-  $("metrics").replaceChildren(metric(t("网关上传正文"),bytes(upload),upload===null?t("尚未采集出口大小"):"Content-Encoding: "+(m.outbound_content_encoding||"identity")),tokenMetric());
+function renderCompression(m) {
+  const root=$("compression-content");root.replaceChildren();
+  const sizes=panel(t("正文大小")), original=originalBytes(m), upload=uploadBytes(m);
+  const before=m.overflow_original_wire_bytes??upload;
+  fact(sizes,t("压缩前的请求正文"),bytes(original));
+  fact(sizes,t("传输压缩后（摘要前）"),bytes(before));
+  fact(sizes,t("实际上传正文"),bytes(upload));
+  fact(sizes,t("最终上传编码"),upload===null?"—":m.outbound_content_encoding||"identity");
+  if(original>0 && upload!==null)fact(sizes,t("总体减小"),(100*(1-upload/original)).toFixed(1)+"%");
+  root.append(sizes);
+  const steps=panel(t("压缩与触发记录"));
+  fact(steps,t("Codex 原生 compact 请求"),m.is_compaction?t("是"):t("否"));
+  fact(steps,t("中转生成摘要"),nf.format(m.overflow_compaction_calls||0)+t(" 次"));
+  fact(steps,t("中转复用摘要"),m.overflow_cache_hit?t("是"):t("否"));
+  if(m.overflow_covered_items)fact(steps,t("摘要覆盖历史条目"),nf.format(m.overflow_covered_items));
+  if(m.overflow_compaction_ms!==undefined)fact(steps,t("摘要处理耗时"),nf.format(m.overflow_compaction_ms)+" ms");
+  root.append(steps);
 }
 function bars(title, rows, total) {
   const p=panel(title);
   for(const r of rows) { const row=el("div","bar-row"), label=el("div","bar-label"); label.append(link(r.name,()=>goPath(r.path)),el("span","",bytes(r.bytes)+" · "+(r.bytes/(total||1)*100).toFixed(1)+"%")); const progress=el("progress");progress.max=total||1;progress.value=r.bytes;row.append(label,progress);p.append(row); }
   return p;
 }
-function inputRows(items) {
-  return items.map(i=>{const cell=el("div");cell.append(link(kind(i.kind)+(i.name?" · "+i.name:""),()=>goPath(i.path)),el("span","cell-note",i.label||""));return ["#"+i.index,cell,bytes(i.bytes)];});
-}
 function renderOverview(m) {
   const root=$("overview");root.replaceChildren();
   if(m.inspection!=="json") {root.append(el("p","muted",t("正文未展开：")+(m.inspection_error||t("正文为空"))+t("。转发仍按原始正文进行。")));return;}
-  const note=el("p","muted help",t("字段构成按未压缩 JSON 统计，各字段不能直接换算成独立的压缩上传大小。")); root.append(note);
-  if(m.overflow_original_wire_bytes!==undefined && (m.overflow_compaction_calls || m.overflow_cache_hit || m.overflow_cache_reset)) {
-    root.append(el("p","muted help",t("超限兜底：原始上传 ")+bytes(m.overflow_original_wire_bytes)+t("；本次压缩 ")+(m.overflow_compaction_calls||0)+t(" 次")+(m.overflow_cache_hit?t("；复用已有摘要"):"")+(m.overflow_cache_reset?t("；旧映射已清空"):"")+t("。下方展示的是原始请求的脱敏副本。")));
-  }
   const cols=el("div","two-columns");
   const fields=[...(m.top_fields||[]).map(r=>({...r,path:"/"+r.name.replaceAll("~","~0").replaceAll("/","~1")})),{name:t("字段名、标点及空白"),bytes:m.json_envelope_bytes,path:""}].sort((a,b)=>b.bytes-a.bytes);
   cols.append(bars(t("顶层字段"),fields,m.decoded_bytes));
   const groups=Object.entries(m.input_groups||{}).map(([name,size])=>({name:kind(name),bytes:size,path:"/input"})).sort((a,b)=>b.bytes-a.bytes);
   cols.append(bars(t("input 字段构成"),groups,(m.top_fields.find(r=>r.name==="input")||{}).bytes));root.append(cols);
 }
-function renderInputItems(m) {
-  const root=$("input-items");root.replaceChildren();
-  const items=m.inspection==="json"?[...(m.input_items||[])].sort((a,b)=>b.bytes-a.bytes).slice(0,100):[];
-  if(!items.length) {root.append(el("p","muted",t("暂无可展示的输入条目。")));return;}
-  const biggest=panel(t("输入条目 · 按大小排序"));
-  biggest.append(table([t("位置"),t("类型与内容摘要"),t("原始字节")],inputRows(items)),el("p","muted help",t("显示最大的 100 项；完整输入可在“内容浏览”查看。")));root.append(biggest);
+function clearJsonDownload() {
+  if(requestBodyDownloadUrl)URL.revokeObjectURL(requestBodyDownloadUrl);
+  requestBodyDownloadUrl="";
+  const download=$("json-download");download.hidden=true;download.removeAttribute("href");
 }
 async function loadTree(path) {
-  const id=state.selected; state.path=path; $("tree-query").value=path; const root=$("json-tree");root.replaceChildren(el("span","muted",t("加载中…")));
-  try {const n=await api("/api/packets/"+id+"/node?path="+encodeURIComponent(path));if(state.selected!==id || state.path!==path)return;root.replaceChildren(treeNode(n,id,true));}
-  catch(e){if(state.selected===id && state.path===path)root.replaceChildren(el("span","muted",e.message));}
-}
-function treeNode(node,id,opened=false) {
-  const container=node.kind==="object"||node.kind==="array", branch=el(container?"details":"div","tree-node");
-  if(!container) {const line=el("div","tree-leaf");line.append(link(node.label,()=>loadText(node.path)),el("span","tree-type",node.kind),el("span","tree-size",bytes(node.bytes)),el("span","tree-preview",String(node.preview??"null").slice(0,180)));branch.append(line);return branch;}
-  const summary=el("summary"); summary.append(el("span","tree-key",node.label),el("span","tree-type",node.kind+" · "+node.count+t(" 项")),el("span","tree-size",bytes(node.bytes)));
-  const children=el("div");branch.append(summary,children);let loaded=false;
-  async function page(data,append=false) {if(!append) children.replaceChildren();for(const child of data.children||[])children.append(treeNode(child,id));if(data.next_offset!==null&&data.next_offset!==undefined){const more=link(t("加载更多子节点…"),async()=>{const next=await api("/api/packets/"+id+"/node?"+new URLSearchParams({path:node.path,offset:data.next_offset}));more.remove();await page(next,true);});children.append(more);}}
-  branch.addEventListener("toggle",async()=>{if(!branch.open||loaded)return;loaded=true;try{await page(node.children?node:await api("/api/packets/"+id+"/node?path="+encodeURIComponent(node.path)));}catch(e){children.textContent=e.message;}});
-  if(opened) branch.open=true; return branch;
+  const id=state.selected, sequence=++requestBodySequence;
+  state.path=path;$("tree-query").value=path;$("body-results").hidden=true;
+  const root=$("json-tree");root.textContent=t("加载中…");clearJsonDownload();
+  try {
+    if(requestBodyCache?.id!==id) {
+      requestBodyCache={id,promise:api("/api/packets/"+id+"/export").then(data=>{
+        if(!data.view||!Object.prototype.hasOwnProperty.call(data.view,"body"))throw new Error(t("此请求没有可解析的 JSON 正文"));
+        return data.view.body;
+      })};
+    }
+    let value=await requestBodyCache.promise;
+    if(state.selected!==id||sequence!==requestBodySequence)return;
+    if(path) {
+      if(!path.startsWith("/"))throw new Error(t("JSON 路径不存在。"));
+      for(const segment of path.slice(1).split("/")) {
+        const key=segment.replace(/~1/g,"/").replace(/~0/g,"~");
+        if(value===null||typeof value!=="object"||!Object.prototype.hasOwnProperty.call(value,key))throw new Error(t("JSON 路径不存在。"));
+        value=value[key];
+      }
+    }
+    const text=JSON.stringify(value,null,2);
+    root.textContent=text;root.scrollTop=0;root.scrollLeft=0;
+    requestBodyDownloadUrl=URL.createObjectURL(new Blob([text+"\n"],{type:"application/json;charset=utf-8"}));
+    const download=$("json-download");download.href=requestBodyDownloadUrl;download.download="codex-request-"+id+".json";download.hidden=false;
+  } catch(error) {
+    if(state.selected===id&&sequence===requestBodySequence) {requestBodyCache=null;root.textContent=error.message;}
+  }
 }
 async function goPath(path) {showTab("tree");await loadTree(path);}
-async function loadText(path,append=false) {
-  const id=state.selected, offset=append&&state.text?state.text.next_offset:0;
-  const data=await api("/api/packets/"+id+"/text?"+new URLSearchParams({path,offset}));if(state.selected!==id)return;
-  if(!append) $("text-content").textContent="";$("text-content").append(document.createTextNode(data.text));$("text-path").textContent=path||t("根节点");$("text-viewer").hidden=false;
-  state.text={path,...data};$("text-more").hidden=data.next_offset===null;$("text-position").textContent=t("已显示 ")+nf.format(offset+data.text.length)+" / "+nf.format(data.total_chars)+t(" 字符");
-}
 async function submitTreeQuery() {
   const query=$("tree-query").value.trim();
-  $("text-viewer").hidden=true;
   if(!query || query.startsWith("/")) {
     $("body-results").hidden=true;
     await loadTree(query);
   } else await searchBody(query);
 }
-async function searchBody(query) {const id=state.selected,results=await api("/api/packets/"+id+"/search?q="+encodeURIComponent(query));if(state.selected!==id || $("tree-query").value.trim()!==query)return;const root=$("body-results");root.hidden=false;root.replaceChildren(el("small","muted",t("找到 ")+results.length+t(" 项（最多 60 项）")));for(const hit of results){const n=el("div","search-hit");n.append(link(hit.path||t("根节点"),async()=>{await loadTree(hit.path);await loadText(hit.path);}),el("p","",hit.preview));root.append(n);}}
+async function searchBody(query) {const id=state.selected,results=await api("/api/packets/"+id+"/search?q="+encodeURIComponent(query));if(state.selected!==id || $("tree-query").value.trim()!==query)return;const root=$("body-results");root.hidden=false;root.replaceChildren(el("small","muted",t("找到 ")+results.length+t(" 项（最多 60 项）")));for(const hit of results){const n=el("div","search-hit");n.append(link(hit.path||t("根节点"),()=>loadTree(hit.path)),el("p","",hit.preview));root.append(n);}}
+function packetDiffRows(data) {
+  const change=(before,after)=>before===null?"added":after===null?"removed":after>before?"grow":after<before?"shrink":"changed";
+  const slot=item=>JSON.stringify([item.index,item.kind,item.name||""]);
+  const removed=data.removed||[],oldBySlot=new Map(removed.map(item=>[slot(item),item])),used=new Set(),items=[];
+  const itemRow=(beforeItem,afterItem)=>{
+    const item=afterItem||beforeItem,before=beforeItem?.bytes??null,after=afterItem?.bytes??null;
+    return {field:"input",scope:"item",index:item.index,kind:item.kind,name:item.name||"",before,after,
+      delta:(after??0)-(before??0),change:change(before,after),path:afterItem?(afterItem.path||"/input/"+afterItem.index):null};
+  };
+  for(const item of data.added||[]) {
+    const previous=oldBySlot.get(slot(item));
+    if(previous&&!used.has(previous)) {used.add(previous);items.push(itemRow(previous,item));}
+    else items.push(itemRow(null,item));
+  }
+  for(const item of removed)if(!used.has(item))items.push(itemRow(item,null));
+  items.sort((a,b)=>a.index-b.index||(a.change==="removed"?-1:1));
+  const fields=new Map();
+  for(const field of data.fields||[]) {
+    const before=field.before===0?null:field.before,after=field.after===0?null:field.after;
+    fields.set(field.name,{field:field.name,scope:"field",before,after,delta:(after??0)-(before??0),
+      change:change(before,after),path:after===null?null:"/"+field.name.replaceAll("~","~0").replaceAll("/","~1")});
+  }
+  const names=new Set(fields.keys());if(items.length)names.add("input");
+  const rows=[];
+  for(const name of [...names].sort()) {
+    if(fields.has(name))rows.push(fields.get(name));
+    if(name==="input")rows.push(...items);
+  }
+  return rows;
+}
 async function loadDiff() {
   const id=state.selected,data=await api("/api/packets/"+id+"/diff");if(state.selected!==id)return;const root=$("diff-content");root.replaceChildren();
   if(!data){root.append(el("p","muted",t("还没有可比较的上一条同会话记录。会话 ID 未识别时不自动配对。")));return;}
   const p=panel(t("相对上一条同会话请求"));fact(p,t("网关上传正文变化"),signed(data.upload_delta));fact(p,t("未压缩 JSON 变化"),signed(data.decoded_delta));root.append(p);
-  const f=panel(t("顶层字段变化"));f.append(table([t("字段"),t("之前"),t("当前"),t("差值")],data.fields.map(r=>[r.name,bytes(r.before),bytes(r.after),signed(r.after-r.before)])));root.append(f);
-  for(const [label,items] of [[t("新增或内容改变的条目"),data.added],[t("移除或内容改变前的条目"),data.removed]]) {const n=panel(label+" · "+items.length); n.append(table([t("位置"),t("类型"),t("字节")],items.slice(0,100).map(i=>["#"+i.index,kind(i.kind)+(i.name?" · "+i.name:""),bytes(i.bytes)])));root.append(n);}
-  root.append(el("p","muted help",t("按条目内容指纹与出现次数比较；条目改变会表现为移除旧条目并新增新条目，未据此推断裁剪是否安全。")));
+  const changes=panel(t("变化明细")),rows=packetDiffRows(data);
+  const labels={added:t("新增"),removed:t("移除"),grow:t("增大"),shrink:t("缩小"),changed:t("内容改变")};
+  if(rows.length)changes.append(table([t("所属字段"),t("条目"),t("变化"),t("之前"),t("当前"),t("差值")],rows.map(r=>{
+    const entry=el("div");
+    if(r.scope==="field")entry.append(el("span","muted",t("字段合计")));
+    else {
+      entry.append(r.path?link("#"+r.index,()=>goPath(r.path)):el("span","","#"+r.index));
+      entry.append(el("span","cell-note",kind(r.kind)+(r.name?" · "+r.name:"")));
+    }
+    return [r.field,entry,labels[r.change],bytes(r.before),bytes(r.after),signed(r.delta)];
+  })));
+  else changes.append(el("p","muted",t("没有发生变化。")));
+  root.append(changes);
 }
 function renderHeaders(m) {
   const root=$("headers-content");root.replaceChildren();const p=panel(t("请求与响应"));
   if(m.source!=="live")fact(p,t("数据来源"),t("历史重建（大小为估算）"));
-  fact(p,t("网关上传正文"),bytes(uploadBytes(m)));
-  fact(p,t("上传编码"),uploadBytes(m)===null?"—":m.outbound_content_encoding||"identity");
-  fact(p,t("采集入口正文"),bytes(m.wire_bytes)+" · "+(m.content_encoding||"identity"));
-  fact(p,t("未压缩 JSON"),bytes(m.decoded_bytes));
-  for(const [label,value] of [[t("模型"),m.model||t("未标记")],[t("路径"),m.method+" "+m.path],[t("会话"),m.thread_id||t("未识别")],[t("请求正文 SHA-256"),m.sha256],[t("响应状态"),m.status||t("尚未收到")],[t("响应正文流量"),bytes(m.response_bytes)],[t("首部等待时间"),m.headers_ms===undefined?"—":m.headers_ms+" ms"],[t("采集点"),t("Codex 发送后、现有出口处理前")]])fact(p,label,String(value));root.append(p);
-  const h=panel(t("请求头 · 认证值不保存"));h.append(table([t("名称"),t("可保存的值")],Object.entries(m.headers||{})));root.append(h);
-  root.append(el("p","muted help",t("未知头字段仅保留名称，避免记录认证信息。原始认证头仍会转发给指定上游。响应只记录状态、耗时与流量，不保存正文。")));
+  fact(p,t("模型"),m.model||t("未标记"));
+  fact(p,t("响应状态"),String(m.status||t("尚未收到")));
+  fact(p,t("响应头耗时"),Number.isFinite(m.headers_ms)&&m.headers_ms>=0?m.headers_ms+" ms":"—");
+  fact(p,t("响应流量"),bytes(m.response_bytes));
+  const upload=uploadBytes(m);
+  if(Number.isFinite(m.wire_bytes)&&m.wire_bytes>=0&&upload!==null&&m.wire_bytes!==upload) {
+    fact(p,t("采集入口正文"),bytes(m.wire_bytes)+" · "+(m.content_encoding||"identity"));
+  }
+  root.append(p);
 }
 async function setInterfaceLanguage(language) {
   if(language===uiI18n.language)return;
@@ -547,95 +897,90 @@ async function setInterfaceLanguage(language) {
     state.listVersion="";state.sessionVersion="";
     renderStatus();renderContextModel();
     if(state.status) {
-      const p=state.status.profile;
-      $("link-status").textContent=providerStatus(state.status);
-      if(!("overflow_compaction_enabled" in state.status))$("overflow-message").textContent=t("当前中转暂不支持此功能。");
+      if(!("packet_size_protection_enabled" in state.status))$("packet-size-message").textContent=t("当前中转暂不支持此功能。");
     }
     if(state.detail) {
-      renderMetrics(state.detail);renderOverview(state.detail);renderInputItems(state.detail);renderHeaders(state.detail);
+      renderOverview(state.detail);renderHeaders(state.detail);
       const selected=state.selected, path=state.path, query=$("tree-query").value, searchVisible=!$("body-results").hidden;
       await loadTree(path);
       if(state.selected===selected && state.path===path && $("tree-query").value===path) {
         $("tree-query").value=query;
         if(searchVisible)await searchBody(query);
       }
-      if(state.text) {
-        $("text-path").textContent=state.text.path||t("根节点");
-        $("text-position").textContent=t("已显示 ")+nf.format($("text-content").textContent.length)+" / "+nf.format(state.text.total_chars)+t(" 字符");
-      }
       await loadDiff();
     }
     if(state.status)await refreshFilters();
-  } finally {for(const button of buttons)button.disabled=false;}
+  } finally {for(const button of buttons)button.disabled=settingsSaving;renderLanguageSelection();}
 }
-action("language-zh",()=>setInterfaceLanguage("zh"));
-action("language-en",()=>setInterfaceLanguage("en"));
-action("capture-toggle",async()=>{await api("/api/settings",{capture_enabled:!state.status.capture_enabled});await refreshStatus();});
-action("settings-open",openSettings);action("empty-connect",openSettings);action("settings-close",()=>$("settings-dialog").close());
+for(const button of document.querySelectorAll("#language-toggle button"))action(button.id,()=>{
+  if(!settingsEditing||settingsSaving)return;
+  settingsLanguage=button.dataset.language;renderLanguageSelection();updateSettingsSaveState();
+});
+action("settings-open",openSettings);action("empty-connect",openSettings);
+function discardSettingsDraft() {
+  settingsEditing=false;settingsBaseline=null;settingsLanguage=null;
+  if(state.status)fillSettings();if(contextSettings)fillContextSettings(contextSettings);renderUpdates();
+  setSettingsMessage("");
+}
+function closeSettings() {
+  if(settingsSaving)return;
+  $("settings-dialog").close();discardSettingsDraft();
+}
+action("settings-close",closeSettings);action("settings-cancel",closeSettings);
+$("settings-dialog").addEventListener("cancel",event=>{event.preventDefault();closeSettings();});
+$("settings-dialog").addEventListener("close",()=>{
+  if(!$("settings-dialog").open)discardSettingsDraft();
+});
+$("settings-dialog").querySelector(".settings-content").addEventListener("input",()=>updateSettingsSaveState());
+$("settings-dialog").querySelector(".settings-content").addEventListener("change",()=>updateSettingsSaveState());
+action("settings-save",saveSettings);
 action("ui-refresh",()=>{if(state.status?.ui_live_reload)location.reload();});
-$("ui-development").addEventListener("change",async()=>{
-  const checkbox=$("ui-development"),previous=!!state.status?.ui_development?.enabled;
-  checkbox.disabled=true;
-  try {
-    await api("/api/ui-development",{enabled:checkbox.checked});
-    location.reload();
-  } catch(error) {checkbox.checked=previous;fail(error);}
-  finally {checkbox.disabled=!!state.status?.ui_read_only;}
+action("context-reset",()=>{
+  if(settingsSaving||!contextSettings||state.status.ui_read_only)return;
+  for(const key of ["context","compact"])$(key+"-default").checked=true;
+  syncContextDefaults();contextMessage("");updateSettingsSaveState();
 });
-action("entry-port-save",async()=>{
-  const input=$("entry-port");if(!input.reportValidity())return;
-  const result=await api("/api/entry-port",{port:Number(input.value)});
-  state.status.entry_port=result;fillEntryPort();
-  const node=$("entry-port-message");node.textContent=t(result.pending?"已保存端口。入口服务重新启动后应用，重启 ChatGPT App 生效。":"端口设置已保存，当前端口无需切换。");node.hidden=false;
-});
-action("context-save",()=>saveContextSettings());action("context-reset",()=>saveContextSettings(true));
 $("updates-check").addEventListener("click",()=>performUpdate("check"));
 $("updates-install").addEventListener("click",()=>performUpdate("install"));
-$("automatic-updates").addEventListener("change",async()=>{
-  updateBusy=true;
-  const enabled=$("automatic-updates").checked;
-  try {updateStatus=await api("/api/updates",{action:"configure",automatic:enabled});}
-  catch(error){updateStatus={...updateStatus,state:"error",error:error.message};}
-  finally {updateBusy=false;renderUpdates();}
-});
-setInterval(()=>{if($("settings-dialog").open && !updateBusy && updateStatus && (["checking","downloading","upgrading"].includes(updateStatus.state)||updateStatus.automatic))loadUpdates();},2000);
-$("request-compression").addEventListener("change",async()=>{
-  const select=$("request-compression"),previous=state.status.request_compression;
-  select.disabled=true;
-  try {
-    const result=await api("/api/settings",{request_compression:select.value});state.status=result;
-    const node=$("compression-message");node.textContent=result.request_compression==="zstd"?t("已开启请求压缩。"):t("已关闭请求压缩。");node.hidden=false;
-  } catch(error) {select.value=previous;fail(error);} finally {select.disabled=false;}
-});
-$("overflow-compaction").addEventListener("change",async()=>{
-  const checkbox=$("overflow-compaction"),previous=!!state.status.overflow_compaction_enabled;
-  checkbox.disabled=true;
-  try {
-    const result=await api("/api/settings",{overflow_compaction_enabled:checkbox.checked});state.status=result;
-    checkbox.checked=!!result.overflow_compaction_enabled;
-    const node=$("overflow-message");node.textContent=checkbox.checked?t("已开启超限兜底。"):t("已关闭超限兜底。");node.hidden=false;
-  } catch(error) {checkbox.checked=previous;fail(error);} finally {checkbox.disabled=false;}
-});
+setInterval(()=>{if($("settings-dialog").open&&!settingsSaving&&!updateBusy&&["checking","downloading","upgrading"].includes(updateStatus?.state))loadUpdates();},2000);
+for(const button of document.querySelectorAll("#request-compression button"))action(button.id,()=>requestCompressionChange(button.dataset.compression));
+action("compression-confirm-cancel",cancelCompressionChange);action("compression-confirm-apply",confirmCompressionChange);
+$("compression-confirm-dialog").addEventListener("cancel",event=>{event.preventDefault();cancelCompressionChange();});
+$("compression-confirm-dialog").addEventListener("close",()=>{if(!$("compression-confirm-dialog").open)compressionTarget=null;});
+function fillPacketProtection() {
+  const s=state.status,supported="packet_size_protection_enabled" in s;
+  if(!settingsEditing){$("packet-size-protection").checked=!!s.packet_size_protection_enabled;$("budget").value=s.budget_bytes/1000;}
+  $("budget").min=(s.packet_size_min_bytes||1024)/1000;$("budget").max=(s.packet_size_max_bytes||134217728)/1000;
+  for(const id of ["packet-size-protection","budget"])$(id).disabled=settingsSaving||!!s.ui_read_only||!supported;
+  $("packet-size-message").hidden=supported;
+  if(!supported)$("packet-size-message").textContent=t("当前中转暂不支持此功能。");
+}
 for(const key of ["context","compact"]) {
   $(key+"-tokens").addEventListener("input",()=>{$(key+"-range").value=$(key+"-tokens").value;contextMessage("");});
   $(key+"-range").addEventListener("input",()=>{$(key+"-tokens").value=$(key+"-range").value;contextMessage("");});
   $(key+"-default").addEventListener("change",()=>{syncContextDefaults();contextMessage("");});
 }
-action("runtime-settings-save",async()=>{
-  const values={};
-  if(state.status.start_on_login_supported)values.start_on_login=$("start-on-login").checked;
-  if(state.status.capacity_retry_supported)values.capacity_retry_enabled=$("capacity-retry").checked;
-  const imageChanged=state.status.image_isolation_supported&&($("image-isolation").checked!==!!state.status.image_isolation_enabled);
-  if(state.status.image_isolation_supported)values.image_isolation_enabled=$("image-isolation").checked;
-  await api("/api/settings",values);await refreshStatus(true);
-  $("runtime-settings-message").textContent=t(imageChanged?"图片工具设置已保存，请重新加载 Codex 后继续使用。":"运行设置已保存。");$("runtime-settings-message").hidden=false;
+action("image-save-dir-reset",()=>{
+  if(settingsSaving||state.status.ui_read_only||!state.status.image_save_dir_supported)return;
+  $("image-save-dir").value=imageDefaultDirectory();updateSettingsSaveState();
 });
-action("settings-save",async()=>{await api("/api/settings",{budget_bytes:Number($("budget").value),max_storage_mb:Number($("storage-limit").value),max_packets:Number($("packet-limit").value)});await refreshStatus(true);message(t("观察设置已保存。"));if(state.selected)await selectPacket(state.selected,true);});
-async function linkAction(which) {await api("/api/link",{action:which,...(which==="activate"?{upstream:state.status.upstream}:{})});await refreshStatus(true);message((which==="activate"?t("已接入。"):t("已恢复原配置。"))+t("重启 ChatGPT App 生效。"));}
-action("link-activate",()=>linkAction("activate"));action("link-restore",()=>linkAction("restore"));
+async function linkAction(which) {
+  const s=state.status;
+  if(linkSaving||settingsSaving||compressionSaving||!s||s.ui_read_only)return;
+  if(which==="activate"?(s.profile.active||s.profile.config_error):!s.profile.can_restore)return;
+  linkSaving=which;linkRevision++;renderConnectionActions();updateSettingsSaveState(false);
+  try {
+    await api("/api/link",{action:which,...(which==="activate"?{upstream:s.upstream}:{})});
+    linkRevision++;await refreshStatus(true);
+    if(which==="activate"&&(!state.status.profile.active||state.status.profile.config_error||state.status.provider_sync_error))
+      throw Error(t("接入未完成，请检查 Codex 配置后重试。"));
+    message((which==="activate"?t("已接入。"):t("已恢复原配置。"))+t("重启 ChatGPT App 生效。"));
+  } finally {linkSaving="";linkRevision++;renderConnectionActions();updateSettingsSaveState(false);}
+}
+action("header-connect",()=>linkAction("activate"));action("link-activate",()=>linkAction("activate"));action("link-restore",()=>linkAction("restore"));
 $("session-search").addEventListener("input",renderSessions);
 $("packet-list").addEventListener("scroll",loadMorePackets,{passive:true});
-action("tree-query-go",submitTreeQuery);action("text-close",()=>{$("text-viewer").hidden=true;});action("text-more",()=>loadText(state.text.path,true));
+action("tree-query-go",submitTreeQuery);
 for(const b of document.querySelectorAll("[data-tab]")) b.addEventListener("click",()=>showTab(b.dataset.tab));
 for(const b of document.querySelectorAll("[data-sort]")) b.addEventListener("click",()=>{
   const key=b.dataset.sort;
@@ -658,11 +1003,11 @@ async function poll() {
     await refreshStatus();
     const revision=state.status.storage.revision, pending=[];
     if(state.filterRevision!==revision)pending.push(refreshFilters());
-    if(!state.older && state.listRevision!==revision)pending.push(loadPackets(false,true));
+    if(!state.older && (state.listRevision!==revision || state.sort==="input_tokens" && (tokenSortCache?.dirty || tokenSortCache?.expires<=Date.now())))pending.push(loadPackets(false,true));
     await Promise.all(pending);
-    await Promise.all([refreshSessionSummaries(),loadTokenWindow()]);
+    await Promise.all([refreshSessionSummaries(),loadTokenWindow()]);loadListTokens();
   } catch(e) {fail(e);} finally {state.polling=false;}
 }
 const pollTimer=setInterval(poll,2000);
-document.addEventListener("visibilitychange",()=>{if(!document.hidden){loadTokenWindow();loadMorePackets();}});
-(async()=>{state.polling=true;try{await Promise.all([refreshStatus(true),refreshFilters(),loadPackets()]);await refreshSessionSummaries();if(!state.status.profile.active && state.status.storage.count===0)await openSettings();}finally{state.polling=false;}})().catch(fail);
+document.addEventListener("visibilitychange",()=>{if(!document.hidden){loadTokenWindow();loadMorePackets();loadListTokens();}});
+(async()=>{state.polling=true;try{await Promise.all([refreshStatus(true),refreshFilters(),loadPackets()]);await refreshSessionSummaries();}finally{state.polling=false;}})().catch(fail);

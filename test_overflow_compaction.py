@@ -1,6 +1,7 @@
 """Overflow behavior tests; no real model requests or user chat mutations."""
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
+from copy import deepcopy
 import hashlib
 import http.client
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -79,6 +80,41 @@ class OverflowTests(unittest.TestCase):
         self.assertFalse(self.calls)
         self.assertFalse(self.compactor.path.exists())
         self.assertFalse(meta["overflow_cache_reset"])
+
+    def test_lite_reasoning_context_survives_every_checkpoint(self):
+        reasoning = {"effort": "max", "summary": "detailed", "context": "all_turns"}
+        _, _, meta = self.run_prepare(make_body(self.items, reasoning=reasoning))
+        self.assertGreater(meta["overflow_compaction_calls"], 0)
+        self.assertTrue(self.calls)
+        self.assertTrue(all(call["reasoning"] == reasoning for call in self.calls))
+
+    def test_checkpoint_follows_native_extensions_without_mutating_original(self):
+        original = {"model": "test", "input": [message(1)],
+                    "reasoning": {"effort": "max", "context": "future-native-mode", "future_option": {"enabled": True}},
+                    "include": ["reasoning.encrypted_content", "future.output"],
+                    "future_protocol": {"mode": "native"}, "service_tier": "auto",
+                    "text": {"verbosity": "low", "format": {"type": "json_object"}},
+                    "previous_response_id": "old-response", "conversation": "old-conversation",
+                    "max_output_tokens": 1, "background": True,
+                    "client_metadata": {"future_client": "native", "x-codex-turn-metadata": json.dumps({
+                        "request_kind": "turn", "future_turn": {"enabled": True},
+                        "compaction": {"future_compaction": "native"}})}}
+        before = deepcopy(original)
+        value = self.compactor._checkpoint_request(original, original["input"], "test-key")
+        for name in ("reasoning", "include", "future_protocol", "service_tier"):
+            self.assertEqual(value[name], original[name])
+        self.assertEqual(value["text"], {"verbosity": "low"})
+        for name in ("previous_response_id", "conversation", "max_output_tokens"):
+            self.assertNotIn(name, value)
+        self.assertFalse(value["background"])
+        self.assertEqual(value["client_metadata"]["future_client"], "native")
+        turn = json.loads(value["client_metadata"]["x-codex-turn-metadata"])
+        self.assertEqual(turn["request_kind"], "compaction")
+        self.assertEqual(turn["future_turn"], {"enabled": True})
+        self.assertEqual(turn["compaction"]["future_compaction"], "native")
+        value["reasoning"]["future_option"]["enabled"] = False
+        value["input"][0]["content"][0]["text"] = "changed only in checkpoint"
+        self.assertEqual(original, before)
 
     def test_first_overflow_fits_each_request_and_preserves_non_input_bytes(self):
         raw = make_body(self.items, tools=[{"type": "function", "name": "business_tool", "parameters": {"type": "object"}}],
@@ -344,6 +380,15 @@ class FakeModel(BaseHTTPRequestHandler):
         metadata = value.get("client_metadata", {})
         compact = "compaction" in metadata.get("x-codex-turn-metadata", "")
         self.server.requests.append((len(raw), compact, value))
+        if (self.headers.get("X-OpenAI-Internal-Codex-Responses-Lite")
+                and value.get("reasoning", {}).get("context") != "all_turns"):
+            body = encode({"error": {"message": "Lite requires reasoning.context=all_turns",
+                                     "param": "reasoning.context", "code": "unsupported_value"}})
+            self.send_response(400)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
         body = (b"data: {\"type\":\"response.created\"}\n\n" if self.server.fail and compact else complete())
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
@@ -363,7 +408,7 @@ class OverflowRelayTests(unittest.TestCase):
         self.up.requests, self.up.fail = [], False
         self.server = InspectorServer(("127.0.0.1", 0), root / "data", self.config,
                                       "http://127.0.0.1:" + str(self.up.server_port) + "/v1")
-        self.server.settings.update(overflow_compaction_enabled=True, budget_bytes=4000, request_compression="off")
+        self.server.settings.update(packet_size_protection_enabled=True, budget_bytes=4000, request_compression="off")
         for server in (self.up, self.server):
             threading.Thread(target=server.serve_forever, daemon=True).start()
         self.addCleanup(self.cleanup)
@@ -374,10 +419,11 @@ class OverflowRelayTests(unittest.TestCase):
             server.server_close()
         self.temp.cleanup()
 
-    def post(self, items, session="relay-test"):
+    def post(self, items, session="relay-test", headers=None, **fields):
         client = http.client.HTTPConnection("127.0.0.1", self.server.port, timeout=10)
         path = self.server.endpoint.split(str(self.server.port), 1)[1] + "/responses"
-        client.request("POST", path, make_body(items), {"Content-Type": "application/json", "session_id": session})
+        client.request("POST", path, make_body(items, **fields),
+                       {"Content-Type": "application/json", "session_id": session, **(headers or {})})
         response = client.getresponse()
         status, body = response.status, response.read()
         client.close()
@@ -404,8 +450,29 @@ class OverflowRelayTests(unittest.TestCase):
         self.assertTrue(self.up.requests)
         self.assertTrue(all(compact for _, compact, _ in self.up.requests))
 
+    def test_lite_http_compaction_keeps_required_context_and_fits_budget(self):
+        reasoning = {"effort": "max", "summary": "detailed", "context": "all_turns"}
+        status, body = self.post([message(i) for i in range(14)], session="lite-test",
+                                 headers={"X-OpenAI-Internal-Codex-Responses-Lite": "1"}, reasoning=reasoning)
+        self.assertEqual(status, 200)
+        self.assertEqual(body, complete())
+        self.assertTrue(any(compact for _, compact, _ in self.up.requests))
+        self.assertEqual(sum(not compact for _, compact, _ in self.up.requests), 1)
+        self.assertTrue(all(size <= 4000 for size, _, _ in self.up.requests))
+        self.assertTrue(all(value["reasoning"] == reasoning for _, _, value in self.up.requests))
+
+    def test_upstream_parameter_error_is_visible_and_original_is_not_sent(self):
+        status, body = self.post([message(i) for i in range(14)],
+                                 headers={"X-OpenAI-Internal-Codex-Responses-Lite": "1"})
+        self.assertEqual(status, 502)
+        error = json.loads(body)["error"]
+        self.assertEqual(error["code"], "overflow_compaction_upstream_error")
+        self.assertIn("reasoning.context=all_turns", error["message"])
+        self.assertTrue(self.up.requests)
+        self.assertTrue(all(compact for _, compact, _ in self.up.requests))
+
     def test_disabled_feature_is_existing_passthrough(self):
-        self.server.settings["overflow_compaction_enabled"] = False
+        self.server.settings["packet_size_protection_enabled"] = False
         self.assertEqual(self.post([message(i) for i in range(14)])[0], 200)
         self.assertEqual(len(self.up.requests), 1)
         self.assertGreater(self.up.requests[0][0], 4000)

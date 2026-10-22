@@ -3,8 +3,10 @@ import base64
 import binascii
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
+import tempfile
 import threading
 import time
 import uuid
@@ -19,6 +21,29 @@ ATTACHMENT_TTL = 7 * 24 * 3600
 MIME_EXTENSIONS = {"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp", "image/gif": ".gif"}
 
 
+def resolve_image_directory(data_dir, value=""):
+    if not isinstance(value, str) or "\x00" in value:
+        raise ValueError("图片保存路径必须是绝对文件夹路径。")
+    if not value.strip():
+        return (Path(data_dir) / "image-attachments").resolve()
+    try:
+        directory = Path(os.path.expandvars(value.strip())).expanduser()
+        if not directory.is_absolute():
+            raise ValueError("图片保存路径必须是绝对文件夹路径。")
+        return directory.resolve()
+    except (OSError, RuntimeError):
+        raise ValueError("无法访问图片保存路径，请检查文件夹路径。") from None
+
+
+def check_image_directory(directory):
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryFile(prefix=".codex-image-check-", dir=directory):
+            pass
+    except OSError:
+        raise ValueError("图片保存路径必须是可写的文件夹。") from None
+
+
 class ImageIsolationFailure(Exception):
     def __init__(self, code, message, status=422):
         self.code, self.message, self.status = code, message, status
@@ -26,8 +51,9 @@ class ImageIsolationFailure(Exception):
 
 
 class ImageIsolation:
-    def __init__(self, directory):
-        self.directory = Path(directory) / "image-attachments"
+    def __init__(self, directory, attachment_dir=""):
+        self.directory = resolve_image_directory(directory, attachment_dir)
+        self.lock_path = Path(directory) / "image-attachments.lock"
         self.lock = threading.RLock()
 
     def _store(self, image_url, protected):
@@ -51,7 +77,7 @@ class ImageIsolation:
         if not signature_ok[match[1]]:
             raise ImageIsolationFailure("image_invalid_data", "图片格式与声明不一致，未上传原始图片。")
         name = hashlib.sha256(payload).hexdigest() + MIME_EXTENSIONS[match[1]]
-        with self.lock, file_lock(self.directory.parent / "image-attachments.lock"):
+        with self.lock, file_lock(self.lock_path):
             self.directory.mkdir(parents=True, exist_ok=True)
             target = self.directory / name
             if target.is_symlink():
@@ -143,10 +169,7 @@ class ImageIsolation:
                     if part.get("file_id"):
                         raise ImageIsolationFailure("image_reference_unsupported", "图片文件 ID 无法转换成本地路径，原图未转发。")
                     image_path = self._store(part.get("image_url"), protected)
-                    text = ("[本地图片附件：" + str(image_path) + "]\n"
-                            "当前主请求未附带图片内容。需要查看时调用 isolated_vision.analyze_image，"
-                            "将上述绝对路径作为 path，并根据当前任务提出识图问题。工具只返回文字；"
-                            "不要读取、编码图片字节或将图片重新附入主会话。")
+                    text = str(image_path)
                     index = index or JsonBytes(decoded)
                     a, b = index.spans[f"/input/{i}/content/{j}"]
                     replacements.append((a, b, encode({"type": "input_text", "text": text})))

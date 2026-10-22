@@ -55,6 +55,7 @@ class UpdateTests(unittest.TestCase):
         arguments = launch.call_args.args[0]
         self.assertEqual(Path(arguments[0]).name, ASSET)
         self.assertIn("--quiet", arguments)
+        self.assertIn("--upgrade", arguments)
         self.assertEqual(arguments[arguments.index("--port") + 1], "47844")
         self.assertEqual(arguments[arguments.index("--data-dir") + 1], str(self.directory.resolve()))
         self.assertNotIn("fixture-credential", self.updates.state_path.read_text())

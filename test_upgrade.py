@@ -21,11 +21,12 @@ class UpgradeTests(unittest.TestCase):
         self.config = self.root / "config.toml"
         self.config.write_text('model="fixture"\n', encoding="utf8")
         hashes = {}
-        for name in ("CodexPacketInspector.exe", "CodexInspectorRouter.exe"):
+        for name in ("CodexPacketInspector.exe",):
             raw = (name + "-verified").encode()
             (self.payload / name).write_bytes(raw)
             hashes[name] = hashlib.sha256(raw).hexdigest()
-        atomic_json(self.payload / "manifest.json", {"version": "9.0.0", "router_protocol": 1, "sha256": hashes})
+        atomic_json(self.payload / "manifest.json", {"version": "9.0.0", "router_protocol": 1,
+                                                     "entry_mode": "shared", "sha256": hashes})
         self.engine = Upgrade(self.payload, self.data, self.config, 47844)
         self.engine._start_candidate = Mock(side_effect=lambda *_args: setattr(self.engine, "candidate", "2" * 32))
         self.engine._stop_candidate = Mock()
@@ -55,6 +56,31 @@ class UpgradeTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "未替换入口"):
                 self.engine.run()
         self.engine._start_candidate.assert_not_called()
+
+    def test_unknown_entry_mode_never_touches_the_running_service(self):
+        path = self.payload / "manifest.json"
+        manifest = json.loads(path.read_text(encoding="utf8"))
+        manifest["entry_mode"] = "unknown"
+        atomic_json(path, manifest)
+        with patch("packet_inspector.upgrade.local_json") as api:
+            with self.assertRaisesRegex(ValueError, "入口模式不兼容"):
+                self.engine.run()
+        api.assert_not_called()
+        self.engine._start_candidate.assert_not_called()
+
+    def test_old_separate_entry_payload_remains_compatible(self):
+        path = self.payload / "manifest.json"
+        manifest = json.loads(path.read_text(encoding="utf8"))
+        manifest.pop("entry_mode")
+        raw = b"legacy-entry-payload"
+        (self.payload / "CodexInspectorRouter.exe").write_bytes(raw)
+        manifest["sha256"]["CodexInspectorRouter.exe"] = hashlib.sha256(raw).hexdigest()
+        atomic_json(path, manifest)
+        atomic_json(self.data / "router-state.json", {"active": "1" * 32, "token": "fixture-control"})
+        self.engine._wait_entry = Mock(return_value={"worker_id": "2" * 32})
+        with patch("packet_inspector.upgrade.local_json", side_effect=self.health):
+            self.engine.run()
+        self.engine._start_candidate.assert_called_once()
 
     def test_post_switch_failure_switches_back_before_stopping_candidate(self):
         atomic_json(self.data / "router-state.json", {"active": "1" * 32, "token": "fixture-control"})

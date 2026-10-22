@@ -1,6 +1,7 @@
 """Windows WebView2 window; the forwarding service runs in a separate process."""
 from __future__ import annotations
 
+import argparse
 import ctypes
 from ctypes import wintypes
 import hashlib
@@ -15,8 +16,10 @@ from urllib.error import URLError
 from urllib.request import Request, ProxyHandler, build_opener
 
 from .server import argument_parser, default_data_dir
-from .desktop_ui import DesktopUI, ui_build_id, window_geometry
-from .frontend_dev import CONFIG_NAME
+from .desktop_ui import DesktopUI, window_geometry
+from .app_icon import APP_ICON
+from .frontend_dev import load_profile, validate_ui_dir, resolve_profile, remember_profile, installed_profile
+from .window_lifecycle import WindowLifecycle
 
 
 def app_command():
@@ -75,10 +78,23 @@ def ensure_service(options):
     raise RuntimeError("后台服务未能启动，请查看数据目录中的 startup-error.txt。")
 
 
-class SingleWindow:
-    """One UI per local profile. Repeated launches signal the existing window."""
+def tray_available(data_dir, status):
+    if status.get("desktop_tray"):
+        return True
+    try:
+        runtime = json.loads((Path(data_dir) / "runtime.json").read_text(encoding="utf8"))
+        user = ctypes.WinDLL("user32", use_last_error=True)
+        user.FindWindowW.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR]
+        user.FindWindowW.restype = wintypes.HWND
+        return bool(user.FindWindowW("CodexPacketInspectorTray-" + str(int(runtime["pid"])), None))
+    except (OSError, ValueError, KeyError, TypeError):
+        return False
 
-    def __init__(self, data_dir, port, frontend_id=""):
+
+class SingleWindow:
+    """One UI per data directory across builds, modes, and entry ports."""
+
+    def __init__(self, data_dir):
         self.kernel = ctypes.WinDLL("kernel32", use_last_error=True)
         self.kernel.CreateEventW.argtypes = [ctypes.c_void_p, wintypes.BOOL, wintypes.BOOL, wintypes.LPCWSTR]
         self.kernel.CreateEventW.restype = wintypes.HANDLE
@@ -87,7 +103,9 @@ class SingleWindow:
         self.kernel.SetEvent.argtypes = [wintypes.HANDLE]
         self.kernel.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
         self.kernel.CloseHandle.argtypes = [wintypes.HANDLE]
-        identity = hashlib.sha256((str(Path(data_dir).resolve()).casefold() + ":" + str(port) + ":" + frontend_id).encode()).hexdigest()[:20]
+        # Editing the entry port or switching EXEs must not open another UI for
+        # the same settings and records. A repeated launch only raises its window.
+        identity = hashlib.sha256(str(Path(data_dir).resolve()).casefold().encode()).hexdigest()[:20]
         prefix = "Local\\CodexPacketInspector-" + identity
         self.event = self.kernel.CreateEventW(None, False, False, prefix + "-show")
         ctypes.set_last_error(0)
@@ -124,39 +142,47 @@ def run(arguments):
         raise RuntimeError("桌面窗口当前支持 Windows。其他平台可使用 --background 启动服务。")
     parser = argument_parser()
     parser.add_argument("--desktop-check", type=Path, help="isolated packaged UI verification report")
+    parser.add_argument("--desktop-check-ui", type=Path, help=argparse.SUPPRESS)
     options = parser.parse_args(arguments)
+    profile = load_profile()
+    ui_dir = profile.ui_dir
     if options.desktop_check:
         report = options.desktop_check.resolve()
         if (options.data_dir.resolve() == default_data_dir().resolve()
                 or not report.is_relative_to(options.data_dir.resolve())):
             raise ValueError("桌面验证只允许使用隔离的数据目录。")
-    instance = SingleWindow(options.data_dir, options.port, ui_build_id())
+    if options.desktop_check_ui:
+        if (not options.desktop_check or installed_profile(options.data_dir).get("mode", profile.mode) != "dev"
+                or not options.desktop_check_ui.resolve().is_relative_to(options.data_dir.resolve())):
+            raise ValueError("测试前端只允许用于隔离的开发版桌面验证。")
+        ui_dir = validate_ui_dir(options.desktop_check_ui.resolve())
+    instance = SingleWindow(options.data_dir)
     ui = None
     try:
         if instance.existing:
             instance.signal()
             return 0
-        ensure_service(options)
-        ui = DesktopUI(options.port, development_config=options.data_dir / CONFIG_NAME).start()
+        profile = resolve_profile(profile, options.data_dir)
+        if not options.desktop_check_ui:
+            ui_dir = profile.ui_dir
+        status = ensure_service(options)
+        remember_profile(options.data_dir, profile)
+        ui = DesktopUI(options.port, ui_dir=ui_dir, live_reload=profile.development).start()
         import webview
 
         webview.settings["ALLOW_DOWNLOADS"] = True
         # Explicitly require Chromium. Do not fall back to an external browser or IE.
-        window = webview.create_window("Codex 请求优化器", ui.ui_url,
-                                       **window_geometry(), maximized=False,
+        title = "Codex 请求优化器 · 开发版" if profile.development else "Codex 请求优化器"
+        window = webview.create_window(title, ui.ui_url,
+                                       **window_geometry(ui_dir), maximized=False,
                                        text_select=True, background_color="#f5f7fb", hidden=bool(options.desktop_check))
         loaded = threading.Event()
-        closed = threading.Event()
+        lifecycle = WindowLifecycle(window, lambda: tray_available(options.data_dir, status))
         window.events.loaded += loaded.set
-        window.events.closed += closed.set
 
         def show():
-            if closed.is_set():
-                return
             try:
-                if str(window.native.WindowState) == "Minimized":
-                    window.restore()
-                window.show()
+                lifecycle.show()
             except Exception:
                 pass
 
@@ -164,23 +190,26 @@ def run(arguments):
             if not loaded.wait(25):
                 if options.desktop_check:
                     options.desktop_check.write_text(json.dumps({"passed": False, "error": "page_load_timeout"}), encoding="utf-8")
-                    window.destroy()
+                    lifecycle.exit()
                 return
             threading.Thread(target=instance.watch, args=(show,), daemon=True).start()
             if options.desktop_check:
-                from .desktop_check import check_window
-                check_window(window, options, instance)
+                if options.desktop_check.with_suffix(".hold").exists():
+                    from .desktop_upgrade_check import check_window
+                    check_window(window, options, instance)
+                else:
+                    from .desktop_check import check_window
+                    check_window(window, options, instance, ui)
                 return
-            # The UI only owns its disposable localhost listener. Forwarding
-            # continues in the existing service when this window closes.
-            while not closed.wait(1):
+            # Closing hides the UI; the tray or an upgrade owns its real exit.
+            while not lifecycle.closed.wait(1):
                 try:
                     local_api(options.port, "/health")
                 except (OSError, ValueError):
-                    window.destroy()
+                    lifecycle.exit()
                     return
 
-        webview.start(workers, gui="edgechromium", private_mode=True, debug=False)
+        webview.start(workers, gui="edgechromium", private_mode=True, debug=False, icon=str(APP_ICON))
         return 0
     finally:
         if ui is not None:

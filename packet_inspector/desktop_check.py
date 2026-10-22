@@ -1,17 +1,12 @@
-"""Hidden native-window checks, available only with an isolated --desktop-check."""
+"""Native WebView2 integration checks, restricted to an isolated data directory."""
 from __future__ import annotations
 
 import json
 import time
 
-from .frontend_dev import CONFIG_NAME, FrontendDevelopment
 
-
-def check_window(window, options, instance):
-    if options.desktop_check.with_suffix(".hold").exists():
-        from .desktop_upgrade_check import check_window as check_upgrade
-        return check_upgrade(window, options, instance)
-    report = {"passed": False}
+def check_window(window, options, instance, ui):
+    report = {"passed": False, "development": ui.live_reload}
     loads = [0]
 
     def loaded():
@@ -19,83 +14,71 @@ def check_window(window, options, instance):
 
     window.events.loaded += loaded
 
-    def wait_until(predicate, message, timeout=8):
+    def wait_until(predicate, message, timeout=10):
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             try:
-                if predicate():
-                    return
+                result = predicate()
+                if result:
+                    return result
             except Exception:
-                pass  # A navigation may briefly replace the JavaScript context.
+                pass
             time.sleep(.05)
         raise AssertionError(message)
 
     def state():
         return window.evaluate_js("""({
-          ready: document.getElementById('app-version').textContent.includes('0.'),
-          refreshHidden: document.getElementById('ui-refresh').hidden,
-          developerHidden: document.getElementById('ui-development-settings').hidden,
-          enabled: document.getElementById('ui-development').checked,
-          dialog: document.getElementById('settings-dialog').open
+          ready: typeof state !== 'undefined' && !!state.status?.version,
+          refreshHidden: document.getElementById('ui-refresh')?.hidden,
+          developerSettings: !!document.getElementById('ui-development-settings'),
+          reloadScript: !!document.querySelector('script[src="/__dev__/reload.js"]'),
+          dialog: document.getElementById('settings-dialog')?.open
         })""")
 
     def ready():
-        wait_until(lambda: state()["ready"], "native UI did not become ready")
+        return wait_until(lambda: state()["ready"], "status did not render")
 
-    def toggle(enabled):
-        window.evaluate_js("document.getElementById('settings-open').click(); true")
-        wait_until(lambda: state()["dialog"], "settings did not open")
-        previous = loads[0]
-        window.evaluate_js("setTimeout(() => document.getElementById('ui-development').click(), 50); true")
-        wait_until(lambda: loads[0] > previous, "developer switch did not reload the native window")
-        ready()
-        result = state()
-        assert result["enabled"] is enabled
-        assert result["refreshHidden"] is not enabled
-        assert not result["developerHidden"]
-
-    def key(expression, should_reload):
-        previous = loads[0]
-        window.evaluate_js("setTimeout(() => window.dispatchEvent(new KeyboardEvent('keydown', " + expression + ")), 50); true")
-        if should_reload:
-            wait_until(lambda: loads[0] > previous, "native refresh shortcut did not reload")
+    def reload(action, expected=True):
+        prior = loads[0]
+        window.evaluate_js("setTimeout(() => {" + action + "}, 50); true")
+        if expected:
+            wait_until(lambda: loads[0] > prior, "native page did not reload")
             ready()
         else:
             time.sleep(.3)
-            assert loads[0] == previous, "a development shortcut was still active while off"
+            assert loads[0] == prior, "release unexpectedly reloaded"
 
     try:
         ready()
-        mode = FrontendDevelopment(options.data_dir / CONFIG_NAME)
-        if not mode.available:
-            result = state()
-            assert result["refreshHidden"] and result["developerHidden"]
-            key("{key:'F5'}", False)
-            key("{key:'r',ctrlKey:true}", False)
-            report.update(passed=True, release_developer_controls_hidden=True,
-                          release_shortcuts_inactive=True)
-        else:
-            assert mode.enabled
-            assert mode.directory.is_relative_to(options.data_dir.resolve()), "check resources must be isolated"
-            assert not state()["refreshHidden"]
-            key("{key:'F5'}", True)
-            key("{key:'r',ctrlKey:true}", True)
-            previous = loads[0]
-            css = mode.directory / "style.css"
-            css.write_bytes(css.read_bytes() + b"\n/* isolated native auto-refresh check */\n")
-            wait_until(lambda: loads[0] > previous, "source change did not reload the native window")
-            ready()
-            toggle(False)
-            assert not FrontendDevelopment(options.data_dir / CONFIG_NAME).enabled
-            key("{key:'F5'}", False)
-            key("{key:'r',ctrlKey:true}", False)
-            toggle(True)
-            assert FrontendDevelopment(options.data_dir / CONFIG_NAME).enabled
-            report.update(passed=True, native_f5=True, native_ctrl_r=True,
-                          native_auto_refresh=True, off_hides_refresh=True,
-                          off_shortcuts_inactive=True, toggle_persisted=True)
+        current = state()
+        assert not current["developerSettings"], "runtime developer settings still exist"
+        assert current["refreshHidden"] is (not ui.live_reload)
+        assert current["reloadScript"] is ui.live_reload
+        window.evaluate_js("document.getElementById('settings-open').click(); true")
+        wait_until(lambda: state()["dialog"], "settings did not open")
+        window.evaluate_js("document.getElementById('settings-dialog').close(); true")
+        reload("window.dispatchEvent(new KeyboardEvent('keydown', {key:'F5'}))", ui.live_reload)
+        reload("window.dispatchEvent(new KeyboardEvent('keydown', {key:'r', ctrlKey:true}))", ui.live_reload)
+        report.update(settings_open=True, refresh_visibility=True, shortcut_behavior=True)
+        if ui.live_reload:
+            reload("document.getElementById('ui-refresh').click()")
+            report["refresh_button"] = True
+            if options.desktop_check_ui:
+                css = ui.ui_dir / "style.css"
+                original = css.read_bytes()
+                try:
+                    # A hidden integration-test window must still exercise the polling path.
+                    window.evaluate_js("Object.defineProperty(document, 'hidden', {configurable:true, get:()=>false}); true")
+                    prior = loads[0]
+                    css.write_bytes(original + b"\n/* native developer refresh check */\n")
+                    wait_until(lambda: loads[0] > prior, "saved frontend did not refresh")
+                    ready()
+                    report["automatic_refresh"] = True
+                finally:
+                    css.write_bytes(original)
+        report["passed"] = True
     except Exception as exc:
         report["error"] = type(exc).__name__ + ": " + str(exc)
     finally:
         options.desktop_check.write_text(json.dumps(report), encoding="utf8")
-        window.destroy()
+        getattr(window, "_optimizer_exit", window.destroy)()

@@ -16,7 +16,6 @@ from .token_window import TokenWindows
 from .session_summary import SessionSummaries
 from .entry_port import port_status, save_port
 from .updates import Updates
-from .frontend_dev import FrontendDevelopment
 
 UI_DIR = Path(__file__).with_name("ui")
 UI_FILES = {"/": ("index.html", "text/html; charset=utf-8"),
@@ -53,18 +52,13 @@ def ui_build_id(ui_dir=None):
 class DesktopUI(ThreadingHTTPServer):
     daemon_threads = True
 
-    def __init__(self, relay_port, *, ui_port=0, live_reload=False, read_only=False, ui_dir=None,
-                 development_config=None):
+    def __init__(self, relay_port, *, ui_port=0, live_reload=False, read_only=False, ui_dir=None):
         if not 1 <= relay_port <= 65535:
             raise ValueError("invalid forwarding service port")
         self.relay_port = relay_port
-        self.preview_live_reload = live_reload
         self.read_only = read_only
-        self.bundled_ui_dir = Path(ui_dir or UI_DIR)
-        self.development_guard = threading.RLock()
-        self.development = FrontendDevelopment(development_config)
-        self.ui_dir = self.development.directory if self.development.enabled else self.bundled_ui_dir
-        self.live_reload = bool(live_reload or self.development.enabled)
+        self.ui_dir = Path(ui_dir or UI_DIR)
+        self.live_reload = bool(live_reload)
         self.token_windows = TokenWindows()
         self.session_summaries = SessionSummaries(self.token_windows)
         self.updates = None
@@ -76,13 +70,6 @@ class DesktopUI(ThreadingHTTPServer):
     @property
     def ui_url(self):
         return f"http://127.0.0.1:{self.port}/"
-
-    def set_development(self, enabled):
-        with self.development_guard:
-            result = self.development.set_enabled(enabled)
-            self.ui_dir = self.development.directory if enabled else self.bundled_ui_dir
-            self.live_reload = bool(self.preview_live_reload or enabled)
-            return result
 
     def start(self):
         self.thread = threading.Thread(target=self.serve_forever, kwargs={"poll_interval": .1}, daemon=True)
@@ -227,30 +214,6 @@ class UIHandler(BaseHTTPRequestHandler):
         except (OSError, KeyError, http.client.HTTPException):
             self._json(503, {"error": "版本更新功能暂不可用。"})
 
-    def _development(self):
-        try:
-            if self.command == "POST":
-                length = int(self.headers.get("Content-Length", "0"))
-                if self.headers.get("Transfer-Encoding") or not 0 < length <= 8192:
-                    raise ValueError("invalid_ui_request_body")
-                body = self.rfile.read(length)
-                if len(body) != length:
-                    raise ValueError("invalid_ui_request_body")
-                data = json.loads(body)
-                if not isinstance(data, dict) or set(data) != {"enabled"}:
-                    raise ValueError("invalid_development_setting")
-                if self.server.read_only:
-                    self._json(409, {"error": "read_only_preview"})
-                    return
-                result = self.server.set_development(data["enabled"])
-            else:
-                result = self.server.development.status()
-            self._json(200, result)
-        except (ValueError, TypeError) as exc:
-            self._json(400, {"error": str(exc)})
-        except OSError:
-            self._json(503, {"error": "本地前端配置暂不可用。"})
-
     def _handle(self):
         self.connection.settimeout(30)
         allowed_hosts = {f"127.0.0.1:{self.server.port}", f"localhost:{self.server.port}"}
@@ -263,9 +226,6 @@ class UIHandler(BaseHTTPRequestHandler):
             self._json(400, {"error": "invalid_ui_path"})
             return
         path = target.path
-        if path == "/api/ui-development" and self.server.development.available and self.command in {"GET", "POST"}:
-            self._development()
-            return
         if path == "/api/updates" and self.command in {"GET", "POST"}:
             self._updates()
             return
@@ -321,9 +281,8 @@ class UIHandler(BaseHTTPRequestHandler):
         if self.command == "GET" and path in UI_FILES:
             name, kind = UI_FILES[path]
             try:
-                with self.server.development_guard:
-                    data = (self.server.ui_dir / name).read_bytes()
-                    reload_page = self.server.live_reload
+                data = (self.server.ui_dir / name).read_bytes()
+                reload_page = self.server.live_reload
             except OSError:
                 self._json(503, {"error": "ui_files_updating"})
                 return
@@ -367,7 +326,6 @@ class UIHandler(BaseHTTPRequestHandler):
                 status["ui_version"] = VERSION
                 status["ui_read_only"] = self.server.read_only
                 status["ui_live_reload"] = self.server.live_reload
-                status["ui_development"] = self.server.development.status()
                 if isinstance(status.get("data_dir"), str):
                     status["entry_port_supported"] = True
                     status["entry_port"] = port_status(status["data_dir"], self.server.relay_port)

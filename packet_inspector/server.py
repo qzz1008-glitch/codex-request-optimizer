@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter
+from contextlib import nullcontext
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
@@ -37,7 +38,7 @@ from .startup import configure_startup, startup_supported
 from .capacity_retry import open_response
 from .overflow import CheckpointStream, OverflowCompactor, OverflowFailure
 from .image_config import ImageToolConfig, WORKER_HEADER
-from .image_isolation import ImageIsolation, ImageIsolationFailure
+from .image_isolation import ImageIsolation, ImageIsolationFailure, check_image_directory, resolve_image_directory
 from .image_tool import ImageToolRPC
 
 HOP = {"connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
@@ -63,6 +64,22 @@ def outbound_proxies():
     return proxies
 
 
+DEFAULT_BUDGET_BYTES = 1_000_000
+MIN_BUDGET_BYTES = 1024
+
+def protection_settings(saved):
+    values = dict(saved)
+    if "packet_size_protection_enabled" not in values:
+        values["packet_size_protection_enabled"] = any(
+            values.get(key) is True for key in ("overflow_compaction_enabled",))
+    for key in ("overflow_compaction_enabled", "native_compact_trigger_enabled"):
+        values.pop(key, None)
+    budget = values.get("budget_bytes", DEFAULT_BUDGET_BYTES)
+    values["budget_bytes"] = (max(MIN_BUDGET_BYTES, min(MAX_BODY, budget))
+                              if type(budget) is int else DEFAULT_BUDGET_BYTES)
+    return values
+
+
 class InspectorServer(ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = True
@@ -75,12 +92,12 @@ class InspectorServer(ThreadingHTTPServer):
         self.guard = threading.RLock()
         saved = json.loads(self.settings_path.read_text(encoding="utf8")) if self.settings_path.exists() else {}
         self.settings = {"relay_token": secrets.token_urlsafe(32),
-                         "capture_enabled": True, "budget_bytes": 1_000_000,
+                         "capture_enabled": True, "budget_bytes": DEFAULT_BUDGET_BYTES,
                          "max_storage_mb": 512, "max_packets": 2000,
-                         "request_compression": "zstd", "overflow_compaction_enabled": False,
+                         "request_compression": "zstd", "packet_size_protection_enabled": False,
                          "start_on_login": False, "capacity_retry_enabled": False,
-                         "image_isolation_enabled": False,
-                         "auto_detect_providers": True, "provider_routes": {}, **saved}
+                         "image_isolation_enabled": False, "image_save_dir": "",
+                         "auto_detect_providers": True, "provider_routes": {}, **protection_settings(saved)}
         self.settings.pop("ui_token", None)
         if upstream:
             self.settings["upstream"] = validate_upstream(upstream)
@@ -114,7 +131,8 @@ class InspectorServer(ThreadingHTTPServer):
         self.overflow = OverflowCompactor(self.data_dir)
         self.image_config = ImageToolConfig(self.link, self.data_dir,
             lambda: f"http://127.0.0.1:{self.public_port}", lambda: self.endpoint)
-        self.image_isolation = ImageIsolation(self.data_dir)
+        self.image_isolation = ImageIsolation(self.data_dir, self.settings["image_save_dir"])
+        self.default_image_save_dir = resolve_image_directory(self.data_dir)
         self.image_tool = ImageToolRPC(self.image_config)
         self.updates = Updates(self.data_dir, self.link.config, self.public_port)
         self.analysis_errors = 0
@@ -168,7 +186,7 @@ class InspectorServer(ThreadingHTTPServer):
                 with self.guard:
                     if self.settings_path.exists():
                         saved = json.loads(self.settings_path.read_text(encoding="utf8"))
-                        self.settings = {**self.settings, **saved}
+                        self.settings = {**self.settings, **protection_settings(saved)}
                     if "public_port" in data:
                         from .entry_port import validate_port
                         self.public_port = validate_port(data["public_port"])
@@ -238,7 +256,7 @@ class InspectorServer(ThreadingHTTPServer):
     def save_settings(self, candidate=None):
         staging = self.settings_path.with_suffix(".new")
         with self.guard:
-            value = self.settings if candidate is None else candidate
+            value = protection_settings(self.settings if candidate is None else candidate)
             staging.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding="utf8")
             staging.replace(self.settings_path)
             self.settings = value
@@ -259,7 +277,9 @@ class InspectorServer(ThreadingHTTPServer):
         storage = self.store.stats()
         return {"version": VERSION, "ui_version": VERSION, "capture_enabled": self.settings["capture_enabled"],
                 "request_compression": self.settings["request_compression"],
-                "overflow_compaction_enabled": self.settings["overflow_compaction_enabled"],
+                "packet_size_protection_enabled": self.settings["packet_size_protection_enabled"],
+                "overflow_compaction_enabled": self.settings["packet_size_protection_enabled"],
+                "packet_size_min_bytes": MIN_BUDGET_BYTES, "packet_size_max_bytes": MAX_BODY,
                 "start_on_login": self.settings["start_on_login"],
                 "start_on_login_supported": startup_supported(self.data_dir),
                 "startup_state_known": self.startup_state_known,
@@ -267,6 +287,8 @@ class InspectorServer(ThreadingHTTPServer):
                 "capacity_retry_supported": True,
                 "image_isolation_enabled": self.settings["image_isolation_enabled"],
                 "image_isolation_supported": True, "image_tool": self.image_config.status(),
+                "image_save_dir": str(self.image_isolation.directory),
+                "image_save_dir_default": str(self.default_image_save_dir), "image_save_dir_supported": True,
                 "budget_bytes": self.settings["budget_bytes"], "upstream": self.settings["upstream"],
                 "max_storage_mb": self.settings["max_storage_mb"], "max_packets": self.settings["max_packets"],
                 "capture_errors": self.capture_errors, "analysis_errors": self.analysis_errors,
@@ -415,7 +437,7 @@ class Handler(BaseHTTPRequestHandler):
     def _image_mcp(self, path):
         with self.server.guard:
             enabled = self.server.settings["image_isolation_enabled"]
-            matches = secrets.compare_digest(path, self.server.image_config.mcp_path())
+            matches = secrets.compare_digest(path.encode("utf8"), self.server.image_config.mcp_path().encode("utf8"))
         if not enabled or not matches:
             self._json(404, {"error": "image_tool_unavailable"})
             return
@@ -429,7 +451,19 @@ class Handler(BaseHTTPRequestHandler):
             return
         try:
             message = json.loads(self._body(32768))
-            result, headers = self.server.image_tool.dispatch(message, self.headers.get("Mcp-Session-Id"))
+            active = isinstance(message, dict) and message.get("method") == "tools/call"
+            with self.server.guard:
+                if active and self.server.upgrade_draining:
+                    self._json(503, {"error": "upgrade_draining"})
+                    return
+                if active:
+                    self.server.active_requests += 1
+            try:
+                result, headers = self.server.image_tool.dispatch(message, self.headers.get("Mcp-Session-Id"))
+            finally:
+                if active:
+                    with self.server.guard:
+                        self.server.active_requests -= 1
             if result is None:
                 self._bytes(202, b"", "application/json", headers)
             else:
@@ -498,16 +532,33 @@ class Handler(BaseHTTPRequestHandler):
             data = json.loads(self._body(8192))
             with self.server.provider_guard, self.server.guard:
                 candidate = dict(self.server.settings)
+                image_isolation = self.server.image_isolation
+                if "image_save_dir" in data:
+                    directory = resolve_image_directory(self.server.data_dir, data["image_save_dir"])
+                    check_image_directory(directory)
+                    candidate["image_save_dir"] = "" if directory == self.server.default_image_save_dir else str(directory)
+                    image_isolation = ImageIsolation(self.server.data_dir, candidate["image_save_dir"])
                 if "request_compression" in data:
                     if data["request_compression"] not in {"off", "zstd"}:
                         raise ValueError("invalid request compression mode")
                     candidate["request_compression"] = data["request_compression"]
-                for key in ("capture_enabled", "overflow_compaction_enabled", "start_on_login", "capacity_retry_enabled", "image_isolation_enabled"):
+                protection_values = []
+                for key in ("packet_size_protection_enabled", "overflow_compaction_enabled"):
+                    if key in data:
+                        if not isinstance(data[key], bool):
+                            raise ValueError("invalid boolean setting: " + key)
+                        protection_values.append(data[key])
+                if len(set(protection_values)) > 1:
+                    raise ValueError("包大小保护开关值冲突")
+                if protection_values:
+                    candidate["packet_size_protection_enabled"] = protection_values[0]
+                for key in ("capture_enabled",
+                            "start_on_login", "capacity_retry_enabled", "image_isolation_enabled"):
                     if key in data:
                         if not isinstance(data[key], bool):
                             raise ValueError("invalid boolean setting: " + key)
                         candidate[key] = data[key]
-                for key, low, high in (("budget_bytes", 1024, MAX_BODY), ("max_storage_mb", 16, 8192),
+                for key, low, high in (("budget_bytes", MIN_BUDGET_BYTES, MAX_BODY), ("max_storage_mb", 16, 8192),
                                        ("max_packets", 10, 20000)):
                     if key in data:
                         value = data[key]
@@ -515,7 +566,9 @@ class Handler(BaseHTTPRequestHandler):
                             raise ValueError("设置超出有效范围: " + key)
                         candidate[key] = value
                 previous = self.server.settings
-                with self.server.image_config.change(candidate["image_isolation_enabled"]):
+                change = (self.server.image_config.change(candidate["image_isolation_enabled"])
+                          if "image_isolation_enabled" in data else nullcontext())
+                with change:
                     self.server.save_settings(candidate)
                     try:
                         if "start_on_login" in data and (
@@ -527,6 +580,7 @@ class Handler(BaseHTTPRequestHandler):
                     except Exception:
                         self.server.save_settings(previous)
                         raise
+                self.server.image_isolation = image_isolation
                 self.server.store.max_bytes = candidate["max_storage_mb"] * 1024 * 1024
                 self.server.store.max_count = candidate["max_packets"]
             self._json(200, self.server.status())
@@ -556,10 +610,12 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, {"stopped": True})
             threading.Thread(target=self.server.shutdown, daemon=True).start()
         elif path == "/api/stop" and self.command == "POST":
-            if self.server.link.profile()["active"]:
-                raise ValueError("请先恢复原出口并重新加载 Codex，再退出采集器")
-            if self.server.active_requests:
-                raise ValueError("仍有请求正在转发，请稍后退出")
+            self._body(8192)
+            with self.server.guard:
+                if self.server.active_requests:
+                    self._json(409, {"error": "requests_in_flight"})
+                    return
+                self.server.upgrade_draining = True
             self._json(200, {"stopped": True})
             threading.Thread(target=self.server.shutdown, daemon=True).start()
         elif path.startswith("/api/packets/") and self.command == "GET":
@@ -624,7 +680,7 @@ class Handler(BaseHTTPRequestHandler):
         # This is a separate, tool-free summary call. The original turn has not
         # been uploaded. Never follow redirects or retry either request.
         remove = {"content-encoding", "accept", "accept-encoding", "content-md5", "digest",
-                  "x-request-id", "x-codex-turn-metadata", "x-codex-client-metadata"}
+                  "x-request-id", "x-codex-turn-metadata"}
         compact_headers = {k: v for k, v in headers.items() if k.lower() not in remove}
         compact_headers.update({"Content-Encoding": encoding, "Accept": "text/event-stream", "Accept-Encoding": "identity"})
         local = urlsplit(upstream).hostname in {"localhost", "127.0.0.1", "::1"}
@@ -632,8 +688,19 @@ class Handler(BaseHTTPRequestHandler):
         try:
             response = opener.open(Request(upstream + suffix, data=body, headers=compact_headers, method="POST"), timeout=120)
         except HTTPError as exc:
-            exc.close()
-            raise OverflowFailure("overflow_compaction_upstream_error", "上游压缩请求返回 HTTP " + str(exc.code) + "；原请求未发送。", 502) from None
+            detail = ""
+            try:
+                error = json.loads(exc.read(8192))
+                if isinstance(error, dict):
+                    error = error.get("error", error)
+                if isinstance(error, dict) and isinstance(error.get("message"), str):
+                    detail = clean_text(error["message"])[:300]
+            except (OSError, TypeError, ValueError):
+                pass
+            finally:
+                exc.close()
+            raise OverflowFailure("overflow_compaction_upstream_error", "上游压缩请求返回 HTTP " + str(exc.code)
+                                  + ("：" + detail if detail else "") + "；原请求未发送。", 502) from None
         parser = CheckpointStream()
         with response:
             if response.status != 200:
@@ -695,25 +762,37 @@ class Handler(BaseHTTPRequestHandler):
         # uses the OS/environment proxy. Redirects and inference retries are disabled.
         with self.server.guard:
             compression = self.server.settings["request_compression"]
-            overflow_enabled = self.server.settings["overflow_compaction_enabled"]
+            protection_enabled = self.server.settings["packet_size_protection_enabled"]
             budget = self.server.settings["budget_bytes"]
             image_enabled = self.server.settings["image_isolation_enabled"]
+            image_isolation = self.server.image_isolation
+            image_configured = self.server.image_config.state.get("enabled", False)
             image_worker = self.server.image_config.is_worker(self.headers.get(WORKER_HEADER, ""))
         try:
+            if image_enabled and not image_configured:
+                raise ImageIsolationFailure("image_configuration_missing", "图片隔离配置不完整，请在设置中重新启用。", 503)
             prepared = None
+            source_body = body
             if image_enabled and not image_worker and self.command == "POST" and urlsplit(suffix).path.rstrip("/").endswith(("/responses", "/responses/compact")):
-                prepared = self.server.image_isolation.prepare(body, headers, suffix, compression)
+                try:
+                    prepared = image_isolation.prepare(body, headers, suffix, compression)
+                except (ImageIsolationFailure, ImportError):
+                    raise
+                except Exception:
+                    raise ImageIsolationFailure("image_preparation_failed", "图片隔离准备失败，原请求未发送。", 503) from None
             if prepared is not None:
                 outbound_body, outbound_encoding, image_meta = prepared
                 update(**image_meta)
-                headers = {k: v for k, v in headers.items() if k.lower() not in {"content-md5", "digest"}}
+                source_body = outbound_body
+                headers = {k: v for k, v in headers.items() if k.lower() not in {"content-md5", "digest", "content-encoding"}}
+                headers["Content-Encoding"] = outbound_encoding
             else:
                 outbound_body, outbound_encoding = prepare_request(body, headers, self.command, suffix, compression)
             if image_worker:
                 update(image_isolation_worker=True)
-            if overflow_enabled and not image_worker and self.command == "POST" and urlsplit(suffix).path.rstrip("/").endswith("/responses"):
+            if protection_enabled and not image_worker and self.command == "POST" and urlsplit(suffix).path.rstrip("/").endswith("/responses"):
                 outbound_body, outbound_encoding, overflow_meta = self.server.overflow.prepare(
-                    outbound_body, outbound_encoding, body, headers, suffix, upstream, compression, budget,
+                    outbound_body, outbound_encoding, source_body, headers, suffix, upstream, compression, budget,
                     lambda compact_body, encoding: self._checkpoint(upstream, suffix, headers, compact_body, encoding),
                     request_scope=scope)
                 update(**overflow_meta)

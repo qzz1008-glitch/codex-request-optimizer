@@ -12,8 +12,9 @@
   <div id="preview-banner" class="notice" role="status" hidden>开发预览 · 前端保存后自动刷新 · 设置只读</div>
   <div id="app-window" class="app-window">
   <header class="app-header">
-    <div class="brand"><span class="brand-mark">P</span><div><strong>Codex 请求优化器</strong><small id="app-version">本机请求观察器</small></div></div>
-    <div class="header-actions"><span id="capture-status" class="status-pill">连接中</span><button id="capture-toggle">暂停记录</button><button id="ui-refresh" type="button" hidden>刷新</button><button id="settings-open" class="settings-button" type="button" title="设置" aria-label="设置"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9.5 3-.6 2.3-1.7 1-2.3-.6-2.5 4.3 1.7 1.7v2l-1.7 1.7 2.5 4.3 2.3-.6 1.7 1 .6 2.3h5l.6-2.3 1.7-1 2.3.6 2.5-4.3-1.7-1.7v-2l1.7-1.7-2.5-4.3-2.3.6-1.7-1L14.5 3z"/><circle cx="12" cy="12.7" r="3"/></svg></button></div>
+    <div class="brand"><strong>Codex 请求优化器</strong></div>
+    <div class="header-compression"><div id="request-compression" class="language-toggle compression-toggle" role="group" aria-label="传输压缩" aria-describedby="compression-hint"><button id="compression-off" type="button" data-compression="off" aria-pressed="false" disabled>仅分析</button><button id="compression-zstd" type="button" data-compression="zstd" aria-pressed="true" disabled>zstd 压缩</button></div><span id="compression-hint" hidden></span></div>
+    <div class="header-actions"><span id="codex-status" class="status-pill disconnected" role="status" aria-live="polite">检测接入状态…</span><button id="header-connect" class="primary" type="button" hidden>接入 Codex</button><button id="ui-refresh" type="button" hidden>刷新</button><button id="settings-open" class="settings-button" type="button" title="设置" aria-label="设置"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9.5 3-.6 2.3-1.7 1-2.3-.6-2.5 4.3 1.7 1.7v2l-1.7 1.7 2.5 4.3 2.3-.6 1.7 1 .6 2.3h5l.6-2.3 1.7-1 2.3.6 2.5-4.3-1.7-1.7v-2l1.7-1.7-2.5-4.3-2.3.6-1.7-1L14.5 3z"/><circle cx="12" cy="12.7" r="3"/></svg></button></div>
   </header>
   <div id="notice" class="notice" role="status" hidden></div>
   <main class="workspace">
@@ -21,18 +22,19 @@
       <div class="sidebar-title sessions-title"><h1>会话</h1><input id="session-search" class="session-search" type="search" placeholder="搜索会话" aria-label="搜索会话名称或 session_id" autocomplete="off" spellcheck="false"></div>
       <nav id="session-list" class="session-list" aria-label="选择 session_id"></nav>
       <p id="session-metadata-note" class="session-metadata-note muted" hidden>会话信息暂时不可用，正在重试。</p>
-      <div class="sidebar-footer storage-summary" id="storage-info"><span>— / —</span><span>— 会话</span><span>— 请求</span></div>
+      <div class="sidebar-footer storage-summary" id="storage-info"><span>— 会话</span><span>— 请求</span></div>
     </aside>
     <aside class="sidebar requests-sidebar" aria-label="请求记录">
       <div class="sidebar-title"><h1>请求记录</h1><span id="record-count">0</span></div>
       <div id="packet-list" class="packet-list">
         <table class="packet-table" aria-label="请求记录">
-          <colgroup><col class="col-time"><col class="col-kind"><col class="col-size"><col class="col-status"></colgroup>
+          <colgroup><col class="col-time"><col class="col-kind"><col class="col-size"><col class="col-size"><col class="col-tokens"></colgroup>
           <thead><tr>
             <th scope="col" aria-sort="descending"><button data-sort="created"><span>时间</span><span class="sort-arrow" aria-hidden="true"> ↓</span></button></th>
-            <th scope="col"><label class="column-filter"><span class="column-filter-label" aria-hidden="true">类型</span><select id="filter-kind" data-filter="kind" aria-label="筛选类型" title="筛选类型"><option value="">类型</option></select></label></th>
-            <th scope="col" aria-sort="none"><button data-sort="upload_bytes" title="网关实际上传正文大小（使用最终出口编码）"><span>大小</span><span class="sort-arrow" aria-hidden="true"></span></button></th>
-            <th scope="col"><label class="column-filter"><span class="column-filter-label" aria-hidden="true">状态</span><select id="filter-status" data-filter="status" aria-label="筛选状态" title="筛选状态"><option value="">状态</option></select></label></th>
+            <th scope="col"><label class="column-filter"><span class="column-filter-label" aria-hidden="true">类型</span><select id="filter-kind" data-filter="kind" aria-label="筛选类型" title="筛选类型"><option value="">全部类型</option></select></label></th>
+            <th scope="col" aria-sort="none"><button data-sort="decoded_bytes" title="压缩前的原始请求正文大小"><span>原始包</span><span class="sort-arrow" aria-hidden="true"></span></button></th>
+            <th scope="col" aria-sort="none"><button data-sort="upload_bytes" title="网关实际上传正文大小（使用最终出口编码）"><span>压缩包</span><span class="sort-arrow" aria-hidden="true"></span></button></th>
+          <th scope="col" aria-sort="none" title="本次请求的真实输入 Token"><button data-sort="input_tokens"><span>Token</span><span class="sort-arrow" aria-hidden="true"></span></button></th>
           </tr></thead>
           <tbody id="packet-rows"></tbody>
         </table>
@@ -47,45 +49,60 @@
         <button id="empty-connect" class="primary">查看接入设置</button>
       </div>
       <div id="packet-detail" hidden>
-        <div class="metrics" id="metrics"></div>
-        <nav class="tabs" aria-label="请求详情"><button class="active" data-tab="overview">大小构成</button><button data-tab="items">输入条目</button><button data-tab="tree">内容浏览</button><button data-tab="diff">请求对比</button><button data-tab="headers">请求信息</button></nav>
+        <nav class="tabs" aria-label="请求详情"><button class="active" data-tab="overview">大小构成</button><button data-tab="compression">压缩详情</button><button data-tab="tree">请求正文</button><button data-tab="diff">请求信息</button></nav>
+        <div class="detail-content">
         <div id="tab-overview" class="tab-panel"><div id="overview"></div></div>
-        <div id="tab-items" class="tab-panel" hidden><div id="input-items"></div></div>
+        <div id="tab-compression" class="tab-panel" hidden><div id="compression-content"></div></div>
         <div id="tab-tree" class="tab-panel" hidden>
           <div class="tree-tools"><input id="tree-query" type="search" placeholder="搜索关键词或输入路径，如 /input/0" aria-label="搜索内容或定位路径" title="输入关键词搜索；以 / 开头的路径直接定位；清空后回车返回完整内容" autocomplete="off" spellcheck="false"><button id="tree-query-go">查找</button></div>
           <div id="body-results" class="search-results" hidden></div>
-          <p class="muted help">字节数取自解压后的原始 JSON，包含值自身的引号与转义；显示内容是脱敏副本。</p>
-          <div class="tree-layout"><div id="json-tree" class="json-tree"></div><section id="text-viewer" class="text-viewer" hidden><div class="text-toolbar"><code id="text-path"></code><button id="text-close">关闭</button></div><pre id="text-content"></pre><button id="text-more" hidden>加载更多文字</button><small id="text-position" class="muted"></small></section></div>
+          <div class="json-viewer"><a id="json-download" class="json-download" title="下载 JSON" aria-label="下载 JSON" hidden download><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12m-5-5 5 5 5-5M5 16v4h14v-4"/></svg></a><pre id="json-tree" class="json-content"></pre></div>
         </div>
-        <div id="tab-diff" class="tab-panel" hidden><div id="diff-content"></div></div>
-        <div id="tab-headers" class="tab-panel" hidden><div id="headers-content"></div></div>
+        <div id="tab-diff" class="tab-panel" hidden><div id="headers-content"></div><div id="diff-content"></div></div>
+        </div>
       </div>
     </section>
   </main>
+  <dialog id="compression-confirm-dialog" aria-labelledby="compression-confirm-title" aria-describedby="compression-confirm-description compression-confirm-hint">
+    <h2 id="compression-confirm-title">切换传输模式</h2>
+    <p id="compression-confirm-description"></p>
+    <p id="compression-confirm-hint" class="muted help">确认后立即用于新请求，无需重启。</p>
+    <p id="compression-confirm-message" class="help error" role="alert" hidden></p>
+    <div class="button-row"><button id="compression-confirm-cancel" type="button" autofocus>取消</button><button id="compression-confirm-apply" class="primary" type="button">确认切换</button></div>
+  </dialog>
   <dialog id="settings-dialog">
     <div class="dialog-heading"><div><h2>设置</h2></div><button id="settings-close" aria-label="关闭设置">✕</button></div>
+    <div class="settings-content">
     <div class="settings-language-row"><span>语言</span><div id="language-toggle" class="language-toggle" role="group" aria-label="语言"><button id="language-zh" type="button" data-language="zh" aria-pressed="true" lang="zh-CN">中文</button><button id="language-en" type="button" data-language="en" aria-pressed="false" lang="en">English</button></div></div>
-    <section id="ui-development-settings" hidden><h3>本机开发</h3><label class="runtime-toggle"><input id="ui-development" type="checkbox" aria-describedby="ui-development-hint">前端开发模式</label><p id="ui-development-hint" class="muted help">读取本地前端文件，启用刷新按钮、F5 / Ctrl+R 与自动刷新。</p><p id="ui-development-message" class="help" role="status" hidden></p></section>
-    <section><h3>Codex 接入</h3><p id="link-status"></p>
-      <div class="entry-port-row"><label for="entry-port">入口端口</label><input id="entry-port" type="number" min="1024" max="65535" step="1" value="47844" required aria-describedby="entry-port-current entry-port-hint"><button id="entry-port-save">保存端口</button></div>
-      <p id="entry-port-current" class="muted help" role="status"></p><p id="entry-port-hint" class="muted help">入口服务重新启动后应用新端口，重启 ChatGPT App 生效。</p><p id="entry-port-message" class="help" role="status" hidden></p>
-      <div class="button-row"><button id="link-activate" class="primary">接入 Codex</button><button id="link-restore">恢复原配置</button></div><p class="muted help">启动时自动接管全部 provider，并检测配置变化。重启 ChatGPT App 生效。</p>
+    <section><h3>Codex 接入</h3>
+      <div class="entry-port-row"><label for="entry-port">入口端口</label><input id="entry-port" type="number" min="1024" max="65535" step="1" value="47844" required aria-describedby="link-status"><span id="link-status" class="entry-port-status" role="status" aria-live="polite"></span></div>
+      <p id="entry-port-message" class="help" role="status" hidden></p>
+      <div class="button-row"><button id="link-activate" class="primary">接入 Codex</button><button id="link-restore">恢复原配置</button></div>
     </section>
-    <section><h3>传输压缩</h3><label for="request-compression">请求压缩</label><select id="request-compression"><option value="zstd">zstd（推荐）</option><option value="off" data-i18n="compression.off">关闭</option></select><p class="muted help">减小上传体积，保留完整内容。</p><p id="compression-message" class="help" role="status" hidden></p>
+    <section><h3>包大小保护</h3><label class="overflow-toggle"><input id="packet-size-protection" type="checkbox">启用包大小保护</label>
+      <div class="packet-size-controls"><label for="budget">包大小上限（kB）<input id="budget" type="number" min="1.024" max="134217.728" step="0.001" value="1000" required></label></div>
+      <p class="muted help">超过上传上限时压缩旧上下文；同一会话复用摘要，原始请求回到上限内时清理缓存。</p>
+      <p id="packet-size-message" class="help" role="status" hidden></p>
     </section>
-    <section><h3>超限兜底（试验）</h3><label class="overflow-toggle"><input id="overflow-compaction" type="checkbox">超限时自动压缩旧上下文</label><p class="muted help">通过摘要缩短旧内容，可能损失细节并增加等待。</p><p id="overflow-message" class="help" role="status" hidden></p></section>
     <section><h3>运行设置</h3>
       <label class="runtime-toggle"><input id="start-on-login" type="checkbox" aria-describedby="startup-hint">开机启动</label>
       <p id="startup-hint" class="muted help">登录 Windows 后在后台启动，可从托盘打开窗口。</p>
       <div class="runtime-setting-row"><label class="runtime-toggle"><input id="capacity-retry" type="checkbox" aria-describedby="capacity-error-note capacity-retry-hint">模型容量不足时自动重试</label><small id="capacity-error-note" class="capacity-error-note" lang="en">Selected model is at capacity. Please try a different model.</small></div>
       <p id="capacity-retry-hint" class="muted help">保持当前模型，最多重试 3 次；已开始输出时不重试。</p>
-      <label class="runtime-toggle"><input id="image-isolation" type="checkbox" aria-describedby="image-isolation-hint">替换 Codex 原生图片解析工具</label>
-      <p id="image-isolation-hint" class="muted help">关闭原生 view_image，保留独立解析工具。主会话只接收图片路径和解析文字；保存后需重新加载 Codex。</p>
-      <button id="runtime-settings-save">保存运行设置</button><p id="runtime-settings-message" class="help" role="status" hidden></p>
+      <p id="runtime-settings-message" class="help" role="status" hidden></p>
     </section>
-    <section><h3>版本与升级</h3><p id="updates-versions" class="muted help"></p><p class="muted help"><span>更新来源：</span><a id="updates-source" href="https://github.com/qzz1008-glitch/codex-request-optimizer" target="_blank" rel="noreferrer">GitHub</a></p>
-      <label class="runtime-toggle"><input id="automatic-updates" type="checkbox">自动检查并升级</label><p class="muted help">下载并校验后升级桌面窗口和服务。</p>
-      <div class="button-row"><button id="updates-check">检查更新</button><button id="updates-install" class="primary" disabled>立即升级</button></div><p id="updates-message" class="help" role="status"></p>
+    <section id="image-settings" aria-labelledby="image-settings-title"><h3 id="image-settings-title">图片处理</h3>
+      <label class="runtime-toggle"><input id="image-isolation" type="checkbox" aria-describedby="image-isolation-hint">替换 Codex 原生图片解析工具</label>
+      <p id="image-isolation-hint" class="muted help">勾选后自动安装缺少的独立图片工具，保留已有工具，并关闭原生 view_image。主请求只接收图片路径和解析文字；需重新加载 Codex。</p>
+      <p id="image-isolation-message" class="help" role="status" hidden></p>
+      <div class="image-directory-settings">
+        <label for="image-save-dir">图片保存路径</label>
+        <div class="image-directory-row"><input id="image-save-dir" type="text" spellcheck="false" autocomplete="off" aria-describedby="image-save-dir-hint"><button id="image-save-dir-reset">使用默认目录</button></div>
+        <p id="image-save-dir-hint" class="muted help"></p><p id="image-save-dir-message" class="help" role="status" hidden></p>
+      </div>
+    </section>
+    <section><h3>版本与升级</h3><p id="updates-versions" class="muted help"></p>
+      <div class="button-row updates-actions"><button id="updates-check">检查更新</button><button id="updates-install" class="primary" disabled>立即升级</button><span id="updates-message" class="help updates-status" role="status" aria-atomic="true" hidden></span></div>
     </section>
     <section id="context-settings"><h3>上下文设置</h3><p id="context-model" class="muted help"></p>
       <div class="context-grid">
@@ -93,9 +110,11 @@
         <div class="context-control"><div class="context-label"><label for="compact-tokens">自动压缩阈值（k tokens）</label><label class="context-default"><input id="compact-default" type="checkbox">模型默认</label></div><input id="compact-tokens" type="number" min="1" max="10000" step="0.001" value="220" required><input id="compact-range" type="range" min="1" max="10000" step="1" value="220" aria-label="调整自动压缩阈值"></div>
       </div>
       <p class="muted help">1k = 1,000 tokens。保存后重启 ChatGPT App 生效。</p>
-      <div class="button-row context-actions"><button id="context-save" class="primary">保存上下文设置</button><button id="context-reset">恢复默认</button></div><p id="context-message" class="help" role="status" hidden></p>
+      <div class="button-row context-actions"><button id="context-reset">恢复默认</button></div><p id="context-message" class="help" role="status" hidden></p>
     </section>
-    <section><h3>观察设置</h3><div class="settings-grid"><label>上传预算（字节）<input id="budget" type="number" min="1024" max="134217728" step="1000"></label><label>存储上限（MiB）<input id="storage-limit" type="number" min="16" max="8192"></label><label>记录上限（条）<input id="packet-limit" type="number" min="10" max="20000"></label></div><p class="muted help">超出预算时标记超额，记录满后自动清理旧记录。</p><button id="settings-save">保存观察设置</button></section>
+    <section><h3>观察设置</h3><div class="settings-grid"><label>存储上限（MiB）<input id="storage-limit" type="number" min="16" max="8192" required></label><label>记录上限（条）<input id="packet-limit" type="number" min="10" max="20000" required></label></div><p class="muted help">记录满后自动清理旧记录。</p></section>
+    </div>
+    <div class="settings-footer"><p id="settings-message" class="help muted" role="status" aria-live="polite"></p><button id="settings-cancel" type="button">取消</button><button id="settings-save" class="primary" type="button" disabled>保存设置</button></div>
   </dialog>
   </div>
 </body>

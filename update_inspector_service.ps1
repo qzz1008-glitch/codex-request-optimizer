@@ -1,18 +1,18 @@
 param(
-    [string]$SourceExecutable = (Join-Path $PSScriptRoot 'CodexRequestOptimizer-Upgrade.exe'),
+    [string]$SourceExecutable = (Join-Path $PSScriptRoot 'CodexPacketInspector.exe'),
     [string]$DataDir = (Join-Path $env:USERPROFILE '.codex-packet-inspector'),
     [string]$ConfigPath = (Join-Path $env:USERPROFILE '.codex\config.toml'),
     [ValidateRange(1024,65535)][int]$Port
 )
 $ErrorActionPreference = 'Stop'
 $taskUpgrade = (Resolve-Path -LiteralPath $SourceExecutable).Path
-if ([IO.Path]::GetFileName($taskUpgrade) -ne 'CodexRequestOptimizer-Upgrade.exe') {
-    throw 'Use CodexRequestOptimizer-Upgrade.exe from the new release. Do not overwrite the stable entry with an application EXE.'
+if ([IO.Path]::GetFileName($taskUpgrade) -ne 'CodexPacketInspector.exe') {
+    throw 'Use CodexPacketInspector.exe from the new release. The application includes its upgrade engine; do not overwrite a running entry manually.'
 }
 $taskData = [IO.Path]::GetFullPath($DataDir)
 $taskConfig = [IO.Path]::GetFullPath($ConfigPath)
 if ($taskData.Contains('"') -or $taskConfig.Contains('"')) { throw 'Invalid path.' }
-$taskArguments = @('--quiet', '--data-dir', ('"' + $taskData + '"'), '--config', ('"' + $taskConfig + '"'))
+$taskArguments = @('--upgrade', '--quiet', '--data-dir', ('"' + $taskData + '"'), '--config', ('"' + $taskConfig + '"'))
 if ($PSBoundParameters.ContainsKey('Port')) { $taskArguments += @('--port', $Port) }
 $taskChild = Start-Process -FilePath $taskUpgrade -ArgumentList $taskArguments -WindowStyle Hidden -Wait -PassThru
 $taskResult = Join-Path $taskData 'upgrade-result.json'
