@@ -1,10 +1,12 @@
 # ⚡ Codex 请求优化器
 
+**简体中文** · [English](https://github.com/qzz1008-glitch/codex-request-optimizer/blob/main/docs/README.en.md)
+
 **Codex Request Optimizer**
 
 一款运行在 Windows 上的 Codex 请求分析与优化工具。按会话查看请求、Token 用量和上传大小，提供无损传输压缩、请求包大小保护、图片处理和模型容量不足重试。
 
-**[⬇️ 下载最新版](https://github.com/qzz1008-glitch/codex-request-optimizer/releases/latest)** · **[📖 使用指南](https://github.com/qzz1008-glitch/codex-request-optimizer/blob/main/docs/usage.md)** · **[🌐 English](https://github.com/qzz1008-glitch/codex-request-optimizer/blob/main/docs/README.en.md)**
+**[⬇️ 下载最新版](https://github.com/qzz1008-glitch/codex-request-optimizer/releases/latest)** · **[📖 使用指南](https://github.com/qzz1008-glitch/codex-request-optimizer/blob/main/docs/usage.md)**
 
 ## ✨ 主要功能
 
