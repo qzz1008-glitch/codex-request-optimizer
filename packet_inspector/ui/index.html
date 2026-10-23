@@ -89,8 +89,8 @@
     <p id="exit-confirm-message" class="help error" role="alert" hidden></p>
     <div class="button-row"><button id="exit-confirm-cancel" type="button" autofocus>取消</button><button id="exit-confirm-direct" type="button">直接退出</button><button id="exit-confirm-restore" class="primary" type="button">切换并退出</button></div>
   </dialog>
-  <dialog id="settings-dialog">
-    <div class="dialog-heading"><div><h2>设置</h2></div><button id="settings-close" aria-label="关闭设置">✕</button></div>
+  <dialog id="settings-dialog" aria-labelledby="settings-title">
+    <div class="dialog-heading"><div><h2 id="settings-title">设置</h2></div><button id="settings-close" type="button" aria-label="关闭设置">✕</button></div>
     <div class="settings-content">
     <div class="settings-language-row" data-settings-field="language"><span>语言</span><div id="language-toggle" class="language-toggle" role="group" aria-label="语言"><button id="language-zh" type="button" data-language="zh" aria-pressed="true" lang="zh-CN">中文</button><button id="language-en" type="button" data-language="en" aria-pressed="false" lang="en">English</button></div></div>
     <section><h3>Codex 接入</h3>
@@ -106,7 +106,7 @@
     </section>
     <section><h3>请求大小保护</h3>
       <div class="packet-size-controls">
-        <label class="overflow-toggle" data-settings-field="packet_size_protection_enabled"><input id="packet-size-protection" type="checkbox" aria-labelledby="packet-size-protection-label"><span id="packet-size-protection-label">启用请求大小保护</span></label>
+        <div class="overflow-toggle" data-settings-field="packet_size_protection_enabled"><input id="packet-size-protection" type="checkbox" aria-labelledby="packet-size-protection-label"><span id="packet-size-protection-label">启用请求大小保护</span></div>
         <label class="packet-size-limit" for="budget" data-settings-field="budget"><span>压缩包上限（kB）</span><input id="budget" type="number" min="50.001" max="134217.728" step="0.001" value="1000" required disabled></label>
       </div>
       <p id="packet-size-message" class="help" role="status" hidden></p>
@@ -125,7 +125,7 @@
     </section>
     <section><h3>运行设置</h3>
       <div class="runtime-setting-row"><div class="runtime-toggle" data-settings-field="start_on_login"><input id="start-on-login" type="checkbox" aria-labelledby="start-on-login-label" aria-describedby="startup-hint"><span id="start-on-login-label">开机启动</span></div><p id="startup-hint" class="muted help runtime-inline-hint">登录 Windows 后在后台启动，可从托盘打开窗口。</p></div>
-      <div class="runtime-setting-row"><div class="runtime-toggle" data-settings-field="capacity_retry_enabled"><input id="capacity-retry" type="checkbox" aria-labelledby="capacity-retry-label"><span id="capacity-retry-label">模型容量不足时自动重试</span></div><div class="capacity-retry-limit" data-settings-field="capacity_retry_max_retries"><label for="capacity-retry-count">重试次数</label><input id="capacity-retry-count" type="number" min="1" max="99" step="1" value="3" inputmode="numeric" required><span>次</span></div></div>
+      <div class="runtime-setting-row runtime-retry-row"><div class="runtime-toggle" data-settings-field="capacity_retry_enabled"><input id="capacity-retry" type="checkbox" aria-labelledby="capacity-retry-label"><span id="capacity-retry-label">模型容量不足时自动重试</span></div><div class="capacity-retry-limit" data-settings-field="capacity_retry_max_retries"><label for="capacity-retry-count">重试次数</label><input id="capacity-retry-count" type="number" min="1" max="99" step="1" value="3" inputmode="numeric" required><span>次</span></div></div>
       <p id="runtime-settings-message" class="help" role="status" hidden></p>
     </section>
     <section id="context-settings"><div class="context-heading"><h3>上下文设置</h3></div>
@@ -143,7 +143,7 @@
       </div>
       <p id="context-message" class="help" role="status" hidden></p>
     </section>
-    <section><h3>记录设置</h3><div class="settings-grid"><label data-settings-field="max_storage_mb">存储上限（MiB）<input id="storage-limit" type="number" min="16" max="8192" required></label><label data-settings-field="max_packets">记录上限（条）<input id="packet-limit" type="number" min="10" max="20000" required></label></div></section>
+    <section><h3>记录设置</h3><div class="settings-grid"><label for="storage-limit" data-settings-field="max_storage_mb"><span>存储上限（MiB）</span><input id="storage-limit" type="number" min="16" max="8192" required></label><label for="packet-limit" data-settings-field="max_packets"><span>记录上限（条）</span><input id="packet-limit" type="number" min="10" max="20000" required></label></div></section>
     <section id="updates-settings"><h3>版本与升级</h3><p id="updates-versions" class="muted help"></p>
       <div class="button-row updates-actions"><button id="updates-check" type="button" aria-busy="false"><span class="update-spinner" aria-hidden="true"></span><span id="updates-check-label">检查更新</span></button><button id="updates-install" class="primary" type="button" aria-busy="false" disabled><span class="update-spinner" aria-hidden="true"></span><span id="updates-install-label">立即升级</span></button><span id="updates-message" class="help updates-status" role="status" aria-atomic="true" hidden></span></div>
     </section>
