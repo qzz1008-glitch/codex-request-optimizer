@@ -253,7 +253,7 @@ const uiI18n = (() => {
     "zstd（推荐）":"zstd (recommended)",
     "压缩等级":"Compression level",
     "3级（默认）":"Level 3 (default)",
-    "{level}级 · 包约缩小{size}% · 耗时约占整体{time}%":"Level {level} · ~{size}% smaller · ~{time}% of total time",
+    "{level}级 · 请求大小≈ -{size}%，任务耗时≈ +{time}%":"Level {level} · Request size ≈ -{size}%, task time ≈ +{time}%",
     "（默认）":" (default)",
     "（推荐）":" (recommended)",
     "切换为 zstd 压缩后可设置等级。":"Switch to zstd compression to set the level.",

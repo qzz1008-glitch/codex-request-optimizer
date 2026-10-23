@@ -755,7 +755,7 @@ function fillZstdLevel() {
   const s=state.status,input=$("zstd-level"),supported=Number.isInteger(s.zstd_level);
   const selected=settingsEditing?Number(input.value):(s.zstd_level??3);
   input.replaceChildren(...zstdLevelEstimates.map(([level,size,,time])=>{
-    const text=t("{level}级 · 包约缩小{size}% · 耗时约占整体{time}%")
+    const text=t("{level}级 · 请求大小≈ -{size}%，任务耗时≈ +{time}%")
       .replace("{level}",level).replace("{size}",size.toFixed(1)).replace("{time}",time.toFixed(3));
     const option=el("option","",text+(level===3?t("（默认）"):level===16?t("（推荐）"):""));
     option.value=String(level);return option;
