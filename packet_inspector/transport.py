@@ -91,6 +91,10 @@ def prepare_zstd(body, encoding, zstd_level=DEFAULT_ZSTD_LEVEL, *,
             decoded = decode_body(body, "zstd")
         except (ValueError, zstandard.ZstdError):
             return PreparedRequest(body, encoding)
+    # The current original size takes priority over the previous session mode.
+    # Native zstd stays byte-for-byte intact when no extra compression is needed.
+    if auto_zstd_level and len(decoded) * 100 < budget_bytes * 90:
+        return PreparedRequest(body, encoding or "identity")
     compressed = zstandard.ZstdCompressor(level=level).compress(decoded)
     if len(compressed) < len(body):
         return PreparedRequest(compressed, "zstd", level)
