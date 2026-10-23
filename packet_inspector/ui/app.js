@@ -736,20 +736,38 @@ function fillSettings() {
     $("start-on-login").checked=!!s.start_on_login;
     $("capacity-retry").checked=!!s.capacity_retry_enabled;
     $("capacity-retry-count").value=s.capacity_retry_max_retries??3;
-    $("image-isolation").checked=!!s.image_isolation_enabled;
   }
   for(const id of ["storage-limit","packet-limit"])$(id).disabled=settingsSaving||!!s.ui_read_only;
   $("start-on-login").disabled=settingsSaving||!!s.ui_read_only||!s.start_on_login_supported;
   $("capacity-retry").disabled=settingsSaving||!!s.ui_read_only||!s.capacity_retry_supported;
   $("capacity-retry-count").disabled=settingsSaving||!!s.ui_read_only||!Number.isInteger(s.capacity_retry_max_retries);
-  $("image-isolation").disabled=settingsSaving||!!s.ui_read_only||!s.image_isolation_supported;
-  $("image-isolation-hint").textContent=t(s.image_isolation_supported?"替换后主请求只包含图片路径，降低大小":"当前中转暂不支持此功能。");
+  fillImageAnalysisMode();
   $("startup-hint").textContent=t(s.start_on_login_supported?(s.startup_state_known===false?"无法读取开机启动状态，请重新保存设置。":"登录 Windows 后在后台启动，可从托盘打开窗口。"):"开机启动仅支持已安装的 Windows 版本。");
   $("runtime-settings-message").hidden=!!s.capacity_retry_supported;
   $("runtime-settings-message").textContent=s.capacity_retry_supported?"":t("当前中转暂不支持此功能。");
   renderConnectionActions();
   renderCompressionMode();renderLanguageSelection();fillZstdLevel();fillImageDirectory();fillPacketProtection();syncContextDefaults();
   updateSettingsSaveState(false);
+}
+function imageAnalysisMode(status=state.status) {
+  return ["native","disabled","optimized"].includes(status?.image_analysis_mode)?status.image_analysis_mode:
+    status?.image_isolation_enabled?"optimized":"native";
+}
+function selectedImageAnalysisMode() {
+  return $("image-analysis-mode").querySelector("input:checked")?.value??imageAnalysisMode();
+}
+function fillImageAnalysisMode() {
+  const s=state.status,hasModes=["native","disabled","optimized"].includes(s.image_analysis_mode);
+  for(const input of $("image-analysis-mode").querySelectorAll("input")) {
+    if(!settingsEditing)input.checked=input.value===imageAnalysisMode(s);
+    const unavailable=input.value==="disabled"&&!hasModes;
+    input.disabled=settingsSaving||!!s.ui_read_only||!(s.image_isolation_supported||hasModes)||unavailable;
+    input.closest("label").title=unavailable?t("当前后台暂不支持禁用模式，升级后可用。"):"";
+  }
+  const descriptions={native:"使用原生图片工具，图片随主请求发送",disabled:"关闭原生与优化图片工具",
+    optimized:"主请求仅保留图片路径和文字结果，降低大小"};
+  $("image-isolation-hint").textContent=t(s.image_isolation_supported||hasModes?
+    descriptions[selectedImageAnalysisMode()]:"当前中转暂不支持此功能。");
 }
 function fillZstdLevel() {
   const s=state.status,input=$("zstd-level"),supported=Number.isInteger(s.zstd_level);
@@ -1003,7 +1021,7 @@ function readSettingsDraft() {
     start_on_login:$("start-on-login").checked,
     capacity_retry_enabled:$("capacity-retry").checked,
     capacity_retry_max_retries:$("capacity-retry-count").value,
-    image_isolation_enabled:$("image-isolation").checked,
+    image_analysis_mode:selectedImageAnalysisMode(),
     image_save_dir:$("image-save-dir").value,
     max_storage_mb:$("storage-limit").value,
     max_packets:$("packet-limit").value,
@@ -1033,7 +1051,7 @@ function trackSettingsRestart(field,before,after) {
   else settingsRestartChanges.set(field,original);
 }
 function finishSettingsSave() {
-  const labels={image_isolation_enabled:"替换图片解析工具",
+  const labels={image_analysis_mode:"图片解析",
     context_tokens:"有效上下文",compact_tokens:"自动压缩阈值"};
   const items=[...settingsRestartChanges.keys()].map(field=>t(labels[field]));
   if(state.status.entry_port?.pending)items.unshift(t("入口端口"));
@@ -1057,7 +1075,9 @@ async function saveSettings() {
     ["start_on_login","start_on_login",draft.start_on_login,s.start_on_login_supported],
     ["capacity_retry_enabled","capacity_retry_enabled",draft.capacity_retry_enabled,s.capacity_retry_supported],
     ["capacity_retry_max_retries","capacity_retry_max_retries",Number(draft.capacity_retry_max_retries),Number.isInteger(s.capacity_retry_max_retries)],
-    ["image_isolation_enabled","image_isolation_enabled",draft.image_isolation_enabled,s.image_isolation_supported],
+    ["image_analysis_mode","image_analysis_mode" in s?"image_analysis_mode":"image_isolation_enabled",
+      "image_analysis_mode" in s?draft.image_analysis_mode:draft.image_analysis_mode==="optimized",
+      s.image_isolation_supported||["native","disabled","optimized"].includes(s.image_analysis_mode)],
     ["image_save_dir","image_save_dir",draft.image_save_dir===imageDefaultDirectory()?"":draft.image_save_dir,s.image_save_dir_supported],
     ["max_storage_mb","max_storage_mb",Number(draft.max_storage_mb),true],
     ["max_packets","max_packets",Number(draft.max_packets),true]
@@ -1075,8 +1095,8 @@ async function saveSettings() {
       const result=await api("/api/settings",values);
       state.status={...state.status,...result};
       for(const [field] of entries)settingsBaseline[field]=draft[field];
-      if(entries.some(([field])=>field==="image_isolation_enabled"))
-        trackSettingsRestart("image_isolation_enabled",s.image_isolation_enabled,result.image_isolation_enabled);
+      if(entries.some(([field])=>field==="image_analysis_mode"))
+        trackSettingsRestart("image_analysis_mode",imageAnalysisMode(s),imageAnalysisMode(result));
       saved++;
     }
     if(contextChanged) {
@@ -1531,6 +1551,7 @@ $("capacity-retry-count").addEventListener("input",event=>{
 $("settings-dialog").querySelector(".settings-content").addEventListener("input",()=>updateSettingsSaveState());
 $("settings-dialog").querySelector(".settings-content").addEventListener("change",()=>updateSettingsSaveState());
 $("zstd-level").addEventListener("change",fillZstdLevel);
+$("image-analysis-mode").addEventListener("change",fillImageAnalysisMode);
 action("settings-save",saveSettings);
 action("ui-refresh",()=>{if(state.status?.ui_live_reload)location.reload();});
 action("updates-check",()=>performUpdate("check"));action("updates-install",()=>performUpdate("install"));
