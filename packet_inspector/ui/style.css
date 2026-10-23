@@ -290,10 +290,11 @@ code.session-id{font-family:Consolas,"Cascadia Mono",monospace;font-size:11px;wo
 #settings-dialog .settings-grid{display:grid;grid-template-columns:minmax(0,1fr);gap:12px}
 #settings-dialog .settings-grid label{display:grid;grid-template-columns:var(--settings-label-width) var(--settings-number-width);align-items:center;gap:16px;margin:0}
 #settings-dialog .settings-grid input{width:100%}
-#settings-dialog #updates-versions{flex:0 1 auto;min-width:0;margin:0}
-#settings-dialog .updates-actions{gap:8px;margin:0}
+#settings-dialog #updates-versions{display:flex;align-items:center;min-width:0;min-height:var(--settings-control-height);margin:0}
+#settings-dialog .updates-actions{display:grid;grid-template-columns:var(--settings-label-width) minmax(0,1fr);align-items:end;gap:8px 16px;margin:0}
+#settings-dialog .updates-buttons{display:flex;align-items:center;flex-wrap:wrap;gap:8px;min-width:0}
 #settings-dialog .updates-actions button[aria-busy=true]{padding-inline:30px}
-#settings-dialog .updates-status{min-width:0;margin:0 0 0 auto}
+#settings-dialog .updates-status{grid-column:2;min-width:0;margin:0;text-align:left}
 #settings-dialog>.settings-footer{flex:none;display:grid;grid-template-columns:minmax(0,1fr) auto auto;align-items:center;gap:12px;padding:16px var(--settings-padding);border-top:1px solid var(--line);background:var(--panel)}
 #settings-dialog .settings-footer .help{min-width:0;margin:0}
 #settings-dialog .settings-footer button{white-space:nowrap}
@@ -325,6 +326,8 @@ code.session-id{font-family:Consolas,"Cascadia Mono",monospace;font-size:11px;wo
 @container settings-dialog (max-width:500px){
   #settings-dialog .settings-language-row{grid-template-columns:minmax(0,1fr) auto}
   #settings-dialog :is(.entry-port-row,.zstd-level-control,.packet-size-limit,.runtime-setting-row,.image-directory-settings,.settings-grid label){grid-template-columns:minmax(0,1fr);gap:8px}
+  #settings-dialog .updates-actions{grid-template-columns:minmax(0,1fr)}
+  #settings-dialog .updates-status{grid-column:1}
   #settings-dialog .entry-port-row input,#settings-dialog .settings-grid input{width:var(--settings-number-width)}
   #settings-dialog .runtime-inline-hint{padding-inline-start:22px}
   #settings-dialog .image-directory-settings .help{grid-column:1}
@@ -342,7 +345,7 @@ code.session-id{font-family:Consolas,"Cascadia Mono",monospace;font-size:11px;wo
   #settings-dialog .image-directory-row button{justify-self:start}
 }
 .updates-actions{align-items:center;flex-wrap:wrap}
-.updates-actions>button{flex:none}
+.updates-actions button{flex:none}
 .updates-status{flex:1 1 180px;min-width:0;margin-left:auto;text-align:right;overflow-wrap:anywhere;color:var(--muted)}
 .updates-status.error{color:var(--danger)}
 .empty-state{margin:12cqh auto}
