@@ -160,6 +160,10 @@ code.session-id{font-family:Consolas,"Cascadia Mono",monospace;font-size:11px;wo
   --settings-inline-label-width:184px;
   --settings-number-width:168px;
   --settings-padding:28px;
+  --settings-control-height:36px;
+  --settings-control-radius:8px;
+  --settings-segment-height:30px;
+  --settings-segment-radius:6px;
   width:min(760px,calc(100vw - 32px));
   max-height:min(calc(var(--desktop-height) - 64px),calc(100dvh - 32px));
   padding:0;
@@ -196,8 +200,8 @@ code.session-id{font-family:Consolas,"Cascadia Mono",monospace;font-size:11px;wo
 #settings-dialog .settings-content>section:last-child{padding-bottom:0}
 #settings-dialog label{margin:0;color:var(--ink);font-size:14px;line-height:22px;font-weight:400}
 #settings-dialog :is(button,input,select){font:inherit;font-size:14px}
-#settings-dialog button{min-height:36px;padding:7px 12px;border-radius:8px;line-height:20px}
-#settings-dialog :is(input:not([type=checkbox]),select){height:36px;margin:0;padding:7px 10px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--ink)}
+#settings-dialog button{min-height:var(--settings-control-height);padding:7px 12px;border-radius:var(--settings-control-radius);line-height:20px}
+#settings-dialog :is(input:not([type=checkbox],[type=radio]),select){height:var(--settings-control-height);margin:0;padding:7px 10px;border:1px solid var(--line);border-radius:var(--settings-control-radius);background:var(--panel);color:var(--ink)}
 #settings-dialog input[type=number]{font-variant-numeric:tabular-nums;text-align:right}
 #settings-dialog :is(input,select):disabled{background:var(--bg);opacity:.55;cursor:default}
 #settings-dialog :is(button,input,select):focus-visible{outline:2px solid var(--accent);outline-offset:2px}
@@ -207,8 +211,16 @@ code.session-id{font-family:Consolas,"Cascadia Mono",monospace;font-size:11px;wo
 #settings-dialog .help.error{color:var(--danger)}
 #settings-dialog .settings-dirty{border-radius:8px;outline:2px solid var(--accent);outline-offset:4px;background-color:var(--soft)}
 #settings-dialog .settings-language-row{display:grid;grid-template-columns:var(--settings-label-width) minmax(0,1fr);align-items:center;gap:16px;margin:20px 0}
-#settings-dialog .language-toggle{justify-self:start;gap:2px;padding:2px;border:1px solid var(--line);border-radius:8px;background:var(--bg)}
-#settings-dialog .language-toggle button{min-width:76px;height:30px;min-height:30px;padding:4px 12px;border-radius:6px;font-size:13px;line-height:20px}
+#settings-dialog :is(.language-toggle,.image-mode-pills){display:inline-flex;justify-self:start;gap:2px;width:max-content;min-width:0;max-width:100%;margin:0;padding:2px;border:1px solid var(--line);border-radius:var(--settings-control-radius);background:var(--bg)}
+#settings-dialog :is(.language-toggle button,.image-mode-pills span){display:block;height:var(--settings-segment-height);min-height:var(--settings-segment-height);padding:5px 8px;border:0;border-radius:var(--settings-segment-radius);font-size:13px;font-weight:400;line-height:20px;text-align:center;white-space:nowrap}
+#settings-dialog .language-toggle button{min-width:76px}
+#settings-dialog :is(.language-toggle button[aria-pressed=true],.image-mode-pills input:checked+span){background:var(--panel);color:var(--accent);box-shadow:0 1px 3px #14243b20}
+#settings-dialog :is(.language-toggle button:focus-visible,.image-mode-pills input:focus-visible+span){outline:2px solid var(--accent);outline-offset:1px}
+#settings-dialog .image-mode-pills label{position:relative;display:block;margin:0;font-size:13px;line-height:20px;white-space:nowrap;cursor:pointer}
+#settings-dialog .image-mode-pills input{position:absolute;inset:0;width:100%;height:100%;margin:0;padding:0;border:0;opacity:0;cursor:pointer}
+#settings-dialog .image-mode-pills span{color:var(--muted)}
+#settings-dialog .image-mode-pills label:has(input:disabled){opacity:.5;cursor:default}
+#settings-dialog .image-mode-pills input:disabled{opacity:0;cursor:default}
 #settings-dialog .entry-port-row{display:grid;grid-template-columns:var(--settings-label-width) var(--settings-number-width) minmax(0,1fr);align-items:center;gap:16px;margin:0}
 #settings-dialog .entry-port-row input{width:100%;min-width:0}
 #settings-dialog .entry-port-status{min-width:0;font-size:13px;line-height:20px;color:var(--muted);overflow-wrap:anywhere}
@@ -226,7 +238,7 @@ code.session-id{font-family:Consolas,"Cascadia Mono",monospace;font-size:11px;wo
 .zstd-level-scroll{min-height:0;max-height:500px;overflow:auto;scrollbar-gutter:stable;border:1px solid var(--line);border-radius:8px}
 .zstd-level-table{table-layout:fixed;font-size:13px}
 .zstd-level-table th,.zstd-level-table td{padding:6px 12px;vertical-align:middle}
-.zstd-level-table th{position:sticky;top:0;z-index:1;background:var(--panel);font-size:12px;line-height:1.4;padding-top:10px;padding-bottom:10px}
+.zstd-level-table th{position:sticky;top:0;z-index:1;background:var(--panel);font-size:12px;line-height:1.4;padding-top:10px;padding-bottom:10px;white-space:normal}
 .zstd-level-table th:first-child{width:42%}
 .zstd-level-table tbody tr{cursor:pointer}
 .zstd-level-table tbody tr:hover td,.zstd-level-table tbody tr:focus-within td{background:#f5f7fc}
@@ -235,7 +247,7 @@ code.session-id{font-family:Consolas,"Cascadia Mono",monospace;font-size:11px;wo
 .zstd-level-option:hover{background:transparent}
 .zstd-level-check{display:inline-block;width:14px;flex:none;text-align:center}
 #settings-dialog .packet-size-controls{display:grid;grid-template-columns:var(--settings-label-width) minmax(0,1fr);align-items:center;gap:12px 16px;margin:0}
-#settings-dialog :is(.runtime-toggle,.overflow-toggle){display:flex;align-items:center;gap:8px;min-width:0;min-height:36px;margin:0;color:var(--ink);font-size:14px;line-height:22px}
+#settings-dialog :is(.runtime-toggle,.overflow-toggle){display:flex;align-items:center;gap:8px;min-width:0;min-height:var(--settings-control-height);margin:0;color:var(--ink);font-size:14px;line-height:22px}
 #settings-dialog .packet-size-limit{display:grid;grid-template-columns:var(--settings-inline-label-width) max-content;align-items:center;justify-self:start;gap:8px;margin:0}
 #settings-dialog .packet-size-value{display:inline-flex;align-items:center;gap:8px}
 #settings-dialog .packet-size-limit input{width:68px}
@@ -247,6 +259,7 @@ code.session-id{font-family:Consolas,"Cascadia Mono",monospace;font-size:11px;wo
 #settings-dialog .capacity-retry-limit{display:grid;grid-template-columns:var(--settings-inline-label-width) 68px minmax(0,1fr);align-items:center;gap:8px;min-width:0;color:var(--muted);font-size:13px;line-height:20px}
 #settings-dialog .capacity-retry-limit label{white-space:nowrap}
 #settings-dialog .capacity-retry-limit input{width:68px;text-align:center}
+#settings-dialog .capacity-retry-limit>span{font-size:12px}
 #settings-dialog .image-directory-settings{display:grid;grid-template-columns:var(--settings-label-width) minmax(0,1fr);align-items:center;gap:8px 16px;margin:16px 0 0}
 #settings-dialog .image-directory-row{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:8px;min-width:0}
 #settings-dialog .image-directory-row input{width:100%;min-width:0}
@@ -255,13 +268,13 @@ code.session-id{font-family:Consolas,"Cascadia Mono",monospace;font-size:11px;wo
 #settings-dialog .context-grid{display:grid;grid-template-columns:minmax(0,1fr);gap:12px}
 #settings-dialog .context-control{display:grid;grid-template-columns:var(--settings-label-width) var(--settings-number-width) minmax(0,1fr);align-items:center;gap:16px;min-width:0}
 #settings-dialog .context-label{min-width:0;margin:0;font-weight:400;overflow-wrap:anywhere}
-#settings-dialog .context-value{display:flex;align-items:center;gap:8px;min-width:0;height:36px;padding:7px 10px;border:1px solid var(--line);border-radius:8px;background:var(--panel)}
+#settings-dialog .context-value{display:flex;align-items:center;gap:8px;min-width:0;height:var(--settings-control-height);padding:7px 10px;border:1px solid var(--line);border-radius:var(--settings-control-radius);background:var(--panel)}
 #settings-dialog .context-value:focus-within{outline:2px solid var(--accent);outline-offset:2px}
 #settings-dialog .context-value:has(input:disabled){background:var(--bg)}
-#settings-dialog .context-value input{width:100%;min-width:0;height:20px;margin:0;padding:0;border:0;border-radius:0;background:transparent;outline:0;box-shadow:none;font-weight:600}
+#settings-dialog .context-value input{width:100%;min-width:0;height:20px;margin:0;padding:0;border:0;border-radius:0;background:transparent;outline:0;box-shadow:none;font-weight:400}
 #settings-dialog .context-value input::placeholder{font-size:13px;font-weight:400}
 #settings-dialog .context-unit{flex:none;color:var(--muted);font-size:12px;white-space:nowrap}
-#settings-dialog .context-default{display:flex;align-items:center;gap:8px;justify-self:start;min-width:0;min-height:36px;margin:0;color:var(--muted);font-size:13px;line-height:20px}
+#settings-dialog .context-default{display:flex;align-items:center;gap:8px;justify-self:start;min-width:0;min-height:var(--settings-control-height);margin:0;color:var(--muted);font-size:13px;line-height:20px}
 #settings-dialog .context-default input{display:block;width:14px;height:14px;margin:0}
 #settings-dialog .settings-grid{display:grid;grid-template-columns:minmax(0,1fr);gap:12px}
 #settings-dialog .settings-grid label{display:grid;grid-template-columns:var(--settings-label-width) var(--settings-number-width);align-items:center;gap:16px;margin:0}
@@ -283,6 +296,7 @@ code.session-id{font-family:Consolas,"Cascadia Mono",monospace;font-size:11px;wo
   #settings-dialog .runtime-setting-row{grid-template-columns:minmax(0,1fr);gap:8px}
   #settings-dialog .capacity-retry-limit{grid-template-columns:var(--settings-label-width) 68px minmax(0,1fr);gap:16px}
   #settings-dialog .runtime-inline-hint{padding-inline-start:22px}
+  #settings-dialog .image-mode-row .runtime-inline-hint{padding-inline-start:0}
 }
 @container settings-dialog (max-width:500px){
   #settings-dialog .settings-language-row{grid-template-columns:minmax(0,1fr) auto}
@@ -313,21 +327,6 @@ pre{max-height:55cqh}
 dialog{width:min(760px,calc(var(--desktop-width) - 80px));max-height:calc(var(--desktop-height) - 80px)}
 :root.preview-mode dialog{position:absolute;left:50%;right:auto;top:calc(50px + var(--desktop-height)/2);bottom:auto;transform:translate(-50%,-50%);margin:0}
 
-#settings-dialog .image-mode-row{grid-template-columns:max-content minmax(0,1fr)}
-#settings-dialog .image-mode-pills{display:inline-flex;gap:2px;min-width:0;margin:0;padding:3px;border:1px solid var(--line);border-radius:999px;background:var(--bg)}
-#settings-dialog .image-mode-pills label{position:relative;display:block;margin:0;font-size:13px;line-height:20px;white-space:nowrap;cursor:pointer}
-#settings-dialog .image-mode-pills input{position:absolute;inset:0;width:100%;height:100%;margin:0;padding:0;border:0;opacity:0;cursor:pointer}
-.image-mode-pills span{display:block;padding:4px 8px;border-radius:999px;color:var(--muted);line-height:20px}
-.image-mode-pills input:checked+span{background:var(--panel);color:var(--accent);box-shadow:0 1px 3px #172b4d18}
-.image-mode-pills input:focus-visible+span{outline:2px solid #a3baff;outline-offset:1px}
-.image-mode-pills label:has(input:disabled){opacity:.5;cursor:default}
-#settings-dialog .image-mode-pills input:disabled{opacity:0;cursor:default}
-@container settings-dialog (max-width:500px){
-  #settings-dialog .image-mode-row{grid-template-columns:minmax(0,1fr);gap:8px}
-  #settings-dialog .image-mode-row .runtime-inline-hint{padding-inline-start:0}
-  #settings-dialog .image-mode-pills{justify-self:start;max-width:100%}
-  #settings-dialog .image-mode-pills label{font-size:12px}
-}
 .header-compression{display:flex;align-items:center;flex-shrink:0}.compression-toggle{flex-shrink:0}.compression-toggle button{min-width:100px}
 #compression-confirm-dialog{width:min(440px,calc(100vw - 48px))}#compression-confirm-dialog h2{font-size:20px}#compression-confirm-dialog .button-row{justify-content:flex-end}#compression-confirm-message{color:var(--danger)}
 #exit-confirm-dialog{width:min(540px,calc(100vw - 48px))}#exit-confirm-dialog h2{font-size:20px}#exit-confirm-dialog .button-row{justify-content:flex-end;flex-wrap:wrap}#exit-confirm-message{color:var(--danger)}
