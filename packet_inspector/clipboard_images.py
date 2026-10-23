@@ -66,8 +66,9 @@ class ClipboardImageCache:
                 with self.lock, file_lock(self.directory / ".clipboard.lock"):
                     source_info = source.stat() if self._regular(source) else None
                     target_info = target.stat() if self._regular(target) else None
-                    fresh = (source_info is None or source == target or
-                             (source_info.st_size == target_info.st_size and source_info.st_mtime_ns <= target_info.st_mtime_ns)) if target_info else False
+                    fresh = target_info is not None and (source_info is None or source == target or
+                            (source_info.st_size == target_info.st_size and
+                             source_info.st_mtime_ns <= target_info.st_mtime_ns))
                     if fresh and 0 < target_info.st_size <= self.max_file_bytes:
                         target.touch()
                         self._prune(protected)
