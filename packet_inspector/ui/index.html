@@ -151,8 +151,10 @@
     <section><h3>记录设置</h3><div class="settings-grid"><label for="storage-limit" data-settings-field="max_storage_mb"><span>存储上限（MiB）</span><input id="storage-limit" type="number" min="16" max="8192" required></label><label for="packet-limit" data-settings-field="max_packets"><span>记录上限（条）</span><input id="packet-limit" type="number" min="10" max="20000" required></label></div></section>
     <section id="updates-settings"><h3>版本与升级</h3>
       <div class="button-row updates-actions">
-        <button id="updates-check" type="button" aria-busy="false"><span class="update-spinner" aria-hidden="true"></span><span id="updates-check-label">检查更新</span></button>
-        <button id="updates-install" class="primary" type="button" aria-busy="false" disabled><span class="update-spinner" aria-hidden="true"></span><span id="updates-install-label">立即升级</span></button>
+        <div class="updates-buttons">
+          <button id="updates-check" type="button" aria-busy="false"><span class="update-spinner" aria-hidden="true"></span><span id="updates-check-label">检查更新</span></button>
+          <button id="updates-install" class="primary" type="button" aria-busy="false" disabled><span class="update-spinner" aria-hidden="true"></span><span id="updates-install-label">立即升级</span></button>
+        </div>
         <p id="updates-versions" class="muted help"></p>
         <span id="updates-message" class="help updates-status" role="status" aria-atomic="true" hidden></span>
       </div>
