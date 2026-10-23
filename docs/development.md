@@ -70,7 +70,7 @@ python -m scripts.verify.verify_self_upgrade_exe --release-dir release/local-bui
 
 采用 GitHub Flow，规则固定在仓库根目录 `AGENTS.md`，所有 agent 都遵守。`main` 是唯一长期集成和交付分支；功能、修复、整理分别使用 `feat/<任务>`、`fix/<任务>`、`chore/<任务>` 短期分支。没有独立的长期发布工作树或 `develop` 分支，版本通过 `vX.Y.Z` 标签标记。
 
-默认保留一个主工作树。单任务从最新 `main` 开任务分支，完成后提交、验证、合入，再删除分支并让主目录回到 `main`：
+默认保留一个主工作树。开发会话从最新 `main` 开任务分支，完成实现及必要验证后自动提交并合入 `main`，无需再次确认；推送和打包仍按发布流程执行。合并时持有仓库共享锁，确认主目录处于干净的 `main`，合入后删除分支并清理临时工作树：
 
 ```powershell
 git fetch origin
