@@ -104,6 +104,21 @@
       </div>
       <p id="zstd-level-message" class="help" role="status" hidden></p>
     </section>
+    <section id="context-settings"><div class="context-heading"><h3>上下文设置</h3></div>
+      <div class="context-grid">
+        <div class="context-control" role="group" aria-labelledby="context-label" data-settings-field="context_tokens">
+          <label id="context-label" class="context-label" for="context-tokens" title="有效上下文">有效上下文</label>
+          <div class="context-value"><input id="context-tokens" type="number" min="4" max="10000" step="0.001" required aria-describedby="context-unit"><span id="context-unit" class="context-unit">k tokens</span></div>
+          <div class="context-default"><input id="context-default" type="checkbox" aria-labelledby="context-label context-default-label"><span id="context-default-label">默认</span></div>
+        </div>
+        <div class="context-control" role="group" aria-labelledby="compact-label" data-settings-field="compact_tokens">
+          <label id="compact-label" class="context-label" for="compact-tokens" title="自动压缩阈值">自动压缩阈值</label>
+          <div class="context-value"><input id="compact-tokens" type="number" min="1" max="10000" step="0.001" required aria-describedby="compact-unit"><span id="compact-unit" class="context-unit">k tokens</span></div>
+          <div class="context-default"><input id="compact-default" type="checkbox" aria-labelledby="compact-label compact-default-label"><span id="compact-default-label">默认</span></div>
+        </div>
+      </div>
+      <p id="context-message" class="help" role="status" hidden></p>
+    </section>
     <section><h3>请求大小保护</h3>
       <div class="packet-size-controls">
         <div class="overflow-toggle" data-settings-field="packet_size_protection_enabled"><input id="packet-size-protection" type="checkbox" aria-labelledby="packet-size-protection-label"><span id="packet-size-protection-label">启用请求大小保护</span></div>
@@ -131,21 +146,6 @@
       <div class="runtime-setting-row"><div class="runtime-toggle" data-settings-field="start_on_login"><input id="start-on-login" type="checkbox" aria-labelledby="start-on-login-label" aria-describedby="startup-hint"><span id="start-on-login-label">开机启动</span></div><p id="startup-hint" class="muted help runtime-inline-hint">登录 Windows 后在后台启动，可从托盘打开窗口。</p></div>
       <div class="runtime-setting-row runtime-retry-row"><div class="runtime-toggle" data-settings-field="capacity_retry_enabled"><input id="capacity-retry" type="checkbox" aria-labelledby="capacity-retry-label"><span id="capacity-retry-label">模型容量不足时自动重试</span></div><div class="capacity-retry-limit" data-settings-field="capacity_retry_max_retries"><label for="capacity-retry-count">重试次数</label><input id="capacity-retry-count" type="number" min="1" max="99" step="1" value="3" inputmode="numeric" required><span>次</span></div></div>
       <p id="runtime-settings-message" class="help" role="status" hidden></p>
-    </section>
-    <section id="context-settings"><div class="context-heading"><h3>上下文设置</h3></div>
-      <div class="context-grid">
-        <div class="context-control" role="group" aria-labelledby="context-label" data-settings-field="context_tokens">
-          <label id="context-label" class="context-label" for="context-tokens" title="有效上下文">有效上下文</label>
-          <div class="context-value"><input id="context-tokens" type="number" min="4" max="10000" step="0.001" required aria-describedby="context-unit"><span id="context-unit" class="context-unit">k tokens</span></div>
-          <div class="context-default"><input id="context-default" type="checkbox" aria-labelledby="context-label context-default-label"><span id="context-default-label">默认</span></div>
-        </div>
-        <div class="context-control" role="group" aria-labelledby="compact-label" data-settings-field="compact_tokens">
-          <label id="compact-label" class="context-label" for="compact-tokens" title="自动压缩阈值">自动压缩阈值</label>
-          <div class="context-value"><input id="compact-tokens" type="number" min="1" max="10000" step="0.001" required aria-describedby="compact-unit"><span id="compact-unit" class="context-unit">k tokens</span></div>
-          <div class="context-default"><input id="compact-default" type="checkbox" aria-labelledby="compact-label compact-default-label"><span id="compact-default-label">默认</span></div>
-        </div>
-      </div>
-      <p id="context-message" class="help" role="status" hidden></p>
     </section>
     <section><h3>记录设置</h3><div class="settings-grid"><label for="storage-limit" data-settings-field="max_storage_mb"><span>存储上限（MiB）</span><input id="storage-limit" type="number" min="16" max="8192" required></label><label for="packet-limit" data-settings-field="max_packets"><span>记录上限（条）</span><input id="packet-limit" type="number" min="10" max="20000" required></label></div></section>
     <section id="updates-settings"><h3>版本与升级</h3><p id="updates-versions" class="muted help"></p>
