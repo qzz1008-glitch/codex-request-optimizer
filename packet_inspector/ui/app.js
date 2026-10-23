@@ -1729,7 +1729,7 @@ function fillPacketProtection() {
   $("packet-size-protection").disabled=settingsSaving||!supported;
   $("budget").disabled=$("packet-size-protection").disabled||!$("packet-size-protection").checked;
   automatic.disabled=$("packet-size-protection").disabled||!$("packet-size-protection").checked||!autoSupported;
-  automatic.closest("label").title=!autoSupported?t("当前中转暂不支持自动选择压缩等级。"):!$("packet-size-protection").checked?t("请先开启请求大小保护"):"";
+  automatic.closest("label").title=!autoSupported?t("当前中转暂不支持按包大小自动压缩。"):!$("packet-size-protection").checked?t("请先开启请求大小保护"):"";
   $("packet-size-message").hidden=supported;
   if(!supported)$("packet-size-message").textContent=t("当前中转暂不支持此功能。");
   fillZstdLevel();
