@@ -113,7 +113,7 @@ const uiI18n = (() => {
     "上游原始输入 Token":"Actual upstream input tokens",
     "向 Codex 报告的输入 Token":"Input tokens reported to Codex",
     "请求大小保护":"Request size protection",
-    "启动":"Enable",
+    "请求保护":"Request protection",
     "请求大小上限（kB）":"Request size limit (kB)",
     "保存保护设置":"Save protection settings",
     "输入 Token":"Input tokens",
