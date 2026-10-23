@@ -139,7 +139,7 @@ const uiI18n = (() => {
     "优化":"Optimized",
     "使用原生图片工具，图片随主请求发送":"Use native image tools; images are sent in the main request.",
     "关闭原生与优化图片工具":"Disable native and optimized image tools.",
-    "主请求仅保留图片路径和文字结果，降低大小":"Keep image paths and text results in the main request to reduce its size.",
+    "主请求仅保留图片路径":"Keep only image paths in the main request.",
     "当前后台暂不支持禁用模式，升级后可用。":"Upgrade the backend to use disabled mode.",
     "图片保存路径":"Image save folder",
     "保存目录":"Save folder",
