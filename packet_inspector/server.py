@@ -39,7 +39,7 @@ from .capacity_retry import MAX_RETRIES, open_response
 from .usage_trigger import (UsageStream, raw_chunks, request_size as usage_trigger_size,
                             trigger_threshold, DEFAULT_BUDGET_BYTES, MIN_BUDGET_BYTES)
 from .overflow import CheckpointStream, OverflowCompactor, OverflowFailure
-from .image_config import ImageToolConfig, WORKER_HEADER
+from .image_config import IMAGE_MODES, ImageToolConfig, WORKER_HEADER, image_mode
 from .image_isolation import ImageIsolation, ImageIsolationFailure, check_image_directory, resolve_image_directory
 from .image_tool import ImageToolRPC
 
@@ -100,10 +100,12 @@ class InspectorServer(ThreadingHTTPServer):
                          "ui_language": "zh",
                          "start_on_login": False, "capacity_retry_enabled": False,
                          "capacity_retry_max_retries": MAX_RETRIES,
-                         "image_isolation_enabled": False, "image_save_dir": "",
+                         "image_isolation_enabled": False, "image_analysis_mode": "native", "image_save_dir": "",
                          "auto_detect_providers": True, "provider_routes": {},
                          **protection_settings(saved)}
         self.settings.pop("ui_token", None)
+        self.settings["image_analysis_mode"] = image_mode(saved)
+        self.settings["image_isolation_enabled"] = self.settings["image_analysis_mode"] == "optimized"
         try:
             self.settings["zstd_level"] = validate_zstd_level(self.settings["zstd_level"])
         except ValueError:
@@ -316,6 +318,7 @@ class InspectorServer(ThreadingHTTPServer):
                 "capacity_retry_max_retries": self.settings["capacity_retry_max_retries"],
                 "capacity_retry_supported": True,
                 "image_isolation_enabled": self.settings["image_isolation_enabled"],
+                "image_analysis_mode": self.settings["image_analysis_mode"],
                 "image_isolation_supported": True, "image_tool": self.image_config.status(),
                 "image_save_dir": str(self.image_isolation.directory),
                 "image_save_dir_default": str(self.default_image_save_dir), "image_save_dir_supported": True,
@@ -589,11 +592,23 @@ class Handler(BaseHTTPRequestHandler):
                 if protection_values:
                     candidate["packet_size_protection_enabled"] = protection_values[0]
                 for key in ("capture_enabled",
-                            "start_on_login", "capacity_retry_enabled", "image_isolation_enabled"):
+                            "start_on_login", "capacity_retry_enabled"):
                     if key in data:
                         if not isinstance(data[key], bool):
                             raise ValueError("invalid boolean setting: " + key)
                         candidate[key] = data[key]
+                if "image_isolation_enabled" in data and not isinstance(data["image_isolation_enabled"], bool):
+                    raise ValueError("invalid boolean setting: image_isolation_enabled")
+                if "image_analysis_mode" in data:
+                    mode = data["image_analysis_mode"]
+                    if not isinstance(mode, str) or mode not in IMAGE_MODES:
+                        raise ValueError("invalid image analysis mode")
+                    if "image_isolation_enabled" in data and data["image_isolation_enabled"] != (mode == "optimized"):
+                        raise ValueError("图片解析设置冲突")
+                    candidate["image_analysis_mode"] = mode
+                elif "image_isolation_enabled" in data:
+                    candidate["image_analysis_mode"] = "optimized" if data["image_isolation_enabled"] else "native"
+                candidate["image_isolation_enabled"] = candidate["image_analysis_mode"] == "optimized"
                 for key, low, high in (("budget_bytes", MIN_BUDGET_BYTES, MAX_BODY), ("max_storage_mb", 16, 8192),
                                        ("max_packets", 10, 20000), ("capacity_retry_max_retries", 1, 99)):
                     if key in data:
@@ -602,8 +617,8 @@ class Handler(BaseHTTPRequestHandler):
                             raise ValueError("设置超出有效范围: " + key)
                         candidate[key] = value
                 previous = self.server.settings
-                change = (self.server.image_config.change(candidate["image_isolation_enabled"])
-                          if "image_isolation_enabled" in data else nullcontext())
+                change = (self.server.image_config.change(candidate["image_analysis_mode"])
+                          if {"image_isolation_enabled", "image_analysis_mode"} & data.keys() else nullcontext())
                 with change:
                     self.server.save_settings(candidate)
                     try:

@@ -195,6 +195,15 @@ dialog .runtime-toggle input{width:14px;height:14px;margin:0;flex:none;accent-co
 .runtime-setting-row{display:flex;align-items:center;flex-wrap:wrap;gap:4px 12px;margin:12px 0 7px}
 .runtime-setting-row .runtime-toggle{margin:0;flex-shrink:0}
 .runtime-setting-row .runtime-inline-hint{flex:1 1 260px;min-width:0;margin:0}
+.image-mode-pills{display:inline-flex;flex:none;gap:2px;min-width:0;margin:0;padding:3px;border:1px solid var(--line);background:var(--bg)}
+#settings-dialog .image-mode-pills{border-radius:999px}
+dialog .image-mode-pills label{position:relative;display:block;margin:0;font-size:12px;white-space:nowrap;cursor:pointer}
+dialog .image-mode-pills input{position:absolute;inset:0;width:100%;height:100%;margin:0;padding:0;opacity:0;cursor:pointer}
+.image-mode-pills span{display:block;padding:6px 10px;border-radius:999px;color:var(--muted);line-height:1.5}
+.image-mode-pills input:checked+span{background:var(--panel);color:var(--accent);box-shadow:0 1px 3px #172b4d18}
+.image-mode-pills input:focus-visible+span{outline:2px solid #a3baff;outline-offset:1px}
+.image-mode-pills label:has(input:disabled){opacity:.5;cursor:default}
+dialog .image-mode-pills input:disabled{opacity:0;cursor:default}
 .capacity-retry-limit{display:flex;align-items:center;gap:6px;color:var(--muted);font-size:12px}
 dialog .capacity-retry-limit label{margin:0;font-size:12px;white-space:nowrap}
 dialog .capacity-retry-limit input{width:58px;padding:5px 6px;text-align:center}
