@@ -219,8 +219,10 @@ code.session-id{font-family:Consolas,"Cascadia Mono",monospace;font-size:11px;wo
 #settings-dialog .zstd-level-control select{width:100%;max-width:100%;font-variant-numeric:tabular-nums}
 #settings-dialog .packet-size-controls{display:grid;grid-template-columns:var(--settings-label-width) minmax(0,1fr);align-items:center;gap:12px 16px;margin:0}
 #settings-dialog :is(.runtime-toggle,.overflow-toggle){display:flex;align-items:center;gap:8px;min-width:0;min-height:36px;margin:0;color:var(--ink);font-size:14px;line-height:22px}
-#settings-dialog .packet-size-limit{display:grid;grid-template-columns:var(--settings-inline-label-width) var(--settings-number-width);align-items:center;justify-self:start;gap:8px;margin:0}
-#settings-dialog .packet-size-limit input{width:100%}
+#settings-dialog .packet-size-limit{display:grid;grid-template-columns:var(--settings-inline-label-width) max-content;align-items:center;justify-self:start;gap:8px;margin:0}
+#settings-dialog .packet-size-value{display:inline-flex;align-items:center;gap:8px}
+#settings-dialog .packet-size-limit input{width:68px}
+#settings-dialog .packet-size-unit{color:var(--muted);font-size:13px;white-space:nowrap}
 #settings-dialog .runtime-setting-row{display:grid;grid-template-columns:var(--settings-label-width) minmax(0,1fr);align-items:center;gap:16px;margin:0}
 #settings-dialog .runtime-setting-row+.runtime-setting-row{margin-top:12px}
 #settings-dialog #request-protection-settings .runtime-retry-row{margin-top:12px}
@@ -256,7 +258,7 @@ code.session-id{font-family:Consolas,"Cascadia Mono",monospace;font-size:11px;wo
 #settings-dialog .settings-footer button{white-space:nowrap}
 @container settings-dialog (max-width:660px){
   #settings-dialog .packet-size-controls{grid-template-columns:minmax(0,1fr)}
-  #settings-dialog .packet-size-limit{grid-template-columns:var(--settings-label-width) var(--settings-number-width);gap:16px}
+  #settings-dialog .packet-size-limit{grid-template-columns:var(--settings-label-width) max-content;gap:16px}
 }
 @container settings-dialog (max-width:620px){
   #settings-dialog>.dialog-heading,#settings-dialog>.settings-footer,#settings-dialog>.settings-content{--settings-padding:20px}
@@ -268,7 +270,7 @@ code.session-id{font-family:Consolas,"Cascadia Mono",monospace;font-size:11px;wo
 @container settings-dialog (max-width:500px){
   #settings-dialog .settings-language-row{grid-template-columns:minmax(0,1fr) auto}
   #settings-dialog :is(.entry-port-row,.zstd-level-control,.packet-size-limit,.runtime-setting-row,.image-directory-settings,.settings-grid label){grid-template-columns:minmax(0,1fr);gap:8px}
-  #settings-dialog .entry-port-row input,#settings-dialog .packet-size-limit input,#settings-dialog .settings-grid input{width:var(--settings-number-width)}
+  #settings-dialog .entry-port-row input,#settings-dialog .settings-grid input{width:var(--settings-number-width)}
   #settings-dialog .runtime-inline-hint{padding-inline-start:22px}
   #settings-dialog .image-directory-settings .help{grid-column:1}
   #settings-dialog .capacity-retry-limit{grid-template-columns:68px minmax(0,1fr);gap:8px}
