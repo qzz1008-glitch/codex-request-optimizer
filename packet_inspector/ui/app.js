@@ -39,12 +39,12 @@ const settingsRestartChanges = new Map();
 // uncompressed JSON mean (956,534.845 B); time share uses the historical full
 // request median (18,945 ms). Upload savings are outside this CPU estimate.
 const zstdLevelEstimates = [
-  [1,49.5,1.78,.009],[2,51.6,2.09,.011],[3,52.8,2.63,.014],
-  [4,52.9,3.38,.018],[5,53.6,5.29,.028],[6,53.9,6.50,.034],
-  [7,54.1,7.69,.041],[8,54.2,8.98,.047],[9,54.2,10.38,.055],
-  [10,54.2,11.72,.062],[11,54.3,14.41,.076],[12,54.3,14.04,.074],
-  [13,54.3,27.51,.145],[14,54.3,30.87,.163],[15,54.4,32.06,.169],
-  [16,54.8,68.89,.364],[17,54.8,76.49,.404]
+  [1,49.47,1.78,.009],[2,51.61,2.09,.011],[3,52.77,2.63,.014],
+  [4,52.90,3.38,.018],[5,53.62,5.29,.028],[6,53.94,6.50,.034],
+  [7,54.06,7.69,.041],[8,54.16,8.98,.047],[9,54.17,10.38,.055],
+  [10,54.23,11.72,.062],[11,54.26,14.41,.076],[12,54.26,14.04,.074],
+  [13,54.32,27.51,.145],[14,54.35,30.87,.163],[15,54.35,32.06,.169],
+  [16,54.81,68.89,.364],[17,54.83,76.49,.404]
 ];
 let compressionTarget = null, compressionSaving = false, compressionRevision = 0;
 let exitRequest = null, exitSaving = false, exitFinished = false, exitRevision = 0;
@@ -774,7 +774,7 @@ function fillZstdLevel() {
   const selected=settingsEditing?Number(input.value):(s.zstd_level??3);
   input.replaceChildren(...zstdLevelEstimates.map(([level,size,,time])=>{
     const text=t("{level}级 · 请求大小≈ -{size}%，任务耗时≈ +{time}%")
-      .replace("{level}",level).replace("{size}",size.toFixed(1)).replace("{time}",time.toFixed(3));
+      .replace("{level}",level).replace("{size}",size.toFixed(2)).replace("{time}",time.toFixed(3));
     const option=el("option","",text+(level===3?t("（默认）"):level===16?t("（推荐）"):""));
     option.value=String(level);return option;
   }));
