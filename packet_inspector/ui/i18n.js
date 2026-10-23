@@ -132,7 +132,7 @@ const uiI18n = (() => {
     "设置已保存。以下配置仍需重启 ChatGPT App 后生效：":"Settings saved. Restart the ChatGPT App to apply these settings:",
     "我知道了":"Got it",
     "图片处理":"Image handling",
-    "替换 图片解析工具":"Replace image analysis tool",
+    "替换图片解析工具":"Replace image analysis tool",
     "图片保存路径":"Image save folder",
     "保存目录":"Save folder",
     "使用默认目录":"Use default folder",

@@ -1033,7 +1033,7 @@ function trackSettingsRestart(field,before,after) {
   else settingsRestartChanges.set(field,original);
 }
 function finishSettingsSave() {
-  const labels={image_isolation_enabled:"替换 图片解析工具",
+  const labels={image_isolation_enabled:"替换图片解析工具",
     context_tokens:"有效上下文",compact_tokens:"自动压缩阈值"};
   const items=[...settingsRestartChanges.keys()].map(field=>t(labels[field]));
   if(state.status.entry_port?.pending)items.unshift(t("入口端口"));
