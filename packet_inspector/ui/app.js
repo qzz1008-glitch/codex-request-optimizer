@@ -984,8 +984,10 @@ function contextMessage(text,error=false) { const node=$("context-message");node
 function syncContextDefaults() {
   for(const key of ["context","compact"]) {
     const unavailable=settingsSaving||!contextSettings||!!state.status?.ui_read_only;
+    const input=$(key+"-tokens"),useDefault=$(key+"-default").checked;
     $(key+"-default").disabled=unavailable;
-    $(key+"-tokens").disabled=unavailable||$(key+"-default").checked;
+    if(useDefault)input.value="";
+    input.disabled=unavailable||useDefault;
   }
 }
 function fillContextSettings(data) {
@@ -993,17 +995,15 @@ function fillContextSettings(data) {
   const maximum=data.max_context_tokens/1000;
   renderContextPlaceholders();
   for(const [key,value] of [["context",data.context_tokens],["compact",data.compact_tokens]]) {
-    if(!settingsEditing)$(key+"-default").checked=value===null;
+    if(!settingsEditing)$(key+"-default").checked=value==null;
     $(key+"-tokens").max=String(maximum);
-    const display=value??(key==="context"?data.default_context_tokens:null);
-    if(!settingsEditing)$(key+"-tokens").value=display===null?"":String(display/1000);
-    $(key+"-tokens").placeholder=t("模型默认");
+    if(!settingsEditing)$(key+"-tokens").value=value==null?"":String(value/1000);
   }
   syncContextDefaults();
 }
 function renderContextPlaceholders() {
   if(!contextSettings)return;
-  for(const key of ["context","compact"])$(key+"-tokens").placeholder=t("模型默认");
+  for(const key of ["context","compact"])$(key+"-tokens").placeholder="";
 }
 async function loadContextSettings() {
   contextMessage("");
