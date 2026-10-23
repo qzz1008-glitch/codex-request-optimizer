@@ -415,11 +415,15 @@ function packetStatus(p) {
   if(p.state==="complete")return "complete";
   return "waiting";
 }
+function capacityRetryCount(p) {
+  return Number.isInteger(p.capacity_retry_count)&&p.capacity_retry_count>0?p.capacity_retry_count:0;
+}
 function packetProtection(p) {
   return {
     predictive:p.usage_override_applied===true,
     overflow:p.overflow_compaction_calls>0 || p.overflow_cache_hit===true ||
-      typeof p.relay_error==="string" && p.relay_error.startsWith("overflow_")
+      typeof p.relay_error==="string" && p.relay_error.startsWith("overflow_"),
+    retry:capacityRetryCount(p)>0
   };
 }
 function listTokens(p) {
@@ -607,7 +611,7 @@ function renderList() {
   const sessionCount=state.filters.thread===OTHER_SESSION_GROUP?otherTaskSessions().reduce((count,row)=>count+(row.packet_count||0),0):state.status.storage.threads?.find(row=>(row.thread||"")===(state.filters.thread==="unknown"?"":state.filters.thread.slice(7)))?.count;
   const total=!filtered?state.status.storage.count:!state.filters.kind && !state.filters.status && state.filters.thread && Number.isFinite(sessionCount)?sessionCount:null;
   $("record-count").textContent=total===null?nf.format(state.packets.length)+(state.canLoadMore?"+":"")+t(" 条"):nf.format(total)+t(" 条");
-  const signature=JSON.stringify([state.selected,state.status.budget_bytes,state.older,state.canLoadMore,state.sort,state.direction,state.filters,state.packets.map(p=>[p.id,p.created,p.method,p.is_compaction,requestKind(p),p.state,p.status,p.duration_ms,p.decoded_bytes,p.outbound_wire_bytes,p.outbound_content_encoding,p.thread_id,p.overflow_compaction_calls,p.overflow_cache_hit,p.overflow_original_wire_bytes,p.usage_override_applied,p.relay_error,p.upstream_usage?.input_tokens])]);
+  const signature=JSON.stringify([state.selected,state.status.budget_bytes,state.older,state.canLoadMore,state.sort,state.direction,state.filters,state.packets.map(p=>[p.id,p.created,p.method,p.is_compaction,requestKind(p),p.state,p.status,p.duration_ms,p.decoded_bytes,p.outbound_wire_bytes,p.outbound_content_encoding,p.thread_id,p.overflow_compaction_calls,p.overflow_cache_hit,p.overflow_original_wire_bytes,p.usage_override_applied,p.capacity_retry_count,p.relay_error,p.upstream_usage?.input_tokens])]);
   if(signature===state.listVersion)return;
   state.listVersion=signature;
   const root=$("packet-rows"), fragment=document.createDocumentFragment(); renderSort();
@@ -631,7 +635,16 @@ function renderList() {
     after.title=upload===null?t("压缩包大小未记录"):t("压缩包：")+bytes(upload);
     row.dataset.packetId=p.id;row.dataset.session=p.thread_id||"";row.title=(states[p.state]||p.state)+(p.status?" · HTTP "+p.status:"")+"\n"+(p.thread_id?"session_id: "+p.thread_id:t("会话未识别"));
     if(protection.length)after.title+=t("\n已触发请求大小保护：")+protection.join(" · ");
-    for (const value of [time,type,before]) {const td=el("td");if(value instanceof Node)td.append(value);else td.textContent=value;row.append(td);}
+    for (const [index,value] of [time,type,before].entries()) {
+      const td=el("td",index===1?"packet-kind":"");
+      if(index===1&&flags.retry) {
+        td.classList.add("capacity-retried");
+        td.title=t("自动重试：{count} 次").replace("{count}",nf.format(capacityRetryCount(p)));
+        row.title+="\n"+td.title;
+      }
+      if(value instanceof Node)td.append(value);else td.textContent=value;
+      row.append(td);
+    }
     const compressed=el("td",["packet-compressed",flags.predictive?"predictive-protected":"",flags.overflow?"overflow-protected":""].filter(Boolean).join(" "));
     compressed.title=after.title;compressed.append(after);row.append(compressed);
     const tokens=el("td","packet-tokens");listTokenCells.set(p.id,tokens);renderListTokens(p);row.append(tokens);
@@ -679,7 +692,7 @@ async function loadPackets(append=false,background=false) {
     renderList();
     loaded=true;
     if (!state.selected && state.packets.length) await selectPacket(state.packets[0].id,false,requestId);
-    else if (state.selected) { const p=state.packets.find(p=>p.id===state.selected); if(p) {const ver=[p.state,p.status,p.duration_ms,p.outbound_wire_bytes,p.outbound_content_encoding,p.relay_content_encoding,p.relay_zstd_level].join(":");if(ver!==state.detailVersion) await selectPacket(state.selected,true);} }
+    else if (state.selected) { const p=state.packets.find(p=>p.id===state.selected); if(p) {const ver=[p.state,p.status,p.duration_ms,p.outbound_wire_bytes,p.outbound_content_encoding,p.relay_content_encoding,p.relay_zstd_level,p.capacity_retry_count].join(":");if(ver!==state.detailVersion) await selectPacket(state.selected,true);} }
   } catch(e) {if(e.name!=="AbortError")throw e;}
   finally {
     if(state.listController===controller) {
@@ -1237,7 +1250,7 @@ async function openSettings() {
 async function selectPacket(id,refresh=false,expectedListRequest=null) {
   const requestId=++state.detailRequest;
   const m=await api("/api/packets/"+id); if(requestId!==state.detailRequest || (refresh && state.selected!==id) || (expectedListRequest!==null && expectedListRequest!==state.listRequest)) return;
-  const changed=state.selected!==id, previousDetail=state.detail; state.selected=id; state.detail=m; state.detailVersion=[m.state,m.status,m.duration_ms,m.outbound_wire_bytes,m.outbound_content_encoding,m.relay_content_encoding,m.relay_zstd_level].join(":");
+  const changed=state.selected!==id, previousDetail=state.detail; state.selected=id; state.detail=m; state.detailVersion=[m.state,m.status,m.duration_ms,m.outbound_wire_bytes,m.outbound_content_encoding,m.relay_content_encoding,m.relay_zstd_level,m.capacity_retry_count].join(":");
   $("empty-state").hidden=true; $("packet-detail").hidden=false; renderList();
   if(changed || tokenVersion(m)!==tokenVersion(previousDetail||{})) {cancelTokenRead();tokenWindow=cachedTokenWindow(m);}
   else if(tokenWindow?.state==="unavailable") tokenWindow=null;
@@ -1249,10 +1262,16 @@ async function selectPacket(id,refresh=false,expectedListRequest=null) {
 }
 function renderProtectionPanelState() {
   const panel=$("packet-protection-panel");if(!panel)return;
-  const disabled=state.status?.packet_size_protection_enabled!==true;
+  const enabled={size:state.status?.packet_size_protection_enabled===true,retry:state.status?.capacity_retry_enabled===true};
+  const disabled=!enabled.size&&!enabled.retry;
   panel.classList.toggle("protection-disabled",disabled);
   panel.setAttribute("aria-disabled",String(disabled));
-  panel.title=disabled?t("可在设置中开启请求大小保护"):"";
+  panel.title=disabled?t("可在设置中开启请求保护"):"";
+  for(const row of panel.querySelectorAll("[data-protection]")) {
+    const inactive=!enabled[row.dataset.protection];
+    row.classList.toggle("protection-inactive",inactive);
+    row.title=inactive?t(row.dataset.protection==="retry"?"可在设置中开启自动重试":"可在设置中开启请求大小保护"):"";
+  }
 }
 function renderCompression(m) {
   const root=$("compression-content");root.replaceChildren();
@@ -1265,12 +1284,14 @@ function renderCompression(m) {
   fact(sizes,t("zstd 压缩等级"),Number.isInteger(level)&&level>=1&&level<=17?level:"—");
   if(original>0 && compressed!==null)fact(sizes,t("减小比例"),(100*(1-compressed/original)).toFixed(1)+"%");
   root.append(sizes);
-  const steps=panel(t("请求大小保护"));steps.id="packet-protection-panel";steps.classList.add("packet-protection-panel");
+  const steps=panel(t("请求保护"));steps.id="packet-protection-panel";steps.classList.add("packet-protection-panel");
   const triggerStatus=triggered=>triggered?t("已触发"):m.source==="live"?t("未触发"):t("暂无记录");
-  fact(steps,t("预测保护"),triggerStatus(m.usage_override_applied===true));
+  fact(steps,t("预测保护"),triggerStatus(m.usage_override_applied===true)).dataset.protection="size";
   const summaryTriggered=m.overflow_compaction_calls>0||m.overflow_cache_hit===true;
   const summaryFailed=typeof m.relay_error==="string"&&m.relay_error.startsWith("overflow_");
-  fact(steps,t("超限保护"),summaryFailed?t("处理失败"):triggerStatus(summaryTriggered));
+  fact(steps,t("超限保护"),summaryFailed?t("处理失败"):triggerStatus(summaryTriggered)).dataset.protection="size";
+  const retries=capacityRetryCount(m);
+  fact(steps,t("自动重试"),retries?t("已触发 · {count} 次").replace("{count}",nf.format(retries)):triggerStatus(false)).dataset.protection="retry";
   root.append(steps);renderProtectionPanelState();
 }
 function bars(title, rows, total) {
