@@ -26,7 +26,7 @@ class EntryPortTests(unittest.TestCase):
         self.thread = threading.Thread(target=self.server.serve_forever, kwargs={"poll_interval": .02}, daemon=True)
         self.thread.start()
         self.addCleanup(self.stop_server)
-        self.ui = DesktopUI(self.server.port, read_only=True).start()
+        self.ui = DesktopUI(self.server.port).start()
         self.addCleanup(self.ui.close)
 
     def stop_server(self):
@@ -44,7 +44,7 @@ class EntryPortTests(unittest.TestCase):
         finally:
             connection.close()
 
-    def test_preview_update_settings_are_independent_of_live_relay_settings(self):
+    def test_desktop_update_settings_are_independent_of_live_relay_settings(self):
         before_settings = self.server.settings_path.read_bytes()
         before_config = self.config.read_bytes()
         code, updates = self.api("/api/updates", port=self.ui.port)
@@ -59,19 +59,17 @@ class EntryPortTests(unittest.TestCase):
         self.assertEqual(self.api("/api/updates", {"action": "install"}, port=self.ui.port,
                                   headers={"Origin": "https://example.invalid"})[0], 403)
 
-    def test_preview_can_save_only_entry_port_without_changing_live_settings_or_provider_config(self):
+    def test_desktop_can_save_entry_port_without_changing_live_settings_or_provider_config(self):
         before_settings = self.server.settings_path.read_bytes()
         before_config = self.config.read_bytes()
         desired = 47844 if self.server.port != 47844 else 47846
         code, status = self.api("/api/status", port=self.ui.port)
         self.assertEqual(code, 200)
-        self.assertTrue(status["ui_read_only"])
-        self.assertTrue(status["ui_entry_port_editable"])
+        self.assertTrue(status["entry_port_supported"])
         code, result = self.api("/api/entry-port", {"port": desired}, port=self.ui.port)
         self.assertEqual(code, 200)
         self.assertEqual(result, {"current_port": self.server.port, "configured_port": desired, "pending": True})
         self.assertEqual(configured_port(self.data), desired)
-        self.assertEqual(self.api("/api/settings", {"budget_bytes": 2000}, port=self.ui.port)[0], 409)
         self.assertEqual(self.server.settings_path.read_bytes(), before_settings)
         self.assertEqual(self.config.read_bytes(), before_config)
         self.assertEqual(self.api("/health")[0], 200)
