@@ -90,7 +90,13 @@ body{height:100dvh;min-width:0;display:flex;flex-direction:column;overflow-x:hid
 .session-search:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 2px #1d4ed81a}
 .session-empty{margin:0;padding:18px 8px;color:var(--muted);font-size:12px;line-height:1.6}
 .session-list{display:flex;flex-direction:column;gap:3px;flex:1;min-height:0;overflow-x:hidden;overflow-y:scroll;padding:2px 3px 8px;scrollbar-gutter:stable;overflow-anchor:none}
-.session-item{display:flex;flex-direction:column;align-items:stretch;justify-content:flex-start;gap:5px;flex-shrink:0;width:100%;min-height:42px;padding:8px 5px 8px 10px;border-color:transparent;background:transparent;text-align:left;white-space:normal;border-radius:7px}
+.session-items{position:relative;display:flex;flex-direction:column;gap:3px;flex:none;min-width:0}
+.session-connections{position:absolute;top:0;left:0;z-index:1;overflow:visible;pointer-events:none}
+.session-connection-path{fill:none;stroke:#8c9fc8;stroke-width:1.5;stroke-linejoin:round;stroke-linecap:round}
+.session-connection-node{fill:var(--panel);stroke:#6c86bd;stroke-width:1.5}
+.session-connection-node.selected{fill:var(--accent);stroke:var(--accent)}
+.session-item.session-linked.selected{box-shadow:none}
+.session-item{display:flex;flex-direction:column;align-items:stretch;justify-content:flex-start;gap:5px;flex-shrink:0;width:100%;min-height:42px;padding:8px 1px 8px 12px;border-color:transparent;background:transparent;text-align:left;white-space:normal;border-radius:7px}
 .session-item,.session-item *{-webkit-user-select:text;user-select:text}
 .session-item:hover{background:#f3f6fc;border-color:var(--line)}
 .session-item.selected{background:var(--soft);border-color:#cad7fa;color:var(--accent);box-shadow:inset 3px 0 var(--accent)}
