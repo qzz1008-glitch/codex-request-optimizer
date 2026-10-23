@@ -159,7 +159,11 @@
       </div>
     </section>
     </div>
-    <div class="settings-footer"><p id="settings-message" class="help muted" role="status" aria-live="polite"></p><button id="settings-restore" type="button" disabled>恢复</button><button id="settings-save" class="primary" type="button" disabled>保存</button></div>
+    <div class="settings-footer">
+      <div class="settings-feedback"><p id="settings-message" class="help muted" role="status" aria-live="polite"></p><ol id="settings-save-log" class="settings-save-log" aria-label="保存进度" hidden></ol></div>
+      <button id="settings-restore" type="button" disabled>恢复</button>
+      <button id="settings-save" class="primary" type="button" aria-busy="false" disabled><span class="settings-save-spinner" aria-hidden="true"></span><span id="settings-save-label">保存</span></button>
+    </div>
   </dialog>
   <dialog id="zstd-level-dialog" aria-labelledby="zstd-level-title" aria-describedby="zstd-level-note">
     <div class="dialog-heading"><h2 id="zstd-level-title">选择压缩等级</h2><button id="zstd-level-close" type="button" aria-label="关闭等级选择">✕</button></div>
