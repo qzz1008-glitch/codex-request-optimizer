@@ -762,10 +762,7 @@ function fillZstdLevel() {
   }));
   input.value=String(selected);
   input.disabled=settingsSaving||!!s.ui_read_only||!supported||s.request_compression!=="zstd";
-  const estimate=zstdLevelEstimates.find(([level])=>level===selected);
-  $("zstd-level-estimate").textContent=estimate?t("本地压缩约 {time} ms / 请求，基于 200 个包的测试估算。")
-    .replace("{time}",estimate[2].toFixed(2)):"";
-  const message=!supported?t("当前中转暂不支持设置压缩等级。"):s.request_compression!=="zstd"?t("切换为 zstd 压缩后可设置等级。"):"";
+  const message=supported&&s.request_compression!=="zstd"?t("切换为 zstd 压缩后可设置等级。"):"";
   $("zstd-level-message").textContent=message;$("zstd-level-message").hidden=!message;
 }
 function renderLanguageSelection() {
