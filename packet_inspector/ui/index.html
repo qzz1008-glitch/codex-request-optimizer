@@ -13,7 +13,8 @@
   <header class="app-header">
     <div class="brand"><strong>Codex 请求优化器</strong><span id="desktop-build" class="desktop-build" hidden>开发版</span></div>
     <div class="header-compression"><div id="request-compression" class="language-toggle compression-toggle" role="group" aria-label="接入与传输模式" aria-describedby="compression-hint"><button id="compression-disconnect" type="button" data-compression="disconnected" aria-pressed="false" disabled>断开</button><button id="compression-off" type="button" data-compression="off" aria-pressed="false" disabled>分析</button><button id="compression-zstd" type="button" data-compression="zstd" aria-pressed="true" disabled>优化</button></div><span id="compression-hint" hidden></span></div>
-    <div class="header-actions"><button id="header-connect" class="primary" type="button" hidden>接入 Codex</button><button id="ui-refresh" type="button" hidden>刷新</button><button id="settings-open" class="settings-button" type="button" title="设置" aria-label="设置"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9.5 3-.6 2.3-1.7 1-2.3-.6-2.5 4.3 1.7 1.7v2l-1.7 1.7 2.5 4.3 2.3-.6 1.7 1 .6 2.3h5l.6-2.3 1.7-1 2.3.6 2.5-4.3-1.7-1.7v-2l1.7-1.7-2.5-4.3-2.3.6-1.7-1L14.5 3z"/><circle cx="12" cy="12.7" r="3"/></svg></button></div>
+    <div class="header-actions"><button id="header-connect" class="primary header-icon-action" type="button" title="接入 Codex" aria-label="接入 Codex" hidden><svg class="header-action-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3v5m8-5v5M6 8h12v3a6 6 0 0 1-12 0V8zm6 9v4"/></svg><span id="header-connect-label" class="header-action-label">接入 Codex</span></button><button id="ui-refresh" class="header-icon-action" type="button" title="刷新" aria-label="刷新" hidden><svg class="header-action-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5m-4.7-1a8 8 0 0 1 13.9-4L20 9M4 15l1.8 2A8 8 0 0 0 19.7 13"/></svg><span class="header-action-label">刷新</span></button><button id="settings-open" class="settings-button" type="button" title="设置" aria-label="设置"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9.5 3-.6 2.3-1.7 1-2.3-.6-2.5 4.3 1.7 1.7v2l-1.7 1.7 2.5 4.3 2.3-.6 1.7 1 .6 2.3h5l.6-2.3 1.7-1 2.3.6 2.5-4.3-1.7-1.7v-2l1.7-1.7-2.5-4.3-2.3.6-1.7-1L14.5 3z"/><circle cx="12" cy="12.7" r="3"/></svg></button></div>
+    <div id="view-toggle" class="view-toggle" role="group" aria-label="视图"><button id="view-records" type="button" title="记录" aria-label="记录" aria-pressed="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M9 6h11M9 12h11M9 18h11M4 6h.01M4 12h.01M4 18h.01"/></svg></button><button id="view-trends" type="button" title="趋势" aria-label="趋势" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3v18h18M6 16l5-6 4 3 6-8"/></svg></button></div>
     <div id="window-controls" class="window-controls" role="group" aria-label="窗口操作" hidden>
       <button id="window-minimize" type="button" title="最小化" aria-label="最小化"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M1 6h10"/></svg></button>
       <button id="window-maximize" type="button" title="最大化" aria-label="最大化"><svg viewBox="0 0 12 12" aria-hidden="true"><path class="maximize-icon" d="M1.5 1.5h9v9h-9z"/><path class="restore-icon" d="M3.5 3.5v-2h7v7h-2m-7-5h7v7h-7z"/></svg></button>
@@ -21,7 +22,7 @@
     </div>
   </header>
   <div id="notice" class="notice" role="status" hidden></div>
-  <main class="workspace">
+  <main id="records-view" class="workspace">
     <aside class="sessions-sidebar" aria-label="会话">
       <div class="sidebar-title sessions-title"><h1>会话</h1><input id="session-search" class="session-search" type="search" placeholder="搜索会话" aria-label="搜索会话名称或 session_id" autocomplete="off" spellcheck="false"></div>
       <nav id="session-list" class="session-list" aria-label="选择 session_id"></nav>
@@ -66,6 +67,17 @@
         </div>
       </div>
     </section>
+  </main>
+  <main id="token-trend-view" class="token-trend-view" aria-label="会话 Token 趋势" hidden>
+    <div class="trend-toolbar">
+      <div><h1>会话 Token 趋势</h1><p class="muted">所有会话共用时间轴，显示每次请求的输入 Token。</p></div>
+      <div id="trend-range" class="view-toggle" role="group" aria-label="时间范围"><button type="button" data-hours="1" aria-pressed="false">1 小时</button><button type="button" data-hours="6" aria-pressed="true">6 小时</button><button type="button" data-hours="24" aria-pressed="false">24 小时</button><button type="button" data-hours="0" aria-pressed="false">全部记录</button></div>
+      <span id="trend-live" class="trend-live" role="status">实时刷新</span>
+    </div>
+    <div class="trend-controls"><input id="trend-search" type="search" placeholder="搜索会话" aria-label="筛选图表会话" autocomplete="off"><button id="trend-show-all" type="button">全部显示</button><div class="trend-event-legend" aria-label="机制标记"><span class="trend-predictive">◆ <span>预测保护</span></span><span class="trend-overflow">▲ <span>超限保护</span></span><span class="trend-retry">○ <span>自动重试</span></span><span class="trend-compact">■ <span>上下文压缩</span></span></div></div>
+    <nav id="trend-series" class="trend-series" aria-label="显示或隐藏会话曲线"></nav>
+    <div id="trend-plot" class="trend-plot"><svg id="trend-chart" role="img" tabindex="0" aria-label="输入 Token 随时间变化；左右方向键查看请求，回车固定提示，Esc 关闭"></svg><div id="trend-empty" class="trend-empty" hidden></div><div id="trend-tooltip" class="trend-tooltip" role="tooltip" hidden></div></div>
+    <div class="trend-footer"><span id="trend-summary"></span><span id="trend-note">缺失用量留空；点击图例可隐藏曲线。</span></div>
   </main>
   <dialog id="compression-confirm-dialog" aria-labelledby="compression-confirm-title" aria-describedby="compression-confirm-description compression-confirm-hint">
     <h2 id="compression-confirm-title">切换传输模式</h2>

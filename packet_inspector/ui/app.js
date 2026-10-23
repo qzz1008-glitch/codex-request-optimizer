@@ -28,6 +28,7 @@ initializeWindowControls();
 history.replaceState(null, "", "/");
 const state = { status: null, packets: [], sessions: [], selected: null, detail: null, tab: "headers", path: "", text: null, older: false, polling: false, detailVersion: "", detailRequest: 0, listVersion: "", sessionVersion: "", sort: "created", direction: "desc", filters: {kind:"",status:"",thread:""}, canLoadMore: false, listRequest: 0, listController: null, listRevision: null, filterRevision: null };
 const nf = new Intl.NumberFormat("zh-CN");
+let workspaceView="records",tokenTrendView=null;
 let requestBodyCache=null, requestBodyDownloadUrl="", requestBodySequence=0;
 let treeQueryTimer=null,requestBodyView=null,requestBodyHighlight=null;
 let contextSettings = null;
@@ -511,6 +512,7 @@ function cacheTokenWindow(packet,data) {
   while(tokenCache.size>256)tokenCache.delete(tokenCache.keys().next().value);
 }
 async function loadTokenWindow() {
+  if(workspaceView!=="records")return;
   const id=state.selected;
   if(!id || document.hidden || tokenLoading || (tokenWindow && !["loading","pending"].includes(tokenWindow.state)))return;
   clearTimeout(tokenTimer);tokenTimer=null;
@@ -626,7 +628,7 @@ function readListTokens(p,signal) {
   });
 }
 function loadListTokens() {
-  if(document.hidden)return;
+  if(document.hidden||workspaceView!=="records")return;
   for(const id of visibleTokenRows) {
     const p=state.packets.find(packet=>packet.id===id);if(!p)continue;
     renderListTokens(p);
@@ -791,6 +793,7 @@ function loadMorePackets() {
   return loadPackets(true).catch(fail);
 }
 async function loadPackets(append=false,background=false) {
+  if(workspaceView!=="records")return;
   // The middle pane must always belong to a selected session, including at startup.
   if(!state.filters.thread||!selectedSessionGroup())return;
   if((append || background) && state.listController)return;
@@ -848,7 +851,8 @@ function renderConnectionActions() {
   const button=$("header-connect");
   button.hidden=!!p.active;
   button.disabled=disabled||!!p.active||!!p.config_error;
-  setText(button,t(linkSaving==="activate"?"正在接入…":"接入 Codex"));
+  const label=t(linkSaving==="activate"?"正在接入…":"接入 Codex");
+  setText($("header-connect-label"),label);button.title=label;button.setAttribute("aria-label",label);
   button.setAttribute("aria-busy",String(linkSaving==="activate"));
   renderCompressionMode();
 }
@@ -1794,6 +1798,7 @@ async function setInterfaceLanguage(language) {
   for(const button of buttons)button.disabled=true;
   try {
     uiI18n.setLanguage(language);
+    tokenTrendView?.render();
     if(document.documentElement.classList.contains("desktop-titlebar"))renderWindowState({enabled:true,maximized:document.documentElement.classList.contains("desktop-maximized")});
     state.listVersion="";state.sessionVersion="";
     renderStatus();renderContextPlaceholders();
@@ -1951,11 +1956,257 @@ for(const select of document.querySelectorAll("[data-filter]")) select.addEventL
 $("tree-query").addEventListener("input",scheduleTreeQuery);
 $("tree-query").addEventListener("compositionend",scheduleTreeQuery);
 $("tree-query").addEventListener("keydown",e=>{if(e.key==="Enter" && !e.isComposing){e.preventDefault();Promise.resolve().then(submitTreeQuery).catch(fail);}});
+function isTrendGeneration(packet) {
+  const purpose=purposeFromMetadata(packet)||packet.session_kind||packet.request_kind;
+  return hasModelTokenUsage(packet)&&!["prewarm","title_generation","next_message_suggestion","session_index"].includes(purpose);
+}
+class TokenTrendView {
+  constructor(services) {
+    this.services=services;this.active=false;this.loading=false;this.hydrating=false;
+    this.packets=new Map();this.native=new Map();this.hidden=new Set();this.hours=6;
+    this.revision=null;this.lastFull=0;this.updated=0;this.query="";this.error=false;this.limited=false;
+    this.points=[];this.series=[];this.hover=null;this.pinned=false;this.frame=null;this.legendVersion="";
+    this.svg=$("trend-chart");this.plot=$("trend-plot");this.tooltip=$("trend-tooltip");
+    try {const hours=Number(localStorage.getItem("packet-inspector-trend-hours"));if([0,1,6,24].includes(hours)&&localStorage.getItem("packet-inspector-trend-hours")!==null)this.hours=hours;} catch(_) {}
+    for(const button of document.querySelectorAll("#trend-range button"))button.onclick=()=>{
+      this.hours=Number(button.dataset.hours);try {localStorage.setItem("packet-inspector-trend-hours",String(this.hours));} catch(_) {}
+      this.cancelPending();this.lastFull=0;this.pinned=false;this.hover=null;this.refresh(true);
+    };
+    $("trend-search").oninput=event=>{this.query=event.currentTarget.value.trim().toLowerCase();this.pinned=false;this.hover=null;this.render();};
+    $("trend-show-all").onclick=()=>{this.hidden.clear();this.query="";$("trend-search").value="";this.hover=null;this.pinned=false;this.render();};
+    this.resize=new ResizeObserver(()=>this.scheduleRender());this.resize.observe(this.plot);
+    this.svg.onpointermove=event=>{if(!this.pinned)this.pointAt(event);};
+    this.svg.onpointerleave=()=>{if(!this.pinned){this.hover=null;this.renderFocus();}};
+    this.svg.onclick=event=>{if(this.pinned){this.pinned=false;this.hover=null;this.renderFocus();}else{this.pointAt(event);this.pinned=!!this.hover;}};
+    this.svg.onkeydown=event=>{
+      if(event.key==="Escape"){this.hover=null;this.pinned=false;this.renderFocus();return;}
+      if(event.key==="Enter"){this.pinned=!!this.hover;return;}
+      if(!["ArrowLeft","ArrowRight","Home","End"].includes(event.key)||!this.points.length)return;
+      event.preventDefault();const ordered=this.points.slice().sort((a,b)=>a.packet.created-b.packet.created||a.packet.id.localeCompare(b.packet.id));
+      const at=ordered.findIndex(point=>point.packet.id===this.hover),next=event.key==="Home"?0:event.key==="End"?ordered.length-1:Math.max(0,Math.min(ordered.length-1,at+(event.key==="ArrowLeft"?-1:1)));
+      this.hover=ordered[next].packet.id;this.pinned=true;this.renderFocus();
+    };
+  }
+  static events(packet) {
+    const result=[];
+    if(packet.usage_override_applied===true)result.push("predictive");
+    if(packet.overflow_compaction_calls>0||packet.overflow_cache_hit===true||String(packet.relay_error||"").startsWith("overflow_"))result.push("overflow");
+    if(packet.capacity_retry_count>0)result.push("retry");
+    if(packet.is_compaction)result.push("compact");
+    return result;
+  }
+  static input(packet,data) {
+    const real=packet.upstream_usage?.input_tokens;
+    if(Number.isSafeInteger(real)&&real>=0)return real;
+    if(packet.usage_override_applied)return null;
+    return data?.state==="available"&&Number.isSafeInteger(data.input_tokens)&&data.input_tokens>=0?data.input_tokens:null;
+  }
+  static scale(maximum) {
+    const rough=(maximum||1000)/5,power=10**Math.floor(Math.log10(rough));
+    const step=[1,2,2.5,5,10].map(value=>value*power).find(value=>value>=rough)||power*10;
+    return {step,max:Math.max(step,Math.ceil(maximum/step)*step)};
+  }
+  static color(id) {let hash=2166136261;for(const char of id)hash=Math.imul(hash^char.charCodeAt(0),16777619);return "hsl("+((hash>>>0)%360)+" 62% 42%)";}
+  cancelPending() {this.controller?.abort();this.nativeController?.abort();this.controller=null;this.nativeController=null;this.loading=false;this.hydrating=false;}
+  setActive(active) {this.active=active;if(!active){this.cancelPending();this.tooltip.hidden=true;}else{this.render();this.refresh();}}
+  scheduleRender() {if(!this.active||this.frame!==null)return;this.frame=requestAnimationFrame(()=>{this.frame=null;this.render();});}
+  async refresh(force=false) {
+    if(!this.active||document.hidden||this.loading)return;
+    const revision=this.services.status()?.storage?.revision,now=Date.now();
+    const full=force||!this.lastFull||now-this.lastFull>=30000;
+    if(!full&&revision===this.revision){this.render();this.hydrate();return;}
+    const controller=new AbortController();this.controller=controller;this.loading=true;this.error=false;this.renderLive();
+    const timeout=setTimeout(()=>controller.abort(),15000),incoming=new Map(),since=this.hours?now/1000-this.hours*3600:-Infinity;
+    try {
+      let after=null,limited=false;
+      for(let page=0;page<40;page++) {
+        const query=new URLSearchParams({limit:"300",sort:"created",direction:"desc"});if(after)query.set("after",after);
+        const values=await this.services.api("/api/packets?"+query,undefined,controller.signal);
+        controller.signal.throwIfAborted();if(!Array.isArray(values))throw Error("invalid trend data");
+        for(const packet of values)if(packet?.id&&Number.isFinite(packet.created)&&packet.created>=since)incoming.set(packet.id,packet);
+        if(values.length<300||values.at(-1).created<since)break;
+        if(!full&&values.some(packet=>this.packets.has(packet.id)))break;
+        const next=values.at(-1).id;if(next===after)throw Error("invalid trend cursor");after=next;
+        if(page===39)limited=true;
+      }
+      if(!full) {
+        const pending=[...this.packets.values()].filter(packet=>["captured","streaming"].includes(packet.state)&&!incoming.has(packet.id));
+        const offset=this.activeCursor||0,jobs=pending.length?Array.from({length:Math.min(12,pending.length)},(_,i)=>pending[(offset+i)%pending.length]):[];
+        let at=0;await Promise.all(Array.from({length:Math.min(3,jobs.length)},async()=>{
+          while(at<jobs.length){const packet=jobs[at++];try{const value=await this.services.api("/api/packets/"+packet.id,undefined,controller.signal);if(value?.id)incoming.set(value.id,value);}catch(error){controller.signal.throwIfAborted();}}
+        }));this.activeCursor=offset+jobs.length;
+      }
+      controller.signal.throwIfAborted();if(!this.active||this.controller!==controller)return;
+      if(full){this.packets=incoming;this.lastFull=now;this.limited=limited;}else for(const [id,packet] of incoming)this.packets.set(id,packet);
+      for(const [id,packet] of this.packets)if(packet.created<since)this.packets.delete(id);
+      if(this.packets.size>12000){const keep=[...this.packets.values()].sort((a,b)=>b.created-a.created||b.id.localeCompare(a.id)).slice(0,12000);this.packets=new Map(keep.map(packet=>[packet.id,packet]));this.limited=true;}
+      for(const id of this.native.keys())if(!this.packets.has(id))this.native.delete(id);
+      this.revision=revision;this.updated=Date.now();this.error=false;
+    } catch(error) {if(this.active&&this.controller===controller)this.error=true;}
+    finally {
+      clearTimeout(timeout);if(this.controller===controller){this.loading=false;this.controller=null;if(this.active){this.render();this.hydrate();}}
+    }
+  }
+  tokenData(packet) {
+    const direct=this.services.peek(packet);if(direct?.state==="available")return direct;
+    const cached=this.native.get(packet.id);return cached?.version===tokenVersion(packet)?cached.data:null;
+  }
+  input(packet) {return TokenTrendView.input(packet,this.tokenData(packet));}
+  hydrate() {
+    if(!this.active||document.hidden||this.hydrating)return;
+    const now=Date.now(),jobs=[...this.packets.values()].filter(packet=>{
+      if(!packet.thread_id||!this.services.isGeneration(packet)||packet.usage_override_applied||packet.status!==200||!["streaming","complete"].includes(packet.state)||this.input(packet)!==null)return false;
+      const cached=this.native.get(packet.id);return !cached||cached.version!==tokenVersion(packet)||cached.expires<=now;
+    }).sort((a,b)=>b.created-a.created).slice(0,8);
+    if(!jobs.length)return;
+    const controller=new AbortController();this.nativeController=controller;this.hydrating=true;let at=0;
+    this.hydration=Promise.all(Array.from({length:Math.min(2,jobs.length)},async()=>{
+      while(at<jobs.length&&!controller.signal.aborted) {
+        const packet=jobs[at++],version=tokenVersion(packet);let data;
+        try {data=await this.services.read(packet,controller.signal);}catch(error){if(controller.signal.aborted)return;data={state:"unavailable"};}
+        if(controller.signal.aborted)return;
+        if(!data||typeof data!=="object")data={state:"unavailable"};
+        if(this.packets.has(packet.id)&&tokenVersion(this.packets.get(packet.id))===version)this.native.set(packet.id,{version,data,expires:Date.now()+(data.state==="available"?300000:["loading","pending"].includes(data.state)?1000:30000)});
+      }
+    })).finally(()=>{if(this.nativeController===controller){this.hydrating=false;this.nativeController=null;this.scheduleRender();}});
+    return this.hydration;
+  }
+  model() {
+    const names=new Map(this.services.sessions().map(row=>[row.thread_id,row.title||row.task_name||row.thread_id]));
+    const groups=new Map();let unknown=0;
+    const now=Date.now()/1000,since=this.hours?now-this.hours*3600:-Infinity;
+    for(const packet of this.packets.values()) {
+      if(packet.created<since||(!packet.is_compaction&&!this.services.isGeneration(packet)))continue;
+      if(typeof packet.thread_id!=="string"||!packet.thread_id){unknown++;continue;}
+      if(!groups.has(packet.thread_id))groups.set(packet.thread_id,{id:packet.thread_id,title:names.get(packet.thread_id)||packet.thread_id,color:TokenTrendView.color(packet.thread_id),points:[],latest:0});
+      const group=groups.get(packet.thread_id);group.latest=Math.max(group.latest,packet.created);
+      group.points.push({packet,input:packet.is_compaction?null:this.input(packet),events:TokenTrendView.events(packet)});
+    }
+    const series=[...groups.values()].sort((a,b)=>b.latest-a.latest||a.id.localeCompare(b.id));
+    for(const group of series)group.points.sort((a,b)=>a.packet.created-b.packet.created||a.packet.id.localeCompare(b.packet.id));
+    const matched=series.filter(group=>!this.query||(group.title+" "+group.id).toLowerCase().includes(this.query));
+    return {series,matched,visible:matched.filter(group=>!this.hidden.has(group.id)),unknown,now};
+  }
+  svgNode(tag,attrs={},text) {const node=document.createElementNS("http://www.w3.org/2000/svg",tag);for(const [name,value]of Object.entries(attrs))node.setAttribute(name,String(value));if(text!==undefined)node.textContent=text;return node;}
+  time(value,withSeconds=false) {
+    const date=new Date(value*1000),locale=uiI18n.language==="en"?"en-GB":"zh-CN";
+    return date.toLocaleString(locale,{month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit",...(withSeconds?{second:"2-digit"}:{})});
+  }
+  eventLabel(key,packet) {
+    if(key==="retry")return t("自动重试")+" · "+nf.format(packet.capacity_retry_count)+t(" 次");
+    if(key==="overflow"&&packet.overflow_cache_hit)return t("超限保护")+" · "+t("复用摘要");
+    return t({predictive:"预测保护",overflow:"超限保护",compact:"上下文压缩"}[key]||key);
+  }
+  renderLive() {
+    const node=$("trend-live"),initial=this.loading&&!this.packets.size;
+    node.textContent=t(this.error?"刷新失败，稍后重试":initial?"正在更新…":"实时刷新")+(!this.error&&!initial&&this.updated?" · "+new Date(this.updated).toLocaleTimeString(uiI18n.language==="en"?"en-GB":"zh-CN",{hour12:false}):"");
+    node.className="trend-live"+(this.error?" error":initial?" loading":"");
+  }
+  renderLegend(model) {
+    const signature=JSON.stringify([uiI18n.language,this.query,model.matched.map(group=>[group.id,group.title,this.hidden.has(group.id)])]);
+    if(signature===this.legendVersion)return;this.legendVersion=signature;
+    const fragment=document.createDocumentFragment();
+    for(const group of model.matched) {
+      const button=el("button",""),swatch=el("span","trend-series-swatch"),label=el("span","",group.title);
+      button.type="button";button.dataset.renderKey="trend-series:"+group.id;button.style.setProperty("--series-color",group.color);
+      button.setAttribute("aria-pressed",String(!this.hidden.has(group.id)));button.title=group.title+"\n"+group.id;
+      button.onclick=()=>{if(this.hidden.has(group.id))this.hidden.delete(group.id);else this.hidden.add(group.id);this.hover=null;this.pinned=false;this.render();};
+      button.onpointerenter=()=>{this.emphasis=group.id;this.renderFocus();};button.onpointerleave=()=>{this.emphasis=null;this.renderFocus();};
+      button.append(swatch,label);fragment.append(button);
+    }
+    reconcileContent($("trend-series"),fragment);
+  }
+  marker(point,layer) {
+    const colors={predictive:"#8058c1",overflow:"#dc6044",retry:"#b88212",compact:"#17856e"};
+    const key=["overflow","predictive","retry","compact"].find(value=>point.events.includes(value)),x=point.x,y=point.y;
+    if(!key)return;
+    const attrs={class:"trend-event",fill:colors[key]},node=key==="predictive"?this.svgNode("path",{...attrs,d:`M${x},${y-6}l6,6l-6,6l-6,-6Z`}):key==="overflow"?this.svgNode("path",{...attrs,d:`M${x},${y-7}l7,12h-14Z`}):key==="compact"?this.svgNode("rect",{...attrs,x:x-5,y:y-5,width:10,height:10,rx:1}):this.svgNode("circle",{...attrs,cx:x,cy:y,r:5,fill:"white",stroke:colors[key],"stroke-width":2.5});
+    layer.append(node);if(point.events.length>1)layer.append(this.svgNode("text",{x:x+7,y:y-7,class:"trend-event-count"},"+"+(point.events.length-1)));
+  }
+  render() {
+    if(!this.active||!this.plot.clientWidth||!this.plot.clientHeight)return;
+    const model=this.model();this.series=model.series;this.renderLegend(model);this.renderLive();
+    for(const button of document.querySelectorAll("#trend-range button"))button.setAttribute("aria-pressed",String(Number(button.dataset.hours)===this.hours));
+    const width=this.plot.clientWidth,height=this.plot.clientHeight,left=70,right=28,top=58,bottom=48,plotWidth=Math.max(1,width-left-right),plotHeight=Math.max(1,height-top-bottom);
+    this.bounds={width,height,left,right,top,bottom};
+    const values=model.visible.flatMap(group=>group.points),known=values.filter(point=>point.input!==null);
+    let start=this.hours?model.now-this.hours*3600:Math.min(...values.map(point=>point.packet.created),model.now-60),end=this.hours?model.now:Math.max(...values.map(point=>point.packet.created),model.now);
+    if(end-start<60){start-=30;end+=30;}
+    const scale=TokenTrendView.scale(Math.max(0,...known.map(point=>point.input))),x=value=>left+(value-start)/(end-start)*plotWidth,y=value=>top+plotHeight-value/scale.max*plotHeight;
+    const root=document.createDocumentFragment();this.svg.setAttribute("viewBox",`0 0 ${width} ${height}`);
+    root.append(this.svgNode("text",{x:14,y:22,class:"trend-axis-title"},t("输入 Token")),this.svgNode("text",{x:left-10,y:35,"text-anchor":"end",class:"trend-axis-label"},t("事件")));
+    for(let value=0;value<=scale.max+scale.step*.01;value+=scale.step) {
+      const py=y(value),label=value>=1000000?nf.format(value/1000000)+"M":value>=1000?nf.format(value/1000)+"k":nf.format(value);
+      root.append(this.svgNode("line",{x1:left,y1:py,x2:width-right,y2:py,class:"trend-grid"}),this.svgNode("text",{x:left-12,y:py+4,"text-anchor":"end",class:"trend-axis-label"},label));
+    }
+    for(let i=0;i<=5;i++) {
+      const px=left+plotWidth*i/5,stamp=start+(end-start)*i/5;
+      root.append(this.svgNode("line",{x1:px,y1:top,x2:px,y2:height-bottom,class:"trend-grid"}),this.svgNode("text",{x:px,y:height-bottom+24,"text-anchor":i===0?"start":i===5?"end":"middle",class:"trend-axis-label"},this.time(stamp,end-start<300)));
+    }
+    this.points=[];
+    for(const group of model.visible) {
+      const layer=this.svgNode("g",{class:"trend-series-line","data-series":group.id}),events=this.svgNode("g");let path="",pen=false;
+      for(const source of group.points) {
+        const point={...source,series:group,x:x(source.packet.created),y:source.input===null?31:y(source.input)};
+        if(source.packet.is_compaction){this.points.push(point);this.marker(point,events);continue;}
+        if(source.input===null){pen=false;if(point.events.length){this.points.push(point);this.marker(point,events);}continue;}
+        path+=(pen?"L":"M")+point.x.toFixed(2)+","+point.y.toFixed(2);pen=true;this.points.push(point);
+        if(point.events.length)this.marker(point,events);
+        else layer.append(this.svgNode("circle",{cx:point.x,cy:point.y,r:2.1,fill:group.color}));
+      }
+      layer.prepend(this.svgNode("path",{d:path,class:"trend-curve",stroke:group.color}));layer.append(events);root.append(layer);
+    }
+    this.focusLayer=this.svgNode("g",{"pointer-events":"none"});root.append(this.focusLayer);this.svg.replaceChildren(root);
+    const empty=$("trend-empty");empty.hidden=known.length>0||this.points.length>0;
+    empty.textContent=t(this.loading&&!this.packets.size?"正在加载趋势…":this.error&&!this.packets.size?"暂时无法加载趋势，请稍后重试":!model.matched.length?(this.query?"没有匹配的会话":"此时间范围内没有请求"):!model.visible.length?"曲线已隐藏，点击“全部显示”恢复":"暂无可确认的 Token 用量");
+    const missing=values.filter(point=>!point.packet.is_compaction&&point.input===null).length;
+    $("trend-summary").textContent=nf.format(model.visible.length)+t(" 个会话")+" · "+nf.format(known.length)+t(" 个用量点")+(missing?" · "+nf.format(missing)+t(" 条用量缺失或等待确认"):"")+(model.unknown?" · "+nf.format(model.unknown)+t(" 条请求缺少会话归属"):"");
+    $("trend-note").textContent=this.limited?t("仅展示最近 12,000 条记录"):t("缺失用量留空；点击图例可隐藏曲线。");
+    this.renderFocus();
+  }
+  pointAt(event) {
+    if(!this.bounds)return;
+    const rect=this.svg.getBoundingClientRect(),x=(event.clientX-rect.left)/rect.width*this.bounds.width,y=(event.clientY-rect.top)/rect.height*this.bounds.height;
+    let nearest=null,distance=28*28;
+    for(const point of this.points){const value=(point.x-x)**2+(point.y-y)**2;if(value<distance){nearest=point;distance=value;}}
+    this.hover=nearest?.packet.id||null;this.renderFocus();
+  }
+  renderFocus() {
+    if(!this.active||!this.focusLayer)return;
+    const point=this.points.find(value=>value.packet.id===this.hover),emphasis=this.emphasis||point?.series.id;
+    for(const line of this.svg.querySelectorAll("[data-series]"))line.classList.toggle("dimmed",!!emphasis&&line.dataset.series!==emphasis);
+    this.focusLayer.replaceChildren();this.tooltip.hidden=!point;if(!point){if(this.pinned)this.pinned=false;return;}
+    this.focusLayer.append(this.svgNode("line",{x1:point.x,x2:point.x,y1:this.bounds.top,y2:this.bounds.height-this.bounds.bottom,class:"trend-focus-line"}),this.svgNode("circle",{cx:point.x,cy:point.y,r:7,class:"trend-focus-dot"}));
+    const fragment=document.createDocumentFragment();fragment.append(el("h3","",point.series.title),el("p","",this.time(point.packet.created,true)));
+    const amount=el("p","");amount.append(el("strong","",point.input===null?"—":nf.format(point.input)),document.createTextNode(" "+t("输入 Token")));fragment.append(amount);
+    if(point.packet.model)fragment.append(el("p","",t("模型")+" · "+point.packet.model));
+    if(point.input===null)fragment.append(el("p","",point.packet.is_compaction?t("压缩事件不推测 Token 数值"):t("用量缺失或等待确认")));
+    for(const event of point.events)fragment.append(el("p","trend-tooltip-event",this.eventLabel(event,point.packet)));
+    fragment.append(el("code","",point.packet.id));this.tooltip.replaceChildren(fragment);
+    const left=Math.max(8,Math.min(this.bounds.width-this.tooltip.offsetWidth-8,point.x+16)),top=point.y-this.tooltip.offsetHeight-14;
+    this.tooltip.style.left=left+"px";this.tooltip.style.top=Math.max(8,Math.min(this.bounds.height-this.tooltip.offsetHeight-8,top>=8?top:point.y+16))+"px";
+  }
+}
+tokenTrendView=new TokenTrendView({api,status:()=>state.status,sessions:()=>sessionSummaries,peek:listTokens,read:readListTokens,isGeneration:isTrendGeneration});
+function setWorkspaceView(view) {
+  workspaceView=view==="trends"?"trends":"records";
+  $("records-view").hidden=workspaceView!=="records";$("token-trend-view").hidden=workspaceView!=="trends";
+  $("view-records").setAttribute("aria-pressed",String(workspaceView==="records"));$("view-trends").setAttribute("aria-pressed",String(workspaceView==="trends"));
+  try {localStorage.setItem("packet-inspector-view",workspaceView);} catch(_) {}
+  tokenTrendView.setActive(workspaceView==="trends");
+  if(workspaceView==="trends"){cancelTokenRead();state.listController?.abort();}else if(state.status){loadPackets(false,true).catch(fail);loadTokenWindow();loadListTokens();}
+}
+$("view-records").onclick=()=>setWorkspaceView("records");$("view-trends").onclick=()=>setWorkspaceView("trends");
+try {if(localStorage.getItem("packet-inspector-view")==="trends")setWorkspaceView("trends");} catch(_) {}
 async function poll() {
   if(state.polling || document.hidden)return;
   state.polling=true;
   try {
     await refreshStatus();
+    if(workspaceView==="trends") {
+      if(state.filterRevision!==state.status.storage.revision)await refreshFilters();
+      await refreshSessionSummaries();await tokenTrendView.refresh();return;
+    }
     const revision=state.status.storage.revision, pending=[];
     if(state.filterRevision!==revision)pending.push(refreshFilters());
     if(!state.older && (state.listRevision!==revision || state.sort==="input_tokens" && (tokenSortCache?.dirty || tokenSortCache?.expires<=Date.now())))pending.push(loadPackets(false,true));
@@ -1964,5 +2215,5 @@ async function poll() {
   } catch(e) {fail(e);} finally {state.polling=false;}
 }
 const pollTimer=setInterval(poll,2000);
-document.addEventListener("visibilitychange",()=>{if(!document.hidden){loadTokenWindow();loadMorePackets();loadListTokens();}});
+document.addEventListener("visibilitychange",()=>{if(document.hidden){tokenTrendView.cancelPending();return;}if(workspaceView==="trends")tokenTrendView.refresh();else{loadTokenWindow();loadMorePackets();loadListTokens();}});
 (async()=>{state.polling=true;try{await Promise.all([refreshStatus(true),refreshFilters()]);await refreshSessionSummaries();}finally{state.polling=false;}})().catch(fail);
