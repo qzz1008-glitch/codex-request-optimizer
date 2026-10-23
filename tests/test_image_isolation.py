@@ -98,6 +98,82 @@ class ImageConfigurationTests(unittest.TestCase):
             pass
         self.assertEqual(tomllib.loads(self.config.read_text(encoding="utf8")), original)
 
+    def test_disabled_mode_needs_no_cli_and_restores_both_tools(self):
+        original = tomllib.loads(self.config.read_text(encoding="utf8"))
+        with patch("packet_inspector.image_config.find_codex_cli", side_effect=AssertionError("no CLI needed")):
+            with self.manager.change("disabled"):
+                pass
+        configured = tomllib.loads(self.config.read_text(encoding="utf8"))
+        self.assertIs(configured["tools"]["view_image"], False)
+        self.assertIs(configured["mcp_servers"]["isolated_vision"]["enabled"], False)
+        self.assertEqual(configured["mcp_servers"]["other"], original["mcp_servers"]["other"])
+        self.assertFalse(self.manager.profile_path.exists())
+        reloaded = ImageToolConfig(self.manager.link, self.root, self.manager.api_base, self.manager.relay_endpoint)
+        self.assertEqual(reloaded.status()["mode"], "disabled")
+        with reloaded.change("native"):
+            pass
+        self.assertEqual(tomllib.loads(self.config.read_text(encoding="utf8")), original)
+
+    def test_all_mode_transitions_keep_the_original_configuration(self):
+        original = tomllib.loads(self.config.read_text(encoding="utf8"))
+        with patch("packet_inspector.image_config.find_codex_cli", return_value="fake"), patch.object(self.manager, "_validate"):
+            for mode in ("disabled", "optimized", "disabled", "native", "optimized", "native"):
+                with self.subTest(mode=mode), self.manager.change(mode):
+                    pass
+                data = tomllib.loads(self.config.read_text(encoding="utf8"))
+                self.assertEqual(self.manager.status()["mode"], mode)
+                self.assertEqual(self.manager.status()["enabled"], mode == "optimized")
+                self.assertEqual(VISION_PROVIDER in data.get("model_providers", {}), mode == "optimized")
+                if mode == "disabled":
+                    self.assertIs(data["mcp_servers"]["isolated_vision"]["enabled"], False)
+                elif mode == "native":
+                    self.assertEqual(data, original)
+
+    def test_optimized_to_disabled_removes_the_managed_tool(self):
+        self.config.write_text('model="test"\n', encoding="utf8")
+        self.enable()
+        with self.manager.change("disabled"):
+            pass
+        data = tomllib.loads(self.config.read_text(encoding="utf8"))
+        self.assertNotIn("mcp_servers", data)
+        self.assertIs(data["tools"]["view_image"], False)
+        with self.manager.change("native"):
+            pass
+        self.assertEqual(tomllib.loads(self.config.read_text(encoding="utf8")), {"model": "test"})
+
+    def test_failed_mode_transition_restores_disabled_configuration_and_state(self):
+        with self.manager.change("disabled"):
+            pass
+        before, state_before = self.config.read_bytes(), self.manager.path.read_bytes()
+        with patch("packet_inspector.image_config.find_codex_cli", return_value="fake"), patch.object(
+                self.manager, "_validate", side_effect=ValueError("CLI rejected")), self.assertRaises(ValueError):
+            with self.manager.change("optimized"):
+                pass
+        self.assertEqual(self.config.read_bytes(), before)
+        self.assertEqual(self.manager.path.read_bytes(), state_before)
+        self.assertEqual(self.manager.status()["mode"], "disabled")
+        self.assertFalse(self.manager.profile_path.exists())
+
+    def test_restoring_disabled_tools_keeps_unrelated_user_edits(self):
+        with self.manager.change("disabled"):
+            pass
+        text = self.config.read_text(encoding="utf8").replace('command="original-reader"', 'command="updated-reader"')
+        self.config.write_text(text, encoding="utf8")
+        with self.manager.change("native"):
+            pass
+        data = tomllib.loads(self.config.read_text(encoding="utf8"))
+        self.assertEqual(data["mcp_servers"]["isolated_vision"]["command"], "updated-reader")
+        self.assertNotIn("enabled", data["mcp_servers"]["isolated_vision"])
+
+    def test_disabled_mode_conflict_does_not_overwrite_user_changes(self):
+        with self.manager.change("disabled"):
+            pass
+        changed = self.config.read_text(encoding="utf8").replace("view_image = false", "view_image = true")
+        self.config.write_text(changed, encoding="utf8")
+        with self.assertRaises(ValueError), self.manager.change("native"):
+            pass
+        self.assertEqual(self.config.read_text(encoding="utf8"), changed)
+
     def test_missing_isolated_tool_gets_text_only_http_fallback(self):
         self.config.write_text('model="test"\n', encoding="utf8")
         self.enable()
@@ -234,6 +310,23 @@ class ImageConfigurationTests(unittest.TestCase):
 
 
 class ImageDirectoryStartupTests(unittest.TestCase):
+    def test_old_settings_migrate_without_changing_the_selected_behavior(self):
+        cases = [({}, "native"), ({"image_isolation_enabled": True}, "optimized"),
+                 ({"image_isolation_enabled": False}, "native"),
+                 ({"image_analysis_mode": "disabled"}, "disabled"),
+                 ({"image_analysis_mode": "native", "image_isolation_enabled": True}, "native")]
+        for saved, expected in cases:
+            with self.subTest(saved=saved), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                config = root / "config.toml"
+                config.write_text('model="test"\n', encoding="utf8")
+                data = root / "data"
+                data.mkdir()
+                (data / "settings.json").write_text(json.dumps(saved), encoding="utf8")
+                with fixtures.InspectorServer(("127.0.0.1", 0), data, config, "http://127.0.0.1:9/v1") as server:
+                    self.assertEqual(server.status()["image_analysis_mode"], expected)
+                    self.assertEqual(server.settings["image_isolation_enabled"], expected == "optimized")
+
     def test_saved_image_directory_survives_server_restart(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -351,8 +444,8 @@ class ImageRelayTests(unittest.TestCase):
     def tearDown(self):
         self.server.settings["packet_size_protection_enabled"] = False
         restore = {}
-        if self.server.settings["image_isolation_enabled"]:
-            restore["image_isolation_enabled"] = False
+        if self.server.settings["image_analysis_mode"] != "native":
+            restore["image_analysis_mode"] = "native"
         if self.server.settings["image_save_dir"]:
             restore["image_save_dir"] = ""
         if restore:
@@ -363,6 +456,36 @@ class ImageRelayTests(unittest.TestCase):
             status, result = self.api("/api/settings", {"image_isolation_enabled": True})
         self.assertEqual(status, 200)
         return result
+
+    def test_modes_are_persisted_and_legacy_boolean_still_restores_native(self):
+        with patch("packet_inspector.image_config.find_codex_cli", return_value="fake"), patch.object(self.server.image_config, "_validate"):
+            for mode in ("disabled", "optimized", "disabled", "native"):
+                status, result = self.api("/api/settings", {"image_analysis_mode": mode})
+                self.assertEqual(status, 200, result)
+                self.assertEqual(result["image_analysis_mode"], mode)
+                self.assertEqual(result["image_isolation_enabled"], mode == "optimized")
+                self.assertEqual(json.loads(self.server.settings_path.read_text())["image_analysis_mode"], mode)
+                self.assertEqual(self.api("/health")[0], 200)
+            self.assertEqual(self.api("/api/settings", {"image_analysis_mode": "disabled"})[0], 200)
+            status, result = self.api("/api/settings", {"image_isolation_enabled": False})
+            self.assertEqual((status, result["image_analysis_mode"]), (200, "native"))
+
+    def test_invalid_modes_and_conflicts_do_not_modify_settings_or_config(self):
+        before, config_before = self.server.settings_path.read_bytes(), self.config.read_bytes()
+        for mode in (True, False, None, 1, [], {}, "off"):
+            with self.subTest(mode=mode):
+                self.assertEqual(self.api("/api/settings", {"image_analysis_mode": mode})[0], 400)
+        self.assertEqual(self.api("/api/settings", {"image_analysis_mode": "disabled", "image_isolation_enabled": True})[0], 400)
+        self.assertEqual(self.server.settings_path.read_bytes(), before)
+        self.assertEqual(self.config.read_bytes(), config_before)
+
+    def test_failed_save_rolls_back_disabled_mode(self):
+        before = self.config.read_bytes()
+        with patch.object(self.server, "save_settings", side_effect=OSError("settings disk full")):
+            self.assertEqual(self.api("/api/settings", {"image_analysis_mode": "disabled"})[0], 500)
+        self.assertEqual(self.config.read_bytes(), before)
+        self.assertEqual(self.server.settings["image_analysis_mode"], "native")
+        self.assertEqual(self.server.image_config.status()["mode"], "native")
 
     def test_toggle_removes_native_tool_and_main_image_but_retains_inbound_evidence(self):
         raw = encode(request_body())
