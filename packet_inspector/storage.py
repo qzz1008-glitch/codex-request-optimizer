@@ -14,6 +14,7 @@ import zlib
 
 from .analyzer import CLASSIFICATION_VERSION, classify_request, encode, compare_packets
 from .maintenance import SQLiteReclaimer
+from .request_context import packet_metadata
 
 SUMMARY_COLUMNS = "id,created,thread,status,method,kind,status_key,state,capture_owner,wire_bytes,stored_bytes,meta"
 COMPRESSED_SIZE_SQL = "coalesce(json_extract(meta,'$.overflow_original_wire_bytes'),json_extract(meta,'$.usage_override_request_bytes'),json_extract(meta,'$.outbound_wire_bytes'),-1)"
@@ -130,6 +131,7 @@ class Store:
                 "time": datetime.fromtimestamp(created, timezone.utc).isoformat(),
                 "state": "captured", "source": meta.get("source", "live"),
                 "capture_owner": self.capture_owner}
+        meta = packet_metadata(meta)
         blob = zlib.compress(encode(content), 3) if content is not None else None
         with self.lock, self.connect() as c:
             c.execute("INSERT INTO packets VALUES(?,?,?,?,?,?,?)",
@@ -167,7 +169,7 @@ class Store:
             row = c.execute("SELECT meta" + (",content" if content else "") + " FROM packets WHERE id=?", (packet_id,)).fetchone()
         if row is None:
             raise KeyError("packet_not_found")
-        meta = json.loads(row["meta"])
+        meta = packet_metadata(json.loads(row["meta"]))
         body = json.loads(zlib.decompress(row["content"])) if content and row["content"] else None
         return meta, body
 
@@ -246,7 +248,7 @@ class Store:
             sql = "SELECT meta FROM packet_summaries" + (" WHERE " + " AND ".join(where) if where else "")
             ordering = f"created {order},id {order}" if sort == "created" else f"{field} {order},created {order},id {order}"
             rows = c.execute(sql + f" ORDER BY {ordering} LIMIT ?", [*args, limit]).fetchall()
-        return [json.loads(r["meta"]) for r in rows]
+        return [packet_metadata(json.loads(r["meta"])) for r in rows]
 
     def filter_options(self):
         kinds, statuses, threads = set(), set(), {}

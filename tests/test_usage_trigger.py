@@ -57,6 +57,43 @@ class Response:
 
 
 class UsageStreamTests(unittest.TestCase):
+    def test_split_bom_and_json_media_types_work_without_version_specific_handling(self):
+        bom = b"\xef\xbb\xbf"
+        for rewrite in (False, True):
+            for mode, payload in ((None, bom + sse(completed())),
+                                  (None, bom + json.dumps(completed()["response"]).encode()),
+                                  ("application/response+json", json.dumps(completed()["response"]).encode())):
+                with self.subTest(rewrite=rewrite, mode=mode):
+                    records = []
+                    stream = UsageStream(Response(payload, mode=mode, chunk=1), lambda **v: records.append(v), rewrite=rewrite)
+                    output = b"".join(stream.chunks())
+                    if not rewrite:
+                        self.assertEqual(output, payload)
+                    self.assertEqual(len(records), 1)
+                    self.assertEqual(records[0]["upstream_usage"], USAGE)
+
+    def test_observation_preserves_every_chunk_and_does_not_delay_json_or_sse(self):
+        for mode, payload in (("text/event-stream", DELTA + sse(completed())),
+                              ("application/json", json.dumps(completed()["response"]).encode()),
+                              (None, DELTA + sse(completed()))):
+            with self.subTest(mode=mode):
+                records = []
+                response = Response(payload, mode=mode, chunk=7)
+                stream = UsageStream(response, lambda **v: records.append(v), rewrite=False)
+                chunks = stream.chunks()
+                self.assertEqual(next(chunks), payload[:7])
+                self.assertEqual(response.body.tell(), 7)
+                self.assertEqual(payload[:7] + b"".join(chunks), payload)
+                self.assertEqual(records, [{"upstream_usage": USAGE}])
+
+    def test_observation_recovers_after_oversized_frames_and_ignores_unknown_events(self):
+        payload = sse({"type": "future.event", "value": "x" * 5000}) + sse(completed())
+        records = []
+        with patch("packet_inspector.usage_trigger.MAX_EVENT_BYTES", 1000):
+            stream = UsageStream(Response(payload, chunk=71), lambda **v: records.append(v), rewrite=False)
+            self.assertEqual(b"".join(stream.chunks()), payload)
+        self.assertEqual(records, [{"upstream_usage": USAGE}])
+
     def transform(self, body, **fields):
         records = []
         stream = UsageStream(Response(body, **fields), lambda **v: records.append(v))
@@ -297,11 +334,10 @@ class UsageRelayTests(unittest.TestCase):
         self.assertGreaterEqual(packet["usage_override_request_bytes"], TRIGGER_BYTES)
         self.assertEqual(len(self.up.requests), 1)
         self.assertEqual(packet["upstream_usage"], USAGE)
-        with patch.object(self.server.token_windows, "lookup", return_value={
-                "state": "available", "input_tokens": 500000, "window_tokens": 330000}):
+        with patch.object(self.server.token_windows, "lookup", side_effect=AssertionError("History must not be read")):
             actual = self.server.token_windows.lookup_ready(packet)
         self.assertEqual(actual["input_tokens"], USAGE["input_tokens"])
-        self.assertEqual(actual["window_tokens"], 330000)
+        self.assertNotIn("window_tokens", actual)
         self.assertEqual(actual["source"], "upstream_response")
 
     def test_small_encoded_packets_disabled_setting_and_native_compaction_are_unchanged(self):
@@ -314,6 +350,23 @@ class UsageRelayTests(unittest.TestCase):
                 self.assertIsNotNone(response.getheader("Content-Length"))
             finally:
                 client.close()
+
+    def test_unprotected_response_records_real_usage_without_changing_stream_or_headers(self):
+        self.server.settings["packet_size_protection_enabled"] = False
+        client, response = self.post(request_body(compressible=True), {"X-Test-Hold": "1"})
+        try:
+            self.assertEqual(response.read(len(DELTA)), DELTA)
+            self.assertEqual(response.getheader("ETag"), '"old-body"')
+            self.assertEqual(int(response.getheader("Content-Length")), len(DELTA + sse(completed())))
+            self.up.release.set()
+            self.assertEqual(response.read(), sse(completed()))
+        finally:
+            self.up.release.set()
+            client.close()
+        packet = self.server.store.list(limit=1)[0]
+        self.assertEqual(packet["upstream_usage"], USAGE)
+        self.assertFalse(packet.get("usage_override_applied", False))
+        self.assertNotIn("reported_usage", packet)
 
 
 class ProtectionMigrationTests(unittest.TestCase):

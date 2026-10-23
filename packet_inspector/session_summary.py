@@ -1,4 +1,4 @@
-"""Read-only session labels and recent packet/window metadata for the sidebar."""
+"""Read-only session labels and recent packet/token metadata for the sidebar."""
 from contextlib import closing
 from collections import OrderedDict
 from datetime import datetime
@@ -11,6 +11,7 @@ import zlib
 
 from .request_context import (IMAGE_ANALYST_PREFIXES, last_user_text, temporary_kind_from_metadata,
                               temporary_request_kind, request_session_context, session_id)
+from .response_usage import packet_usage
 
 MAX_SESSIONS = 300
 INDEX_TASK_PREFIX = "You are in a fork of an existing Codex thread.\nFill the structured description field"
@@ -73,10 +74,15 @@ class SessionSummaries:
                 with closing(sqlite3.connect(database.as_uri() + "?mode=ro", uri=True, timeout=.2)) as db:
                     db.execute("PRAGMA query_only=ON")
                     columns = {r[1] for r in db.execute("PRAGMA table_info(threads)")}
-                    updated = "coalesce(nullif(updated_at_ms,0)/1000.0,updated_at)" if "updated_at_ms" in columns else "updated_at"
+                    if "id" not in columns:
+                        continue
+                    timestamps = (["nullif(updated_at_ms,0)/1000.0"] if "updated_at_ms" in columns else [])
+                    timestamps += ["updated_at"] if "updated_at" in columns else []
+                    updated = "coalesce(" + ",".join(timestamps + ["NULL"]) + ")" if timestamps else "NULL"
+                    title = "substr(title,1,512)" if "title" in columns else "NULL"
                     extras = ["substr(" + column + ",1," + str(limit) + ")" if column in columns else "NULL"
                               for column, limit in (("name", 512), ("agent_nickname", 128), ("source", 8192))]
-                    rows = db.execute("SELECT id,substr(title,1,512)," + updated + "," + ",".join(extras) + " FROM threads WHERE id IN (" +
+                    rows = db.execute("SELECT id," + title + "," + updated + "," + ",".join(extras) + " FROM threads WHERE id IN (" +
                                       ",".join("?" for _ in ids) + ")", ids).fetchall()
                     try:
                         edges = db.execute("SELECT child_thread_id,min(parent_thread_id) FROM thread_spawn_edges WHERE child_thread_id IN (" +
@@ -221,7 +227,9 @@ class SessionSummaries:
             labels[thread] = {**previous, **label}
         with self._lock:
             self._prepare_records(path, records, labels)
-            ids = [r["thread_id"] for r in records if r["thread_id"]]
+            ids = [r["thread_id"] for r in records if r["thread_id"]
+                   and packet_usage(reported_packets.get(r["thread_id"], {})) is None
+                   and not reported_packets.get(r["thread_id"], {}).get("usage_override_applied")]
             self._token_states = {k: v for k, v in self._token_states.items() if k in ids}
             # At most eight bounded history reads per refresh, rotating through larger lists.
             for offset in range(min(8, len(ids))):
@@ -231,15 +239,11 @@ class SessionSummaries:
             for record in records:
                 record["token_window"] = self._token_states.get(record["thread_id"], {"state": "loading" if record["thread_id"] else "unavailable"})
                 packet = reported_packets.get(record["thread_id"], {})
-                usage = packet.get("upstream_usage")
-                if (isinstance(usage, dict) and packet.get("status") == 200
-                        and packet.get("state") in {"streaming", "complete"}
-                        and all(type(usage.get(k)) is int and usage[k] >= 0
-                                for k in ("input_tokens", "output_tokens", "total_tokens"))):
-                    window = record["token_window"].get("window_tokens")
+                usage = packet_usage(packet)
+                if usage is not None:
                     record["token_window"] = {"state": "available", "source": "upstream_response",
                         "input_tokens": usage["input_tokens"], "output_tokens": usage["output_tokens"],
-                        "used_tokens": usage["total_tokens"], "window_tokens": window,
+                        "used_tokens": usage["total_tokens"],
                         "recorded_at": record["latest_packet"]["created"],
                         "usage_override_applied": bool(packet.get("usage_override_applied"))}
                 elif packet.get("usage_override_applied"):
