@@ -1605,9 +1605,10 @@ function renderHeaders(m) {
   if(m.source!=="live")fact(p,t("数据来源"),t("历史重建（大小为估算）"));
   fact(p,t("模型"),m.model||t("未标记"));
   const session=sessionSummaries.find(row=>row.thread_id===m.thread_id);
-  const auxiliary=auxiliarySessionKind(session);
+  const auxiliary=auxiliarySessionKind(session),purpose=purposeFromMetadata(m);
+  const specialKind=[purpose,m.request_kind,auxiliary].find(kind=>kind&&kind!=="subagent"&&Object.hasOwn(auxiliaryLabels,kind));
   const body=requestBodyView?.id===m.id?requestBodyView.body:null, paths=requestImagePaths(m,body);
-  const hasImage=auxiliary==="image_analysis"||purposeFromMetadata(m)==="image_analysis"||m.image_isolation_removed>0||paths.length>0||
+  const hasImage=auxiliary==="image_analysis"||specialKind==="image_analysis"||m.image_isolation_removed>0||paths.length>0||
     (Array.isArray(body?.input)&&body.input.some(item=>item?.role==="user"&&Array.isArray(item.content)&&item.content.some(part=>part?.type==="input_image")));
   fact(p,t("响应状态"),String(m.status||t("尚未收到")));
   fact(p,t("响应头耗时"),Number.isFinite(m.headers_ms)&&m.headers_ms>=0?m.headers_ms+" ms":"—");
@@ -1616,19 +1617,21 @@ function renderHeaders(m) {
     fact(p,t("采集入口正文"),bytes(m.wire_bytes)+" · "+(m.content_encoding||"identity"));
   }
   root.append(p);
-  const context=panel(t("会话信息"));context.id="request-session-info";
-  fact(context,"session_id",m.thread_id||"—").classList.add("request-context");
-  const nativeTitle=session?.title_source==="index_task"||session?.title_source==="subagent"?null:session?.title;
-  fact(context,t("会话名称"),nativeTitle||"—").classList.add("request-context");
-  const parentId=session?.parent_thread_id||m.parent_thread_id;
-  if(parentId) {
-    fact(context,"parent_session_id",parentId).classList.add("request-context");
-    const parent=sessionSummaries.find(row=>row.thread_id===parentId);
-    const parentTitle=parent?.title_source==="index_task"||parent?.title_source==="subagent"?null:parent?.title;
-    fact(context,t("父会话名称"),parentTitle||"—").classList.add("request-context");
+  if(specialKind) {
+    const context=panel(t("会话信息"));context.id="request-session-info";
+    fact(context,"session_id",m.thread_id||"—").classList.add("request-context");
+    const nativeTitle=session?.title_source==="index_task"||session?.title_source==="subagent"?null:session?.title;
+    fact(context,t("会话名称"),nativeTitle||"—").classList.add("request-context");
+    const parentId=session?.parent_thread_id||m.parent_thread_id;
+    if(parentId&&parentId!==m.thread_id) {
+      fact(context,"parent_session_id",parentId).classList.add("request-context");
+      const parent=sessionSummaries.find(row=>row.thread_id===parentId);
+      const parentTitle=parent?.title_source==="index_task"||parent?.title_source==="subagent"?null:parent?.title;
+      fact(context,t("父会话名称"),parentTitle||"—").classList.add("request-context");
+    }
+    fact(context,t("任务类型"),t(auxiliaryLabels[specialKind]));
+    root.append(context);
   }
-  if(auxiliary)fact(context,t("任务类型"),t(auxiliaryLabels[auxiliary]));
-  root.append(context);
   if(hasImage) {
     const images=panel(t("图片信息"));images.id="request-image-info";
     fact(images,t("图片路径"),paths.length?paths.join("\n"):t("未记录图片路径")).classList.add("request-context","request-image-paths");
