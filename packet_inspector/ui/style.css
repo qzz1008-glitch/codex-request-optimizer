@@ -111,6 +111,46 @@ code.session-id{font-family:Consolas,"Cascadia Mono",monospace;font-size:11px;wo
 .image-path-group+.image-path-group{margin-top:10px}
 .image-path-directory{display:block;min-width:0;margin-bottom:4px;color:var(--muted);font:11px/1.6 Consolas,"Cascadia Mono",monospace;white-space:pre-wrap;overflow-wrap:anywhere;user-select:text}
 .image-path-list{list-style:none;margin:0;padding:0;min-width:0}
+.view-toggle{display:inline-flex;align-items:center;flex:none;gap:2px;padding:3px;background:#eef2f6;border:1px solid var(--line);border-radius:8px;user-select:none}
+.view-toggle button{border:0;background:transparent;color:var(--muted);box-shadow:none;padding:4px 10px;font-size:12px;line-height:20px;white-space:nowrap}
+.view-toggle button[aria-pressed=true]{background:white;color:var(--ink);box-shadow:0 1px 3px #152b4314}
+#view-toggle{margin-right:10px}
+#view-toggle button{display:grid;place-items:center;width:32px;padding:4px}
+#view-toggle svg{display:block;width:18px;height:20px;pointer-events:none}
+.header-action-icon{display:none}
+@media(max-width:1360px){.desktop-titlebar .header-icon-action{display:grid;place-items:center;flex:none;width:36px;height:36px;padding:7px}.desktop-titlebar .header-action-label{display:none}.desktop-titlebar .header-action-icon{display:block;width:20px;height:20px}}
+.token-trend-view{display:flex;flex:1;flex-direction:column;min-height:0;min-width:0;padding:20px 24px 12px;gap:12px;overflow:hidden}
+.trend-toolbar{display:flex;align-items:center;gap:20px;flex:none}
+.trend-toolbar h1{font-size:18px;line-height:1.5;margin:0}
+.trend-toolbar p{font-size:12px;margin:3px 0 0}
+#trend-range{margin-left:auto}
+.trend-live{font-size:11px;color:var(--green);white-space:nowrap}
+.trend-live::before{content:"";display:inline-block;width:6px;height:6px;background:currentColor;border-radius:50%;margin-right:6px}
+.trend-live.loading{color:var(--muted)}
+.trend-live.error{color:var(--danger)}
+.trend-controls{display:flex;align-items:center;gap:8px;flex:none}
+#trend-search{width:200px;height:30px;padding:4px 10px;font-size:12px}
+#trend-show-all{height:30px;padding:3px 10px;font-size:11px;white-space:nowrap}
+.trend-event-legend{display:flex;gap:14px;align-items:center;margin-left:auto;font-size:12px;white-space:nowrap}
+.trend-event-legend>span>span{color:var(--muted);font-size:11px;margin-left:3px}
+.trend-predictive{color:#8058c1}.trend-overflow{color:#dc6044}.trend-retry{color:#b88212}.trend-compact{color:#17856e}
+.trend-series{display:flex;flex-wrap:wrap;align-content:flex-start;gap:6px;max-height:74px;min-height:30px;flex:none;overflow:auto;scrollbar-gutter:stable}
+.trend-series button{display:flex;align-items:center;gap:6px;max-width:230px;padding:4px 9px;border:1px solid var(--line);border-radius:6px;font-size:11px;line-height:18px;background:white}
+.trend-series button[aria-pressed=false]{opacity:.42;background:#f0f2f5}
+.trend-series button span:last-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.trend-series-swatch{display:block;width:14px;height:3px;background:var(--series-color);border-radius:2px;flex:none}
+.trend-plot{position:relative;flex:1;min-height:200px;min-width:0;background:white;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+#trend-chart{display:block;width:100%;height:100%;outline-offset:-3px;touch-action:pan-y}
+.trend-grid{stroke:#e8edf3;stroke-width:1;vector-effect:non-scaling-stroke}.trend-axis-label{fill:var(--muted);font:11px "Segoe UI",sans-serif}.trend-axis-title{fill:var(--muted);font:11px "Segoe UI",sans-serif}
+.trend-curve{fill:none;stroke-width:2;stroke-linejoin:round;stroke-linecap:round;vector-effect:non-scaling-stroke}
+.trend-series-line{transition:opacity .12s}.trend-series-line.dimmed{opacity:.13}
+.trend-event{stroke:white;stroke-width:1.5;vector-effect:non-scaling-stroke}.trend-event-count{fill:var(--ink);font:9px "Segoe UI",sans-serif;paint-order:stroke;stroke:white;stroke-width:3px}
+.trend-focus-line{stroke:#9baabd;stroke-dasharray:4 4;stroke-width:1;pointer-events:none}.trend-focus-dot{fill:white;stroke:var(--ink);stroke-width:2;pointer-events:none}
+.trend-empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:13px;pointer-events:none;padding:30px;text-align:center;background:#ffffffd9}
+.trend-tooltip{position:absolute;z-index:2;width:280px;max-width:calc(100% - 16px);background:#fffffffa;border:1px solid #cdd7e4;border-radius:9px;box-shadow:0 8px 28px #1628421f;padding:12px;font-size:12px;pointer-events:none;overflow-wrap:anywhere}
+.trend-tooltip h3{font-size:13px;margin:0 0 5px}.trend-tooltip p{margin:3px 0;color:var(--muted)}.trend-tooltip strong{font-size:18px;color:var(--ink)}.trend-tooltip .trend-tooltip-event{color:var(--ink)}.trend-tooltip code{font-size:10px;color:var(--muted)}
+.trend-footer{display:flex;justify-content:space-between;gap:12px;color:var(--muted);font-size:11px;line-height:1.6;flex:none;min-height:18px}
+@media(prefers-reduced-motion:reduce){.trend-series-line{transition:none}}
 .image-path-item{display:flex;align-items:flex-start;gap:8px;min-width:0;padding:8px 0;border-top:1px solid var(--line)}
 .image-path-name{flex:1;min-width:0;color:var(--ink);font:12px/1.6 Consolas,"Cascadia Mono",monospace;white-space:pre-wrap;overflow-wrap:anywhere;user-select:text}
 .session-title{font-size:13px;font-weight:600;line-height:1.5;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
@@ -410,5 +450,6 @@ dialog{width:min(760px,calc(var(--desktop-width) - 80px));max-height:calc(var(--
 .desktop-titlebar .header-actions{margin-left:auto}
 .desktop-build{display:none}
 .desktop-titlebar .desktop-build:not([hidden]){display:inline-flex;padding:2px 6px;border-radius:4px;background:var(--soft);color:var(--accent);font-size:11px;white-space:nowrap}
-.app-header{position:relative}
+.app-header{position:relative;gap:12px}
+.header-actions{margin-left:auto}
 .header-compression{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%)}
