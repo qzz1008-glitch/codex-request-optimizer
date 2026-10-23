@@ -1736,45 +1736,22 @@ function imagePathGroups(paths) {
   }
   return [...groups.values()];
 }
-async function copyImagePath(path) {
-  try {
-    if(navigator.clipboard?.writeText) {await navigator.clipboard.writeText(path);return;}
-  } catch(_) {}
-  const focused=document.activeElement,selection=window.getSelection();
-  const ranges=Array.from({length:selection?.rangeCount||0},(_,index)=>selection.getRangeAt(index).cloneRange());
-  const input=el("textarea","image-path-clipboard");input.value=path;input.readOnly=true;input.setAttribute("aria-hidden","true");
-  document.body.append(input);
-  try {input.select();if(!document.execCommand("copy"))throw Error(t("复制失败"));}
-  finally {
-    input.remove();focused?.focus({preventScroll:true});
-    if(selection) {selection.removeAllRanges();for(const range of ranges)try {selection.addRange(range);} catch(_) {}}
-  }
-}
 function renderImageInfo(paths) {
   const images=panel(t("图片信息"));images.id="request-image-info";
   if(!paths.length) {images.append(el("p","muted",t("未记录图片路径")));return images;}
-  const feedback=el("span","sr-only");feedback.setAttribute("role","status");feedback.setAttribute("aria-live","polite");
   for(const group of imagePathGroups(paths)) {
     const section=el("section","image-path-group");section.dataset.renderKey="image-folder:"+group.directory;section.setAttribute("aria-label",t("图片目录")+"："+group.directory);
     const directory=el("code","image-path-directory",group.directory);directory.title=group.directory;
     const list=el("ul","image-path-list");
     for(const {name,path} of group.files) {
-      const item=el("li","image-path-item"),filename=el("code","image-path-name",name),copy=el("button","image-path-copy",t("复制"));
+      const item=el("li","image-path-item"),filename=el("code","image-path-name",name);
       item.dataset.renderKey="image:"+path;
-      filename.title=path;copy.type="button";copy.title=t("复制完整路径");copy.setAttribute("aria-label",t("复制完整路径")+"："+name);
-      copy.onclick=async event=>{
-        const button=event.currentTarget,liveFeedback=button.closest("#request-image-info").querySelector('[role="status"]');
-        if(button.imagePathCopying)return;
-        clearTimeout(button.imagePathReset);button.imagePathCopying=true;button.setAttribute("aria-busy","true");button.classList.remove("copied","copy-error");liveFeedback.textContent="";
-        try {await copyImagePath(path);if(button.isConnected){button.textContent=t("已复制");button.classList.add("copied");liveFeedback.textContent=t("已复制")+"："+name;}}
-        catch(_) {if(button.isConnected){button.textContent=t("复制失败");button.classList.add("copy-error");liveFeedback.textContent=t("复制失败，请手动复制路径");}}
-        finally {button.imagePathCopying=false;button.removeAttribute("aria-busy");button.imagePathReset=setTimeout(()=>{if(button.isConnected){button.textContent=t("复制");button.classList.remove("copied","copy-error");}},1800);}
-      };
-      item.append(filename,copy);list.append(item);
+      filename.title=path;
+      item.append(filename);list.append(item);
     }
     section.append(directory,list);images.append(section);
   }
-  images.append(feedback);return images;
+  return images;
 }
 function renderHeaders(m) {
   const root=document.createDocumentFragment(),p=panel(t("请求与响应"));
