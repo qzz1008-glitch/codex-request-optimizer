@@ -8,7 +8,7 @@ import json
 import re
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-from .request_context import request_image_paths, temporary_request_kind
+from .request_context import request_image_paths, request_session_context, temporary_request_kind
 
 MAX_BODY = 128 * 1024 * 1024
 CLASSIFICATION_VERSION = 2
@@ -309,6 +309,7 @@ def inspect_request(raw, headers, path=""):
         model = value.get("model", "") if isinstance(value, dict) else ""
         meta.update(stats)
         meta["image_paths"] = request_image_paths(value)
+        meta.update(request_session_context(value, headers))
         kind = temporary_request_kind(value)
         if kind:
             meta["request_kind"] = kind

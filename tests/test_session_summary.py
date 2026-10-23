@@ -206,6 +206,43 @@ class SessionSummaryTests(unittest.TestCase):
             self.assertEqual(row["token_window"]["state"], "unavailable")
         self.assertEqual(before, [(p.read_bytes(), p.stat().st_mtime_ns) for p in paths])
 
+    def test_ephemeral_compaction_recovers_parent_without_changing_history(self):
+        parent = "01a15d9a-f5e3-73c1-b4e7-87b3c5db9a3c"
+        self.index_request(last_user="Create a context checkpoint")
+        body = {"input": [{"role": "user", "content": "Create a context checkpoint"}],
+                "client_metadata": {"x-codex-turn-metadata": json.dumps({
+                    "thread_source": "thread_description", "forked_from_thread_id": parent})}}
+        meta = {"is_compaction": True, "request_kind": "compaction",
+                "top_fields": [{"name": "client_metadata"}]}
+        with closing(sqlite3.connect(self.capture / "packets.sqlite")) as db:
+            db.execute("UPDATE packets SET meta=?,content=?", (json.dumps(meta), zlib.compress(json.dumps({"body": body}).encode())))
+            db.commit()
+        with closing(sqlite3.connect(self.native / "state_5.sqlite")) as db:
+            db.execute("INSERT INTO threads VALUES (?,?,?,?,?)", (parent, "真实父会话", 120, 120000, None))
+            db.commit()
+        files = [self.capture / "packets.sqlite", self.native / "state_5.sqlite", self.rollout]
+        before = [(p.read_bytes(), p.stat().st_mtime_ns) for p in files]
+        rows = {r["thread_id"]: r for r in self.reader.read(self.capture)["sessions"]}
+        self.assertEqual(rows[THREAD]["parent_thread_id"], parent)
+        self.assertEqual(rows[THREAD]["session_kind"], "session_index")
+        self.assertIsNone(rows[THREAD]["title"])
+        self.assertEqual(rows[parent]["title"], "真实父会话")
+        self.assertEqual(rows[parent]["packet_count"], 0)
+        self.assertIsNone(rows[parent]["latest_packet"])
+        self.assertEqual(before, [(p.read_bytes(), p.stat().st_mtime_ns) for p in files])
+
+    def test_native_spawn_edges_recover_missing_parent_and_bound_cycles(self):
+        parent = "01a15d9a-f5e3-73c1-b4e7-87b3c5db9a3c"
+        with closing(sqlite3.connect(self.native / "state_5.sqlite")) as db:
+            db.execute("CREATE TABLE thread_spawn_edges(parent_thread_id TEXT,child_thread_id TEXT,status TEXT)")
+            db.executemany("INSERT INTO thread_spawn_edges VALUES (?,?,?)", [(parent, THREAD, "complete"), (THREAD, parent, "complete")])
+            db.commit()
+        rows = {r["thread_id"]: r for r in self.reader.read(self.capture)["sessions"]}
+        self.assertEqual(rows[THREAD]["parent_thread_id"], parent)
+        self.assertEqual(rows[parent]["parent_thread_id"], THREAD)
+        self.assertEqual(rows[THREAD]["session_kind"], "subagent")
+        self.assertEqual(len(rows), 3)
+
     def test_real_title_has_priority_over_request_index_label(self):
         self.index_request(remove_native=False)
         row = self.reader.read(self.capture)["sessions"][0]
