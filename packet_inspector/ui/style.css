@@ -294,6 +294,19 @@ code.session-id{font-family:Consolas,"Cascadia Mono",monospace;font-size:11px;wo
 #settings-dialog>.settings-footer{flex:none;display:grid;grid-template-columns:minmax(0,1fr) auto auto;align-items:center;gap:12px;padding:16px var(--settings-padding);border-top:1px solid var(--line);background:var(--panel)}
 #settings-dialog .settings-footer .help{min-width:0;margin:0}
 #settings-dialog .settings-footer button{white-space:nowrap}
+#settings-dialog .settings-feedback{min-width:0}
+#settings-dialog .settings-feedback .help{max-height:60px;overflow-y:auto}
+#settings-dialog .settings-save-log{display:grid;gap:4px;max-height:84px;margin:6px 0 0;padding:0;overflow:auto;list-style:none;color:var(--muted);font-size:12px;line-height:18px}
+#settings-dialog .settings-save-log li{display:grid;grid-template-columns:12px minmax(0,1fr) auto;align-items:baseline;gap:6px}
+#settings-dialog .settings-save-log .settings-step-label{min-width:0;overflow-wrap:anywhere}
+#settings-dialog .settings-save-log .settings-step-state{white-space:nowrap}
+#settings-dialog .settings-save-log li[data-state=running]{color:var(--accent)}
+#settings-dialog .settings-save-log li[data-state=done] .settings-step-icon{color:var(--green)}
+#settings-dialog .settings-save-log li[data-state=error]{color:var(--danger)}
+#settings-dialog #settings-save{position:relative;min-width:96px}
+#settings-dialog #settings-save[aria-busy=true]{cursor:wait;opacity:1}
+.settings-save-spinner{position:absolute;left:8px;top:calc(50% - 7px);width:14px;height:14px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;visibility:hidden}
+#settings-save[aria-busy=true] .settings-save-spinner{visibility:visible;animation:update-spin .8s linear infinite}
 @container settings-dialog (max-width:660px){
   #settings-dialog .packet-size-controls{grid-template-columns:minmax(0,1fr)}
   #settings-dialog .packet-size-limit{grid-template-columns:var(--settings-label-width) max-content;gap:16px}
@@ -317,9 +330,9 @@ code.session-id{font-family:Consolas,"Cascadia Mono",monospace;font-size:11px;wo
   #settings-dialog .context-control{grid-template-columns:var(--settings-context-width) minmax(0,1fr);gap:8px 12px}
   #settings-dialog .context-label{grid-column:1/-1}
   #settings-dialog .context-default{justify-self:end}
-  #settings-dialog .settings-footer .help{grid-column:1/-1}
-  #settings-dialog .settings-footer .help:empty{display:none}
-  #settings-dialog #settings-cancel{grid-column:2}
+  #settings-dialog .settings-feedback{grid-column:1/-1}
+  #settings-dialog .settings-feedback:has(#settings-message:empty):has(#settings-save-log[hidden]){display:none}
+  #settings-dialog #settings-restore{grid-column:2}
 }
 @container settings-dialog (max-width:380px){
   #settings-dialog .image-directory-row{grid-template-columns:minmax(0,1fr);max-width:var(--settings-path-width)}
@@ -344,7 +357,7 @@ dialog{width:min(760px,calc(var(--desktop-width) - 80px));max-height:calc(var(--
 .updates-actions button[aria-busy=true]{opacity:1;padding-inline:30px}
 .updates-actions button[aria-busy=true] .update-spinner{visibility:visible;animation:update-spin .8s linear infinite}
 @keyframes update-spin{to{transform:rotate(360deg)}}
-@media(prefers-reduced-motion:reduce){.updates-actions button[aria-busy=true] .update-spinner{animation:none}}
+@media(prefers-reduced-motion:reduce){.updates-actions button[aria-busy=true] .update-spinner,#settings-save[aria-busy=true] .settings-save-spinner{animation:none}}
 #settings-restart-dialog{width:min(460px,calc(100vw - 48px))}
 #settings-restart-dialog h2{font-size:20px}
 #settings-restart-items{padding-left:20px;margin:16px 0;line-height:1.8;overflow-wrap:anywhere}
