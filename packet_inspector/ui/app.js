@@ -1761,20 +1761,21 @@ function renderImageInfo(paths) {
   if(!paths.length) {images.append(el("p","muted",t("未记录图片路径")));return images;}
   const feedback=el("span","sr-only");feedback.setAttribute("role","status");feedback.setAttribute("aria-live","polite");
   for(const group of imagePathGroups(paths)) {
-    const section=el("section","image-path-group");section.setAttribute("aria-label",t("图片目录")+"："+group.directory);
+    const section=el("section","image-path-group");section.dataset.renderKey="image-folder:"+group.directory;section.setAttribute("aria-label",t("图片目录")+"："+group.directory);
     const directory=el("code","image-path-directory",group.directory);directory.title=group.directory;
     const list=el("ul","image-path-list");
     for(const {name,path} of group.files) {
       const item=el("li","image-path-item"),filename=el("code","image-path-name",name),copy=el("button","image-path-copy",t("复制"));
+      item.dataset.renderKey="image:"+path;
       filename.title=path;copy.type="button";copy.title=t("复制完整路径");copy.setAttribute("aria-label",t("复制完整路径")+"："+name);
-      let reset=null,copying=false;
-      copy.addEventListener("click",async()=>{
-        if(copying)return;
-        clearTimeout(reset);copying=true;copy.setAttribute("aria-busy","true");copy.classList.remove("copied","copy-error");feedback.textContent="";
-        try {await copyImagePath(path);copy.textContent=t("已复制");copy.classList.add("copied");feedback.textContent=t("已复制")+"："+name;}
-        catch(_) {copy.textContent=t("复制失败");copy.classList.add("copy-error");feedback.textContent=t("复制失败，请手动复制路径");}
-        finally {copying=false;copy.removeAttribute("aria-busy");reset=setTimeout(()=>{if(copy.isConnected){copy.textContent=t("复制");copy.classList.remove("copied","copy-error");}},1800);}
-      });
+      copy.onclick=async event=>{
+        const button=event.currentTarget,liveFeedback=button.closest("#request-image-info").querySelector('[role="status"]');
+        if(button.imagePathCopying)return;
+        clearTimeout(button.imagePathReset);button.imagePathCopying=true;button.setAttribute("aria-busy","true");button.classList.remove("copied","copy-error");liveFeedback.textContent="";
+        try {await copyImagePath(path);if(button.isConnected){button.textContent=t("已复制");button.classList.add("copied");liveFeedback.textContent=t("已复制")+"："+name;}}
+        catch(_) {if(button.isConnected){button.textContent=t("复制失败");button.classList.add("copy-error");liveFeedback.textContent=t("复制失败，请手动复制路径");}}
+        finally {button.imagePathCopying=false;button.removeAttribute("aria-busy");button.imagePathReset=setTimeout(()=>{if(button.isConnected){button.textContent=t("复制");button.classList.remove("copied","copy-error");}},1800);}
+      };
       item.append(filename,copy);list.append(item);
     }
     section.append(directory,list);images.append(section);
