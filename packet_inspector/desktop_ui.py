@@ -14,6 +14,7 @@ from urllib.parse import urlencode, urlsplit
 from . import VERSION
 from .build_info import build_info
 from .token_window import TokenWindows, is_token_request
+from .response_usage import packet_usage
 from .session_summary import SessionSummaries
 from .entry_port import port_status, save_port
 from .updates import Updates
@@ -177,6 +178,9 @@ class UIHandler(BaseHTTPRequestHandler):
                 return
             if not is_token_request(packet):
                 self._json(200, {"state": "unavailable"})
+                return
+            if packet_usage(packet) is not None:
+                self._json(200, self.server.token_windows.lookup_ready(packet))
                 return
             query = urlencode({"thread": packet.get("thread_id", ""), "limit": 32,
                                "sort": "created", "direction": "asc", "after": packet_id})
