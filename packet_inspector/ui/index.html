@@ -100,7 +100,7 @@
       <div class="zstd-level-control" data-settings-field="zstd_level">
         <label for="zstd-level-open">压缩等级</label>
         <input id="zstd-level" type="hidden" value="3" disabled>
-        <div class="zstd-level-selection"><button id="zstd-level-open" class="zstd-level-trigger" type="button" aria-haspopup="dialog" aria-controls="zstd-level-dialog" aria-describedby="zstd-level-auto-note" aria-expanded="false" disabled><span id="zstd-level-value">3级</span><svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></button><span id="zstd-level-auto-note" class="help muted" hidden>由请求大小保护自动选择</span></div>
+        <div class="zstd-level-selection"><button id="zstd-level-open" class="zstd-level-trigger" type="button" aria-haspopup="dialog" aria-controls="zstd-level-dialog" aria-describedby="zstd-level-auto-note" aria-expanded="false" disabled><span id="zstd-level-value">3级</span><svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></button><span id="zstd-level-auto-note" class="help muted" hidden>根据包大小自动调整</span></div>
       </div>
       <p id="zstd-level-message" class="help" role="status" hidden></p>
     </section>
@@ -125,7 +125,7 @@
         <label class="packet-size-limit" for="budget" data-settings-field="budget"><span id="budget-label">压缩包上限</span><span class="packet-size-value"><input id="budget" type="number" min="50.001" max="134217.728" step="0.001" value="1000" aria-labelledby="budget-label" aria-describedby="budget-unit" required disabled><span id="budget-unit" class="packet-size-unit">kB</span></span></label>
       </div>
       <p id="packet-size-message" class="help" role="status" hidden></p>
-      <div class="runtime-setting-row auto-zstd-row" data-settings-field="auto_zstd_level_enabled"><label class="runtime-toggle" for="auto-zstd-level"><input id="auto-zstd-level" type="checkbox" disabled><span>自动选择压缩等级</span></label></div>
+      <div class="runtime-setting-row auto-zstd-row" data-settings-field="auto_zstd_level_enabled"><label class="runtime-toggle" for="auto-zstd-level"><input id="auto-zstd-level" type="checkbox" disabled><span>按包大小自动压缩</span></label></div>
       <div class="runtime-setting-row runtime-retry-row"><div class="runtime-toggle" data-settings-field="capacity_retry_enabled"><input id="capacity-retry" type="checkbox" aria-labelledby="capacity-retry-label"><span id="capacity-retry-label" title="模型容量不足时自动重试">容量不足重试</span></div><div class="capacity-retry-limit" data-settings-field="capacity_retry_max_retries"><label for="capacity-retry-count">重试次数</label><input id="capacity-retry-count" type="number" min="1" max="99" step="1" value="3" inputmode="numeric" required><span>次</span></div></div>
       <p id="runtime-settings-message" class="help" role="status" hidden></p>
     </section>
