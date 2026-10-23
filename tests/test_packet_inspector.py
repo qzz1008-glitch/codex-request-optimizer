@@ -753,6 +753,38 @@ class RelayTests(unittest.TestCase):
         finally:
             self.api("/api/settings", previous)
 
+    def test_applied_zstd_level_is_recorded_per_request_without_guessing_passthrough(self):
+        previous = {key: self.server.settings[key] for key in ("zstd_level", "request_compression")}
+        raw = encode({"input": "retained request content " * 1500})
+        try:
+            self.assertEqual(self.api("/api/settings", {"request_compression": "zstd", "zstd_level": 7})[0], 200)
+            self.assertEqual(self.relay(raw)[0], 200)
+            first, _ = self.latest()
+            self.assertEqual(first["relay_zstd_level"], 7)
+            self.assertEqual(self.up.requests[-1]["body"], zstandard.ZstdCompressor(level=7).compress(raw))
+
+            self.assertEqual(self.api("/api/settings", {"zstd_level": 16})[0], 200)
+            self.assertEqual(self.relay(raw)[0], 200)
+            latest, _ = self.latest()
+            self.assertEqual(latest["relay_zstd_level"], 16)
+            self.assertEqual(self.server.store.get(first["id"])[0]["relay_zstd_level"], 7)
+
+            for body, headers, path in ((b"{}", {}, "/responses"),
+                                        (gzip.compress(raw), {"Content-Encoding": "gzip"}, "/responses"),
+                                        (raw, {}, "/alpha/search")):
+                with self.subTest(path=path, encoding=headers.get("Content-Encoding", "identity")):
+                    self.assertEqual(self.relay(body, path, headers)[0], 200)
+                    self.assertIsNone(self.latest()[0]["relay_zstd_level"])
+                    self.assertEqual(self.up.requests[-1]["body"], body)
+
+            self.assertEqual(self.api("/api/settings", {"request_compression": "off"})[0], 200)
+            incoming = zstandard.ZstdCompressor(level=7).compress(raw)
+            self.assertEqual(self.relay(incoming, headers={"Content-Encoding": "zstd"})[0], 200)
+            self.assertIsNone(self.latest()[0]["relay_zstd_level"])
+            self.assertEqual(self.up.requests[-1]["body"], incoming)
+        finally:
+            self.api("/api/settings", previous)
+
     def test_installation_api_cannot_modify_login_tasks_from_disposable_instances(self):
         status,result=self.api("/api/installation")
         self.assertEqual(status,200)

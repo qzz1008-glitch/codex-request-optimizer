@@ -679,7 +679,7 @@ async function loadPackets(append=false,background=false) {
     renderList();
     loaded=true;
     if (!state.selected && state.packets.length) await selectPacket(state.packets[0].id,false,requestId);
-    else if (state.selected) { const p=state.packets.find(p=>p.id===state.selected); if(p) {const ver=[p.state,p.status,p.duration_ms,p.outbound_wire_bytes,p.outbound_content_encoding].join(":");if(ver!==state.detailVersion) await selectPacket(state.selected,true);} }
+    else if (state.selected) { const p=state.packets.find(p=>p.id===state.selected); if(p) {const ver=[p.state,p.status,p.duration_ms,p.outbound_wire_bytes,p.outbound_content_encoding,p.relay_content_encoding,p.relay_zstd_level].join(":");if(ver!==state.detailVersion) await selectPacket(state.selected,true);} }
   } catch(e) {if(e.name!=="AbortError")throw e;}
   finally {
     if(state.listController===controller) {
@@ -1198,7 +1198,7 @@ async function openSettings() {
 async function selectPacket(id,refresh=false,expectedListRequest=null) {
   const requestId=++state.detailRequest;
   const m=await api("/api/packets/"+id); if(requestId!==state.detailRequest || (refresh && state.selected!==id) || (expectedListRequest!==null && expectedListRequest!==state.listRequest)) return;
-  const changed=state.selected!==id, previousDetail=state.detail; state.selected=id; state.detail=m; state.detailVersion=[m.state,m.status,m.duration_ms,m.outbound_wire_bytes,m.outbound_content_encoding].join(":");
+  const changed=state.selected!==id, previousDetail=state.detail; state.selected=id; state.detail=m; state.detailVersion=[m.state,m.status,m.duration_ms,m.outbound_wire_bytes,m.outbound_content_encoding,m.relay_content_encoding,m.relay_zstd_level].join(":");
   $("empty-state").hidden=true; $("packet-detail").hidden=false; renderList();
   if(changed || tokenVersion(m)!==tokenVersion(previousDetail||{})) {cancelTokenRead();tokenWindow=cachedTokenWindow(m);}
   else if(tokenWindow?.state==="unavailable") tokenWindow=null;
@@ -1217,10 +1217,13 @@ function renderProtectionPanelState() {
 }
 function renderCompression(m) {
   const root=$("compression-content");root.replaceChildren();
-  const sizes=panel(t("包大小")), original=originalBytes(m), compressed=compressedBytes(m);
+  const sizes=panel(t("传输压缩")), original=originalBytes(m), compressed=compressedBytes(m);
   fact(sizes,t("原始包"),bytes(original));
   fact(sizes,t("压缩包"),bytes(compressed));
-  fact(sizes,t("传输压缩"),m.outbound_content_encoding==="identity"?t("不压缩"):m.outbound_content_encoding||"—");
+  const encoding=m.relay_content_encoding||m.outbound_content_encoding;
+  fact(sizes,t("压缩方式"),encoding==="identity"?t("不压缩"):encoding||"—");
+  const level=m.relay_zstd_level;
+  fact(sizes,t("zstd 压缩等级"),Number.isInteger(level)&&level>=1&&level<=17?level:"—");
   if(original>0 && compressed!==null)fact(sizes,t("减小比例"),(100*(1-compressed/original)).toFixed(1)+"%");
   root.append(sizes);
   const steps=panel(t("请求大小保护"));steps.id="packet-protection-panel";steps.classList.add("packet-protection-panel");
