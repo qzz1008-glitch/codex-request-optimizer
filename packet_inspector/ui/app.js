@@ -67,9 +67,37 @@ const OTHER_SESSION_GROUP="group:other";
 const auxiliaryLabels={image_analysis:"图片解析",next_message_suggestion:"消息建议",title_generation:"自动标题",session_index:"会话索引",subagent:"子任务"};
 const requestPurposeCache=new Map();
 function auxiliarySessionKind(row) {return Object.hasOwn(auxiliaryLabels,row?.session_kind)?row.session_kind:row?.title_source==="index_task"?"session_index":row?.title_source==="subagent"?"subagent":null;}
-function otherTaskSessions() {return sessionSummaries.filter(row=>row.thread_id&&auxiliarySessionKind(row));}
+function sessionGroups() {
+  const rows=new Map(sessionSummaries.map(row=>[row.thread_id,row]));
+  for(const id of state.sessions)if(!rows.has(id))rows.set(id,{thread_id:id});
+  const groups=new Map();
+  for(const member of rows.values()) {
+    if(member.packet_count===0&&!state.sessions.includes(member.thread_id))continue;
+    let current=member,owner=null;const visited=new Set();
+    for(let depth=0;current&&depth<32;depth++) {
+      if(visited.has(current.thread_id))break;
+      visited.add(current.thread_id);
+      if(typeof current.title==="string"&&current.title.trim()&&!auxiliarySessionKind(current)) {owner=current;break;}
+      current=rows.get(current.parent_thread_id);
+    }
+    const id=owner?.thread_id||OTHER_SESSION_GROUP;
+    if(!groups.has(id))groups.set(id,{...(owner||{}),thread_id:id,title:owner?.title||t("其他"),members:[],packet_count:0,updated_at:owner?.updated_at||0});
+    const group=groups.get(id);group.members.push(member);
+    group.packet_count+=Number.isFinite(member.packet_count)?member.packet_count:
+      state.status?.storage?.threads?.find(row=>(row.thread||"")===member.thread_id)?.count||0;
+    group.updated_at=Math.max(group.updated_at,member.updated_at||0);
+    if(member.latest_packet&&(!group.latest_packet||member.latest_packet.created>group.latest_packet.created))group.latest_packet=member.latest_packet;
+  }
+  return [...groups.values()];
+}
+function otherTaskSessions() {return sessionGroups().find(group=>group.thread_id===OTHER_SESSION_GROUP)?.members||[];}
+function selectedSessionGroup() {
+  const value=state.filters.thread,id=value===OTHER_SESSION_GROUP?value:value==="unknown"?"":value.slice(7);
+  return sessionGroups().find(group=>group.thread_id===id||group.members.some(row=>row.thread_id===id));
+}
 function purposeFromMetadata(meta) {
   if(meta.image_isolation_worker===true)return "image_analysis";
+  if(Object.hasOwn(auxiliaryLabels,meta.session_kind))return meta.session_kind;
   if(Object.hasOwn(auxiliaryLabels,meta.request_kind))return meta.request_kind;
   const item=Array.isArray(meta.input_items)?meta.input_items.findLast(item=>item?.kind==="message:user"):null;
   const text=typeof item?.label==="string"?item.label.trimStart():"";
@@ -120,7 +148,8 @@ async function sessionPacketPage(query,signal) {
   async function read() {
     while(cursor<ids.length) {
       signal.throwIfAborted();
-      const scan=new URLSearchParams(base);scan.set("thread",ids[cursor++]);
+      const scan=new URLSearchParams(base),id=ids[cursor++];
+      if(id)scan.set("thread",id);else scan.set("thread_unknown","1");
       records.push(...await api("/api/packets?"+scan,undefined,signal));
     }
   }
@@ -170,7 +199,7 @@ function originalBytes(p) { return Number.isFinite(p.decoded_bytes) && p.decoded
 function compact(n) { if (n === undefined || n === null) return "—"; return n >= 1048576 ? (n/1048576).toFixed(2)+" MiB" : n >= 1024 ? (n/1024).toFixed(1)+" KiB" : n+" B"; }
 function renderStorageInfo() {
   const storage=state.status?.storage;if(!storage)return;
-  const sessions=state.filterRevision!==null?nf.format(state.sessions.length):"—";
+  const sessions=state.filterRevision!==null?nf.format(sessionGroups().filter(group=>group.thread_id!==OTHER_SESSION_GROUP).length):"—";
   $("storage-info").replaceChildren(
     el("span","",t("{count} 会话").replace("{count}",sessions)),
     el("span","",t("{count} 请求").replace("{count}",nf.format(storage.count)))
@@ -216,7 +245,8 @@ async function refreshFilters() {
 }
 async function refreshSessionSummaries() {
   if(!state.status || sessionMetadataLoading || Date.now()-sessionMetadataAt<5000)return;
-  const otherMembers=JSON.stringify(otherTaskSessions().map(row=>row.thread_id).sort());
+  const membership=()=>JSON.stringify(sessionGroups().map(group=>[group.thread_id,group.members.map(row=>row.thread_id).sort()]));
+  const previousMembers=membership();
   sessionMetadataLoading=true;
   try {
     if(sessionMetadataSupported!==false || Date.now()-sessionMetadataProbeAt>=30000) {
@@ -250,10 +280,12 @@ async function refreshSessionSummaries() {
     sessionSummaries=await enrichSessionPurposes(results);
   } finally {
     sessionMetadataAt=Date.now();sessionMetadataLoading=false;
-    if(otherTaskSessions().some(row=>"thread:"+row.thread_id===state.filters.thread))await selectSession(OTHER_SESSION_GROUP);
+    const group=state.filters.thread?(selectedSessionGroup()||sessionGroups().find(group=>group.members.some(row=>row.thread_id===state.detail?.thread_id))):null;
+    const selection=group?(group.thread_id===OTHER_SESSION_GROUP?OTHER_SESSION_GROUP:"thread:"+group.thread_id):"";
+    if(selection!==state.filters.thread)await selectSession(selection);
     else {
       renderSessions();
-      if(state.filters.thread===OTHER_SESSION_GROUP&&otherMembers!==JSON.stringify(otherTaskSessions().map(row=>row.thread_id).sort()))state.listRevision=null;
+      if(state.filters.thread&&previousMembers!==membership())state.listRevision=null;
     }
     renderList();if(state.detail)renderHeaders(state.detail);
   }
@@ -265,25 +297,11 @@ function hasTextSelectionWithin(node) {
 function renderSessions() {
   const list=$("session-list");
   if(!state.status||hasTextSelectionWithin(list))return;
-  const summaries=new Map(sessionSummaries.map(row=>[row.thread_id,row]));
-  const otherTasks=otherTaskSessions(), otherIds=new Set(otherTasks.map(row=>row.thread_id));
-  const typeCounts=new Map();
-  for(const row of otherTasks) {
-    const type=auxiliarySessionKind(row), count=Number.isFinite(row.packet_count)?row.packet_count:1;
-    typeCounts.set(type,(typeCounts.get(type)||0)+count);
-  }
-  const typeOrder=Object.keys(auxiliaryLabels);
-  const otherTitle=[...typeCounts].sort((a,b)=>b[1]-a[1]||typeOrder.indexOf(a[0])-typeOrder.indexOf(b[0])).map(([type])=>t(auxiliaryLabels[type])).join(" · ")||t("其他");
-  const ids=[...new Set([...sessionSummaries.map(row=>row.thread_id),...state.sessions])].filter(id=>!otherIds.has(id)), selected=state.filters.thread;
-  if(otherTasks.length||selected===OTHER_SESSION_GROUP) {
-    summaries.set(OTHER_SESSION_GROUP,{updated_at:Math.max(0,...otherTasks.map(row=>row.updated_at||0))});
-    ids.push(OTHER_SESSION_GROUP);
-  }
+  const groups=sessionGroups(),summaries=new Map(groups.map(group=>[group.thread_id,group]));
+  const ids=groups.map(group=>group.thread_id),selected=state.filters.thread;
   ids.sort((a,b)=>(summaries.get(b)?.updated_at||0)-(summaries.get(a)?.updated_at||0));
-  const selectedId=selected===OTHER_SESSION_GROUP?OTHER_SESSION_GROUP:selected==="unknown"?"":selected.slice(7);
-  if(selected && !ids.includes(selectedId))ids.push(selectedId);
   const query=$("session-search").value.trim().toLowerCase();
-  const signature=JSON.stringify([ids,selected,sessionSummaries,sessionMetadataSupported,query]);
+  const signature=JSON.stringify([ids,selected,groups,sessionMetadataSupported,query]);
   if(signature===state.sessionVersion)return;
   state.sessionVersion=signature;
   const scrollTop=list.scrollTop, bounds=list.getBoundingClientRect();
@@ -299,8 +317,8 @@ function renderSessions() {
   for(const id of ids) {
     const otherGroup=id===OTHER_SESSION_GROUP;
     const value=otherGroup?OTHER_SESSION_GROUP:id?"thread:"+id:"unknown", data=summaries.get(id)||{};
-    const title=!id?t("未识别会话"):otherGroup?otherTitle:data.title===null||data.title===undefined?t("会话名称暂不可用"):data.title||t("未命名会话");
-    if(query && !(title+"\n"+(otherGroup?otherTasks.map(row=>row.thread_id+" "+t(auxiliaryLabels[auxiliarySessionKind(row)])+" "+(row.title||"")).join("\n"):id)).toLowerCase().includes(query))continue;
+    const title=data.title;
+    if(query && !(title+"\n"+data.members.map(row=>row.thread_id+" "+(row.title||"")+" "+(auxiliaryLabels[auxiliarySessionKind(row)]?t(auxiliaryLabels[auxiliarySessionKind(row)]):"")).join("\n")).toLowerCase().includes(query))continue;
     const item=el("button","session-item"+(otherGroup?" other-session-group":"")+(value===selected?" selected":""));
     item.type="button";item.dataset.session=value;
     if(value===anchorId)nextAnchor=item;
@@ -604,7 +622,7 @@ function renderList() {
   if(!state.status)return;
   renderListEmpty();
   const filtered=Object.values(state.filters).some(Boolean);
-  const sessionCount=state.filters.thread===OTHER_SESSION_GROUP?otherTaskSessions().reduce((count,row)=>count+(row.packet_count||0),0):state.status.storage.threads?.find(row=>(row.thread||"")===(state.filters.thread==="unknown"?"":state.filters.thread.slice(7)))?.count;
+  const sessionCount=selectedSessionGroup()?.packet_count;
   const total=!filtered?state.status.storage.count:!state.filters.kind && !state.filters.status && state.filters.thread && Number.isFinite(sessionCount)?sessionCount:null;
   $("record-count").textContent=total===null?nf.format(state.packets.length)+(state.canLoadMore?"+":"")+t(" 条"):nf.format(total)+t(" 条");
   const signature=JSON.stringify([state.selected,state.status.budget_bytes,state.older,state.canLoadMore,state.sort,state.direction,state.filters,state.packets.map(p=>[p.id,p.created,p.method,p.is_compaction,requestKind(p),p.state,p.status,p.duration_ms,p.decoded_bytes,p.outbound_wire_bytes,p.outbound_content_encoding,p.thread_id,p.overflow_compaction_calls,p.overflow_cache_hit,p.overflow_original_wire_bytes,p.usage_override_applied,p.relay_error,p.upstream_usage?.input_tokens])]);
@@ -663,12 +681,10 @@ async function loadPackets(append=false,background=false) {
   const q=new URLSearchParams({limit:"100",sort:state.sort,direction:state.direction});
   if(state.filters.kind)q.set("kind",state.filters.kind);
   if(state.filters.status)q.set("status",state.filters.status);
-  if(state.filters.thread===OTHER_SESSION_GROUP) {
-    q.set("thread_group","other");
-    for(const row of otherTaskSessions())q.append("thread",row.thread_id);
+  if(state.filters.thread) {
+    const group=selectedSessionGroup();q.set("thread_group",group?.thread_id||state.filters.thread);
+    for(const row of group?.members||[])q.append("thread",row.thread_id);
   }
-  else if(state.filters.thread==="unknown")q.set("thread_unknown","1");
-  else if(state.filters.thread)q.set("thread",state.filters.thread.slice(7));
   if (append && state.packets.length) q.set("after",state.packets.at(-1).id);
   try {
     const values=state.sort==="input_tokens"?await tokenSortedPackets(q,revision,controller.signal):state.sort==="compressed_bytes"?await compressedSortedPackets(q,revision,controller.signal):await sessionPacketPage(q,controller.signal);
@@ -1538,15 +1554,9 @@ function renderHeaders(m) {
   fact(p,t("模型"),m.model||t("未标记"));
   const session=sessionSummaries.find(row=>row.thread_id===m.thread_id);
   const auxiliary=auxiliarySessionKind(session);
-  if(auxiliary) {
-    fact(p,"session_id",m.thread_id||t("未识别会话")).classList.add("request-context");
-    const nativeTitle=session?.title_source==="index_task"||session?.title_source==="subagent"?null:session?.title;
-    fact(p,t("会话名称"),nativeTitle||t("未保存原生会话名称")).classList.add("request-context");
-  }
   const body=requestBodyView?.id===m.id?requestBodyView.body:null, paths=requestImagePaths(m,body);
   const hasImage=auxiliary==="image_analysis"||purposeFromMetadata(m)==="image_analysis"||m.image_isolation_removed>0||paths.length>0||
     (Array.isArray(body?.input)&&body.input.some(item=>item?.role==="user"&&Array.isArray(item.content)&&item.content.some(part=>part?.type==="input_image")));
-  if(hasImage)fact(p,t("图片路径"),paths.length?paths.join("\n"):t("未记录图片路径")).classList.add("request-context","request-image-paths");
   fact(p,t("响应状态"),String(m.status||t("尚未收到")));
   fact(p,t("响应头耗时"),Number.isFinite(m.headers_ms)&&m.headers_ms>=0?m.headers_ms+" ms":"—");
   const upload=uploadBytes(m);
@@ -1554,6 +1564,24 @@ function renderHeaders(m) {
     fact(p,t("采集入口正文"),bytes(m.wire_bytes)+" · "+(m.content_encoding||"identity"));
   }
   root.append(p);
+  const context=panel(t("会话信息"));context.id="request-session-info";
+  fact(context,"session_id",m.thread_id||"—").classList.add("request-context");
+  const nativeTitle=session?.title_source==="index_task"||session?.title_source==="subagent"?null:session?.title;
+  fact(context,t("会话名称"),nativeTitle||"—").classList.add("request-context");
+  const parentId=session?.parent_thread_id||m.parent_thread_id;
+  if(parentId) {
+    fact(context,"parent_session_id",parentId).classList.add("request-context");
+    const parent=sessionSummaries.find(row=>row.thread_id===parentId);
+    const parentTitle=parent?.title_source==="index_task"||parent?.title_source==="subagent"?null:parent?.title;
+    fact(context,t("父会话名称"),parentTitle||"—").classList.add("request-context");
+  }
+  if(auxiliary)fact(context,t("任务类型"),t(auxiliaryLabels[auxiliary]));
+  root.append(context);
+  if(hasImage) {
+    const images=panel(t("图片信息"));images.id="request-image-info";
+    fact(images,t("图片路径"),paths.length?paths.join("\n"):t("未记录图片路径")).classList.add("request-context","request-image-paths");
+    root.append(images);
+  }
 }
 async function setInterfaceLanguage(language) {
   if(language===uiI18n.language)return;
