@@ -265,7 +265,7 @@ code.session-id{font-family:Consolas,"Cascadia Mono",monospace;font-size:11px;wo
 #settings-dialog .packet-size-unit{color:var(--muted);font-size:13px;white-space:nowrap}
 #settings-dialog .runtime-setting-row{display:grid;grid-template-columns:var(--settings-label-width) minmax(0,1fr);align-items:center;gap:16px;margin:0}
 #settings-dialog .runtime-setting-row+.runtime-setting-row{margin-top:12px}
-#settings-dialog #request-protection-settings .runtime-retry-row{margin-top:12px}
+#settings-dialog #request-protection-settings .runtime-setting-row{margin-top:12px}
 #settings-dialog .runtime-inline-hint{min-width:0;margin:0}
 #settings-dialog .capacity-retry-limit{display:grid;grid-template-columns:var(--settings-inline-label-width) 68px minmax(0,1fr);align-items:center;gap:8px;min-width:0;color:var(--muted);font-size:13px;line-height:20px}
 #settings-dialog .capacity-retry-limit label{white-space:nowrap}
