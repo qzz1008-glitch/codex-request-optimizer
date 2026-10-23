@@ -884,7 +884,8 @@ class Handler(BaseHTTPRequestHandler):
             headers = {k: v for k, v in headers.items() if k.lower() != "content-encoding"}
             headers["Content-Encoding"] = outbound_encoding
         update(relay_wire_bytes=len(outbound_body), relay_content_encoding=outbound_encoding,
-               compression_applied=outbound_body is not body)
+               compression_applied=outbound_body is not body,
+               relay_zstd_level=zstd_level if outbound_body is not body and outbound_encoding.strip().lower() == "zstd" else None)
         local_upstream = urlsplit(upstream).hostname in {"localhost", "127.0.0.1", "::1"}
         retry_settings = self.server.settings
         capacity_retry = (retry_settings["capacity_retry_enabled"] and self.command == "POST"
