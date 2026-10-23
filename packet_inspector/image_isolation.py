@@ -12,8 +12,10 @@ import time
 import uuid
 
 from .analyzer import JsonBytes, decode_body, encode
+from .clipboard_images import ClipboardImageCache, rewrite_clipboard_text
 from .overflow import encode_changed_info
 from .locking import file_lock
+from .request_context import request_image_paths
 
 MAX_IMAGE_BYTES = 50 * 1024 * 1024
 MAX_ATTACHMENTS_BYTES = 256 * 1024 * 1024
@@ -55,6 +57,8 @@ class ImageIsolation:
         self.directory = resolve_image_directory(directory, attachment_dir)
         self.lock_path = Path(directory) / "image-attachments.lock"
         self.lock = threading.RLock()
+        self.clipboard = ClipboardImageCache(max_file_bytes=MAX_IMAGE_BYTES,
+                                            max_bytes=MAX_ATTACHMENTS_BYTES, ttl=ATTACHMENT_TTL)
 
     def _store(self, image_url, protected):
         if not isinstance(image_url, str):
@@ -123,6 +127,19 @@ class ImageIsolation:
         inputs = body.get("input", [])
         replacements, protected = [], set()
         index = None
+        copied = self.clipboard.prepare(request_image_paths(body))
+        protected.update(Path(value) for value in copied.values())
+
+        def rewrite_text(text, pointer):
+            nonlocal index
+            if not isinstance(text, str):
+                return
+            changed = rewrite_clipboard_text(text, copied)
+            if changed != text:
+                index = index or JsonBytes(decoded)
+                a, b = index.spans[pointer]
+                replacements.append((a, b, encode(changed)))
+
         hidden_tools = 0
         def filter_tools(tools):
             nonlocal hidden_tools
@@ -162,10 +179,18 @@ class ImageIsolation:
         images_removed = 0
         if isinstance(inputs, list):
             for i, item in enumerate(inputs):
-                if not isinstance(item, dict) or item.get("role") != "user" or not isinstance(item.get("content"), list):
+                if not isinstance(item, dict) or item.get("role") != "user":
+                    continue
+                if isinstance(item.get("content"), str):
+                    rewrite_text(item["content"], f"/input/{i}/content")
+                    continue
+                if not isinstance(item.get("content"), list):
                     continue
                 for j, part in enumerate(item["content"]):
-                    if not isinstance(part, dict) or part.get("type") != "input_image":
+                    if not isinstance(part, dict):
+                        continue
+                    if part.get("type") != "input_image":
+                        rewrite_text(part.get("text"), f"/input/{i}/content/{j}/text")
                         continue
                     if part.get("file_id"):
                         raise ImageIsolationFailure("image_reference_unsupported", "图片文件 ID 无法转换成本地路径，原图未转发。")
@@ -194,5 +219,6 @@ class ImageIsolation:
                                 "relay_zstd_level": prepared.zstd_level,
                                 "native_image_tools_hidden": hidden_tools,
                                 "image_paths": sorted(str(path.resolve()) for path in protected),
+                                "image_path_rewrites": {source: target for source, target in copied.items() if source != target},
                                 "image_isolation_decoded_before": len(decoded),
                                 "image_isolation_decoded_after": len(changed)}
