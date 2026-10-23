@@ -45,7 +45,7 @@
 .packet-table .packet-tokens{font-variant-numeric:tabular-nums;white-space:normal;overflow-wrap:anywhere}
 
 .packet-table tbody tr:hover{background:var(--row-hover)}
-.packet-table tbody tr.selected{box-shadow:inset 3px 0 var(--accent);outline:1px solid var(--accent);outline-offset:-1px}
+.packet-table tbody tr.selected{outline:1px solid var(--accent);outline-offset:-1px}
 .packet-table .packet-compressed.predictive-protected{background:#7063b81a;box-shadow:inset -3px 0 #7063b8}
 .packet-table .packet-compressed.overflow-protected{background:#c58a321a;box-shadow:inset -3px 0 #c58a32}
 .packet-table tbody tr.capacity-retried:not(.request-failed):not(.request-interrupted){--row-bg:#edf8fa;--row-hover:#dff1f4}
