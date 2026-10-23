@@ -77,11 +77,15 @@ function sessionGroups() {
     for(let depth=0;current&&depth<32;depth++) {
       if(visited.has(current.thread_id))break;
       visited.add(current.thread_id);
-      if(typeof current.title==="string"&&current.title.trim()&&!auxiliarySessionKind(current)) {owner=current;break;}
+      const kind=auxiliarySessionKind(current);
+      if(kind==="subagent"||!kind&&typeof current.title==="string"&&current.title.trim()) {owner=current;break;}
       current=rows.get(current.parent_thread_id);
     }
     const id=owner?.thread_id||OTHER_SESSION_GROUP;
-    if(!groups.has(id))groups.set(id,{...(owner||{}),thread_id:id,title:owner?.title||t("其他"),members:[],packet_count:0,updated_at:owner?.updated_at||0});
+    if(!groups.has(id)) {
+      const title=typeof owner?.title==="string"&&owner.title.trim()?owner.title:t(owner?"子任务":"其他");
+      groups.set(id,{...(owner||{}),thread_id:id,title,members:[],packet_count:0,updated_at:owner?.updated_at||0});
+    }
     const group=groups.get(id);group.members.push(member);
     group.packet_count+=Number.isFinite(member.packet_count)?member.packet_count:
       state.status?.storage?.threads?.find(row=>(row.thread||"")===member.thread_id)?.count||0;
@@ -215,7 +219,7 @@ function requestKind(p) {
   if(p.request_kind==="tool_search" || /\/alpha\/search\/*(?:\?.*)?$/.test(p.path||""))return t("工具搜索");
   if(p.is_compaction)return t("上下文压缩");
   const purpose=purposeFromMetadata(p)||requestPurposeCache.get(p.id)||auxiliarySessionKind(sessionSummaries.find(row=>row.thread_id===p.thread_id));
-  return purpose?t(auxiliaryLabels[purpose]):p.method==="POST"?t("对话生成"):String(p.method||t("未知")).slice(0,10);
+  return purpose&&purpose!=="subagent"?t(auxiliaryLabels[purpose]):p.method==="POST"?t("对话生成"):String(p.method||t("未知")).slice(0,10);
 }
 const requestKinds = uiI18n.labels({generation:"对话生成",compaction:"上下文压缩",other:"其他请求"});
 const filterLabels = uiI18n.labels({kind:"类型",status:"状态"});
