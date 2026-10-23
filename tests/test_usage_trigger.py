@@ -176,6 +176,8 @@ class UsageRelayTests(unittest.TestCase):
         self.server.settings["packet_size_protection_enabled"] = True
         self.original_config = config.read_bytes()
         for server in (self.server, self.up):
+            # Join handlers before deleting SQLite fixture files on Windows.
+            server.daemon_threads = False
             threading.Thread(target=server.serve_forever, daemon=True).start()
 
     def tearDown(self):
