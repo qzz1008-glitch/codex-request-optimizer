@@ -192,7 +192,7 @@ const uiI18n = (() => {
     "登录 Windows 后在后台启动，可从托盘打开窗口。":"Start in the background when you sign in to Windows. Open the window from the tray.",
     "开机启动仅支持已安装的 Windows 版本。":"Start with Windows requires the installed Windows version.",
     "无法读取开机启动状态，请重新保存设置。":"The startup state could not be read. Save the settings again.",
-    "模型容量不足时自动重试":"Retry when the model is at capacity",
+    "模型容量不足时自动重试":"Auto-retry at capacity",
     "重试次数":"Retry limit",
     "次":"times",
     "保存运行设置":"Save runtime settings",
