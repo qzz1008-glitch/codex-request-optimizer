@@ -776,7 +776,7 @@ function fillZstdLevel() {
   input.value=String(selected);
   input.disabled=settingsSaving||!!s.ui_read_only||!supported||s.request_compression!=="zstd";
   $("zstd-level-open").disabled=input.disabled;
-  $("zstd-level-value").textContent=t("{level}级").replace("{level}",selected)+(selected===3?t("（默认）"):selected===16?t("（推荐）"):"");
+  $("zstd-level-value").textContent=t("{level}级").replace("{level}",selected);
   if($("zstd-level-dialog").open) {
     if(input.disabled)closeZstdLevelPicker();else renderZstdLevelRows();
   }
@@ -791,7 +791,6 @@ function renderZstdLevelRows() {
     button.setAttribute("aria-pressed",String(current));button.tabIndex=current?0:-1;
     const mark=el("span","zstd-level-check",current?"✓":"");mark.setAttribute("aria-hidden","true");
     button.append(mark,el("span","",t("{level}级").replace("{level}",level)));
-    if(level===3||level===16)button.append(el("span","zstd-level-tag",t(level===3?"默认":"推荐")));
     cell.append(button);row.append(cell,el("td","num","-"+size.toFixed(2)+"%"),el("td","num","+"+time.toFixed(3)+"%"));
     return row;
   }));
