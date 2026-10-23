@@ -9,6 +9,31 @@ from packet_inspector.request_context import (
 
 
 class RequestContextTests(unittest.TestCase):
+    def test_specific_purpose_wins_over_generic_subagent_metadata(self):
+        for meta, expected in (({"session_kind": "subagent", "request_kind": "image_analysis"}, "image_analysis"),
+                               ({"session_kind": "subagent", "input_items": [
+                                   {"kind": "message:user", "label": NEXT_MESSAGE_PREFIX[:140]}]}, "next_message_suggestion")):
+            self.assertEqual(temporary_kind_from_metadata(meta), expected)
+        self.assertEqual(temporary_kind_from_metadata({"session_kind": "subagent"}), "subagent")
+        body = {"input": [{"role": "user", "content": IMAGE_ANALYST_PREFIXES[0]}],
+                "client_metadata": {"thread_source": "subagent"}}
+        self.assertEqual(request_session_context(body)["session_kind"], "image_analysis")
+
+    def test_storage_exposes_one_purpose_for_list_and_detail_and_preserves_unknown_fields(self):
+        from pathlib import Path
+        import tempfile
+        from packet_inspector.storage import Store
+        with tempfile.TemporaryDirectory() as folder:
+            store = Store(Path(folder))
+            meta = {"method": "POST", "session_kind": "subagent", "future_field": {"value": "retained"},
+                    "input_items": [{"kind": "message:user", "label": TITLE_REQUEST_PREFIX[:140]}]}
+            identifier = store.add(meta)
+            detail, _ = store.get(identifier)
+            summary = store.list()[0]
+            for value in (detail, summary):
+                self.assertEqual(value["request_purpose"], "title_generation")
+                self.assertEqual(value["future_field"], meta["future_field"])
+
     def test_explicit_fork_metadata_survives_compaction_classification(self):
         parent = "01a15d9a-f5e3-73c1-b4e7-87b3c5db9a3c"
         body = {"input": [{"role": "user", "content": "Create a context checkpoint"}],

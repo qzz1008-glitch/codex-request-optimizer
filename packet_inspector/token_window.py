@@ -13,6 +13,7 @@ import sqlite3
 import threading
 import time
 from urllib.parse import urlsplit
+from .response_usage import packet_usage
 
 READ_BUDGET = 8 * 1024 * 1024
 LINE_LIMIT = 2 * 1024 * 1024
@@ -64,10 +65,16 @@ class TokenWindows:
         databases = sorted(self.home.glob("state_*.sqlite"),
                            key=lambda p: int(p.stem[6:]) if p.stem[6:].isdigit() else -1, reverse=True)
         for database in databases[:3]:
-            with closing(sqlite3.connect(database.as_uri() + "?mode=ro", uri=True, timeout=.2)) as db:
-                db.execute("PRAGMA query_only=ON")
-                row = db.execute("SELECT rollout_path FROM threads WHERE id=?", (thread,)).fetchone()
-            if not row:
+            try:
+                with closing(sqlite3.connect(database.as_uri() + "?mode=ro", uri=True, timeout=.2)) as db:
+                    db.execute("PRAGMA query_only=ON")
+                    columns = {r[1] for r in db.execute("PRAGMA table_info(threads)")}
+                    if not {"id", "rollout_path"} <= columns:
+                        continue
+                    row = db.execute("SELECT rollout_path FROM threads WHERE id=?", (thread,)).fetchone()
+            except (OSError, sqlite3.Error):
+                continue
+            if not row or not isinstance(row[0], str):
                 continue
             path = Path(row[0]).resolve()
             allowed = any(_comparable(path).is_relative_to(_comparable(self.home / folder))
@@ -77,7 +84,7 @@ class TokenWindows:
         return None
 
     def latest(self, thread):
-        """Read the latest native window report with bounded tail reads and memory."""
+        """Read the latest native usage report with bounded tail reads and memory."""
         unavailable = {"state": "unavailable"}
         try:
             with self._lock:
@@ -116,10 +123,8 @@ class TokenWindows:
                         inputs, outputs, total = values
                         if total != inputs + outputs and (inputs or outputs):
                             continue
-                        window = info.get("model_context_window")
                         result = {"state": "available", "source": "codex_history", "used_tokens": total,
                                   "input_tokens": inputs, "output_tokens": outputs,
-                                  "window_tokens": window if type(window) is int and window > 0 else None,
                                   "estimated": total != inputs + outputs,
                                   "recorded_at": datetime.fromisoformat(item["timestamp"].replace("Z", "+00:00")).timestamp()}
                         break
@@ -199,15 +204,13 @@ class TokenWindows:
         if total != inputs + outputs or total == 0:
             return
         cumulative = info.get("total_token_usage") or {}
-        event_key = (cumulative.get("total_tokens"), inputs, outputs, total, info.get("model_context_window"))
+        event_key = (cumulative.get("total_tokens"), inputs, outputs, total)
         if event_key == entry["last_key"] and cumulative.get("total_tokens") is not None:
             return
         timestamp = datetime.fromisoformat(item["timestamp"].replace("Z", "+00:00")).timestamp()
         entry["last_key"] = event_key
-        window = info.get("model_context_window")
         entry["events"].append({"at": timestamp, "model": entry["model"], "input_tokens": inputs,
-                                "output_tokens": outputs, "used_tokens": total,
-                                "window_tokens": window if type(window) is int and window > 0 else None})
+                                "output_tokens": outputs, "used_tokens": total})
         del entry["events"][:-MAX_EVENTS]
 
     def lookup(self, packet, next_created=None):
@@ -245,25 +248,17 @@ class TokenWindows:
             return {"state": "pending"} if not candidates and waiting else unavailable
         event = candidates[0]
         return {"state": "available", "source": "codex_history", "recorded_at": event["at"],
-                **{k: event[k] for k in ("input_tokens", "output_tokens", "used_tokens", "window_tokens")}}
+                **{k: event[k] for k in ("input_tokens", "output_tokens", "used_tokens")}}
 
     def lookup_ready(self, packet, next_created=None):
         """Read consecutive bounded chunks without waiting for the browser's next poll."""
         if not is_token_request(packet):
             return {"state": "unavailable"}
-        usage = packet.get("upstream_usage")
-        if (isinstance(usage, dict) and packet.get("status") == 200
-                and packet.get("state") in {"streaming", "complete"}
-                and all(type(usage.get(k)) is int and usage[k] >= 0
-                        for k in ("input_tokens", "output_tokens", "total_tokens"))):
-            # Native history may contain the deliberately elevated client value.
-            # Use it only to resolve the window, never to replace actual usage.
-            native = self.lookup(packet, next_created)
+        usage = packet_usage(packet)
+        if usage is not None:
             return {"state": "available", "source": "upstream_response",
                     "input_tokens": usage["input_tokens"], "output_tokens": usage["output_tokens"],
-                    "used_tokens": usage["total_tokens"], "window_tokens": native.get("window_tokens"),
-                    "recorded_at": native.get("recorded_at"),
-                    "window_pending": native.get("state") in {"pending", "loading"},
+                    "used_tokens": usage["total_tokens"], "recorded_at": packet.get("created"),
                     "usage_override_applied": bool(packet.get("usage_override_applied")),
                     "reported_input_tokens": (packet.get("reported_usage") or {}).get("input_tokens")}
         if packet.get("usage_override_applied"):

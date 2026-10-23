@@ -44,12 +44,27 @@ class TokenWindowTests(unittest.TestCase):
     def write(self, *events):
         self.path.write_text("".join(json.dumps(e) + "\n" for e in [*self.prefix, *events]), encoding="utf8")
 
-    def test_uses_single_response_usage_and_historical_window(self):
+    def test_uses_single_response_usage_without_window_limits(self):
         self.write(event())
         result = self.reader.lookup(self.packet, 103)
         self.assertEqual(result["state"], "available")
-        self.assertEqual((result["used_tokens"], result["window_tokens"]), (40500, 270000))
+        self.assertEqual(result["used_tokens"], 40500)
+        self.assertNotIn("window_tokens", result)
         self.assertEqual((result["input_tokens"], result["output_tokens"]), (40000, 500))
+
+    def test_real_response_usage_needs_no_native_files_or_database_reads(self):
+        packet = {**self.packet, "upstream_usage": {"input_tokens": 123, "output_tokens": 7, "total_tokens": 130}}
+        with patch.object(self.reader, "lookup", side_effect=AssertionError("Native lookup must not run")):
+            result = self.reader.lookup_ready(packet)
+        self.assertEqual((result["input_tokens"], result["output_tokens"]), (123, 7))
+        self.assertNotIn("window_tokens", result)
+        self.assertNotIn("window_pending", result)
+
+    def test_new_database_without_rollout_column_does_not_hide_older_usage(self):
+        self.write(event())
+        with closing(sqlite3.connect(self.home / "state_6.sqlite")) as db:
+            db.execute("CREATE TABLE threads (id TEXT)")
+        self.assertEqual(self.reader.lookup(self.packet, 103)["input_tokens"], 40000)
 
     def test_subagent_usage_survives_inherited_parent_headers(self):
         self.prefix.insert(1, {"type": "session_meta", "payload": {"id": "parent-session"}})

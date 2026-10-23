@@ -109,7 +109,7 @@ class DesktopUITests(unittest.TestCase):
 
     def test_token_window_is_read_locally_without_new_backend_or_writes(self):
         self.backend.test_packet = {"id": "a" * 32, "thread_id": "thread-test", "created": 100}
-        expected = {"state": "available", "used_tokens": 40500, "window_tokens": 270000}
+        expected = {"state": "available", "used_tokens": 40500, "input_tokens": 40000}
         with patch.object(self.ui.token_windows, "lookup", return_value=expected) as lookup:
             status, body, _headers = self.request("/api/packets/" + "a" * 32 + "/token-window")
         self.assertEqual((status, json.loads(body)), (200, expected))

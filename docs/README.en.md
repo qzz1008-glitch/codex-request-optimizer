@@ -14,7 +14,8 @@ Browse request records by session to see what each request sent, how much space 
 
 - View session names, request times, models, response statuses, and elapsed times.
 - Group image analysis, automatic titles, and similar auxiliary requests under their parent session. Regular subtasks keep separate rows with parent-child links; unidentified requests appear under “Other.”
-- Check context-window usage and input/output token counts; unavailable data is clearly marked.
+- Show image information only for separate image-analysis sessions; regular sessions do not show it when carrying historical images or image paths.
+- Check actual input/output token counts for requests; unavailable data is clearly marked.
 - See how messages, tool outputs, reasoning content, and other parts contribute to request size.
 - Explore structured request JSON, compare sizes before and after processing, and download a sanitized copy.
 - Select and copy text, preserving valid selections during live updates and sorting.
@@ -138,7 +139,7 @@ Image optimization copies `codex-clipboard-*` images from the system temporary d
 
 ### Usage and request records
 
-Token usage comes from upstream responses and existing local Codex records; context-window limits are read from native records. When data cannot be matched or has not yet been written, the interface shows an unavailable or pending state.
+Token usage is captured directly from successful upstream responses, independently of request size protection. Existing local Codex records are used only when older requests lack captured response usage. Usage displays no longer read or show token window limits or occupancy percentages. When data cannot be matched or has not yet been written, the interface shows an unavailable or pending state.
 
 Request records and processing results are stored in **SQLite**. Sensitive authentication headers are forwarded without saving their values in captured records. Browsing and JSON downloads use sanitized copies.
 
