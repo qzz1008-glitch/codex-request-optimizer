@@ -216,9 +216,9 @@ code.session-id{font-family:Consolas,"Cascadia Mono",monospace;font-size:11px;wo
 #settings-dialog .entry-port-status[data-state=error]{color:var(--danger)}
 #settings-dialog .zstd-level-control{display:grid;grid-template-columns:var(--settings-label-width) minmax(0,1fr);align-items:center;gap:16px;margin:0}
 #settings-dialog .zstd-level-control select{width:100%;max-width:100%;font-variant-numeric:tabular-nums}
-#settings-dialog .packet-size-controls{display:grid;gap:12px;margin:0}
+#settings-dialog .packet-size-controls{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:12px 20px;margin:0}
 #settings-dialog :is(.runtime-toggle,.overflow-toggle){display:flex;align-items:center;gap:8px;min-width:0;min-height:36px;margin:0;color:var(--ink);font-size:14px;line-height:22px}
-#settings-dialog .packet-size-limit{display:grid;grid-template-columns:var(--settings-label-width) var(--settings-number-width);align-items:center;gap:16px;margin:0}
+#settings-dialog .packet-size-limit{display:grid;grid-template-columns:auto var(--settings-number-width);align-items:center;gap:12px;margin:0}
 #settings-dialog .packet-size-limit input{width:100%}
 #settings-dialog .runtime-setting-row{display:grid;grid-template-columns:var(--settings-label-width) minmax(0,1fr);align-items:center;gap:16px;margin:0}
 #settings-dialog .runtime-setting-row+.runtime-setting-row{margin-top:12px}
@@ -253,6 +253,10 @@ code.session-id{font-family:Consolas,"Cascadia Mono",monospace;font-size:11px;wo
 #settings-dialog>.settings-footer{flex:none;display:grid;grid-template-columns:minmax(0,1fr) auto auto;align-items:center;gap:12px;padding:16px var(--settings-padding);border-top:1px solid var(--line);background:var(--panel)}
 #settings-dialog .settings-footer .help{min-width:0;margin:0}
 #settings-dialog .settings-footer button{white-space:nowrap}
+@container settings-dialog (max-width:660px){
+  #settings-dialog .packet-size-controls{grid-template-columns:minmax(0,1fr)}
+  #settings-dialog .packet-size-limit{grid-template-columns:var(--settings-label-width) var(--settings-number-width);gap:16px}
+}
 @container settings-dialog (max-width:620px){
   #settings-dialog>.dialog-heading,#settings-dialog>.settings-footer,#settings-dialog>.settings-content{--settings-padding:20px}
   #settings-dialog>.settings-content{--settings-label-width:160px}
