@@ -12,7 +12,7 @@ import time
 import uuid
 
 from .analyzer import JsonBytes, decode_body, encode
-from .overflow import encode_changed
+from .overflow import encode_changed_info
 from .locking import file_lock
 
 MAX_IMAGE_BYTES = 50 * 1024 * 1024
@@ -108,7 +108,8 @@ class ImageIsolation:
             protected.add(target)
             return target.resolve()
 
-    def prepare(self, raw, headers, path, compression, *, zstd_level=3):
+    def prepare(self, raw, headers, path, compression, *, zstd_level=3,
+                auto_zstd_level=False, budget_bytes=None):
         coding = next((v for k, v in headers.items() if k.lower() == "content-encoding"), "identity")
         try:
             decoded = decode_body(raw, coding)
@@ -187,8 +188,10 @@ class ImageIsolation:
         changed = decoded
         for start, end, replacement in sorted(replacements, reverse=True):
             changed = changed[:start] + replacement + changed[end:]
-        wire, encoding = encode_changed(changed, headers, path, compression, zstd_level)
-        return wire, encoding, {"image_isolation_applied": True, "image_isolation_removed": images_removed,
+        prepared = encode_changed_info(changed, headers, path, compression, zstd_level,
+                                       auto_zstd_level=auto_zstd_level, budget_bytes=budget_bytes)
+        return prepared.body, prepared.encoding, {"image_isolation_applied": True, "image_isolation_removed": images_removed,
+                                "relay_zstd_level": prepared.zstd_level,
                                 "native_image_tools_hidden": hidden_tools,
                                 "image_paths": sorted(str(path.resolve()) for path in protected),
                                 "image_isolation_decoded_before": len(decoded),

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 from collections import Counter
 from contextlib import nullcontext
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -24,7 +25,7 @@ import webbrowser
 
 from . import VERSION
 from .analyzer import (MAX_BODY, clean_text, describe_node, encode, inspect_request,
-                       resolve, safe_path, search_body)
+                       classify_request, decode_body, thread_identity, resolve, safe_path, search_body)
 from .config_link import ConfigLink, validate_upstream
 from .providers import ProviderManager, config_paths
 from .entry_port import ConfiguredPortParser, port_status, save_port
@@ -32,7 +33,7 @@ from .updates import Updates
 from .token_window import TokenWindows
 from .session_summary import SessionSummaries
 from .storage import Store
-from .transport import DEFAULT_ZSTD_LEVEL, prepare_request, validate_zstd_level
+from .transport import CompressionHistory, DEFAULT_ZSTD_LEVEL, prepare_request_info, validate_zstd_level
 from .installation import manage_installation
 from .startup import configure_startup, startup_supported
 from .capacity_retry import MAX_RETRIES, open_response
@@ -77,6 +78,8 @@ def protection_settings(saved, *, default_enabled=False):
     budget = values.get("budget_bytes", DEFAULT_BUDGET_BYTES)
     values["budget_bytes"] = (max(MIN_BUDGET_BYTES, min(MAX_BODY, budget))
                               if type(budget) is int else DEFAULT_BUDGET_BYTES)
+    values["auto_zstd_level_enabled"] = (values.get("auto_zstd_level_enabled") is True
+                                         and values["packet_size_protection_enabled"] is True)
     return values
 
 
@@ -140,6 +143,7 @@ class InspectorServer(ThreadingHTTPServer):
         self.opener = build_opener(ProxyHandler(outbound_proxies()), HTTPSHandler(context=ssl_context), NoRedirect())
         self.local_opener = build_opener(ProxyHandler({}), NoRedirect())
         self.overflow = OverflowCompactor(self.data_dir)
+        self.compression_history = CompressionHistory()
         self.image_config = ImageToolConfig(self.link, self.data_dir,
             lambda: f"http://127.0.0.1:{self.public_port}", lambda: self.endpoint)
         self.image_isolation = ImageIsolation(self.data_dir, self.settings["image_save_dir"])
@@ -305,6 +309,7 @@ class InspectorServer(ThreadingHTTPServer):
         return {"version": VERSION, "ui_version": VERSION, "capture_enabled": self.settings["capture_enabled"],
                 "request_compression": self.settings["request_compression"],
                 "zstd_level": self.settings["zstd_level"],
+                "auto_zstd_level_enabled": self.settings["auto_zstd_level_enabled"],
                 "ui_language": self.settings["ui_language"],
                 "packet_size_protection_enabled": self.settings["packet_size_protection_enabled"],
                 "overflow_compaction_enabled": self.settings["packet_size_protection_enabled"],
@@ -591,6 +596,14 @@ class Handler(BaseHTTPRequestHandler):
                     raise ValueError("包大小保护开关值冲突")
                 if protection_values:
                     candidate["packet_size_protection_enabled"] = protection_values[0]
+                if "auto_zstd_level_enabled" in data:
+                    if not isinstance(data["auto_zstd_level_enabled"], bool):
+                        raise ValueError("invalid boolean setting: auto_zstd_level_enabled")
+                    if data["auto_zstd_level_enabled"] and not candidate["packet_size_protection_enabled"]:
+                        raise ValueError("请先开启请求大小保护")
+                    candidate["auto_zstd_level_enabled"] = data["auto_zstd_level_enabled"]
+                if not candidate["packet_size_protection_enabled"]:
+                    candidate["auto_zstd_level_enabled"] = False
                 for key in ("capture_enabled",
                             "start_on_login", "capacity_retry_enabled"):
                     if key in data:
@@ -634,6 +647,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.server.image_isolation = image_isolation
                 self.server.store.max_bytes = candidate["max_storage_mb"] * 1024 * 1024
                 self.server.store.max_count = candidate["max_packets"]
+                if any(candidate[key] != previous[key] for key in ("auto_zstd_level_enabled", "request_compression")):
+                    self.server.compression_history.clear()
             self._json(200, self.server.status())
         elif path == "/api/link" and self.command == "POST":
             data = json.loads(self._body(8192))
@@ -801,9 +816,11 @@ class Handler(BaseHTTPRequestHandler):
             return
         started = time.monotonic()
         packet_id = None
+        capture_meta = {}
         if self.server.settings["capture_enabled"]:
             try:
                 meta, content = inspect_request(body, dict(self.headers.items()), suffix)
+                capture_meta = meta
                 meta.update(method=self.command, path=safe_path(suffix), source="live",
                             capture_point="app_exit_before_downstream")
                 packet_id = self.server.store.add(meta, content)
@@ -829,7 +846,51 @@ class Handler(BaseHTTPRequestHandler):
             image_isolation = self.server.image_isolation
             image_configured = self.server.image_config.state.get("enabled", False)
             image_worker = self.server.image_config.is_worker(self.headers.get(WORKER_HEADER, ""))
+            auto_zstd_level = (protection_enabled and self.server.settings["auto_zstd_level_enabled"]
+                               and compression == "zstd" and not image_worker)
         trigger_size = None
+        applied_zstd_level = None
+        compression_scope = hashlib.sha256(upstream.encode()).hexdigest()
+        auto_key, remember_auto = None, False
+        if auto_zstd_level and self.command == "POST" and urlsplit(suffix).path.rstrip("/").endswith("/responses"):
+            if not capture_meta:
+                try:
+                    source_encoding = next((v for k, v in headers.items() if k.lower() == "content-encoding"), "identity")
+                    value = json.loads(decode_body(body, source_encoding))
+                    capture_meta = {**classify_request(value, headers, suffix), "thread_id": thread_identity(headers, value)}
+                except Exception:
+                    capture_meta = {}
+            thread = capture_meta.get("thread_id")
+            if thread:
+                auto_key = (upstream, thread)
+                previous_level = self.server.compression_history.level(auto_key, budget)
+                if previous_level is None:
+                    # Reuse existing measurements after restart; ignore the new
+                    # captured row and auxiliary/native-compaction requests.
+                    try:
+                        for previous in self.server.store.list(limit=10, thread=thread):
+                            if (previous.get("id") == packet_id or previous.get("is_compaction")
+                                    or previous.get("source") != "live"
+                                    or previous.get("relay_compression_scope") != compression_scope
+                                    or previous.get("request_kind") in {"prewarm", "memory"}
+                                    or previous.get("image_isolation_worker")
+                                    or not previous.get("path", "").split("?", 1)[0].rstrip("/").endswith("/responses")):
+                                continue
+                            if time.time() - previous.get("created", 0) >= self.server.compression_history.ttl:
+                                break
+                            size = next((previous.get(k) for k in ("overflow_original_wire_bytes", "usage_override_request_bytes", "outbound_wire_bytes", "relay_wire_bytes")
+                                         if type(previous.get(k)) is int and previous[k] >= 0), None)
+                            if size is not None:
+                                self.server.compression_history.remember(auto_key, size, previous.get("relay_zstd_level"), only_if_missing=True)
+                                previous_level = self.server.compression_history.level(auto_key, budget)
+                                break
+                    except Exception:
+                        pass
+                zstd_level = previous_level or 1
+                remember_auto = (not capture_meta.get("is_compaction")
+                                 and capture_meta.get("request_kind") not in {"prewarm", "memory"})
+            else:
+                zstd_level = 1
         try:
             if image_enabled and not image_configured:
                 raise ImageIsolationFailure("image_configuration_missing", "图片隔离配置不完整，请在设置中重新启用。", 503)
@@ -837,7 +898,8 @@ class Handler(BaseHTTPRequestHandler):
             source_body = body
             if image_enabled and not image_worker and self.command == "POST" and urlsplit(suffix).path.rstrip("/").endswith(("/responses", "/responses/compact")):
                 try:
-                    prepared = image_isolation.prepare(body, headers, suffix, compression, zstd_level=zstd_level)
+                    prepared = image_isolation.prepare(body, headers, suffix, compression, zstd_level=zstd_level,
+                                                        auto_zstd_level=auto_zstd_level, budget_bytes=budget)
                 except (ImageIsolationFailure, ImportError):
                     raise
                 except Exception:
@@ -845,11 +907,16 @@ class Handler(BaseHTTPRequestHandler):
             if prepared is not None:
                 outbound_body, outbound_encoding, image_meta = prepared
                 update(**image_meta)
+                applied_zstd_level = image_meta.get("relay_zstd_level")
                 source_body = outbound_body
                 headers = {k: v for k, v in headers.items() if k.lower() not in {"content-md5", "digest", "content-encoding"}}
                 headers["Content-Encoding"] = outbound_encoding
             else:
-                outbound_body, outbound_encoding = prepare_request(body, headers, self.command, suffix, compression, zstd_level)
+                encoded = prepare_request_info(body, headers, self.command, suffix, compression, zstd_level,
+                                                auto_zstd_level=auto_zstd_level, budget_bytes=budget)
+                outbound_body, outbound_encoding, applied_zstd_level = encoded
+            if remember_auto and outbound_encoding.strip().lower() in {"", "identity", "zstd"}:
+                self.server.compression_history.remember(auto_key, len(outbound_body), applied_zstd_level or zstd_level)
             if protection_enabled and not image_worker:
                 trigger_size = usage_trigger_size(body, dict(self.headers.items()), self.command, suffix, len(outbound_body), budget)
                 if trigger_size is not None:
@@ -860,7 +927,8 @@ class Handler(BaseHTTPRequestHandler):
                 outbound_body, outbound_encoding, overflow_meta = self.server.overflow.prepare(
                     outbound_body, outbound_encoding, source_body, headers, suffix, upstream, compression, budget,
                     lambda compact_body, encoding: self._checkpoint(upstream, suffix, headers, compact_body, encoding),
-                    request_scope=scope, zstd_level=zstd_level)
+                    request_scope=scope, zstd_level=zstd_level, auto_zstd_level=auto_zstd_level)
+                applied_zstd_level = overflow_meta.get("relay_zstd_level", applied_zstd_level)
                 update(**overflow_meta)
         except ImageIsolationFailure as exc:
             update(state="relay_error", relay_error=exc.code, status=exc.status)
@@ -885,7 +953,8 @@ class Handler(BaseHTTPRequestHandler):
             headers["Content-Encoding"] = outbound_encoding
         update(relay_wire_bytes=len(outbound_body), relay_content_encoding=outbound_encoding,
                compression_applied=outbound_body is not body,
-               relay_zstd_level=zstd_level if outbound_body is not body and outbound_encoding.strip().lower() == "zstd" else None)
+               relay_zstd_level=applied_zstd_level, relay_auto_zstd_level=auto_zstd_level,
+               relay_compression_scope=compression_scope)
         local_upstream = urlsplit(upstream).hostname in {"localhost", "127.0.0.1", "::1"}
         retry_settings = self.server.settings
         capacity_retry = (retry_settings["capacity_retry_enabled"] and self.command == "POST"

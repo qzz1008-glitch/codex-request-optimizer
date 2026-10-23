@@ -18,7 +18,7 @@ import threading
 import time
 
 from .analyzer import JsonBytes, MAX_BODY, decode_body, encode, thread_identity
-from .transport import DEFAULT_ZSTD_LEVEL, prepare_request
+from .transport import DEFAULT_ZSTD_LEVEL, PreparedRequest, prepare_request_info, prepare_zstd
 from .maintenance import SQLiteReclaimer
 from .locking import file_lock
 
@@ -159,14 +159,26 @@ def safe_cuts(items):
     return cuts
 
 
-def encode_changed(decoded, headers, path, compression, zstd_level=DEFAULT_ZSTD_LEVEL):
+def encode_changed_info(decoded, headers, path, compression, zstd_level=DEFAULT_ZSTD_LEVEL, *,
+                        auto_zstd_level=False, budget_bytes=None):
     original_encoding = next((v for k, v in headers.items() if k.lower() == "content-encoding"), "identity").strip().lower()
     if original_encoding == "gzip":
-        return gzip.compress(decoded, mtime=0), "gzip"
+        return PreparedRequest(gzip.compress(decoded, mtime=0), "gzip")
     if original_encoding == "zstd":
+        if auto_zstd_level and compression == "zstd":
+            return prepare_zstd(decoded, "identity", zstd_level,
+                                auto_zstd_level=True, budget_bytes=budget_bytes)
         import zstandard
-        return zstandard.ZstdCompressor(level=zstd_level).compress(decoded), "zstd"
-    return prepare_request(decoded, {}, "POST", path, compression, zstd_level)
+        return PreparedRequest(zstandard.ZstdCompressor(level=zstd_level).compress(decoded), "zstd", zstd_level)
+    return prepare_request_info(decoded, {}, "POST", path, compression, zstd_level,
+                                auto_zstd_level=auto_zstd_level, budget_bytes=budget_bytes)
+
+
+def encode_changed(decoded, headers, path, compression, zstd_level=DEFAULT_ZSTD_LEVEL, *,
+                   auto_zstd_level=False, budget_bytes=None):
+    prepared = encode_changed_info(decoded, headers, path, compression, zstd_level,
+                                   auto_zstd_level=auto_zstd_level, budget_bytes=budget_bytes)
+    return prepared.body, prepared.encoding
 
 
 class CheckpointStream:
@@ -370,16 +382,17 @@ class OverflowCompactor:
             self.reclaimer.request()
 
     def prepare(self, original, original_encoding, body, headers, path, upstream,
-                compression, budget, compact, *, request_scope=None, zstd_level=DEFAULT_ZSTD_LEVEL):
+                compression, budget, compact, *, request_scope=None, zstd_level=DEFAULT_ZSTD_LEVEL,
+                auto_zstd_level=False):
         if request_scope is None:
             with self.request_scope() as scope:
                 return self._prepare(original, original_encoding, body, headers, path, upstream,
-                                      compression, budget, compact, scope, zstd_level)
+                                      compression, budget, compact, scope, zstd_level, auto_zstd_level)
         return self._prepare(original, original_encoding, body, headers, path, upstream,
-                             compression, budget, compact, request_scope, zstd_level)
+                             compression, budget, compact, request_scope, zstd_level, auto_zstd_level)
 
     def _prepare(self, original, original_encoding, body, headers, path, upstream,
-                 compression, budget, compact, scope, zstd_level):
+                 compression, budget, compact, scope, zstd_level, auto_zstd_level):
         """Return wire bytes/encoding/metrics; compact is an injected HTTP adapter.
 
         The original turn has NOT been sent. No inference retries occur here.
@@ -434,7 +447,10 @@ class OverflowCompactor:
                 changed = decoded[:span[0]] + encode(candidate) + decoded[span[1]:]
                 if len(changed) > MAX_BODY:
                     raise OverflowFailure("overflow_body_limit", "替换后的上下文超过本地解析限制。")
-                return encode_changed(changed, headers, path, compression, zstd_level)
+                prepared = encode_changed_info(changed, headers, path, compression, zstd_level,
+                                               auto_zstd_level=auto_zstd_level, budget_bytes=budget)
+                metrics["relay_zstd_level"] = prepared.zstd_level
+                return prepared.body, prepared.encoding
 
             result, encoding = wire(current) if mapping and metrics["overflow_cache_hit"] else (original, original_encoding)
             calls = 0
@@ -451,7 +467,8 @@ class OverflowCompactor:
                     mid = (lo + hi) // 2
                     cut = cuts[mid]
                     request_body = self._checkpoint_request(value, current[:cut], key)
-                    request_wire, request_encoding = encode_changed(encode(request_body), headers, path, compression, zstd_level)
+                    request_wire, request_encoding = encode_changed(encode(request_body), headers, path, compression, zstd_level,
+                                                                    auto_zstd_level=auto_zstd_level, budget_bytes=budget)
                     if len(request_wire) <= budget:
                         plan = (cut, request_wire, request_encoding)
                         lo = mid + 1

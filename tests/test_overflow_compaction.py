@@ -429,6 +429,22 @@ class OverflowRelayTests(unittest.TestCase):
         client.close()
         return status, body
 
+    def test_auto_levels_keep_summary_requests_bounded_and_record_the_final_level(self):
+        self.server.settings.update(request_compression="zstd", auto_zstd_level_enabled=True, zstd_level=9)
+        items = [message(i) for i in range(14)]
+        for current, expected in ((items, 1), (items + [message("tail", 30)], 17)):
+            status, body = self.post(current, session="auto-overflow")
+            self.assertEqual((status, body), (200, complete()))
+            for _ in range(100):
+                meta = self.server.store.list(limit=1)[0]
+                if meta.get("state") == "complete":
+                    break
+                time.sleep(.005)
+            self.assertEqual(meta["relay_zstd_level"], expected)
+            self.assertLessEqual(meta["relay_wire_bytes"], 4000)
+        self.assertTrue(any(compact for _, compact, _ in self.up.requests))
+        self.assertTrue(all(size <= 4000 for size, _, _ in self.up.requests))
+
     def test_http_first_reuse_clear_and_native_threshold_unchanged(self):
         items = [message(i) for i in range(14)]
         for sample in (items, items + [message("new", 80)], [message("native-compact", 30)]):

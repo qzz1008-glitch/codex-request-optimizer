@@ -798,9 +798,11 @@ function fillImageAnalysisMode() {
 function fillZstdLevel() {
   const s=state.status,input=$("zstd-level"),supported=Number.isInteger(s.zstd_level);
   const selected=settingsEditing?Number(input.value):(s.zstd_level??3);
+  const automatic=$("packet-size-protection").checked&&$("auto-zstd-level").checked;
   input.value=String(selected);
-  input.disabled=settingsSaving||!!s.ui_read_only||!supported||s.request_compression!=="zstd";
+  input.disabled=settingsSaving||!!s.ui_read_only||!supported||s.request_compression!=="zstd"||automatic;
   $("zstd-level-open").disabled=input.disabled;
+  $("zstd-level-auto-note").hidden=!automatic;
   $("zstd-level-value").textContent=t("{level}级").replace("{level}",selected);
   if($("zstd-level-dialog").open) {
     if(input.disabled)closeZstdLevelPicker();else renderZstdLevelRows();
@@ -1097,6 +1099,7 @@ function readSettingsDraft() {
     entry_port:$("entry-port").value,
     zstd_level:$("zstd-level").value,
     packet_size_protection_enabled:$("packet-size-protection").checked,
+    auto_zstd_level_enabled:$("packet-size-protection").checked&&$("auto-zstd-level").checked,
     budget:$("budget").value,
     start_on_login:$("start-on-login").checked,
     capacity_retry_enabled:$("capacity-retry").checked,
@@ -1151,6 +1154,7 @@ async function saveSettings() {
   const entries=[
     ["zstd_level","zstd_level",Number(draft.zstd_level),Number.isInteger(s.zstd_level)],
     ["packet_size_protection_enabled","packet_size_protection_enabled",draft.packet_size_protection_enabled,protectionSupported],
+    ["auto_zstd_level_enabled","auto_zstd_level_enabled",draft.auto_zstd_level_enabled,typeof s.auto_zstd_level_enabled==="boolean"],
     ["budget","budget_bytes",Math.round(Number(draft.budget)*1000),protectionSupported],
     ["start_on_login","start_on_login",draft.start_on_login,s.start_on_login_supported],
     ["capacity_retry_enabled","capacity_retry_enabled",draft.capacity_retry_enabled,s.capacity_retry_supported],
@@ -1686,15 +1690,20 @@ $("exit-confirm-dialog").addEventListener("cancel",event=>{event.preventDefault(
 action("connect-confirm-cancel",cancelConnectPrompt);action("connect-confirm-apply",confirmConnection);
 $("connect-confirm-dialog").addEventListener("cancel",event=>{event.preventDefault();cancelConnectPrompt();});
 function fillPacketProtection() {
-  const s=state.status,supported="packet_size_protection_enabled" in s;
-  if(!settingsEditing){$("packet-size-protection").checked=!!s.packet_size_protection_enabled;$("budget").value=s.budget_bytes/1000;}
+  const s=state.status,supported="packet_size_protection_enabled" in s,automatic=$("auto-zstd-level"),autoSupported=typeof s.auto_zstd_level_enabled==="boolean";
+  if(!settingsEditing){$("packet-size-protection").checked=!!s.packet_size_protection_enabled;$("budget").value=s.budget_bytes/1000;automatic.checked=autoSupported&&s.auto_zstd_level_enabled;}
+  if(!$("packet-size-protection").checked)automatic.checked=false;
   $("budget").min=(s.packet_size_min_bytes||50001)/1000;$("budget").max=(s.packet_size_max_bytes||134217728)/1000;
   $("packet-size-protection").disabled=settingsSaving||!!s.ui_read_only||!supported;
   $("budget").disabled=$("packet-size-protection").disabled||!$("packet-size-protection").checked;
+  automatic.disabled=$("packet-size-protection").disabled||!$("packet-size-protection").checked||!autoSupported;
+  automatic.closest("label").title=!autoSupported?t("当前中转暂不支持自动选择压缩等级。"):!$("packet-size-protection").checked?t("请先开启请求大小保护"):"";
   $("packet-size-message").hidden=supported;
   if(!supported)$("packet-size-message").textContent=t("当前中转暂不支持此功能。");
+  fillZstdLevel();
 }
 $("packet-size-protection").addEventListener("change",fillPacketProtection);
+$("auto-zstd-level").addEventListener("change",fillZstdLevel);
 for(const key of ["context","compact"]) {
   const input=$(key+"-tokens"),useDefault=$(key+"-default");
   input.closest(".context-value").addEventListener("click",()=>{
