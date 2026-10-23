@@ -18,6 +18,14 @@ TOOL_SERVER = "isolated_vision"
 VISION_PROVIDER = "codex_isolated_vision"
 VISION_PROFILE = "isolated-vision"
 WORKER_HEADER = "X-Codex-Isolated-Vision"
+IMAGE_MODES = ("native", "disabled", "optimized")
+
+
+def image_mode(settings):
+    mode = settings.get("image_analysis_mode")
+    if isinstance(mode, str) and mode in IMAGE_MODES:
+        return mode
+    return "optimized" if settings.get("image_isolation_enabled") is True else "native"
 
 
 def find_codex_cli(configured=None):
@@ -70,11 +78,47 @@ class ImageToolConfig:
         return "/mcp/image/" + self.state.get("mcp_token", "disabled")
 
     def status(self):
-        return {"enabled": bool(self.state.get("enabled")), "server": TOOL_SERVER,
+        return {"enabled": bool(self.state.get("enabled")), "mode": self.mode(), "server": TOOL_SERVER,
                 "native_tool": "view_image", "existing_tool_preserved": self.state.get("existing_tool_preserved", False),
                 "managed_tool_installed": bool(self.state.get("enabled") and self.state.get("managed_mcp")),
                 "reload_required": bool(self.state), "backup": self.state.get("backup", ""),
                 "profile_path": str(self.profile_path)}
+
+    def mode(self):
+        return self.state.get("mode", "optimized" if self.state.get("enabled") else "native")
+
+    def _disable_tools(self, document, data, previous):
+        tools = data.get("tools", {})
+        mcp = data.get("mcp_servers", {}).get(TOOL_SERVER)
+        original = {"native_present": "view_image" in tools, "native": tools.get("view_image"),
+                    "tools_created": "tools" not in data, "mcp_present": mcp is not None,
+                    "mcp_enabled_present": mcp is not None and "enabled" in mcp,
+                    "mcp_enabled": mcp.get("enabled") if mcp is not None else None}
+        if "tools" not in document:
+            document["tools"] = tomlkit.table()
+        document["tools"]["view_image"] = False
+        if mcp is not None:
+            document["mcp_servers"][TOOL_SERVER]["enabled"] = False
+        return {**previous, "schema_version": 3, "config": str(self.link.config.resolve()),
+                "enabled": False, "mode": "disabled", "disabled_original": original}
+
+    def _restore_disabled(self, document, data, previous):
+        original = previous["disabled_original"]
+        if data.get("tools", {}).get("view_image") is not False:
+            raise ValueError("原生图片工具配置已被修改，未覆盖用户配置。")
+        if original["mcp_present"]:
+            mcp = data.get("mcp_servers", {}).get(TOOL_SERVER, {})
+            if mcp.get("enabled") is not False:
+                raise ValueError("独立图片工具配置已被修改，未覆盖用户配置。")
+            target = document["mcp_servers"][TOOL_SERVER]
+            target.pop("enabled", None)
+            if original["mcp_enabled_present"]:
+                target["enabled"] = original["mcp_enabled"]
+        document["tools"].pop("view_image", None)
+        if original["native_present"]:
+            document["tools"]["view_image"] = original["native"]
+        if original["tools_created"] and not document["tools"]:
+            document.pop("tools")
 
     def _save(self, state):
         staging = self.path.with_suffix(".new")
@@ -193,26 +237,45 @@ class ImageToolConfig:
         return profile_updated, {**previous, "enabled": False}
 
     @contextmanager
-    def change(self, enabled):
+    def change(self, mode):
         """Rollback root config, profile layer, state, and caller settings together."""
+        if isinstance(mode, bool):
+            mode = "optimized" if mode else "native"
+        if not isinstance(mode, str) or mode not in IMAGE_MODES:
+            raise ValueError("invalid image analysis mode")
         with file_lock(self.directory / "image-tool.lock"):
             previous = deepcopy(self.state)
-            if bool(previous.get("enabled")) == enabled:
-                if enabled:
+            previous_mode = self.mode()
+            if previous_mode == mode:
+                if mode == "optimized":
                     _, data, _ = read_configuration(self.link.config)
                     _, profile_data, _ = read_configuration(self.profile_path)
                     if data.get("tools", {}).get("view_image") is not False or profile_data.get("model_provider") != VISION_PROVIDER:
                         raise ValueError("图片工具配置已被修改，请先检查 Codex 配置。")
+                elif mode == "disabled":
+                    before, data, _ = read_configuration(self.link.config)
+                    self._restore_disabled(tomlkit.parse(before), data, previous)
                 yield False
                 return
             before, data, config_before = read_configuration(self.link.config)
             profile_before, profile_data, profile_raw = read_configuration(self.profile_path)
             document, profile_document = tomlkit.parse(before), tomlkit.parse(profile_before)
-            if enabled:
+            profile_updated = profile_before if profile_raw is not None else None
+            if previous_mode == "optimized":
+                profile_updated, _ = self._disable(document, data, profile_document, profile_data, previous)
+                profile_document = tomlkit.parse(profile_updated or "")
+            elif previous_mode == "disabled":
+                self._restore_disabled(document, data, previous)
+            data = tomllib.loads(tomlkit.dumps(document))
+            profile_data = tomllib.loads(profile_updated or "")
+            if mode == "optimized":
                 profile_updated, candidate = self._enable(document, data, profile_document, profile_data,
-                                                           profile_raw is not None, previous)
+                                                           profile_updated is not None, previous)
+                candidate["mode"] = mode
+            elif mode == "disabled":
+                candidate = self._disable_tools(document, data, previous)
             else:
-                profile_updated, candidate = self._disable(document, data, profile_document, profile_data, previous)
+                candidate = {**previous, "enabled": False, "mode": "native"}
             updated = tomlkit.dumps(document)
             tomllib.loads(updated)
             state_before = self.path.read_bytes() if self.path.exists() else None
@@ -220,12 +283,13 @@ class ImageToolConfig:
             try:
                 candidate["backup"] = self.link._write(updated)
                 written = True
-                if profile_updated is None:
-                    self.profile_path.unlink(missing_ok=True)
-                else:
-                    candidate["profile_backup"] = ConfigLink(self.profile_path, self.path)._write(profile_updated)
-                profile_written = True
-                if enabled:
+                if profile_updated != (profile_before if profile_raw is not None else None):
+                    if profile_updated is None:
+                        self.profile_path.unlink(missing_ok=True)
+                    else:
+                        candidate["profile_backup"] = ConfigLink(self.profile_path, self.path)._write(profile_updated)
+                    profile_written = True
+                if mode == "optimized":
                     self._validate(candidate)
                 self._save(candidate)
                 yield True
