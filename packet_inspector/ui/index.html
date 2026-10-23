@@ -148,8 +148,13 @@
       <div class="runtime-setting-row"><div class="runtime-toggle" data-settings-field="start_on_login"><input id="start-on-login" type="checkbox" aria-labelledby="start-on-login-label" aria-describedby="startup-hint"><span id="start-on-login-label">开机启动</span></div><p id="startup-hint" class="muted help runtime-inline-hint">登录 Windows 后在后台启动，可从托盘打开窗口。</p></div>
     </section>
     <section><h3>记录设置</h3><div class="settings-grid"><label for="storage-limit" data-settings-field="max_storage_mb"><span>存储上限（MiB）</span><input id="storage-limit" type="number" min="16" max="8192" required></label><label for="packet-limit" data-settings-field="max_packets"><span>记录上限（条）</span><input id="packet-limit" type="number" min="10" max="20000" required></label></div></section>
-    <section id="updates-settings"><h3>版本与升级</h3><p id="updates-versions" class="muted help"></p>
-      <div class="button-row updates-actions"><button id="updates-check" type="button" aria-busy="false"><span class="update-spinner" aria-hidden="true"></span><span id="updates-check-label">检查更新</span></button><button id="updates-install" class="primary" type="button" aria-busy="false" disabled><span class="update-spinner" aria-hidden="true"></span><span id="updates-install-label">立即升级</span></button><span id="updates-message" class="help updates-status" role="status" aria-atomic="true" hidden></span></div>
+    <section id="updates-settings"><h3>版本与升级</h3>
+      <div class="button-row updates-actions">
+        <button id="updates-check" type="button" aria-busy="false"><span class="update-spinner" aria-hidden="true"></span><span id="updates-check-label">检查更新</span></button>
+        <button id="updates-install" class="primary" type="button" aria-busy="false" disabled><span class="update-spinner" aria-hidden="true"></span><span id="updates-install-label">立即升级</span></button>
+        <p id="updates-versions" class="muted help"></p>
+        <span id="updates-message" class="help updates-status" role="status" aria-atomic="true" hidden></span>
+      </div>
     </section>
     </div>
     <div class="settings-footer"><p id="settings-message" class="help muted" role="status" aria-live="polite"></p><button id="settings-cancel" type="button">取消</button><button id="settings-save" class="primary" type="button" disabled>保存设置</button></div>
