@@ -13,6 +13,7 @@ import tomlkit
 
 from .config_link import ConfigLink, validate_upstream
 from .locking import file_lock
+from .image_tool_install import ImageToolInstallation
 
 TOOL_SERVER = "isolated_vision"
 VISION_PROVIDER = "codex_isolated_vision"
@@ -60,12 +61,13 @@ def restore_file(path, raw):
 
 
 class ImageToolConfig:
-    def __init__(self, link, directory, api_base, relay_endpoint):
+    def __init__(self, link, directory, relay_endpoint):
         self.link = link
         self.directory = Path(directory)
         self.path = self.directory / "image-tool.json"
         self.profile_path = link.config.with_name(VISION_PROFILE + ".config.toml")
-        self.api_base, self.relay_endpoint = api_base, relay_endpoint
+        self.relay_endpoint = relay_endpoint
+        self.installation = ImageToolInstallation(link.config.parent)
         self.state = json.loads(self.path.read_text(encoding="utf8")) if self.path.exists() else {}
         if self.state and self.state.get("config") != str(link.config.resolve()):
             raise ValueError("图片工具配置属于另一个 Codex 配置文件。")
@@ -74,13 +76,12 @@ class ImageToolConfig:
         token = self.state.get("worker_token", "")
         return bool(token and value and secrets.compare_digest(value.encode("utf8"), token.encode("ascii")))
 
-    def mcp_path(self):
-        return "/mcp/image/" + self.state.get("mcp_token", "disabled")
-
     def status(self):
         return {"enabled": bool(self.state.get("enabled")), "mode": self.mode(), "server": TOOL_SERVER,
                 "native_tool": "view_image", "existing_tool_preserved": self.state.get("existing_tool_preserved", False),
                 "managed_tool_installed": bool(self.state.get("enabled") and self.state.get("managed_mcp")),
+                "transport": "stdio" if (self.state.get("managed_mcp") or {}).get("command") else None,
+                "installation_error": getattr(self, "installation_error", ""),
                 "reload_required": bool(self.state), "backup": self.state.get("backup", ""),
                 "profile_path": str(self.profile_path)}
 
@@ -167,11 +168,10 @@ class ImageToolConfig:
         if selected == "openai":
             provider["requires_openai_auth"] = True
         worker_token = previous.get("worker_token") or secrets.token_urlsafe(32)
-        mcp_token = previous.get("mcp_token") or secrets.token_urlsafe(32)
         for key in ("http_headers", "env_http_headers"):
             provider[key] = {k: v for k, v in provider.get(key, {}).items() if k.lower() != WORKER_HEADER.lower()}
         provider["http_headers"][WORKER_HEADER] = worker_token
-        registration = {"url": self.api_base() + "/mcp/image/" + mcp_token, "tool_timeout_sec": 300}
+        registration = self.installation.install(cli) if old_tool is None else None
         fields = [("tools", "view_image"), ("model_providers", VISION_PROVIDER)]
         if TOOL_SERVER not in data.get("mcp_servers", {}):
             fields.append(("mcp_servers", TOOL_SERVER))
@@ -197,8 +197,8 @@ class ImageToolConfig:
         document.pop("profile", None)
         profile_document["model_provider"] = VISION_PROVIDER
         profile_updated = tomlkit.dumps(profile_document)
-        candidate = {"schema_version": 2, "config": str(self.link.config.resolve()), "enabled": True,
-            "cli": str(cli), "worker_token": worker_token, "mcp_token": mcp_token, "originals": originals,
+        candidate = {"schema_version": 4, "config": str(self.link.config.resolve()), "enabled": True,
+            "cli": str(cli), "worker_token": worker_token, "originals": originals,
             "managed_mcp": registration if old_tool is None else None, "managed_provider": provider,
             "created_tables": sorted({table for table, _ in fields if table and table not in data}),
             "existing_tool_preserved": old_tool is not None, "profile_existed": profile_existed,
@@ -206,6 +206,46 @@ class ImageToolConfig:
             "profile_selector_before": profile_data.get("model_provider"),
             "managed_profile": tomllib.loads(profile_updated)}
         return profile_updated, candidate
+
+    def _refresh_managed_tool(self):
+        """Migrate our HTTP registration and update installed stdio assets."""
+        before, data, config_raw = read_configuration(self.link.config)
+        current = data.get("mcp_servers", {}).get(TOOL_SERVER)
+        managed = self.state.get("managed_mcp")
+        adopted = not managed and self.installation.matches(current)
+        if not managed and not adopted:
+            return False
+        if managed and current != managed:
+            raise ValueError("独立图片工具注册已被修改，未覆盖用户配置。")
+        registration = self.installation.install(self.state["cli"])
+        if managed == registration and self.state.get("schema_version") == 4:
+            return False
+        document = tomlkit.parse(before)
+        document["mcp_servers"][TOOL_SERVER] = registration
+        updated = tomlkit.dumps(document)
+        previous = deepcopy(self.state)
+        state_raw = self.path.read_bytes() if self.path.exists() else None
+        candidate = {**previous, "schema_version": 4, "managed_mcp": registration, "existing_tool_preserved": False}
+        candidate.pop("mcp_token", None)
+        if adopted and not any(v["table"] == "mcp_servers" and v["name"] == TOOL_SERVER for v in candidate["originals"]):
+            candidate["originals"] = [*candidate["originals"],
+                {"table": "mcp_servers", "name": TOOL_SERVER, "present": False, "value": None}]
+        written = False
+        try:
+            if updated != before:
+                candidate["backup"] = self.link._write(updated)
+                written = True
+            self._validate(candidate)
+            self._save(candidate)
+            return True
+        except BaseException:
+            if written:
+                if read_configuration(self.link.config)[0] != updated:
+                    raise ValueError("图片工具迁移期间配置被修改，未覆盖用户更改。") from None
+                restore_file(self.link.config, config_raw)
+            restore_file(self.path, state_raw)
+            self.state = previous
+            raise
 
     def _disable(self, document, data, profile_document, profile_data, previous):
         if previous.get("managed_mcp") and data.get("mcp_servers", {}).get(TOOL_SERVER) != previous["managed_mcp"]:
@@ -243,10 +283,17 @@ class ImageToolConfig:
             mode = "optimized" if mode else "native"
         if not isinstance(mode, str) or mode not in IMAGE_MODES:
             raise ValueError("invalid image analysis mode")
-        with file_lock(self.directory / "image-tool.lock"):
+        with file_lock(self.directory / "image-tool.lock"), self.installation.transaction():
             previous = deepcopy(self.state)
             previous_mode = self.mode()
-            if previous_mode == mode:
+            if previous_mode == mode == "native":
+                _, data, _ = read_configuration(self.link.config)
+                if (data.get("tools", {}).get("view_image") is not False
+                        and data.get("features", {}).get("view_image") is not False
+                        and not self.installation.manifest.exists()):
+                    yield False
+                    return
+            if previous_mode == mode and mode != "native":
                 if mode == "optimized":
                     _, data, _ = read_configuration(self.link.config)
                     _, profile_data, _ = read_configuration(self.profile_path)
@@ -255,7 +302,22 @@ class ImageToolConfig:
                 elif mode == "disabled":
                     before, data, _ = read_configuration(self.link.config)
                     self._restore_disabled(tomlkit.parse(before), data, previous)
-                yield False
+                config_raw = self.link.config.read_bytes() if self.link.config.exists() else None
+                state_raw = self.path.read_bytes() if self.path.exists() else None
+                changed = False
+                applied = None
+                try:
+                    changed = self._refresh_managed_tool() if mode == "optimized" else False
+                    applied = self.link.config.read_bytes() if self.link.config.exists() else None
+                    yield changed
+                except BaseException:
+                    if changed:
+                        if self.link.config.read_bytes() != applied:
+                            raise ValueError("图片工具迁移期间配置被修改，未覆盖用户更改。") from None
+                        restore_file(self.link.config, config_raw)
+                        restore_file(self.path, state_raw)
+                        self.state = previous
+                    raise
                 return
             before, data, config_before = read_configuration(self.link.config)
             profile_before, profile_data, profile_raw = read_configuration(self.profile_path)
@@ -275,7 +337,15 @@ class ImageToolConfig:
             elif mode == "disabled":
                 candidate = self._disable_tools(document, data, previous)
             else:
-                candidate = {**previous, "enabled": False, "mode": "native"}
+                candidate = {**previous, "schema_version": 4, "config": str(self.link.config.resolve()),
+                             "enabled": False, "mode": "native"}
+                if "tools" not in document:
+                    document["tools"] = tomlkit.table()
+                document["tools"]["view_image"] = True
+                if document.get("features", {}).get("view_image") is False:
+                    document["features"].pop("view_image")
+                    if not document["features"]:
+                        document.pop("features")
             updated = tomlkit.dumps(document)
             tomllib.loads(updated)
             state_before = self.path.read_bytes() if self.path.exists() else None
@@ -292,6 +362,8 @@ class ImageToolConfig:
                 if mode == "optimized":
                     self._validate(candidate)
                 self._save(candidate)
+                if mode != "optimized":
+                    self.installation.uninstall()
                 yield True
             except Exception:
                 if written and read_configuration(self.link.config)[0] != updated:

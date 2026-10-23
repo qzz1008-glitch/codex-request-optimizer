@@ -42,7 +42,6 @@ from .usage_trigger import (UsageStream, raw_chunks, request_size as usage_trigg
 from .overflow import CheckpointStream, OverflowCompactor, OverflowFailure
 from .image_config import IMAGE_MODES, ImageToolConfig, WORKER_HEADER, image_mode
 from .image_isolation import ImageIsolation, ImageIsolationFailure, check_image_directory, resolve_image_directory
-from .image_tool import ImageToolRPC
 
 HOP = {"connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
        "te", "trailer", "transfer-encoding", "upgrade"}
@@ -144,11 +143,15 @@ class InspectorServer(ThreadingHTTPServer):
         self.local_opener = build_opener(ProxyHandler({}), NoRedirect())
         self.overflow = OverflowCompactor(self.data_dir)
         self.compression_history = CompressionHistory()
-        self.image_config = ImageToolConfig(self.link, self.data_dir,
-            lambda: f"http://127.0.0.1:{self.public_port}", lambda: self.endpoint)
+        self.image_config = ImageToolConfig(self.link, self.data_dir, lambda: self.endpoint)
         self.image_isolation = ImageIsolation(self.data_dir, self.settings["image_save_dir"])
         self.default_image_save_dir = resolve_image_directory(self.data_dir)
-        self.image_tool = ImageToolRPC(self.image_config)
+        if self.settings["image_isolation_enabled"] and self.image_config.state.get("enabled"):
+            try:
+                with self.image_config.change("optimized"):
+                    pass
+            except (OSError, ValueError) as exc:
+                self.image_config.installation_error = clean_text(str(exc))[:250]
         self.updates = Updates(self.data_dir, self.link.config, self.public_port)
         self.analysis_errors = 0
         self.maintenance_errors = 0
@@ -450,7 +453,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         relay_prefix = "/relay/" + self.server.settings["relay_token"]
         if path.startswith("/mcp/image/"):
-            self._image_mcp(path)
+            self._json(404, {"error": "image_tool_uses_stdio"})
             return
         if path.startswith(relay_prefix + "/"):
             self._relay(relay_prefix)
@@ -471,45 +474,6 @@ class Handler(BaseHTTPRequestHandler):
             self._json(400, {"error": clean_text(str(exc))[:250]})
         except Exception as exc:
             self._json(500, {"error": type(exc).__name__})
-
-    def _image_mcp(self, path):
-        with self.server.guard:
-            enabled = self.server.settings["image_isolation_enabled"]
-            matches = secrets.compare_digest(path.encode("utf8"), self.server.image_config.mcp_path().encode("utf8"))
-        if not enabled or not matches:
-            self._json(404, {"error": "image_tool_unavailable"})
-            return
-        if self.command == "DELETE":
-            with self.server.image_tool.guard:
-                self.server.image_tool.sessions.pop(self.headers.get("Mcp-Session-Id", ""), None)
-            self._bytes(204, b"", "application/json")
-            return
-        if self.command != "POST":
-            self._json(405, {"error": "method_not_allowed"}, {"Allow": "POST, DELETE"})
-            return
-        try:
-            message = json.loads(self._body(32768))
-            active = isinstance(message, dict) and message.get("method") == "tools/call"
-            with self.server.guard:
-                if active and self.server.upgrade_draining:
-                    self._json(503, {"error": "upgrade_draining"})
-                    return
-                if active:
-                    self.server.active_requests += 1
-            try:
-                result, headers = self.server.image_tool.dispatch(message, self.headers.get("Mcp-Session-Id"))
-            finally:
-                if active:
-                    with self.server.guard:
-                        self.server.active_requests -= 1
-            if result is None:
-                self._bytes(202, b"", "application/json", headers)
-            else:
-                self._json(200, result, headers)
-        except KeyError:
-            self._json(404, {"error": "image_tool_session_expired"})
-        except (ValueError, TypeError) as exc:
-            self._json(400, {"error": clean_text(str(exc))[:250]})
 
     def _api(self, path):
         query = parse_qs(urlsplit(self.path).query)

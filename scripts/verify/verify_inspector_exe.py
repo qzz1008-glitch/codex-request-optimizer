@@ -124,17 +124,18 @@ def main():
             image_config=tomllib.loads(config.read_text(encoding="utf8"))
             assert image_config["tools"]["view_image"] is False
             registration=image_config["mcp_servers"]["isolated_vision"]
-            assert "command" not in registration
-            def mcp(message,session=None):
-                headers={"Content-Type":"application/json","Accept":"application/json, text/event-stream"}
-                if session:headers["Mcp-Session-Id"]=session
-                request=Request(registration["url"],data=json.dumps(message).encode(),headers=headers)
-                with urlopen(request,timeout=5) as response:
-                    return json.load(response),response.getheader("Mcp-Session-Id")
-            _,session=mcp({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}})
-            assert session
-            listing,_=mcp({"jsonrpc":"2.0","id":2,"method":"tools/list"},session)
-            assert [tool["name"] for tool in listing["result"]["tools"]]==["analyze_image"]
+            assert "command" in registration and "url" not in registration
+            tool_file=Path(registration["args"][-1])
+            assert tool_file.is_file()
+            messages=[{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}},
+                      {"jsonrpc":"2.0","id":2,"method":"tools/list"}]
+            tool_check=subprocess.run([registration["command"],*registration["args"]],
+                input="".join(json.dumps(message)+"\n" for message in messages),
+                env={**os.environ,**registration["env"]},capture_output=True,text=True,encoding="utf8",timeout=15,
+                creationflags=getattr(subprocess,"CREATE_NO_WINDOW",0))
+            assert tool_check.returncode==0,tool_check.stderr[:500]
+            replies=[json.loads(line) for line in tool_check.stdout.splitlines() if line.strip()]
+            assert [tool["name"] for tool in replies[-1]["result"]["tools"]]==["analyze_image"]
             api("/api/settings",{"request_compression":"off"})
             connection=http.client.HTTPConnection("127.0.0.1",runtime["port"],timeout=5)
             connection.request("POST","/relay/"+settings["relay_token"]+"/responses",json.dumps(request_body()).encode(),{"Content-Type":"application/json"})
@@ -144,7 +145,13 @@ def main():
             assert image_part["type"]=="input_text" and image_path.is_absolute()
             assert image_path.parent==custom_image_folder.resolve() and image_path.is_file()
             api("/api/settings",{"image_isolation_enabled":False})
-            assert tomllib.loads(config.read_text(encoding="utf8"))==original_config
+            expected_native=json.loads(json.dumps(original_config))
+            expected_native.setdefault("tools",{})["view_image"]=True
+            if expected_native.get("features",{}).get("view_image") is False:
+                expected_native["features"].pop("view_image")
+                if not expected_native["features"]:expected_native.pop("features")
+            assert tomllib.loads(config.read_text(encoding="utf8"))==expected_native
+            assert not tool_file.exists()
             assert len(upstream.requests)==model_requests+1
             image_install="verified"
         reset=api("/api/settings",{"image_save_dir":""})
