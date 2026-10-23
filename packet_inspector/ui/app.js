@@ -260,7 +260,7 @@ async function refreshSessionSummaries() {
       } catch(_) {}
       sessionMetadataSupported=false;
     }
-    // Older running previews can still show recent upload size and request time.
+    // Older running backends can still show recent upload size and request time.
     const previous=new Map(sessionSummaries.map(row=>[row.thread_id,row]));
     const ids=state.sessions.slice(0,300), results=ids.map(id=>({...previous.get(id),thread_id:id}));
     const jobs=Array.from({length:Math.min(8,ids.length)},(_,i)=>(sessionLegacyCursor+i)%ids.length);let index=0;
@@ -726,7 +726,7 @@ async function refreshStatus(fill=false) {
 }
 function renderConnectionActions() {
   const s=state.status;if(!s)return;
-  const p=s.profile,disabled=!!(linkSaving||settingsSaving||compressionSaving||exitSaving||connectSaving||connectChecking||s.ui_read_only);
+  const p=s.profile,disabled=!!(linkSaving||settingsSaving||compressionSaving||exitSaving||connectSaving||connectChecking);
   const button=$("header-connect");
   button.hidden=!!p.active;
   button.disabled=disabled||!!p.active||!!p.config_error;
@@ -736,16 +736,8 @@ function renderConnectionActions() {
 }
 function renderStatus(fill=false) {
   const s=state.status;if(!s)return;
-  const preview=!!s.ui_live_reload && !!s.ui_read_only;
   $("desktop-build").hidden=!s.ui_live_reload;
   $("ui-refresh").hidden=!s.ui_live_reload;
-  $("preview-banner").hidden=!preview;
-  document.documentElement.classList.toggle("preview-mode",preview);
-  if(preview) {
-    const style=getComputedStyle(document.documentElement);
-    const width=parseInt(style.getPropertyValue("--desktop-width")), height=parseInt(style.getPropertyValue("--desktop-height"));
-    $("preview-banner").textContent=t("桌面窗口预览 · ")+width+" × "+height+t(s.ui_entry_port_editable?" · 保存后自动刷新":" · 保存后自动刷新 · 设置只读");
-  }
   renderConnectionActions();
   $("empty-connect").hidden=!!s.profile.active;
   renderStorageInfo();
@@ -764,10 +756,10 @@ function fillSettings() {
     $("capacity-retry").checked=!!s.capacity_retry_enabled;
     $("capacity-retry-count").value=s.capacity_retry_max_retries??3;
   }
-  for(const id of ["storage-limit","packet-limit"])$(id).disabled=settingsSaving||!!s.ui_read_only;
-  $("start-on-login").disabled=settingsSaving||!!s.ui_read_only||!s.start_on_login_supported;
-  $("capacity-retry").disabled=settingsSaving||!!s.ui_read_only||!s.capacity_retry_supported;
-  $("capacity-retry-count").disabled=settingsSaving||!!s.ui_read_only||!Number.isInteger(s.capacity_retry_max_retries);
+  for(const id of ["storage-limit","packet-limit"])$(id).disabled=settingsSaving;
+  $("start-on-login").disabled=settingsSaving||!s.start_on_login_supported;
+  $("capacity-retry").disabled=settingsSaving||!s.capacity_retry_supported;
+  $("capacity-retry-count").disabled=settingsSaving||!Number.isInteger(s.capacity_retry_max_retries);
   fillImageAnalysisMode();
   $("startup-hint").textContent=t(s.start_on_login_supported?(s.startup_state_known===false?"无法读取开机启动状态，请重新保存设置。":"登录 Windows 后在后台启动，可从托盘打开窗口。"):"开机启动仅支持已安装的 Windows 版本。");
   $("runtime-settings-message").hidden=!!s.capacity_retry_supported;
@@ -788,7 +780,7 @@ function fillImageAnalysisMode() {
   for(const input of $("image-analysis-mode").querySelectorAll("input")) {
     if(!settingsEditing)input.checked=input.value===imageAnalysisMode(s);
     const unavailable=input.value==="disabled"&&!hasModes;
-    input.disabled=settingsSaving||!!s.ui_read_only||!(s.image_isolation_supported||hasModes)||unavailable;
+    input.disabled=settingsSaving||!(s.image_isolation_supported||hasModes)||unavailable;
     input.closest("label").title=unavailable?t("当前后台暂不支持禁用模式，升级后可用。"):"";
   }
   const descriptions={native:"卸载优化工具，恢复原生图片解析",disabled:"关闭原生与优化图片工具",
@@ -801,7 +793,7 @@ function fillZstdLevel() {
   const selected=settingsEditing?Number(input.value):(s.zstd_level??3);
   const automatic=$("packet-size-protection").checked&&$("auto-zstd-level").checked;
   input.value=String(selected);
-  input.disabled=settingsSaving||!!s.ui_read_only||!supported||s.request_compression!=="zstd"||automatic;
+  input.disabled=settingsSaving||!supported||s.request_compression!=="zstd"||automatic;
   $("zstd-level-open").disabled=input.disabled;
   $("zstd-level-auto-note").hidden=!automatic;
   $("zstd-level-value").textContent=t("{level}级").replace("{level}",selected);
@@ -865,7 +857,7 @@ function renderCompressionMode() {
   for(const button of document.querySelectorAll("#request-compression button")) {
     const disconnect=button.dataset.compression==="disconnected";
     button.setAttribute("aria-pressed",String(disconnect?!connected&&!unknown:connected&&button.dataset.compression===mode));
-    button.disabled=compressionSaving||settingsSaving||exitSaving||!!linkSaving||!!s.ui_read_only||(disconnect?unknown||connected&&!s.profile.can_restore:!supported||!connected);
+    button.disabled=compressionSaving||settingsSaving||exitSaving||!!linkSaving||(disconnect?unknown||connected&&!s.profile.can_restore:!supported||!connected);
   }
   $("request-compression").setAttribute("aria-busy",String(compressionSaving));
   $("compression-hint").textContent=!connected?t("接入 Codex 后可切换传输模式。"):supported?t(mode==="zstd"?"无损压缩，减小上传体积，保留完整内容。":"不额外压缩，原样转发并分析请求。"):t("当前中转暂不支持此功能。");
@@ -877,7 +869,7 @@ function renderCompressionMode() {
 }
 function requestCompressionChange(mode) {
   const s=state.status,dialog=$("compression-confirm-dialog");
-  if(!s||!s.profile?.active||compressionSaving||settingsSaving||settingsOpening||settingsEditing||linkSaving||exitSaving||connectSaving||$("connect-confirm-dialog").open||$("exit-confirm-dialog").open||s.ui_read_only||dialog.open)return;
+  if(!s||!s.profile?.active||compressionSaving||settingsSaving||settingsOpening||settingsEditing||linkSaving||exitSaving||connectSaving||$("connect-confirm-dialog").open||$("exit-confirm-dialog").open||dialog.open)return;
   const disconnect=mode==="disconnected";
   if(disconnect?(!s.profile.can_restore||s.profile.config_error||s.provider_sync_error):(!["off","zstd"].includes(mode)||!["off","zstd"].includes(s.request_compression)||mode===s.request_compression))return;
   compressionTarget=mode;
@@ -896,7 +888,7 @@ function cancelCompressionChange() {
 }
 async function confirmCompressionChange() {
   const s=state.status,mode=compressionTarget,disconnect=mode==="disconnected";
-  if(!s||!s.profile?.active||compressionSaving||settingsSaving||linkSaving||s.ui_read_only)return;
+  if(!s||!s.profile?.active||compressionSaving||settingsSaving||linkSaving)return;
   if(disconnect?(!s.profile.can_restore||s.profile.config_error||s.provider_sync_error):(!["off","zstd"].includes(mode)||!["off","zstd"].includes(s.request_compression)))return;
   if(!disconnect&&mode===s.request_compression){cancelCompressionChange();return;}
   compressionSaving=true;compressionRevision++;renderConnectionActions();
@@ -926,7 +918,7 @@ function renderConnectPrompt() {
   for(const key of ["cancel","apply"])$("connect-confirm-"+key).disabled=connectSaving;
   $("connect-confirm-apply").textContent=t(connectSaving?"正在接入…":"确认接入");
   if(dialog.open&&s.profile?.active&&!connectSaving)cancelConnectPrompt();
-  if(startupConnectChecked||!s.ui_desktop||s.ui_read_only||s.ui_exit_request||exitFinished)return;
+  if(startupConnectChecked||!s.ui_desktop||s.ui_exit_request||exitFinished)return;
   if(s.profile?.config_error||typeof s.profile?.active!=="boolean")return;
   if(s.profile.active){startupConnectChecked=true;return;}
   if(settingsSaving||settingsOpening||settingsEditing||linkSaving||compressionSaving||exitSaving||document.querySelector("dialog[open]"))return;
@@ -934,13 +926,13 @@ function renderConnectPrompt() {
 }
 async function requestConnection(source="header") {
   const s=state.status,dialog=$("connect-confirm-dialog");
-  if(!s||s.profile?.active||s.profile?.config_error||s.ui_read_only||connectSaving||connectChecking||linkSaving||settingsSaving||settingsOpening||compressionSaving||exitSaving||dialog.open||$("exit-confirm-dialog").open||$("settings-restart-dialog").open)return;
+  if(!s||s.profile?.active||s.profile?.config_error||connectSaving||connectChecking||linkSaving||settingsSaving||settingsOpening||compressionSaving||exitSaving||dialog.open||$("exit-confirm-dialog").open||$("settings-restart-dialog").open)return;
   if(settingsEditing)return;
   startupConnectChecked=true;connectChecking=true;renderConnectionActions();
   try {await refreshStatus();}
   finally {connectChecking=false;renderConnectionActions();}
   const current=state.status;
-  if(current.profile?.active||current.ui_read_only||current.profile?.config_error||current.ui_exit_request||exitSaving||exitFinished||$("exit-confirm-dialog").open)return;
+  if(current.profile?.active||current.profile?.config_error||current.ui_exit_request||exitSaving||exitFinished||$("exit-confirm-dialog").open)return;
   connectSource=source;
   $("connect-confirm-cancel").textContent=t(source==="startup"?"暂不接入":"取消");
   $("connect-confirm-hint").textContent=t("接入会备份并更新 Codex 配置，完成后需重启 ChatGPT App。");
@@ -975,7 +967,7 @@ function renderExitRequest() {
     if(!exitSaving){exitRequest=null;if(dialog.open)dialog.close();}
     return;
   }
-  if(s.ui_read_only||settingsSaving||settingsOpening||compressionSaving||linkSaving||$("compression-confirm-dialog").open)return;
+  if(settingsSaving||settingsOpening||compressionSaving||linkSaving||$("compression-confirm-dialog").open)return;
   if(connectSaving)return;
   if($("connect-confirm-dialog").open)cancelConnectPrompt();
   const fresh=exitRequest!==id;
@@ -996,7 +988,7 @@ function renderExitRequest() {
   if(!dialog.open)dialog.showModal();
 }
 async function confirmExit(which) {
-  if(!exitRequest||exitSaving||exitFinished||state.status?.ui_read_only)return;
+  if(!exitRequest||exitSaving||exitFinished)return;
   if(which==="restore"&&$("exit-confirm-restore").disabled)return;
   exitSaving=true;exitRevision++;renderConnectionActions();renderExitRequest();
   $("exit-confirm-message").hidden=true;
@@ -1022,12 +1014,12 @@ function fillImageDirectory() {
   const defaultPath=imageDefaultDirectory();
   if(!settingsEditing)input.value=s.image_save_dir||defaultPath;
   input.placeholder=defaultPath;
-  for(const id of ["image-save-dir","image-save-dir-reset"])$(id).disabled=settingsSaving||!!s.ui_read_only||!supported||selectedImageAnalysisMode()!=="optimized";
+  for(const id of ["image-save-dir","image-save-dir-reset"])$(id).disabled=settingsSaving||!supported||selectedImageAnalysisMode()!=="optimized";
 }
 function fillEntryPort() {
   const s=state.status,port=s.entry_port,supported=!!s.entry_port_supported&&!!port;
   if(!settingsEditing)$("entry-port").value=port?.configured_port??port?.current_port??s.relay_port??47844;
-  $("entry-port").disabled=settingsSaving||!supported||!!s.ui_read_only&&!s.ui_entry_port_editable;
+  $("entry-port").disabled=settingsSaving||!supported;
   renderEntryPortStatus();
 }
 function renderEntryPortStatus() {
@@ -1051,7 +1043,7 @@ function providerStatus(s) {
 function contextMessage(text,error=false) { const node=$("context-message");node.textContent=text;node.className="help"+(error?" error":"");node.hidden=!text; }
 function syncContextDefaults() {
   for(const key of ["context","compact"]) {
-    const unavailable=settingsSaving||!contextSettings||!!state.status?.ui_read_only;
+    const unavailable=settingsSaving||!contextSettings;
     const input=$(key+"-tokens"),useDefault=$(key+"-default").checked;
     $(key+"-default").disabled=unavailable;
     if(useDefault) {
@@ -1063,7 +1055,7 @@ function syncContextDefaults() {
   }
 }
 function editContextValue(key) {
-  if(!settingsEditing||settingsSaving||!contextSettings||state.status?.ui_read_only)return;
+  if(!settingsEditing||settingsSaving||!contextSettings)return;
   const useDefault=$(key+"-default");
   if(!useDefault.checked)return;
   useDefault.checked=false;
@@ -1176,7 +1168,7 @@ async function saveSettings() {
   for(const input of $("settings-dialog").querySelectorAll(".settings-content input:not(:disabled)")) {
     if(!input.reportValidity())return;
   }
-  const editable=!s.ui_read_only,protectionSupported="packet_size_protection_enabled" in s;
+  const protectionSupported="packet_size_protection_enabled" in s;
   const entries=[
     ["zstd_level","zstd_level",Number(draft.zstd_level),Number.isInteger(s.zstd_level)],
     ["packet_size_protection_enabled","packet_size_protection_enabled",draft.packet_size_protection_enabled,protectionSupported],
@@ -1191,9 +1183,9 @@ async function saveSettings() {
     ["image_save_dir","image_save_dir",draft.image_save_dir===imageDefaultDirectory()?"":draft.image_save_dir,s.image_save_dir_supported],
     ["max_storage_mb","max_storage_mb",Number(draft.max_storage_mb),true],
     ["max_packets","max_packets",Number(draft.max_packets),true]
-  ].filter(([field,,,supported])=>editable&&supported&&changed.has(field));
-  const contextChanged=editable&&contextSettings&&["context_tokens","compact_tokens"].some(key=>changed.has(key));
-  const portChanged=s.entry_port_supported&&s.entry_port&&(!s.ui_read_only||s.ui_entry_port_editable)&&changed.has("entry_port");
+  ].filter(([field,,,supported])=>supported&&changed.has(field));
+  const contextChanged=contextSettings&&["context_tokens","compact_tokens"].some(key=>changed.has(key));
+  const portChanged=s.entry_port_supported&&s.entry_port&&changed.has("entry_port");
   const controls=new Map([...$("settings-dialog").querySelectorAll("input,select,button")].map(node=>[node,node.disabled]));
   let saved=0,error=null;
   settingsSaveProgress={total:Number(!!entries.length)+Number(!!contextChanged)+Number(!!portChanged)+Number(changed.has("language")),steps:[]};
@@ -1734,7 +1726,7 @@ function fillPacketProtection() {
   if(!settingsEditing){$("packet-size-protection").checked=!!s.packet_size_protection_enabled;$("budget").value=s.budget_bytes/1000;automatic.checked=autoSupported&&s.auto_zstd_level_enabled;}
   if(!$("packet-size-protection").checked)automatic.checked=false;
   $("budget").min=(s.packet_size_min_bytes||50001)/1000;$("budget").max=(s.packet_size_max_bytes||134217728)/1000;
-  $("packet-size-protection").disabled=settingsSaving||!!s.ui_read_only||!supported;
+  $("packet-size-protection").disabled=settingsSaving||!supported;
   $("budget").disabled=$("packet-size-protection").disabled||!$("packet-size-protection").checked;
   automatic.disabled=$("packet-size-protection").disabled||!$("packet-size-protection").checked||!autoSupported;
   automatic.closest("label").title=!autoSupported?t("当前中转暂不支持自动选择压缩等级。"):!$("packet-size-protection").checked?t("请先开启请求大小保护"):"";
@@ -1756,7 +1748,7 @@ for(const key of ["context","compact"]) {
   });
 }
 action("image-save-dir-reset",()=>{
-  if(settingsSaving||state.status.ui_read_only||!state.status.image_save_dir_supported||selectedImageAnalysisMode()!=="optimized")return;
+  if(settingsSaving||!state.status.image_save_dir_supported||selectedImageAnalysisMode()!=="optimized")return;
   $("image-save-dir").value=imageDefaultDirectory();updateSettingsSaveState();
 });
 async function applyLinkAction(which) {
@@ -1777,7 +1769,7 @@ async function applyLinkAction(which) {
 }
 async function linkAction(which) {
   const s=state.status;
-  if(linkSaving||settingsSaving||compressionSaving||!s||s.ui_read_only)return;
+  if(linkSaving||settingsSaving||compressionSaving||!s)return;
   if(which==="activate"?(s.profile.active||s.profile.config_error):!s.profile.can_restore)return;
   linkSaving=which;renderConnectionActions();updateSettingsSaveState(false);
   try {
