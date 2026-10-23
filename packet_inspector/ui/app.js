@@ -743,7 +743,7 @@ function fillSettings() {
   $("capacity-retry").disabled=settingsSaving||!!s.ui_read_only||!s.capacity_retry_supported;
   $("capacity-retry-count").disabled=settingsSaving||!!s.ui_read_only||!Number.isInteger(s.capacity_retry_max_retries);
   $("image-isolation").disabled=settingsSaving||!!s.ui_read_only||!s.image_isolation_supported;
-  $("image-isolation-hint").textContent=t(s.image_isolation_supported?"关闭原生 view_image，并安装新的图片解析工具，主请求中只需图片路径，可以降低包大小":"当前中转暂不支持此功能。");
+  $("image-isolation-hint").textContent=t(s.image_isolation_supported?"替换后主请求只包含图片路径，降低大小":"当前中转暂不支持此功能。");
   $("startup-hint").textContent=t(s.start_on_login_supported?(s.startup_state_known===false?"无法读取开机启动状态，请重新保存设置。":"登录 Windows 后在后台启动，可从托盘打开窗口。"):"开机启动仅支持已安装的 Windows 版本。");
   $("runtime-settings-message").hidden=!!s.capacity_retry_supported;
   $("runtime-settings-message").textContent=s.capacity_retry_supported?"":t("当前中转暂不支持此功能。");

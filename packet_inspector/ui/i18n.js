@@ -137,7 +137,7 @@ const uiI18n = (() => {
     "保存目录":"Save folder",
     "使用默认目录":"Use default folder",
     "图片保存路径已保存，立即用于新保存的图片。":"Image folder saved. Newly saved images use it immediately.",
-    "关闭原生 view_image，并安装新的图片解析工具，主请求中只需图片路径，可以降低包大小":"Disable native view_image and install a new image analysis tool. Main requests only need image paths, reducing payload size.",
+    "替换后主请求只包含图片路径，降低大小":"After replacement, main requests contain only image paths, reducing payload size.",
     "当前中转暂不支持图片隔离，请升级中转后启用。":"Upgrade the forwarding service to enable image isolation.",
     "图片工具设置已保存，请重新加载 Codex 后继续使用。":"Image tool settings saved. Reload Codex before continuing.",
     "正在安装或检查独立图片工具…":"Installing or checking the isolated image reader…",
