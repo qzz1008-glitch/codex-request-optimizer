@@ -118,7 +118,7 @@ The stable endpoint receives requests. The background service analyzes them, app
 
 Image handling has two parts: saving local attachments and providing a separate image analysis tool.
 
-When enabled, the relay saves embedded images as local attachments and uses their paths in the main request sent upstream. The image analysis tool connects through MCP, analyzes images in a separate session, and returns text results to the main session.
+When enabled, the relay saves embedded images as local attachments and uses their paths in the main request sent upstream. The EXE installs and registers a separate stdio MCP image tool; Codex launches it, analyzes images in an independent session, and returns text to the main session. The tool runs with Windows PowerShell and has its own installed files. The EXE installs, updates, and uninstalls it without hosting an image-tool HTTP endpoint or using tool hooks. Selecting Native uninstalls the image tool installed by this application and restores the native `view_image` tool.
 
 ### Usage and request records
 

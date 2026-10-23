@@ -146,7 +146,7 @@ const uiI18n = (() => {
     "原生":"Native",
     "禁用":"Disabled",
     "优化":"Optimized",
-    "使用原生图片工具，图片随主请求发送":"Use native image tools; images are sent in the main request.",
+    "卸载优化工具，恢复原生图片解析":"Uninstall optimized tools and restore native image analysis.",
     "关闭原生与优化图片工具":"Disable native and optimized image tools.",
     "主请求仅保留图片路径":"Keep only image paths in the main request.",
     "当前后台暂不支持禁用模式，升级后可用。":"Upgrade the backend to use disabled mode.",
