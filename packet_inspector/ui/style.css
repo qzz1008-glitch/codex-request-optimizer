@@ -158,7 +158,9 @@ code.session-id{font-family:Consolas,"Cascadia Mono",monospace;font-size:11px;wo
   --muted:#526174;
   --settings-label-width:200px;
   --settings-inline-label-width:184px;
-  --settings-number-width:168px;
+  --settings-number-width:128px;
+  --settings-context-width:152px;
+  --settings-path-width:320px;
   --settings-padding:28px;
   --settings-control-height:36px;
   --settings-control-radius:8px;
@@ -228,7 +230,7 @@ code.session-id{font-family:Consolas,"Cascadia Mono",monospace;font-size:11px;wo
 #settings-dialog .entry-port-status:is([data-state=pending],[data-state=unsaved]){color:var(--warn)}
 #settings-dialog .entry-port-status[data-state=error]{color:var(--danger)}
 #settings-dialog .zstd-level-control{display:grid;grid-template-columns:var(--settings-label-width) minmax(0,1fr);align-items:center;gap:16px;margin:0}
-#settings-dialog .zstd-level-trigger{width:100%;max-width:100%;font-variant-numeric:tabular-nums;display:flex;align-items:center;justify-content:space-between;gap:12px;text-align:left}
+#settings-dialog .zstd-level-trigger{width:var(--settings-number-width);max-width:100%;justify-self:start;font-variant-numeric:tabular-nums;display:flex;align-items:center;justify-content:space-between;gap:12px;text-align:left}
 #zstd-level-dialog{width:min(520px,calc(100vw - 32px));max-height:min(640px,calc(100vh - 40px));padding:20px;overflow:hidden}
 #zstd-level-dialog[open]{display:flex;flex-direction:column}
 #zstd-level-dialog .dialog-heading{flex:none;align-items:center;gap:16px;margin-bottom:6px}
@@ -261,12 +263,12 @@ code.session-id{font-family:Consolas,"Cascadia Mono",monospace;font-size:11px;wo
 #settings-dialog .capacity-retry-limit input{width:68px;text-align:center}
 #settings-dialog .capacity-retry-limit>span{font-size:12px}
 #settings-dialog .image-directory-settings{display:grid;grid-template-columns:var(--settings-label-width) minmax(0,1fr);align-items:center;gap:8px 16px;margin:16px 0 0}
-#settings-dialog .image-directory-row{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:8px;min-width:0}
+#settings-dialog .image-directory-row{display:grid;grid-template-columns:minmax(0,var(--settings-path-width)) auto;justify-content:start;align-items:center;gap:8px;min-width:0}
 #settings-dialog .image-directory-row input{width:100%;min-width:0}
 #settings-dialog .image-directory-settings .help{grid-column:2;margin:0}
 #settings-dialog .context-heading{margin:0}
 #settings-dialog .context-grid{display:grid;grid-template-columns:minmax(0,1fr);gap:12px}
-#settings-dialog .context-control{display:grid;grid-template-columns:var(--settings-label-width) var(--settings-number-width) minmax(0,1fr);align-items:center;gap:16px;min-width:0}
+#settings-dialog .context-control{display:grid;grid-template-columns:var(--settings-label-width) var(--settings-context-width) minmax(0,1fr);align-items:center;gap:16px;min-width:0}
 #settings-dialog .context-label{min-width:0;margin:0;font-weight:400;overflow-wrap:anywhere}
 #settings-dialog .context-value{display:flex;align-items:center;gap:8px;min-width:0;height:var(--settings-control-height);padding:7px 10px;border:1px solid var(--line);border-radius:var(--settings-control-radius);background:var(--panel)}
 #settings-dialog .context-value:focus-within{outline:2px solid var(--accent);outline-offset:2px}
@@ -306,7 +308,7 @@ code.session-id{font-family:Consolas,"Cascadia Mono",monospace;font-size:11px;wo
   #settings-dialog .image-directory-settings .help{grid-column:1}
   #settings-dialog .capacity-retry-limit{grid-template-columns:68px minmax(0,1fr);gap:8px}
   #settings-dialog .capacity-retry-limit label{grid-column:1/-1}
-  #settings-dialog .context-control{grid-template-columns:var(--settings-number-width) minmax(0,1fr);gap:8px 12px}
+  #settings-dialog .context-control{grid-template-columns:var(--settings-context-width) minmax(0,1fr);gap:8px 12px}
   #settings-dialog .context-label{grid-column:1/-1}
   #settings-dialog .context-default{justify-self:end}
   #settings-dialog .settings-footer .help{grid-column:1/-1}
@@ -314,7 +316,7 @@ code.session-id{font-family:Consolas,"Cascadia Mono",monospace;font-size:11px;wo
   #settings-dialog #settings-cancel{grid-column:2}
 }
 @container settings-dialog (max-width:380px){
-  #settings-dialog .image-directory-row{grid-template-columns:minmax(0,1fr)}
+  #settings-dialog .image-directory-row{grid-template-columns:minmax(0,1fr);max-width:var(--settings-path-width)}
   #settings-dialog .image-directory-row button{justify-self:start}
 }
 .updates-actions{align-items:center;flex-wrap:wrap}
