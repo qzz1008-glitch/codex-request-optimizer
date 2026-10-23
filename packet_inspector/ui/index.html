@@ -99,8 +99,9 @@
     </section>
     <section><h3>传输压缩</h3>
       <div class="zstd-level-control" data-settings-field="zstd_level">
-        <label for="zstd-level">压缩等级</label>
-        <select id="zstd-level" disabled><option value="3">3级（默认）</option></select>
+        <label for="zstd-level-open">压缩等级</label>
+        <input id="zstd-level" type="hidden" value="3" disabled>
+        <button id="zstd-level-open" class="zstd-level-trigger" type="button" aria-haspopup="dialog" aria-controls="zstd-level-dialog" aria-expanded="false" disabled><span id="zstd-level-value">3级（默认）</span><svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
       </div>
       <p id="zstd-level-message" class="help" role="status" hidden></p>
     </section>
@@ -158,6 +159,11 @@
     </section>
     </div>
     <div class="settings-footer"><p id="settings-message" class="help muted" role="status" aria-live="polite"></p><button id="settings-restore" type="button" disabled>恢复</button><button id="settings-save" class="primary" type="button" disabled>保存</button></div>
+  </dialog>
+  <dialog id="zstd-level-dialog" aria-labelledby="zstd-level-title" aria-describedby="zstd-level-note">
+    <div class="dialog-heading"><h2 id="zstd-level-title">选择压缩等级</h2><button id="zstd-level-close" type="button" aria-label="关闭等级选择">✕</button></div>
+    <p id="zstd-level-note" class="help muted">基于历史样本估算，大小相对原始未压缩包。</p>
+    <div class="zstd-level-scroll"><table class="zstd-level-table"><thead><tr><th scope="col">等级</th><th scope="col" class="num">请求大小变化</th><th scope="col" class="num">任务耗时变化</th></tr></thead><tbody id="zstd-level-options"></tbody></table></div>
   </dialog>
   <dialog id="settings-restart-dialog" aria-labelledby="settings-restart-title" aria-describedby="settings-restart-description">
     <h2 id="settings-restart-title">重启 ChatGPT App 后生效</h2>
