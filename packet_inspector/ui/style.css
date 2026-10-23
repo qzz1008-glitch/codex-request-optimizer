@@ -176,6 +176,7 @@ code.session-id{font-family:Consolas,"Cascadia Mono",monospace;font-size:11px;wo
   --settings-context-width:152px;
   --settings-path-width:320px;
   --settings-padding:28px;
+  --settings-section-indent:16px;
   --settings-control-height:36px;
   --settings-control-radius:8px;
   --settings-segment-height:30px;
@@ -199,7 +200,7 @@ code.session-id{font-family:Consolas,"Cascadia Mono",monospace;font-size:11px;wo
   background:var(--panel);
 }
 #settings-dialog h2{margin:0;font-size:20px;font-weight:600;line-height:28px}
-#settings-dialog h3{margin:0 0 16px;font-size:14px;font-weight:600;line-height:22px}
+#settings-dialog h3{margin:0 0 16px;font-size:16px;font-weight:600;line-height:24px}
 #settings-dialog #settings-close{width:32px;min-height:32px;padding:0;color:var(--muted);font-size:18px}
 #settings-dialog>.settings-content{
   flex:1;
@@ -212,7 +213,8 @@ code.session-id{font-family:Consolas,"Cascadia Mono",monospace;font-size:11px;wo
 #settings-dialog>.settings-content::-webkit-scrollbar{width:8px}
 #settings-dialog>.settings-content::-webkit-scrollbar-thumb{border:2px solid var(--panel);border-radius:8px;background:#c3ccd8}
 #settings-dialog>.settings-content::-webkit-scrollbar-thumb:hover{background:#9aa9c5}
-#settings-dialog .settings-content>section{margin:0;padding:20px 0;border-top:1px solid var(--line)}
+#settings-dialog .settings-content>section{margin:0;padding:20px 0;padding-inline-start:var(--settings-section-indent);border-top:1px solid var(--line)}
+#settings-dialog .settings-content>section>:is(h3,.context-heading){margin-inline-start:calc(-1 * var(--settings-section-indent))}
 #settings-dialog .settings-content>section:last-child{padding-bottom:0}
 #settings-dialog label{margin:0;color:var(--ink);font-size:14px;line-height:22px;font-weight:400}
 #settings-dialog :is(button,input,select){font:inherit;font-size:14px}
@@ -226,7 +228,7 @@ code.session-id{font-family:Consolas,"Cascadia Mono",monospace;font-size:11px;wo
 #settings-dialog .help{margin:10px 0 0;color:var(--muted);font-size:13px;line-height:20px;overflow-wrap:anywhere}
 #settings-dialog .help.error{color:var(--danger)}
 #settings-dialog .settings-dirty{border-radius:8px;outline:2px solid var(--accent);outline-offset:4px;background-color:var(--soft)}
-#settings-dialog .settings-language-row{display:grid;grid-template-columns:var(--settings-label-width) minmax(0,1fr);align-items:center;gap:16px;margin:20px 0}
+#settings-dialog .settings-language-row{display:grid;grid-template-columns:var(--settings-label-width) minmax(0,1fr);align-items:center;gap:16px;margin:20px 0;padding-inline-start:var(--settings-section-indent)}
 #settings-dialog :is(.language-toggle,.image-mode-pills){display:inline-flex;justify-self:start;gap:2px;width:max-content;min-width:0;max-width:100%;margin:0;padding:2px;border:1px solid var(--line);border-radius:var(--settings-control-radius);background:var(--bg)}
 #settings-dialog :is(.language-toggle button,.image-mode-pills span){display:block;height:var(--settings-segment-height);min-height:var(--settings-segment-height);padding:5px 8px;border:0;border-radius:var(--settings-segment-radius);font-size:13px;font-weight:400;line-height:20px;text-align:center;white-space:nowrap}
 #settings-dialog .language-toggle button{min-width:76px}
@@ -333,6 +335,7 @@ code.session-id{font-family:Consolas,"Cascadia Mono",monospace;font-size:11px;wo
   #settings-dialog .image-mode-row .runtime-inline-hint{padding-inline-start:0}
 }
 @container settings-dialog (max-width:500px){
+  #settings-dialog>.settings-content{--settings-section-indent:12px}
   #settings-dialog .settings-language-row{grid-template-columns:minmax(0,1fr) auto}
   #settings-dialog :is(.entry-port-row,.zstd-level-control,.packet-size-limit,.runtime-setting-row,.image-directory-settings,.settings-grid label){grid-template-columns:minmax(0,1fr);gap:8px}
   #settings-dialog .updates-actions{grid-template-columns:minmax(0,1fr)}
