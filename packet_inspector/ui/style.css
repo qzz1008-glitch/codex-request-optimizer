@@ -216,7 +216,26 @@ code.session-id{font-family:Consolas,"Cascadia Mono",monospace;font-size:11px;wo
 #settings-dialog .entry-port-status:is([data-state=pending],[data-state=unsaved]){color:var(--warn)}
 #settings-dialog .entry-port-status[data-state=error]{color:var(--danger)}
 #settings-dialog .zstd-level-control{display:grid;grid-template-columns:var(--settings-label-width) minmax(0,1fr);align-items:center;gap:16px;margin:0}
-#settings-dialog .zstd-level-control select{width:100%;max-width:100%;font-variant-numeric:tabular-nums}
+#settings-dialog .zstd-level-trigger{width:100%;max-width:100%;font-variant-numeric:tabular-nums;display:flex;align-items:center;justify-content:space-between;gap:12px;text-align:left}
+#zstd-level-dialog{width:min(520px,calc(100vw - 32px));max-height:min(640px,calc(100vh - 40px));padding:20px;overflow:hidden}
+#zstd-level-dialog[open]{display:flex;flex-direction:column}
+#zstd-level-dialog .dialog-heading{flex:none;align-items:center;gap:16px;margin-bottom:6px}
+#zstd-level-title{font-size:18px;line-height:1.4;margin:0}
+#zstd-level-close{border:0;padding:4px 7px}
+#zstd-level-note{flex:none;margin:0 0 14px}
+.zstd-level-scroll{min-height:0;max-height:500px;overflow:auto;scrollbar-gutter:stable;border:1px solid var(--line);border-radius:8px}
+.zstd-level-table{table-layout:fixed;font-size:13px}
+.zstd-level-table th,.zstd-level-table td{padding:6px 12px;vertical-align:middle}
+.zstd-level-table th{position:sticky;top:0;z-index:1;background:var(--panel);font-size:12px;line-height:1.4;padding-top:10px;padding-bottom:10px}
+.zstd-level-table th:first-child{width:42%}
+.zstd-level-table tbody tr{cursor:pointer}
+.zstd-level-table tbody tr:hover td,.zstd-level-table tbody tr:focus-within td{background:#f5f7fc}
+.zstd-level-table tbody tr.selected td{background:var(--soft);color:var(--accent)}
+.zstd-level-option{display:flex;align-items:center;gap:6px;flex-wrap:wrap;min-height:24px;border:0;border-radius:4px;padding:0;background:transparent;color:inherit;font-size:13px}
+.zstd-level-option:hover{background:transparent}
+.zstd-level-check{display:inline-block;width:14px;flex:none;text-align:center}
+.zstd-level-tag{padding:1px 5px;border-radius:4px;background:#edf0f5;color:#65758b;font-size:10px;line-height:16px}
+.zstd-level-table tr.selected .zstd-level-tag{background:#dce6ff;color:var(--accent)}
 #settings-dialog .packet-size-controls{display:grid;grid-template-columns:var(--settings-label-width) minmax(0,1fr);align-items:center;gap:12px 16px;margin:0}
 #settings-dialog :is(.runtime-toggle,.overflow-toggle){display:flex;align-items:center;gap:8px;min-width:0;min-height:36px;margin:0;color:var(--ink);font-size:14px;line-height:22px}
 #settings-dialog .packet-size-limit{display:grid;grid-template-columns:var(--settings-inline-label-width) max-content;align-items:center;justify-self:start;gap:8px;margin:0}

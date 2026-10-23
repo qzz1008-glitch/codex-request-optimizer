@@ -773,16 +773,56 @@ function fillImageAnalysisMode() {
 function fillZstdLevel() {
   const s=state.status,input=$("zstd-level"),supported=Number.isInteger(s.zstd_level);
   const selected=settingsEditing?Number(input.value):(s.zstd_level??3);
-  input.replaceChildren(...zstdLevelEstimates.map(([level,size,,time])=>{
-    const text=t("{level}级 · 请求大小≈ -{size}%，任务耗时≈ +{time}%")
-      .replace("{level}",level).replace("{size}",size.toFixed(2)).replace("{time}",time.toFixed(3));
-    const option=el("option","",text+(level===3?t("（默认）"):level===16?t("（推荐）"):""));
-    option.value=String(level);return option;
-  }));
   input.value=String(selected);
   input.disabled=settingsSaving||!!s.ui_read_only||!supported||s.request_compression!=="zstd";
+  $("zstd-level-open").disabled=input.disabled;
+  $("zstd-level-value").textContent=t("{level}级").replace("{level}",selected)+(selected===3?t("（默认）"):selected===16?t("（推荐）"):"");
+  if($("zstd-level-dialog").open) {
+    if(input.disabled)closeZstdLevelPicker();else renderZstdLevelRows();
+  }
   const message=supported&&s.request_compression!=="zstd"?t("切换为 zstd 压缩后可设置等级。"):"";
   $("zstd-level-message").textContent=message;$("zstd-level-message").hidden=!message;
+}
+function renderZstdLevelRows() {
+  const selected=Number($("zstd-level").value);
+  $("zstd-level-options").replaceChildren(...zstdLevelEstimates.map(([level,size,,time])=>{
+    const current=level===selected,row=el("tr",current?"selected":"");row.dataset.level=String(level);
+    const cell=el("td"),button=el("button","zstd-level-option");button.type="button";
+    button.setAttribute("aria-pressed",String(current));button.tabIndex=current?0:-1;
+    const mark=el("span","zstd-level-check",current?"✓":"");mark.setAttribute("aria-hidden","true");
+    button.append(mark,el("span","",t("{level}级").replace("{level}",level)));
+    if(level===3||level===16)button.append(el("span","zstd-level-tag",t(level===3?"默认":"推荐")));
+    cell.append(button);row.append(cell,el("td","num","-"+size.toFixed(2)+"%"),el("td","num","+"+time.toFixed(3)+"%"));
+    return row;
+  }));
+}
+function openZstdLevelPicker() {
+  const dialog=$("zstd-level-dialog");
+  if(!$("settings-dialog").open||$("zstd-level-open").disabled||dialog.open)return;
+  renderZstdLevelRows();dialog.showModal();$("zstd-level-open").setAttribute("aria-expanded","true");
+  const selected=dialog.querySelector(".zstd-level-option[aria-pressed='true']");
+  selected?.focus({preventScroll:true});selected?.scrollIntoView({block:"center"});
+}
+function closeZstdLevelPicker(restoreFocus=true) {
+  if($("zstd-level-dialog").open)$("zstd-level-dialog").close();
+  $("zstd-level-open").setAttribute("aria-expanded","false");
+  if(restoreFocus&&$("settings-dialog").open&&!$("zstd-level-open").disabled)$("zstd-level-open").focus({preventScroll:true});
+}
+function selectZstdLevel(value) {
+  const input=$("zstd-level"),level=Number(value);
+  fillZstdLevel();
+  if(input.disabled||!Number.isInteger(level)||level<1||level>17)return;
+  input.value=String(level);input.dispatchEvent(new Event("change",{bubbles:true}));
+  closeZstdLevelPicker();
+}
+function navigateZstdLevels(event) {
+  if(!["ArrowUp","ArrowDown","Home","End"].includes(event.key))return;
+  const options=[...$("zstd-level-options").querySelectorAll(".zstd-level-option")],index=options.indexOf(document.activeElement);
+  if(index<0)return;
+  event.preventDefault();
+  const next=event.key==="Home"?0:event.key==="End"?options.length-1:Math.max(0,Math.min(options.length-1,index+(event.key==="ArrowDown"?1:-1)));
+  options.forEach((option,i)=>option.tabIndex=i===next?0:-1);
+  options[next].focus({preventScroll:true});options[next].scrollIntoView({block:"nearest"});
 }
 function renderLanguageSelection() {
   for(const button of document.querySelectorAll("#language-toggle button")) {
@@ -1556,6 +1596,7 @@ function restoreSettings() {
 }
 function closeSettings() {
   if(settingsSaving||$("settings-restart-dialog").open)return;
+  closeZstdLevelPicker(false);
   $("settings-dialog").close();discardSettingsDraft();
 }
 action("settings-restart-confirm",()=>{
@@ -1565,7 +1606,7 @@ $("settings-restart-dialog").addEventListener("cancel",event=>event.preventDefau
 action("settings-close",closeSettings);action("settings-restore",restoreSettings);
 $("settings-dialog").addEventListener("cancel",event=>{event.preventDefault();closeSettings();});
 $("settings-dialog").addEventListener("close",()=>{
-  if(!$("settings-dialog").open)discardSettingsDraft();
+  if(!$("settings-dialog").open){closeZstdLevelPicker(false);discardSettingsDraft();}
 });
 $("capacity-retry-count").addEventListener("input",event=>{
   if(event.target.valueAsNumber>99)event.target.value="99";
@@ -1573,6 +1614,17 @@ $("capacity-retry-count").addEventListener("input",event=>{
 $("settings-dialog").querySelector(".settings-content").addEventListener("input",()=>updateSettingsSaveState());
 $("settings-dialog").querySelector(".settings-content").addEventListener("change",()=>updateSettingsSaveState());
 $("zstd-level").addEventListener("change",fillZstdLevel);
+action("zstd-level-open",openZstdLevelPicker);action("zstd-level-close",()=>closeZstdLevelPicker());
+$("zstd-level-options").addEventListener("click",event=>{
+  const row=event.target.closest("tr[data-level]");if(row)selectZstdLevel(row.dataset.level);
+});
+$("zstd-level-dialog").addEventListener("keydown",navigateZstdLevels);
+$("zstd-level-dialog").addEventListener("cancel",event=>{event.preventDefault();closeZstdLevelPicker();});
+$("zstd-level-dialog").addEventListener("close",()=>$("zstd-level-open").setAttribute("aria-expanded","false"));
+$("zstd-level-dialog").addEventListener("click",event=>{
+  const dialog=$("zstd-level-dialog"),rect=dialog.getBoundingClientRect();
+  if(event.target===dialog&&(event.clientX<rect.left||event.clientX>rect.right||event.clientY<rect.top||event.clientY>rect.bottom))closeZstdLevelPicker();
+});
 $("image-analysis-mode").addEventListener("change",()=>{fillImageAnalysisMode();fillImageDirectory();});
 action("settings-save",saveSettings);
 action("ui-refresh",()=>{if(state.status?.ui_live_reload)location.reload();});
