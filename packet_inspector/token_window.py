@@ -17,6 +17,7 @@ from urllib.parse import urlsplit
 READ_BUDGET = 8 * 1024 * 1024
 LINE_LIMIT = 2 * 1024 * 1024
 MAX_EVENTS = 20000
+USAGE_SETTLE_SECONDS = 60
 
 
 def is_token_request(packet, *, include_compaction=False):
@@ -222,8 +223,10 @@ class TokenWindows:
         if next_created is not None and (not _number(next_created) or next_created <= created
                                         or (completed is not None and next_created < completed)):
             return unavailable
-        # Response usage may be persisted shortly after the relay closes its stream.
-        end = min(completed + 5 if completed is not None else time.time(), next_created or float("inf"))
+        # Native usage can arrive after slow post-response processing. Allow a
+        # bounded delay, always stopping before the next model request starts.
+        end = min(completed + USAGE_SETTLE_SECONDS if completed is not None else time.time(),
+                  next_created or float("inf"))
         try:
             with self._lock:
                 path = self._rollout(packet.get("thread_id"))
@@ -238,7 +241,7 @@ class TokenWindows:
         except (OSError, sqlite3.Error, ValueError, TypeError):
             return unavailable
         if len(candidates) != 1:
-            waiting = next_created is None and (completed is None or time.time() < completed + 5)
+            waiting = next_created is None and (completed is None or time.time() < completed + USAGE_SETTLE_SECONDS)
             return {"state": "pending"} if not candidates and waiting else unavailable
         event = candidates[0]
         return {"state": "available", "source": "codex_history", "recorded_at": event["at"],
