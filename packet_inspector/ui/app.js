@@ -35,6 +35,7 @@ const contextCustomValues = new Map();
 let settingsEditing = false, settingsSaving = false, settingsOpening = false, settingsRevision = 0;
 let linkSaving = "", linkRevision = 0;
 let settingsBaseline = null, settingsLanguage = null;
+let settingsSaveProgress = {total:0,steps:[]};
 const settingsRestartChanges = new Map();
 // 200 local viewing copies, three passes per level. Size is relative to the
 // uncompressed JSON mean (956,534.845 B); time share uses the historical full
@@ -1119,6 +1120,31 @@ function changedSettings(draft=readSettingsDraft()) {
 function setSettingsMessage(text,error=false) {
   const node=$("settings-message");node.textContent=text;node.className="help "+(error?"error":"muted");
 }
+function renderSettingsSaveProgress() {
+  $("settings-save").setAttribute("aria-busy",String(settingsSaving));
+  $("settings-save-label").textContent=t(settingsSaving?"保存中":"保存");
+  const log=$("settings-save-log"),states={running:["…","处理中"],done:["✓","已保存"],error:["×","失败"]};
+  log.replaceChildren(...settingsSaveProgress.steps.map(step=>{
+    const item=el("li"),[mark,label]=states[step.state];item.dataset.state=step.state;
+    const icon=el("span","settings-step-icon",mark);icon.setAttribute("aria-hidden","true");
+    item.append(icon,el("span","settings-step-label",t(step.label)),el("span","settings-step-state",t(label)));
+    return item;
+  }));
+  log.hidden=!settingsSaveProgress.steps.length;log.scrollTop=log.scrollHeight;
+  if(settingsSaving) {
+    const completed=settingsSaveProgress.steps.filter(step=>step.state==="done").length;
+    setSettingsMessage(t("正在保存设置…")+" "+completed+"/"+settingsSaveProgress.total);
+  }
+}
+function resetSettingsSaveProgress() {
+  settingsSaveProgress={total:0,steps:[]};renderSettingsSaveProgress();
+}
+async function runSettingsSaveStep(label,apply) {
+  const step={label,state:"running"};settingsSaveProgress.steps.push(step);renderSettingsSaveProgress();
+  try {await apply();step.state="done";}
+  catch(error) {step.state="error";throw error;}
+  finally {renderSettingsSaveProgress();}
+}
 function updateSettingsSaveState(clearMessage=true) {
   const changed=new Set(settingsEditing?changedSettings():[]),dirty=changed.size>0;
   for(const node of $("settings-dialog").querySelectorAll("[data-settings-field]"))
@@ -1170,41 +1196,52 @@ async function saveSettings() {
   const portChanged=s.entry_port_supported&&s.entry_port&&(!s.ui_read_only||s.ui_entry_port_editable)&&changed.has("entry_port");
   const controls=new Map([...$("settings-dialog").querySelectorAll("input,select,button")].map(node=>[node,node.disabled]));
   let saved=0,error=null;
+  settingsSaveProgress={total:Number(!!entries.length)+Number(!!contextChanged)+Number(!!portChanged)+Number(changed.has("language")),steps:[]};
   settingsSaving=true;settingsRevision++;
   for(const node of controls.keys())node.disabled=true;
-  $("settings-dialog").setAttribute("aria-busy","true");setSettingsMessage(t("正在保存设置…"));
+  $("settings-dialog").setAttribute("aria-busy","true");renderSettingsSaveProgress();
   try {
     if(entries.length) {
-      const values=Object.fromEntries(entries.map(([,key,value])=>[key,value]));
-      const result=await api("/api/settings",values);
-      state.status={...state.status,...result};
-      for(const [field] of entries)settingsBaseline[field]=draft[field];
-      if(entries.some(([field])=>field==="image_analysis_mode"))
-        trackSettingsRestart("image_analysis_mode",imageAnalysisMode(s),imageAnalysisMode(result));
-      saved++;
+      const label=entries.some(([field])=>["image_analysis_mode","image_save_dir"].includes(field))?"图片与运行设置":
+        entries.some(([field])=>field==="start_on_login")?"开机启动与运行设置":"运行设置";
+      await runSettingsSaveStep(label,async()=>{
+        const values=Object.fromEntries(entries.map(([,key,value])=>[key,value]));
+        const result=await api("/api/settings",values);
+        state.status={...state.status,...result};
+        for(const [field] of entries)settingsBaseline[field]=draft[field];
+        if(entries.some(([field])=>field==="image_analysis_mode"))
+          trackSettingsRestart("image_analysis_mode",imageAnalysisMode(s),imageAnalysisMode(result));
+        saved++;
+      });
     }
     if(contextChanged) {
-      const values=Object.fromEntries(["context_tokens","compact_tokens"].map(key=>[key,draft[key]===null?null:Math.round(Number(draft[key])*1000)]));
-      const previous=contextSettings;
-      contextSettings=await api("/api/context-settings",values);
-      if(contextSettings.changed||contextSettings.reload_required)
-        for(const field of ["context_tokens","compact_tokens"])trackSettingsRestart(field,previous[field],contextSettings[field]);
-      settingsBaseline.context_tokens=draft.context_tokens;settingsBaseline.compact_tokens=draft.compact_tokens;
-      saved++;
+      await runSettingsSaveStep("上下文设置",async()=>{
+        const values=Object.fromEntries(["context_tokens","compact_tokens"].map(key=>[key,draft[key]===null?null:Math.round(Number(draft[key])*1000)]));
+        const previous=contextSettings;
+        contextSettings=await api("/api/context-settings",values);
+        if(contextSettings.changed||contextSettings.reload_required)
+          for(const field of ["context_tokens","compact_tokens"])trackSettingsRestart(field,previous[field],contextSettings[field]);
+        settingsBaseline.context_tokens=draft.context_tokens;settingsBaseline.compact_tokens=draft.compact_tokens;
+        saved++;
+      });
     }
     if(portChanged) {
-      state.status.entry_port=await api("/api/entry-port",{port:Number(draft.entry_port)});
-      settingsBaseline.entry_port=draft.entry_port;saved++;
+      await runSettingsSaveStep("入口端口",async()=>{
+        state.status.entry_port=await api("/api/entry-port",{port:Number(draft.entry_port)});
+        settingsBaseline.entry_port=draft.entry_port;saved++;
+      });
     }
     if(changed.has("language")) {
-      if(editable&&["zh","en"].includes(state.status.ui_language)) {
-        const result=await api("/api/settings",{ui_language:draft.language});
-        if(result.ui_language!==draft.language)throw Error(t("语言设置未保存，请重试。"));
-        state.status={...state.status,...result};
-      }
-      try {await setInterfaceLanguage(draft.language);}
-      finally {if(uiI18n.language===draft.language)settingsBaseline.language=draft.language;}
-      saved++;
+      await runSettingsSaveStep("语言",async()=>{
+        if(editable&&["zh","en"].includes(state.status.ui_language)) {
+          const result=await api("/api/settings",{ui_language:draft.language});
+          if(result.ui_language!==draft.language)throw Error(t("语言设置未保存，请重试。"));
+          state.status={...state.status,...result};
+        }
+        try {await setInterfaceLanguage(draft.language);}
+        finally {if(uiI18n.language===draft.language)settingsBaseline.language=draft.language;}
+        saved++;
+      });
     }
     if(changedSettings().length)throw Error(t("有未保存的修改"));
   } catch(failure) {error=failure;}
@@ -1212,6 +1249,7 @@ async function saveSettings() {
     settingsSaving=false;settingsRevision++;
     for(const [node,disabled] of controls)if(node.isConnected)node.disabled=disabled;
     $("settings-dialog").setAttribute("aria-busy","false");
+    renderSettingsSaveProgress();
     fillSettings();renderContextPlaceholders();renderUpdates();renderStatus();updateSettingsSaveState(false);
     if(error)setSettingsMessage(t(saved?"部分设置已保存，剩余修改未保存：":"保存失败：")+error.message,true);
     else finishSettingsSave();
@@ -1259,6 +1297,7 @@ async function openSettings() {
     await Promise.all([refreshStatus(true),loadContextSettings(),loadUpdates()]);
     settingsLanguage=uiI18n.language;
     settingsBaseline=readSettingsDraft();settingsEditing=true;
+    resetSettingsSaveProgress();
     renderLanguageSelection();renderConnectionActions();renderUpdates();updateSettingsSaveState();
     $("settings-dialog").showModal();
   } finally {settingsOpening=false;}
@@ -1636,6 +1675,7 @@ for(const button of document.querySelectorAll("#language-toggle button"))action(
 action("settings-open",openSettings);action("empty-connect",openSettings);
 function discardSettingsDraft() {
   settingsEditing=false;settingsBaseline=null;settingsLanguage=null;
+  resetSettingsSaveProgress();
   if(state.status)fillSettings();if(contextSettings)fillContextSettings(contextSettings);renderUpdates();
   setSettingsMessage("");
 }
