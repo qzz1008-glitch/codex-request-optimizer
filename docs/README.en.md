@@ -135,6 +135,8 @@ Image handling has two parts: saving local attachments and providing a separate 
 
 When enabled, the relay saves embedded images as local attachments and uses their paths in the main request sent upstream. The EXE installs and registers a separate stdio MCP image tool; Codex launches it, analyzes images in an independent session, and returns text to the main session. The tool runs with Windows PowerShell and has its own installed files. The EXE installs, updates, and uninstalls it without hosting an image-tool HTTP endpoint or using tool hooks. Selecting Native uninstalls the image tool installed by this application and restores the native `view_image` tool.
 
+Image optimization copies `codex-clipboard-*` images from the system temporary directory into `%TEMP%\CodexRequestOptimizer\` and uses the copy paths in the current request, retaining the originals. The copy cache is limited to 256 MiB; later image processing removes copies unused for more than seven days. If copying fails, the original path is retained.
+
 ### Usage and request records
 
 Token usage is captured directly from successful upstream responses, independently of request size protection. Existing local Codex records are used only when older requests lack captured response usage. Usage displays no longer read or show token window limits or occupancy percentages. When data cannot be matched or has not yet been written, the interface shows an unavailable or pending state.
