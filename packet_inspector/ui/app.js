@@ -780,7 +780,7 @@ function fillZstdLevel() {
   if($("zstd-level-dialog").open) {
     if(input.disabled)closeZstdLevelPicker();else renderZstdLevelRows();
   }
-  const message=supported&&s.request_compression!=="zstd"?t("切换为 zstd 压缩后可设置等级。"):"";
+  const message=supported&&s.request_compression!=="zstd"?t("切换为「优化」后可设置等级。"):"";
   $("zstd-level-message").textContent=message;$("zstd-level-message").hidden=!message;
 }
 function renderZstdLevelRows() {
@@ -854,9 +854,9 @@ function requestCompressionChange(mode) {
   if(disconnect?(!s.profile.can_restore||s.profile.config_error||s.provider_sync_error):(!["off","zstd"].includes(mode)||!["off","zstd"].includes(s.request_compression)||mode===s.request_compression))return;
   compressionTarget=mode;
   $("compression-confirm-title").textContent=t(disconnect?"取消接入":"切换传输模式");
-  $("compression-confirm-description").textContent=t(disconnect?"切换为「不接入」并恢复原出口？":mode==="zstd"?
-    "切换为「zstd 压缩」？将无损压缩请求正文，减小上传体积。":
-    "切换为「仅分析」？将关闭 zstd 传输压缩，继续记录和分析请求。");
+  $("compression-confirm-description").textContent=t(disconnect?"切换为「断开」并恢复原出口？":mode==="zstd"?
+    "切换为「优化」？将无损压缩请求正文，减小上传体积。":
+    "切换为「分析」？将关闭 zstd 传输压缩，继续记录和分析请求。");
   $("compression-confirm-hint").textContent=t(disconnect?"重启 ChatGPT App 生效。":"确认后立即用于新请求，无需重启。");
   renderCompressionMode();
   $("compression-confirm-message").hidden=true;
@@ -882,7 +882,7 @@ async function confirmCompressionChange() {
     }
     $("compression-confirm-dialog").close();compressionTarget=null;
     renderStatus();
-    message(t(disconnect?"已切换为不接入。重启 ChatGPT App 生效。":mode==="zstd"?"已切换为 zstd 压缩。":"已切换为仅分析。"));
+    message(t(disconnect?"已切换为断开。重启 ChatGPT App 生效。":mode==="zstd"?"已切换为优化。":"已切换为分析。"));
   } catch(error) {
     $("compression-confirm-message").textContent=error.message;
     $("compression-confirm-message").hidden=false;
@@ -955,10 +955,10 @@ function renderExitRequest() {
   const p=s.profile||{},unknown=typeof p.active!=="boolean"||!!(p.config_error||s.provider_sync_error),connected=!!p.active;
   $("exit-confirm-description").textContent=t(unknown?"无法确认当前接入状态。退出后中转服务将停止，仍使用此出口的 Codex 将无法发送请求。":connected?
     "当前仍处于接入状态。退出后中转服务将停止，Codex 将无法通过当前出口发送请求。":
-    "当前为“不接入”状态，退出将停止中转服务。");
+    "当前为“断开”状态，退出将停止中转服务。");
   $("exit-confirm-hint").textContent=t(connected||unknown?
     "建议选择“切换并退出”，恢复原出口后重启 ChatGPT App。直接退出会保留接入配置，下次使用前需重新打开本程序。":
-    "如刚切换为“不接入”，请重启 ChatGPT App 使原出口生效。");
+    "如刚切换为“断开”，请重启 ChatGPT App 使原出口生效。");
   dialog.setAttribute("aria-busy",String(exitSaving));
   for(const key of ["cancel","direct","restore"])$("exit-confirm-"+key).disabled=exitSaving;
   $("exit-confirm-restore").disabled=exitSaving||unknown||connected&&!p.can_restore;
