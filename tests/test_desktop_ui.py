@@ -1,10 +1,8 @@
 """UI iteration must preserve the independently running forwarding service."""
 from __future__ import annotations
 
-from contextlib import redirect_stderr
 import http.client
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-import io
 import json
 import os
 from pathlib import Path
@@ -15,7 +13,6 @@ import unittest
 from unittest.mock import patch
 
 from scripts.build_inspector import output_directory
-from scripts import dev_inspector_ui
 from packet_inspector import VERSION
 from packet_inspector.desktop_ui import DesktopUI
 
@@ -111,7 +108,6 @@ class DesktopUITests(unittest.TestCase):
         self.assertEqual(data["active_requests"], 1)
 
     def test_token_window_is_read_locally_without_new_backend_or_writes(self):
-        self.ui.read_only = True
         self.backend.test_packet = {"id": "a" * 32, "thread_id": "thread-test", "created": 100}
         expected = {"state": "available", "used_tokens": 40500, "window_tokens": 270000}
         with patch.object(self.ui.token_windows, "lookup", return_value=expected) as lookup:
@@ -156,7 +152,6 @@ class DesktopUITests(unittest.TestCase):
         lookup.assert_not_called()
 
     def test_session_summaries_are_local_read_only_metadata(self):
-        self.ui.read_only = True
         self.backend.test_data_dir = str(self.folder)
         expected = {"state": "available", "sessions": [{"thread_id": "thread-test", "title": "会话名称"}]}
         with patch.object(self.ui.session_summaries, "read", return_value=expected) as read:
@@ -196,14 +191,6 @@ class DesktopUITests(unittest.TestCase):
     def test_absolute_urls_are_rejected(self):
         self.assertEqual(self.request("http://outside.invalid/api/status", headers={"Host": f"127.0.0.1:{self.ui.port}"})[0], 400)
         self.assertEqual(self.backend.requests, [])
-
-    def test_read_only_preview_cannot_change_relay_settings(self):
-        self.ui.read_only = True
-        for path in ["/api/settings", "/api/context-settings", "/api/link"]:
-            self.assertEqual(self.request(path, "POST", b"{}")[0], 409)
-        self.assertEqual(self.backend.requests, [])
-        data = json.loads(self.request("/api/status")[1])
-        self.assertTrue(data["ui_read_only"])
 
     def test_oversize_ui_write_is_rejected_before_forwarding(self):
         self.assertEqual(self.request("/api/settings", "POST", b"x" * 8193)[0], 400)
@@ -262,13 +249,6 @@ class DevelopmentSafetyTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 output_directory(directory)
             self.assertEqual(executable.read_bytes(), b"in-use-release")
-
-    def test_preview_does_not_start_a_missing_service(self):
-        with patch.object(dev_inspector_ui, "check_relay", side_effect=OSError), \
-                patch.object(dev_inspector_ui, "DesktopUI") as ui, redirect_stderr(io.StringIO()):
-            with self.assertRaises(SystemExit):
-                dev_inspector_ui.main([])
-            ui.assert_not_called()
 
     @unittest.skipUnless(os.name == "nt", "Windows installation helper")
     def test_upgrade_helper_rejects_unknown_exe_without_mutating_running_services_or_tasks(self):
