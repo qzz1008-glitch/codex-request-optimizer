@@ -58,7 +58,7 @@ const uiI18n = (() => {
     "减小比例":"Size reduction",
     "生成摘要 ":"Summaries generated: ",
     "\n已触发请求大小保护：":"\nRequest size protection triggered: ",
-    "压缩包上限（kB）":"Compressed packet limit (kB)",
+    "压缩包上限":"Compressed packet limit",
     "记录设置":"Record settings",
     "保存记录设置":"Save record settings",
     "没有可比较的上条请求。":"No previous request available for comparison.",
