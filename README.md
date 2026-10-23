@@ -151,7 +151,7 @@ python -m scripts.build_inspector --mode release
 
 构建过程冻结完整源码，记录 Git 提交及文件指纹，并核对 EXE 内嵌资源与前端内容。正式发布使用已整合的干净 `main`，构建期间源码变化时作废重打。
 
-开发环境、预览、测试和构建流程见 **[开发与构建](https://github.com/qzz1008-glitch/codex-request-optimizer/blob/main/docs/development.md)**。
+开发环境、前端热更新、测试和构建流程见 **[开发与构建](https://github.com/qzz1008-glitch/codex-request-optimizer/blob/main/docs/development.md)**。
 
 ---
 
