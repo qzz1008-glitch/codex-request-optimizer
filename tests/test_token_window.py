@@ -107,6 +107,37 @@ class TokenWindowTests(unittest.TestCase):
         self.packet["model"] = "different-model"
         self.assertEqual(self.reader.lookup(self.packet, 104)["state"], "unavailable")
 
+    def test_delayed_native_usage_matches_before_the_next_request(self):
+        self.write(event(at=112.8, inputs=45000))
+        result = self.reader.lookup(self.packet, 113)
+        self.assertEqual(result["state"], "available")
+        self.assertEqual((result["input_tokens"], result["recorded_at"]), (45000, 112.8))
+
+    def test_completed_request_keeps_waiting_for_delayed_history(self):
+        self.write()
+        with patch("packet_inspector.token_window.time.time", return_value=110):
+            self.assertEqual(self.reader.lookup(self.packet), {"state": "pending"})
+        with self.path.open("a", encoding="utf8") as stream:
+            stream.write(json.dumps(event(at=112.8, inputs=45000)) + "\n")
+        with patch("packet_inspector.token_window.time.time", return_value=113):
+            self.assertEqual(self.reader.lookup(self.packet)["input_tokens"], 45000)
+        self.write()
+        with patch("packet_inspector.token_window.time.time", return_value=162):
+            self.assertEqual(self.reader.lookup(self.packet), {"state": "unavailable"})
+
+    def test_late_usage_never_crosses_the_next_request_boundary(self):
+        self.write(event(at=113))
+        self.assertEqual(self.reader.lookup(self.packet, 113), {"state": "unavailable"})
+        self.assertEqual(self.reader.lookup(self.packet, 114)["state"], "available")
+
+    def test_ambiguous_delayed_usage_is_not_assigned(self):
+        self.write(event(at=111), event(at=112, cumulative=1040499))
+        self.assertEqual(self.reader.lookup(self.packet, 113), {"state": "unavailable"})
+
+    def test_late_usage_has_a_bounded_settle_period(self):
+        self.write(event(at=162))
+        self.assertEqual(self.reader.lookup(self.packet, 200), {"state": "unavailable"})
+
     def test_compaction_estimates_and_failed_requests_are_not_actual_usage(self):
         estimate = event(inputs=0, outputs=0)
         estimate["payload"]["info"]["last_token_usage"]["total_tokens"] = 43000
