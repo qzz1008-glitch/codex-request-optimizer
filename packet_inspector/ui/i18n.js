@@ -263,7 +263,7 @@ const uiI18n = (() => {
     "通过摘要缩短旧内容，可能损失细节并增加等待。":"Summarizes older content, which may lose details and add latency.",
     "上下文设置":"Context settings",
     "有效上下文":"Context window",
-    "模型默认":"Model default",
+    "默认":"Default",
     "调整有效上下文":"Adjust context window",
     "自动压缩阈值":"Auto-compaction threshold",
     "调整自动压缩阈值":"Adjust auto-compaction threshold",
