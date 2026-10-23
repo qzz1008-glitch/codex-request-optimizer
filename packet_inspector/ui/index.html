@@ -100,10 +100,8 @@
     <section><h3>传输压缩</h3>
       <div class="zstd-level-control" data-settings-field="zstd_level">
         <label for="zstd-level">压缩等级</label>
-        <select id="zstd-level" aria-describedby="zstd-level-hint zstd-level-estimate" disabled><option value="3">3级（默认）</option></select>
+        <select id="zstd-level" disabled><option value="3">3级（默认）</option></select>
       </div>
-      <p id="zstd-level-hint" class="muted help">以原始未压缩包为基准；耗时仅计本地压缩开销，未计上传变小的收益。</p>
-      <p id="zstd-level-estimate" class="muted help" aria-live="polite"></p>
       <p id="zstd-level-message" class="help" role="status" hidden></p>
     </section>
     <section><h3>请求大小保护</h3>
