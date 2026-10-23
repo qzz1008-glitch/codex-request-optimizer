@@ -76,9 +76,6 @@
 :root{--desktop-width:1200px;--desktop-height:760px;--desktop-min-width:1120px;--desktop-min-height:640px}
 body{height:100dvh;min-width:0;display:flex;flex-direction:column;overflow-x:hidden;overflow-y:hidden}
 .app-window{display:flex;flex-direction:column;flex:1;min-height:0;min-width:0;width:100%;height:100dvh;background:var(--bg);overflow:hidden;container:inspector-window / size}
-:root.preview-mode body{height:auto;min-height:100dvh;min-width:0;padding:18px clamp(6px,calc((100vw - var(--desktop-min-width)) / 4 + 6px),24px) 24px;align-items:center;overflow-x:hidden;overflow-y:auto;background:#e9edf3}
-:root.preview-mode .app-window{flex:none;width:100%;max-width:var(--desktop-width);height:var(--desktop-height);min-height:var(--desktop-height);outline:1px solid #cbd4df;border-radius:10px;box-shadow:0 12px 36px #24344d18}
-:root.preview-mode #preview-banner{width:100%;max-width:var(--desktop-width);padding:0 0 12px;margin:0;background:transparent;border:0;color:var(--muted);font-size:12px;line-height:20px}
 .app-header,.notice{flex-shrink:0}
 .workspace{display:grid;flex:1;min-height:0;min-width:0;height:auto;grid-template-columns:260px minmax(380px,1fr) 480px}
 /* Keep all three panes visible in narrower windows. */
@@ -361,7 +358,6 @@ code.session-id{font-family:Consolas,"Cascadia Mono",monospace;font-size:11px;wo
 .json-tree{max-height:68cqh}
 pre{max-height:55cqh}
 dialog{width:min(760px,calc(var(--desktop-width) - 80px));max-height:calc(var(--desktop-height) - 80px)}
-:root.preview-mode dialog{position:absolute;left:50%;right:auto;top:calc(50px + var(--desktop-height)/2);bottom:auto;transform:translate(-50%,-50%);margin:0}
 
 .header-compression{display:flex;align-items:center;flex-shrink:0}.compression-toggle{flex-shrink:0}.compression-toggle button{min-width:100px}
 #compression-confirm-dialog{width:min(440px,calc(100vw - 48px))}#compression-confirm-dialog h2{font-size:20px}#compression-confirm-dialog .button-row{justify-content:flex-end}#compression-confirm-message{color:var(--danger)}
@@ -400,7 +396,7 @@ dialog{width:min(760px,calc(var(--desktop-width) - 80px));max-height:calc(var(--
 
 .json-focused{background:var(--soft);box-shadow:inset 3px 0 var(--accent);border-radius:3px}
 
-/* A single desktop title bar; browser previews retain their normal header. */
+/* Native desktop title bar and window controls. */
 .window-controls{display:flex;align-self:stretch;flex-shrink:0;margin-left:2px}
 .window-controls[hidden]{display:none}
 .window-controls button{display:grid;place-items:center;width:46px;height:100%;padding:0;border:0;border-radius:0;background:transparent;color:#3e4858}

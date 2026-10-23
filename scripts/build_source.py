@@ -27,7 +27,7 @@ def product_path(name):
     return (bool(path.parts) and path.parts[0] in {"packet_inspector", "scripts", "tests", "docs", ".githooks", ".github"}
             or name in {"README.md", "LICENSE", "AGENTS.md", ".gitignore", ".gitattributes", "requirements-dev.txt",
                         ".github/RELEASE_NOTES.md", ".github/workflows/windows-build.yml",
-                        "build_inspector.py", "dev_inspector_ui.py", "build_app_icon.ps1"}
+                        "build_inspector.py", "build_app_icon.ps1"}
             or (len(path.parts) == 1 and (name.startswith(("test_", "verify_"))
                                          or name.endswith("_inspector_service.ps1"))))
 
