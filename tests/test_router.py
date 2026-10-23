@@ -29,6 +29,13 @@ class RouterTests(unittest.TestCase):
         class Upstream(BaseHTTPRequestHandler):
             def log_message(self, *_args):
                 pass
+            def do_GET(handler):
+                test.seen.append((handler.path, None, handler.headers.get("Authorization")))
+                result = b"existing-response"
+                handler.send_response(200)
+                handler.send_header("Content-Length", str(len(result)))
+                handler.end_headers()
+                handler.wfile.write(result)
             def do_POST(handler):
                 body = handler.rfile.read(int(handler.headers.get("Content-Length", "0")))
                 test.seen.append((handler.path, body, handler.headers.get("Authorization")))
@@ -98,6 +105,57 @@ class RouterTests(unittest.TestCase):
     def switch(self, identity):
         return self.api("/__router__/switch", {"worker_id": identity, "expected_active": self.first.worker_id})
 
+    def test_websocket_handshake_falls_back_without_forwarding_then_http_post_succeeds(self):
+        route_id = "websocket-fallback"
+        self.first.save_settings({**self.first.settings, "provider_routes": {
+            **self.first.settings["provider_routes"],
+            route_id: {"provider": "openai", "identity": "test-openai",
+                       "upstream": f"http://127.0.0.1:{self.upstream.server_port}"}}})
+        prefix = "/relay/" + self.first.settings["relay_token"]
+        handshake_headers = [{}, {"Connection": "Upgrade", "Upgrade": "websocket",
+                                  "Sec-WebSocket-Key": "dGhlIHNhbXBsZSBub25jZQ==", "Sec-WebSocket-Version": "13"},
+                             {"Sec-WebSocket-Key": "fixture"}, {"Sec-WebSocket-Version": "13"}]
+        cases = [(suffix, headers) for suffix in ["/responses", "/responses/", "/responses?api-version=test",
+                                                  "/p/" + route_id + "/responses?api-version=test"]
+                 for headers in handshake_headers]
+        for suffix, headers in cases:
+            with self.subTest(suffix=suffix, headers=headers):
+                client = http.client.HTTPConnection("127.0.0.1", self.router.port, timeout=5)
+                self.addCleanup(client.close)
+                before = len(self.seen)
+                client.request("GET", prefix + suffix, headers=headers)
+                response = client.getresponse()
+                self.assertEqual(response.status, 426)
+                self.assertEqual(json.loads(response.read())["error"]["code"], "websocket_not_supported")
+                self.assertEqual(len(self.seen), before)
+                client.request("POST", prefix + suffix, b'{"input":[]}',
+                               {"Content-Type": "application/json", "Authorization": "Bearer fixture"})
+                response = client.getresponse()
+                self.assertEqual((response.status, response.read()), (200, b"ok"))
+                self.assertEqual(len(self.seen), before + 1)
+                self.assertEqual(self.seen[-1][1:], (b'{"input":[]}', "Bearer fixture"))
+
+    def test_retrieving_an_existing_response_still_uses_http_get(self):
+        client = http.client.HTTPConnection("127.0.0.1", self.router.port, timeout=5)
+        self.addCleanup(client.close)
+        prefix = "/relay/" + self.first.settings["relay_token"]
+        client.request("GET", prefix + "/responses/resp_fixture?include=usage", headers={"Authorization": "Bearer fixture"})
+        response = client.getresponse()
+        self.assertEqual((response.status, response.read()), (200, b"existing-response"))
+        self.assertEqual(self.seen, [("/responses/resp_fixture?include=usage", None, "Bearer fixture")])
+
+    def test_websocket_handshake_preserves_route_and_relay_token_validation(self):
+        prefix = "/relay/" + self.first.settings["relay_token"]
+        for path in [prefix + "/p/missing/responses", "/relay/wrong-token/responses"]:
+            with self.subTest(path=path):
+                client = http.client.HTTPConnection("127.0.0.1", self.router.port, timeout=5)
+                self.addCleanup(client.close)
+                client.request("GET", path, headers={"Upgrade": "websocket", "Sec-WebSocket-Key": "fixture"})
+                response = client.getresponse()
+                self.assertEqual(response.status, 404)
+                response.read()
+        self.assertEqual(self.seen, [])
+
     def test_cutover_preserves_stream_and_active_records_and_sends_new_requests_to_new_worker(self):
         client = http.client.HTTPConnection("127.0.0.1", self.router.port, timeout=5)
         path = "/relay/" + self.first.settings["relay_token"] + "/responses?api-version=test"
@@ -115,6 +173,12 @@ class RouterTests(unittest.TestCase):
         self.assertEqual(status["relay_active_requests"], 1)
         self.assertEqual(self.first.active_requests, 1)
         self.assertFalse(self.first.maintenance_enabled)
+        fallback = http.client.HTTPConnection("127.0.0.1", self.router.port, timeout=5)
+        self.addCleanup(fallback.close)
+        fallback.request("GET", "/relay/" + second.settings["relay_token"] + "/responses")
+        response_fallback = fallback.getresponse()
+        self.assertEqual(response_fallback.status, 426)
+        response_fallback.read()
         self.assertEqual(self.api("/api/stop", {})[0], 409)
         self.assertEqual(self.api("/__router__/status")[1]["active"], second.worker_id)
         self.release.set()

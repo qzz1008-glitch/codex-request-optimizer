@@ -8,8 +8,10 @@ import json
 import re
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
+from .request_context import request_image_paths, temporary_request_kind
+
 MAX_BODY = 128 * 1024 * 1024
-CLASSIFICATION_VERSION = 1
+CLASSIFICATION_VERSION = 2
 SECRET_KEYS = {"authorization", "proxy-authorization", "cookie", "set-cookie",
                "x-api-key", "api-key", "api_key", "apikey", "access_token",
                "refresh_token", "id_token", "client_secret", "password",
@@ -64,6 +66,8 @@ def safe_path(path):
 def classify_request(value, headers=None, path=""):
     """Classify this dispatch, without treating historical summaries as requests."""
     result = {"is_compaction": False, "classification_version": CLASSIFICATION_VERSION}
+    if urlsplit(path).path.rstrip("/").endswith("/alpha/search"):
+        return {**result, "request_kind": "tool_search"}
     lower = {k.lower(): v for k, v in (headers or {}).items()}
     client = value.get("client_metadata", {}) if isinstance(value, dict) else {}
     client = client if isinstance(client, dict) else {}
@@ -304,6 +308,10 @@ def inspect_request(raw, headers, path=""):
         thread = thread_identity(headers, value)
         model = value.get("model", "") if isinstance(value, dict) else ""
         meta.update(stats)
+        meta["image_paths"] = request_image_paths(value)
+        kind = temporary_request_kind(value)
+        if kind:
+            meta["request_kind"] = kind
         meta.update(thread_id=thread, model=clean_text(str(model))[:120],
                     inspection="json", redactions=dict(counts))
         return meta, {"body": view, "source_sizes": index.sizes}

@@ -285,7 +285,7 @@ class CleanupRelayTests(unittest.TestCase):
             config.write_text('model="test"', encoding="utf8")
             server = InspectorServer(("127.0.0.1", 0), root / "data", config, "http://127.0.0.1:1")
             try:
-                server.settings["packet_size_protection_enabled"] = False
+                server.save_settings({**server.settings, "packet_size_protection_enabled": False})
                 server.overflow._save("expired", "scope", 1, [message(1)], [{"role": "user", "content": "old"}])
                 with server.overflow._connect() as db:
                     db.execute("UPDATE mappings SET updated=?", (time.time() - 8 * 86400,))

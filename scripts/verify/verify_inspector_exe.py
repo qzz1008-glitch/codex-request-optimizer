@@ -11,13 +11,13 @@ import tempfile
 import threading
 import time
 import tomllib
-import zipfile
 from http.server import ThreadingHTTPServer
 from urllib.request import Request, urlopen
 
 from tests.test_packet_inspector import Upstream, zstandard
 from tests.test_image_isolation import request_body
 from packet_inspector.image_config import find_codex_cli
+from scripts.build_inspector import PUBLIC_FILES
 
 ROOT=Path(__file__).resolve().parents[2]
 
@@ -60,6 +60,15 @@ def main():
         assert api("/api/status")["request_compression"]=="zstd"
         assert api("/api/installation")["supported"] is False
         api("/api/settings",{"request_compression":"off"})
+        for suffix,headers in [("/responses", {}), ("/responses/?api-version=test", {
+                "Connection":"Upgrade", "Upgrade":"websocket", "Sec-WebSocket-Version":"13",
+                "Sec-WebSocket-Key":"dGhlIHNhbXBsZSBub25jZQ=="})]:
+            c=http.client.HTTPConnection("127.0.0.1",runtime["port"],timeout=5)
+            c.request("GET","/relay/"+settings["relay_token"]+suffix,headers=headers)
+            r=c.getresponse()
+            assert r.status==426 and json.loads(r.read())["error"]["code"]=="websocket_not_supported"
+            c.close()
+        assert not upstream.requests
         body={"model":"local-ui-test","input":[{"type":"message","role":"developer","content":[{"type":"input_text","text":"Synthetic local-only UI test."}]},
             {"type":"message","role":"user","content":[{"type":"input_text","text":"packet-size-check"}]},
             {"type":"reasoning","encrypted_content":"synthetic-ciphertext"*120},
@@ -142,21 +151,16 @@ def main():
         assert reset["image_save_dir"]==reset["image_save_dir_default"]
         assert json.loads((folder/"settings.json").read_text(encoding="utf8"))["image_save_dir"]==""
         if image_path:assert image_path.is_file()
-        with zipfile.ZipFile(release/"CodexPacketInspector-source.zip") as source:
-            names=source.namelist()
-            assert {"README.md","LICENSE","packet_inspector/transport.py","packet_inspector/windows_install.ps1",".github/workflows/windows-build.yml"}<=set(names)
-            assert {"scripts/__init__.py", "scripts/build_inspector.py", "scripts/verify/verify_self_upgrade_exe.py",
-                    "tests/__init__.py", "tests/fixtures/updates_v0_6_9.py", "docs/usage.md", "docs/development.md"}<=set(names)
-            assert "THIRD_PARTY_LICENSES/Codex-LICENSE.txt" in names
-            assert not any(n.startswith(("evidence/",".local/",".upstream/","build/")) or n.endswith(("settings.json","auth.json",".sqlite")) for n in names)
-            assert not {"install_gate_observer.py","test_gate_observer.py","packet_inspector/observer.py","payload_patch.py","payload_transport.py"}.intersection(names)
-            assert not any(b"C:\\Users\\z00611370" in source.read(n) for n in names)
+        public = release / "publish"
+        assert {path.name for path in public.iterdir()} == set(PUBLIC_FILES)
+        notices = (public / "THIRD_PARTY_NOTICES.txt").read_text(encoding="utf8")
+        assert "Codex-LICENSE.txt" in notices and "Apache License" in notices
         (local/"inspector-smoke-current.json").write_text(json.dumps({"data_dir":str(folder),"url":base+"/"}),encoding="utf8")
         print(json.dumps({"packaged_smoke":"ok","body_bytes_unchanged":True,"zstd_bundled":True,
                           "analysis_only_requests":byte_results,"standalone_compression":compressed_results,
                           "bundled_image_tool_auto_install":image_install,
                           "image_save_directory":"verified",
-                          "source_archive_clean":True,"real_config_changed":False}),flush=True)
+                          "public_files_verified":True,"real_config_changed":False}),flush=True)
         if args.keep_open:
             input("Packaged UI fixture ready; press Enter to finish.\n")
     finally:

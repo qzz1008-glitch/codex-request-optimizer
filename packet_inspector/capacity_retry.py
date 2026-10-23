@@ -160,10 +160,12 @@ def wait_for_retry(delay, cancelled):
         time.sleep(min(.2, remaining))
 
 
-def open_response(opener, request, *, enabled=False, on_retry=None, cancelled=lambda: False,
+def open_response(opener, request, *, enabled=False, max_retries=MAX_RETRIES, on_retry=None, cancelled=lambda: False,
                   still_enabled=lambda: True, wait=wait_for_retry):
+    if isinstance(max_retries, bool) or not isinstance(max_retries, int) or not 1 <= max_retries <= 99:
+        raise ValueError("max_retries must be an integer from 1 to 99")
     deadline = time.monotonic() + MAX_RETRY_SECONDS
-    for attempt in range(MAX_RETRIES + 1):
+    for attempt in range(max_retries + 1):
         if cancelled():
             raise BrokenPipeError("Client disconnected before capacity retry")
         try:
@@ -175,7 +177,7 @@ def open_response(opener, request, *, enabled=False, on_retry=None, cancelled=la
         try:
             prefix, overloaded = inspect_prefix(response)
             buffered = BufferedResponse(response, prefix)
-            if not overloaded or attempt == MAX_RETRIES or not still_enabled():
+            if not overloaded or attempt == max_retries or not still_enabled():
                 return buffered
             delay = retry_delay(response.headers, attempt + 1)
             if delay > deadline - time.monotonic():

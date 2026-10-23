@@ -5,11 +5,12 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from scripts import build_inspector
 from tests import test_desktop_ui as desktop_tests
 from packet_inspector.desktop_ui import DesktopUI
-from packet_inspector.frontend_dev import BuildProfile, RESOURCES, load_profile
+from packet_inspector.frontend_dev import BuildProfile, RESOURCES, load_profile, resolve_profile, DESKTOP_PROFILE
 
 
 class BuildProfileTests(unittest.TestCase):
@@ -66,6 +67,30 @@ class BuildProfileTests(unittest.TestCase):
         self.assertEqual(Path(profile["ui_dir"]).name, "ui")
         with self.assertRaises(ValueError):
             build_inspector.build_profile("invalid")
+
+    def test_same_version_new_build_does_not_reuse_managed_old_frontend(self):
+        data = self.folder / "installed"
+        data.mkdir()
+        (data / DESKTOP_PROFILE).write_text(json.dumps({"mode": "dev", "managed_ui": True}))
+        with patch("packet_inspector.frontend_dev.build_info", return_value={"source_sha256": "a" * 64}):
+            first = resolve_profile(BuildProfile("dev"), data)
+            (first.ui_dir / "app.js").write_text("old managed UI")
+            self.assertEqual(resolve_profile(BuildProfile("dev"), data).ui_dir, first.ui_dir)
+            self.assertEqual((first.ui_dir / "app.js").read_text(), "old managed UI")
+        with patch("packet_inspector.frontend_dev.build_info", return_value={"source_sha256": "b" * 64}):
+            second = resolve_profile(BuildProfile("dev"), data)
+            self.assertNotEqual(first.ui_dir, second.ui_dir)
+            self.assertNotEqual((second.ui_dir / "app.js").read_text(encoding="utf8"), "old managed UI")
+
+    def test_new_build_preserves_explicit_live_source_directory(self):
+        for name in RESOURCES:
+            (self.folder / name).write_text("editable source")
+        data = self.folder / "installed"
+        data.mkdir()
+        (data / DESKTOP_PROFILE).write_text(json.dumps({"mode": "dev", "managed_ui": False,
+                                                      "ui_dir": str(self.folder.resolve())}))
+        with patch("packet_inspector.frontend_dev.build_info", return_value={"source_sha256": "b" * 64}):
+            self.assertEqual(resolve_profile(BuildProfile("dev"), data).ui_dir, self.folder.resolve())
 
 
 class FixedFrontendHTTPTests(unittest.TestCase):

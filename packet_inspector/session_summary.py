@@ -9,39 +9,41 @@ import sqlite3
 import threading
 import zlib
 
+from .request_context import (IMAGE_ANALYST_PREFIXES, last_user_text, temporary_kind_from_metadata,
+                              temporary_request_kind)
+
 MAX_SESSIONS = 300
 INDEX_TASK_PREFIX = "You are in a fork of an existing Codex thread.\nFill the structured description field"
 
 
 def index_task_title(body):
-    inputs = body.get("input") if isinstance(body, dict) else None
-    if not isinstance(inputs, list):
+    text = last_user_text(body)
+    if not text or not text.startswith(INDEX_TASK_PREFIX) or "This is a keyword retrieval index, not a broad prose summary." not in text:
         return None
-    for item in reversed(inputs):
-        if not isinstance(item, dict) or item.get("role") != "user":
-            continue
-        content = item.get("content")
-        text = content if isinstance(content, str) else "\n".join(
-            part["text"] for part in content if isinstance(part, dict) and isinstance(part.get("text"), str)
-        ) if isinstance(content, list) else ""
-        if not text.startswith(INDEX_TASK_PREFIX) or "This is a keyword retrieval index, not a broad prose summary." not in text:
-            return None
-        titles = [line[len("Current title: "):].strip() for line in text.splitlines() if line.startswith("Current title: ")]
-        return titles[0][:512] if len(titles) == 1 and titles[0] else None
-    return None
+    titles = [line[len("Current title: "):].strip() for line in text.splitlines() if line.startswith("Current title: ")]
+    return titles[0][:512] if len(titles) == 1 and titles[0] else None
+
+
+def image_analysis_request(body):
+    return temporary_request_kind(body) == "image_analysis"
 
 
 def number(value):
     return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
 
 
-def subagent_title(source, name=None, nickname=None):
+def subagent_source(source):
     try:
         source = json.loads(source)
         subagent = source.get("subagent") if isinstance(source, dict) else None
-        spawn = subagent.get("thread_spawn") if isinstance(subagent, dict) else None
     except (ValueError, TypeError):
         return None
+    return subagent if isinstance(subagent, dict) and subagent else None
+
+
+def subagent_title(source, name=None, nickname=None):
+    subagent = subagent_source(source)
+    spawn = subagent.get("thread_spawn") if subagent else None
     if not isinstance(spawn, dict):
         return None
     task = name if isinstance(name, str) and name.strip() else spawn.get("agent_path")
@@ -78,7 +80,8 @@ class SessionSummaries:
                                       ",".join("?" for _ in ids) + ")", ids).fetchall()
                 # Codex App stores its display name separately from the initial-message title.
                 return {r[0]: {"title": r[3] if isinstance(r[3], str) and r[3].strip() else r[1], "updated_at": r[2],
-                               "fallback_title": subagent_title(r[5], r[3], r[4])} for r in rows}
+                               "fallback_title": subagent_title(r[5], r[3], r[4]),
+                               **({"session_kind": "subagent"} if subagent_source(r[5]) else {})} for r in rows}
             except (OSError, sqlite3.Error):
                 continue
         return {}
@@ -143,7 +146,7 @@ class SessionSummaries:
             previous = labels.get(thread, {})
             if number(previous.get("updated_at")) and (not number(label["updated_at"]) or previous["updated_at"] > label["updated_at"]):
                 label["updated_at"] = previous["updated_at"]
-            labels[thread] = label
+            labels[thread] = {**previous, **label}
         with self._lock:
             unread_labels = 0
             ids = [r["thread_id"] for r in records if r["thread_id"]]
@@ -158,16 +161,19 @@ class SessionSummaries:
                 record["title"] = label.get("title")
                 if not record["title"] and label.get("fallback_title"):
                     record["title"] = label["fallback_title"]
+                    record["title_source"] = "subagent"
+                if label.get("session_kind"):
+                    record["session_kind"] = label["session_kind"]
                 if not record["title"] and record["thread_id"]:
                     packet_id = record["latest_packet"]["id"]
                     if packet_id not in self._request_labels and unread_labels < 8:
-                        self._request_labels[packet_id] = self._request_title(path, packet_id, record["thread_id"])
+                        self._request_labels[packet_id] = self._request_metadata(path, packet_id, record["thread_id"])
                         unread_labels += 1
                         while len(self._request_labels) > MAX_SESSIONS:
                             self._request_labels.popitem(last=False)
-                    source_title = self._request_labels.get(packet_id)
-                    if source_title:
-                        record.update(title="会话索引 · " + source_title, title_source="index_task", source_title=source_title)
+                    request_metadata = self._request_labels.get(packet_id)
+                    if request_metadata:
+                        record.update(request_metadata)
                 updated = label.get("updated_at")
                 if number(updated):
                     record["updated_at"] = max(record["updated_at"], updated)
@@ -189,27 +195,42 @@ class SessionSummaries:
         records.sort(key=lambda r: (-r["updated_at"], r["thread_id"]))
         return {"state": "available", "sessions": records}
 
-    def _request_title(self, database, packet_id, thread):
-        """Identify native ephemeral indexing requests from their saved, redacted copy."""
+    def _request_metadata(self, database, packet_id, thread):
+        """Identify temporary tasks from their saved, redacted request text."""
         try:
             with closing(sqlite3.connect(database.as_uri() + "?mode=ro", uri=True, timeout=.2)) as db:
                 db.execute("PRAGMA query_only=ON")
-                row = db.execute("SELECT substr(meta,1,1048577),CASE WHEN length(content)<=2097152 THEN content END "
-                                 "FROM packets WHERE id=? AND thread=?", (packet_id, thread)).fetchone()
-            if not row or len(row[0]) > 1048576:
-                return None
-            meta = json.loads(row[0])
-            items = meta.get("input_items") or []
-            if not any(isinstance(item, dict) and item.get("kind") == "message:user"
-                       and isinstance(item.get("label"), str) and item["label"].startswith(INDEX_TASK_PREFIX) for item in items):
-                return None
-            if not row[1]:
+                row = db.execute("SELECT substr(meta,1,1048577) FROM packets WHERE id=? AND thread=?",
+                                 (packet_id, thread)).fetchone()
+                if not row or len(row[0]) > 1048576:
+                    return None
+                meta = json.loads(row[0])
+                kind = temporary_kind_from_metadata(meta)
+                if kind:
+                    return {"session_kind": kind}
+                items = meta.get("input_items") or []
+                if not any(isinstance(item, dict) and item.get("kind") == "message:user"
+                           and isinstance(item.get("label"), str) and item["label"].startswith(
+                               (INDEX_TASK_PREFIX, "<image name=", "You are a one-shot image analyst.",
+                                "You are an isolated one-shot image analyst.")) for item in items):
+                    return None
+                content_row = db.execute("SELECT CASE WHEN length(content)<=2097152 THEN content END "
+                                         "FROM packets WHERE id=? AND thread=?", (packet_id, thread)).fetchone()
+            if not content_row or not content_row[0]:
                 return None
             inflater = zlib.decompressobj()
-            raw = inflater.decompress(row[1], 8 * 1024 * 1024 + 1)
+            raw = inflater.decompress(content_row[0], 8 * 1024 * 1024 + 1)
             if len(raw) > 8 * 1024 * 1024 or not inflater.eof:
                 return None
             content = json.loads(raw)
-            return index_task_title(content.get("body")) if isinstance(content, dict) else None
+            body = content.get("body") if isinstance(content, dict) else None
+            source_title = index_task_title(body)
+            if source_title:
+                return {"title": "会话索引 · " + source_title, "title_source": "index_task", "source_title": source_title,
+                        "session_kind": "session_index"}
+            kind = temporary_request_kind(body)
+            if kind:
+                return {"session_kind": kind}
+            return None
         except (OSError, sqlite3.Error, ValueError, TypeError, AttributeError, zlib.error):
             return None

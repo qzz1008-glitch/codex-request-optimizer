@@ -52,7 +52,11 @@ def raw_chunks(response):
 
 
 class UsageStream:
-    """Stream generation content and retain actual usage before rewriting usage."""
+    """Keep output streaming and retain authentic usage before rewriting it.
+
+    This does not manufacture native history events. The user-enabled option
+    changes only the successful Responses usage reported to its client.
+    """
     def __init__(self, response, record):
         self.response, self.record = response, record
         self.mode = response.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()

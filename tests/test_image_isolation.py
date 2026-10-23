@@ -268,6 +268,7 @@ class ImageRewriteTests(unittest.TestCase):
         self.assertEqual(parts[2], parts[1])
         self.assertNotIn("data:image", wire.decode())
         self.assertEqual(metrics["image_isolation_removed"], 2)
+        self.assertEqual(metrics["image_paths"], [str(attachments[0].resolve())])
 
     def test_rewrites_all_encodings_and_preserves_unrelated_original_bytes(self):
         raw = b' { "extra" : "\\u0061", "encrypted_content" : "EXACT\\nbytes", "input":' + encode(request_body()["input"]) + b' } '

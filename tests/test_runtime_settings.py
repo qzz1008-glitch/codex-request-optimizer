@@ -24,7 +24,8 @@ class RuntimeSettingsTests(unittest.TestCase):
     latest = fixtures.RelayTests.latest
 
     def setUp(self):
-        self.server.save_settings({**self.server.settings, "start_on_login": False, "capacity_retry_enabled": False})
+        self.server.save_settings({**self.server.settings, "start_on_login": False, "capacity_retry_enabled": False,
+                                   "capacity_retry_max_retries": 3})
         self.server.startup_state_known = True
 
     def test_defaults_and_capabilities(self):
@@ -32,6 +33,7 @@ class RuntimeSettingsTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertFalse(result["start_on_login"])
         self.assertFalse(result["capacity_retry_enabled"])
+        self.assertEqual(result["capacity_retry_max_retries"], 3)
         self.assertFalse(result["start_on_login_supported"])
         self.assertTrue(result["capacity_retry_supported"])
 
@@ -43,12 +45,45 @@ class RuntimeSettingsTests(unittest.TestCase):
             saved = json.loads(self.server.settings_path.read_text(encoding="utf8"))
             self.assertEqual(saved["capacity_retry_enabled"], enabled)
 
+    def test_language_is_persisted_and_invalid_changes_are_atomic(self):
+        try:
+            for language in ("en", "zh"):
+                status, result = self.api("/api/settings", {"ui_language": language})
+                self.assertEqual((status, result["ui_language"]), (200, language))
+                self.assertEqual(json.loads(self.server.settings_path.read_text())["ui_language"], language)
+            before = self.server.settings_path.read_bytes()
+            for invalid in (None, [], True, "fr"):
+                self.assertEqual(self.api("/api/settings", {"ui_language": invalid, "capacity_retry_enabled": True})[0], 400)
+                self.assertEqual(self.server.settings_path.read_bytes(), before)
+        finally:
+            self.server.save_settings({**self.server.settings, "ui_language": "zh"})
+
     def test_boolean_validation_does_not_accept_numbers_or_strings(self):
         for key in ["start_on_login", "capacity_retry_enabled"]:
             for value in [1, "true", None]:
                 with self.subTest(key=key, value=value):
                     self.assertEqual(self.api("/api/settings", {key: value})[0], 400)
                     self.assertFalse(self.server.settings[key])
+
+    def test_retry_limit_is_persisted(self):
+        for limit in [1, 12, 99]:
+            with self.subTest(limit=limit):
+                status, result = self.api("/api/settings", {"capacity_retry_max_retries": limit})
+                self.assertEqual(status, 200)
+                self.assertEqual(result["capacity_retry_max_retries"], limit)
+                saved = json.loads(self.server.settings_path.read_text(encoding="utf8"))
+                self.assertEqual(saved["capacity_retry_max_retries"], limit)
+
+    def test_invalid_retry_limit_rejects_entire_settings_change(self):
+        before = self.server.settings_path.read_bytes()
+        for limit in [0, -1, 100, True, False, "3", 2.5, None]:
+            with self.subTest(limit=limit):
+                status, _ = self.api("/api/settings", {"capacity_retry_enabled": True,
+                                                      "capacity_retry_max_retries": limit})
+                self.assertEqual(status, 400)
+                self.assertFalse(self.server.settings["capacity_retry_enabled"])
+                self.assertEqual(self.server.settings["capacity_retry_max_retries"], 3)
+                self.assertEqual(self.server.settings_path.read_bytes(), before)
 
     def test_login_setting_uses_installation_helper_without_stopping_service(self):
         with patch("packet_inspector.server.configure_startup") as configure:
@@ -102,6 +137,18 @@ class RuntimeSettingsTests(unittest.TestCase):
         with patch.object(self.server.local_opener, "open", return_value=Response(CREATED + FAILED)) as opened:
             status, data = self.relay(b"{}")
         self.assertEqual((status, data, opened.call_count), (200, CREATED + FAILED, 1))
+
+    def test_relay_uses_configured_retry_limit(self):
+        for limit in [1, 5]:
+            with self.subTest(limit=limit):
+                self.assertEqual(self.api("/api/settings", {"capacity_retry_enabled": True,
+                                                           "capacity_retry_max_retries": limit})[0], 200)
+                responses = [Response(FAILED, extra={"Retry-After": "0"}) for _ in range(limit + 1)]
+                with patch.object(self.server.local_opener, "open", side_effect=responses) as opened:
+                    status, data = self.relay(b"{}")
+                self.assertEqual((status, data, opened.call_count), (200, FAILED, limit + 1))
+                metadata, _ = self.latest()
+                self.assertEqual(metadata["capacity_retry_count"], limit)
 
 
 class StartupHelperTests(unittest.TestCase):

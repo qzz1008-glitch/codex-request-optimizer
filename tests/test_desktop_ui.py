@@ -51,7 +51,7 @@ class LegacyHandler(BaseHTTPRequestHandler):
         elif self.path == "/api/packets/" + "a" * 32:
             value = self.server.test_packet
         elif self.path.startswith("/api/packets?") and hasattr(self.server, "test_packet"):
-            value = [{"created": 103}]
+            value = getattr(self.server, "test_following", [{"created": 103}])
         else:
             value = {"received": body.decode()}
         raw = json.dumps(value).encode()
@@ -126,6 +126,34 @@ class DesktopUITests(unittest.TestCase):
                                               headers={"Origin": "https://example.com"})
         self.assertEqual(status, 403)
         self.assertEqual(self.backend.requests, [])
+
+    def test_tool_search_has_no_model_usage_and_does_not_scan_history(self):
+        self.backend.test_packet = {"id": "a" * 32, "method": "POST", "path": "/alpha/search", "created": 100}
+        with patch.object(self.ui.token_windows, "lookup_ready") as lookup:
+            status, body, _ = self.request("/api/packets/" + "a" * 32 + "/token-window")
+        self.assertEqual((status, json.loads(body)), (200, {"state": "unavailable"}))
+        lookup.assert_not_called()
+        self.assertEqual(len(self.backend.requests), 1)
+
+    def test_tool_search_does_not_cut_off_the_preceding_model_usage(self):
+        self.backend.test_packet = {"id": "a" * 32, "method": "POST", "path": "/responses", "created": 100}
+        self.backend.test_following = [
+            {"method": "POST", "path": "/alpha/search", "created": 101},
+            {"method": "POST", "path": "/responses", "is_compaction": True, "created": 103},
+        ]
+        expected = {"state": "available", "input_tokens": 237211}
+        with patch.object(self.ui.token_windows, "lookup_ready", return_value=expected) as lookup:
+            status, body, _ = self.request("/api/packets/" + "a" * 32 + "/token-window")
+        self.assertEqual((status, json.loads(body)), (200, expected))
+        lookup.assert_called_once_with(self.backend.test_packet, 103)
+
+    def test_ambiguous_boundary_after_many_auxiliary_requests_is_not_guessed(self):
+        self.backend.test_packet = {"id": "a" * 32, "method": "POST", "path": "/responses", "created": 100}
+        self.backend.test_following = [{"method": "POST", "path": "/alpha/search", "created": 101+i} for i in range(32)]
+        with patch.object(self.ui.token_windows, "lookup_ready") as lookup:
+            status, body, _ = self.request("/api/packets/" + "a" * 32 + "/token-window")
+        self.assertEqual((status, json.loads(body)), (200, {"state": "unavailable"}))
+        lookup.assert_not_called()
 
     def test_session_summaries_are_local_read_only_metadata(self):
         self.ui.read_only = True
@@ -243,8 +271,8 @@ class DevelopmentSafetyTests(unittest.TestCase):
             ui.assert_not_called()
 
     @unittest.skipUnless(os.name == "nt", "Windows installation helper")
-    def test_installer_rejects_plain_app_exe_without_mutating_running_services_or_tasks(self):
-        helper = Path(__file__).resolve().parents[1] / "scripts" / "windows" / "install_inspector_service.ps1"
+    def test_upgrade_helper_rejects_unknown_exe_without_mutating_running_services_or_tasks(self):
+        helper = Path(__file__).resolve().parents[1] / "scripts" / "windows" / "update_inspector_service.ps1"
         wrapper = r'''
 param($Helper, $Executable, $Case)
 [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
@@ -269,7 +297,7 @@ function New-Item { $global:inspectorTestMutated=$true; throw 'mutation attempte
 function Copy-Item { $global:inspectorTestMutated=$true; throw 'mutation attempted' }
 function Register-ScheduledTask { $global:inspectorTestMutated=$true; throw 'mutation attempted' }
 function Start-ScheduledTask { $global:inspectorTestMutated=$true; throw 'mutation attempted' }
-try { & $Helper -Executable $Executable; throw 'installer unexpectedly continued' }
+try { & $Helper -SourceExecutable $Executable; throw 'installer unexpectedly continued' }
 catch { [pscustomobject]@{mutated=$global:inspectorTestMutated; reason=$_.Exception.Message} | ConvertTo-Json -Compress }
 '''
         with tempfile.TemporaryDirectory() as directory:
@@ -287,7 +315,7 @@ catch { [pscustomobject]@{mutated=$global:inspectorTestMutated; reason=$_.Except
                     self.assertEqual(result.returncode, 0, result.stderr)
                     data = json.loads(result.stdout)
                     self.assertFalse(data["mutated"])
-                    self.assertIn("Use CodexRequestOptimizer-Upgrade.exe", data["reason"])
+                    self.assertIn("Use CodexPacketInspector.exe", data["reason"])
 
 
 class DesktopProcessLifetimeTests(unittest.TestCase):

@@ -1,4 +1,4 @@
-"""Build a distributable EXE and a clean source archive, without local records."""
+"""Build verified executables and the minimal public release files."""
 from pathlib import Path
 import argparse
 import hashlib
@@ -8,29 +8,36 @@ import os
 import shutil
 import subprocess
 import sys
-import zipfile
 import uuid
 from datetime import datetime, timezone
+from scripts.build_source import Workspace, Snapshot, SourceError
 
 from packet_inspector import VERSION
 from packet_inspector.app_icon import APP_ICON
 from packet_inspector.frontend_dev import PROFILE_NAME, PORTABLE_UI
 
 ROOT=Path(__file__).resolve().parents[1]
+PUBLIC_FILES = ("CodexPacketInspector.exe", "README.md", "LICENSE", "THIRD_PARTY_NOTICES.txt")
 
 
 def source_files(root=None):
     """Collect redistributable sources while excluding local runtime data."""
     root = Path(root or ROOT).resolve()
-    files = [root / name for name in ("README.md", "LICENSE", "AGENTS.md", ".gitignore", "requirements-dev.txt",
-             ".github/RELEASE_NOTES.md", ".github/workflows/windows-build.yml")]
-    suffixes = {".py", ".txt", ".md", ".html", ".js", ".css", ".ps1", ".json", ".ico", ".png", ".svg"}
+    files = [root / name for name in ("README.md", "LICENSE", "AGENTS.md", ".gitignore", ".gitattributes", "requirements-dev.txt",
+             ".github/RELEASE_NOTES.md", ".github/workflows/windows-build.yml", ".githooks/pre-push")
+             if (root / name).is_file()]
+    suffixes = {".py", ".txt", ".md", ".html", ".js", ".css", ".ps1", ".json", ".ico", ".png", ".svg",
+                ".toml", ".yaml", ".yml", ".sh", ".bat", ".cmd", ".woff", ".woff2", ".ttf", ".otf",
+                ".webp", ".gif", ".jpeg", ".jpg"}
     excluded = {"__pycache__", "data", ".local", ".venv", "build", "release", "node_modules"}
-    for folder in ("packet_inspector", "scripts", "tests", "docs"):
+    for folder in ("packet_inspector", "scripts", "tests", "docs", ".github"):
         for path in (root / folder).rglob("*"):
-            if (path.is_file() and not path.is_symlink() and path.suffix in suffixes
-                    and not excluded.intersection(path.relative_to(root).parts)):
-                files.append(path)
+            if not path.is_file() or excluded.intersection(path.relative_to(root).parts):
+                continue
+            if path.is_symlink() or path.suffix not in suffixes:
+                raise SourceError("Unsupported source input; include it explicitly before building: "
+                                  + path.relative_to(root).as_posix())
+            files.append(path)
     return sorted(set(files))
 
 
@@ -51,31 +58,13 @@ def build_profile(mode, portable_dev=False):
     raise ValueError("invalid build mode")
 
 
-def main(argv=None):
-    parser=argparse.ArgumentParser()
-    parser.add_argument("--output-dir",type=Path)
-    parser.add_argument("--mode",choices=("dev","release"),default="release")
-    parser.add_argument("--portable-dev",action="store_true",help="bundle editable frontend assets for distributed development builds")
-    args=parser.parse_args(argv)
-    try:
-        release=output_directory(args.output_dir,args.mode)
-    except ValueError as exc:
-        parser.error(str(exc))
-    release.mkdir(parents=True,exist_ok=True)
-    work=ROOT/"build"/("inspector-"+args.mode+"-"+uuid.uuid4().hex[:8])
-    work.mkdir(parents=True)
-    log=work/"build.log"
-    profile=work/PROFILE_NAME
-    profile.write_text(json.dumps(build_profile(args.mode,args.portable_dev)),encoding="utf8")
-    env=dict(os.environ)
-    deps=ROOT/".local"/"builddeps"
-    if deps.is_dir():
-        env["PYTHONPATH"]=str(deps)+os.pathsep+env.get("PYTHONPATH","")
+def collect_licenses(source, work):
     licenses=work/"THIRD_PARTY_LICENSES"
-    licenses.mkdir(parents=True,exist_ok=True)
-    shutil.copyfile(ROOT/"packet_inspector"/"Codex-LICENSE.txt",licenses/"Codex-LICENSE.txt")
+    licenses.mkdir(parents=True)
+    shutil.copyfile(source/"packet_inspector"/"Codex-LICENSE.txt",licenses/"Codex-LICENSE.txt")
     python_license=Path(sys.base_prefix)/"LICENSE.txt"
     if python_license.is_file():shutil.copyfile(python_license,licenses/"Python-LICENSE.txt")
+    deps=ROOT/".local"/"builddeps"
     distributions=list(importlib.metadata.distributions())
     if deps.is_dir():distributions.extend(importlib.metadata.distributions(path=[str(deps)]))
     for distribution in distributions:
@@ -85,71 +74,117 @@ def main(argv=None):
             if "licenses/" in str(entry).replace("\\","/"):
                 source=Path(distribution.locate_file(entry))
                 if source.is_file():shutil.copyfile(source,licenses/(name+"-"+source.name))
-    name="CodexPacketInspector-Dev" if args.mode=="dev" else "CodexPacketInspector"
+    return licenses
+
+
+def compile_executable(snapshot, mode, portable_dev, work, stage, licenses):
+    source=snapshot.source
+    build=work/mode
+    build.mkdir()
+    profile=build/PROFILE_NAME
+    profile.write_text(json.dumps(build_profile(mode,portable_dev)),encoding="utf8")
+    manifest=build/"_source_manifest.json"
+    snapshot.write_manifest(manifest,mode)
+    env=dict(os.environ)
+    deps=ROOT/".local"/"builddeps"
+    env["PYTHONPATH"]=str(source)+(os.pathsep+str(deps) if deps.is_dir() else "")
+    name="CodexPacketInspector-Dev" if mode=="dev" else "CodexPacketInspector"
+    icon=source/APP_ICON.relative_to(ROOT)
+    log=build/"build.log"
     command=[sys.executable,"-m","PyInstaller","--noconfirm","--clean","--onefile","--windowed",
-             "--name",name,"--icon",str(APP_ICON),"--distpath",str(release),
-             "--workpath",str(work/"app"),"--specpath",str(work/"spec"),
-             "--paths",str(ROOT),"--collect-submodules","zstandard","--hidden-import","zstandard.backend_c",
-             "--add-data",str(ROOT/"packet_inspector"/"ui")+os.pathsep+"packet_inspector/ui",
+             "--name",name,"--icon",str(icon),"--distpath",str(stage),
+             "--workpath",str(build/"app"),"--specpath",str(build/"spec"),
+             "--paths",str(source),"--collect-submodules","zstandard","--hidden-import","zstandard.backend_c",
+             "--add-data",str(source/"packet_inspector"/"ui")+os.pathsep+"packet_inspector/ui",
              "--add-data",str(profile)+os.pathsep+"packet_inspector",
-             "--add-data",str(APP_ICON)+os.pathsep+"packet_inspector/assets",
-             "--add-data",str(ROOT/"packet_inspector"/"update_channel.json")+os.pathsep+"packet_inspector",
-             "--add-data",str(ROOT/"packet_inspector"/"compress_image.ps1")+os.pathsep+"packet_inspector",
-              "--add-data",str(ROOT/"packet_inspector"/"windows_install.ps1")+os.pathsep+"packet_inspector",
+             "--add-data",str(manifest)+os.pathsep+"packet_inspector",
+             "--add-data",str(icon)+os.pathsep+"packet_inspector/assets",
+             "--add-data",str(source/"packet_inspector"/"update_channel.json")+os.pathsep+"packet_inspector",
+             "--add-data",str(source/"packet_inspector"/"compress_image.ps1")+os.pathsep+"packet_inspector",
+             "--add-data",str(source/"packet_inspector"/"windows_install.ps1")+os.pathsep+"packet_inspector",
               "--add-data",str(licenses)+os.pathsep+"THIRD_PARTY_LICENSES",
-             str(ROOT/"packet_inspector"/"launch.py")]
+             str(source/"packet_inspector"/"launch.py")]
     with log.open("w",encoding="utf8") as output:
-        result=subprocess.run(command,cwd=ROOT,env=env,stdout=output,stderr=subprocess.STDOUT)
+        result=subprocess.run(command,cwd=source,env=env,stdout=output,stderr=subprocess.STDOUT)
     if result.returncode:
-        print("Build failed; log:",log)
-        print("\n".join(log.read_text(encoding="utf8",errors="replace").splitlines()[-18:]))
-        return result.returncode
-    if args.mode=="dev":
-        executable=release/(name+".exe")
-        with executable.open("rb") as stream:digest=hashlib.file_digest(stream,"sha256").hexdigest()
-        (release/"SHA256SUMS.txt").write_text(digest+"  "+executable.name+"\n",encoding="ascii")
-        print(json.dumps({"build":"ok","mode":"dev","output_dir":str(release),
-                          "executable":str(executable),"frontend":build_profile("dev",args.portable_dev)["ui_dir"],
-                          "sha256":digest},ensure_ascii=False))
-        return 0
-    dev_output=work/"development-package"
-    dev_log=work/"development-package.log"
-    with dev_log.open("w",encoding="utf8") as output:
-        dev_result=subprocess.run([sys.executable,"-m","scripts.build_inspector","--mode","dev","--portable-dev",
-                                   "--output-dir",str(dev_output)],cwd=ROOT,env=env,stdout=output,stderr=subprocess.STDOUT)
-    if dev_result.returncode:
-        print(json.dumps({"build":"failed","component":"development","log":str(dev_log)}))
-        return dev_result.returncode
-    shutil.copy2(dev_output/"CodexPacketInspector-Dev.exe",release/"CodexPacketInspector-Dev.exe")
-    for name in ("install_inspector_service.ps1", "update_inspector_service.ps1"):
-        shutil.copyfile(ROOT/"scripts"/"windows"/name, release/name)
-    for name in ["README.md","LICENSE"]:
-        shutil.copyfile(ROOT/name,release/name)
-    shutil.copytree(ROOT/"docs", release/"docs")
-    shutil.copyfile(ROOT/"docs"/"THIRD_PARTY_NOTICES.txt", release/"THIRD_PARTY_NOTICES.txt")
-    archive=release/"CodexPacketInspector-source.zip"
-    with zipfile.ZipFile(archive,"w",zipfile.ZIP_DEFLATED) as zipped:
-        for path in source_files():
-            zipped.write(path,path.relative_to(ROOT))
-        for path in sorted(licenses.iterdir()):
-            if path.is_file():zipped.write(path,"THIRD_PARTY_LICENSES/"+path.name)
-    portable=release/"CodexPacketInspector-Windows-x64.zip"
-    with zipfile.ZipFile(portable,"w",zipfile.ZIP_DEFLATED) as zipped:
-        for name in ["CodexPacketInspector.exe","README.md","LICENSE","THIRD_PARTY_NOTICES.txt"]:
-            zipped.write(release/name,name)
-        for path in sorted((release/"docs").rglob("*")):
-            if path.is_file():zipped.write(path,path.relative_to(release))
-        for path in sorted(licenses.iterdir()):
-            if path.is_file():zipped.write(path,"THIRD_PARTY_LICENSES/"+path.name)
-    summary=[]
-    for path in [release/"CodexPacketInspector.exe",release/"CodexPacketInspector-Dev.exe",portable,release/"install_inspector_service.ps1",archive]:
-        with path.open("rb") as stream:
-            digest=hashlib.file_digest(stream,"sha256").hexdigest()
-        summary.append({"file":path.name,"bytes":path.stat().st_size,
-                        "sha256":digest})
-    (release/"SHA256SUMS.txt").write_text("\n".join(row["sha256"]+"  "+row["file"] for row in summary)+"\n",encoding="ascii")
-    print(json.dumps({"build":"ok","mode":"release","output_dir":str(release),"artifacts":summary},ensure_ascii=False))
-    return 0
+        raise SourceError(f"{mode} compilation failed; diagnostics: {log}")
+    executable=stage/(name+".exe")
+    # An EXE copied from an older build cannot pass this comparison.
+    if deps.is_dir() and str(deps) not in sys.path:sys.path.insert(0,str(deps))
+    from PyInstaller.archive.readers import CArchiveReader
+    archive=CArchiveReader(str(executable))
+    entries={name.replace('\\','/'):name for name in archive.toc}
+    embedded=json.loads(archive.extract(entries['packet_inspector/_source_manifest.json']))
+    if embedded!={**snapshot.manifest,"mode":mode}:
+        raise SourceError("EXE source manifest does not match this build")
+    for asset in ('index.html','style.css','app.js','i18n.js'):
+        key='packet_inspector/ui/'+asset
+        if hashlib.sha256(archive.extract(entries[key])).hexdigest()!=snapshot.files[key]:
+            raise SourceError("EXE contains an older frontend: "+asset)
+    pyz=archive.open_embedded_archive(next(name for name in archive.toc if name.startswith('PYZ')))
+    if 'packet_inspector.window_chrome' not in pyz.toc:
+        raise SourceError("EXE is missing the current native title bar")
+    return executable
+
+
+def package_release(source, stage, licenses):
+    public = stage / "publish"
+    public.mkdir()
+    shutil.copyfile(stage / PUBLIC_FILES[0], public / PUBLIC_FILES[0])
+    for name in ("README.md", "LICENSE"):
+        shutil.copyfile(source / name, public / name)
+    notices = (source / "docs" / "THIRD_PARTY_NOTICES.txt").read_text(encoding="utf8")
+    for path in sorted(licenses.iterdir()):
+        if path.is_file():
+            notices += "\n\n" + "=" * 72 + "\n" + path.name + "\n" + "=" * 72 + "\n"
+            notices += path.read_text(encoding="utf8", errors="replace")
+    (public / "THIRD_PARTY_NOTICES.txt").write_text(notices, encoding="utf8")
+
+
+def main(argv=None):
+    parser=argparse.ArgumentParser()
+    parser.add_argument("--output-dir",type=Path)
+    parser.add_argument("--mode",choices=("dev","release"),default="release")
+    parser.add_argument("--portable-dev",action="store_true")
+    parser.add_argument("--check-source",action="store_true",help="validate the shared source without building")
+    args=parser.parse_args(argv)
+    try:
+        workspace=Workspace(ROOT)
+        with workspace.lock():
+            metadata=workspace.validate(args.mode,refresh=args.mode=="release")
+            if metadata['version']!=VERSION:raise SourceError("Imported version differs from the source version")
+            if args.check_source:
+                print(json.dumps({"source":"ok",**metadata,"canonical_root":str(workspace.canonical)},ensure_ascii=False))
+                return 0
+            release=output_directory(args.output_dir,args.mode)
+            work=ROOT/"build"/("inspector-"+args.mode+"-"+uuid.uuid4().hex[:8])
+            work.mkdir(parents=True)
+            snapshot=Snapshot(workspace,work/"source",source_files,metadata)
+            stage=work/"deliverable"
+            stage.mkdir()
+            licenses=collect_licenses(snapshot.source,work)
+            executable=compile_executable(snapshot,args.mode,args.portable_dev,work,stage,licenses)
+            if args.mode=="release":
+                compile_executable(snapshot,"dev",True,work,stage,licenses)
+                package_release(snapshot.source,stage,licenses)
+            snapshot.write_manifest(stage/"BUILD-SOURCE.json",args.mode)
+            snapshot.assert_unchanged()
+            Workspace(ROOT).validate(args.mode,refresh=args.mode=="release")
+            artifacts=[]
+            for path in sorted(stage.rglob("*")):
+                if path.is_file():
+                    with path.open('rb') as stream:digest=hashlib.file_digest(stream,'sha256').hexdigest()
+                    artifacts.append({"file":path.relative_to(stage).as_posix(),"bytes":path.stat().st_size,"sha256":digest})
+            (stage/"SHA256SUMS.txt").write_text(''.join(item['sha256']+'  '+item['file']+'\n' for item in artifacts),encoding='ascii')
+            output_directory(release,args.mode)
+            shutil.copytree(stage,release,dirs_exist_ok=True)
+            print(json.dumps({"build":"ok","mode":args.mode,"output_dir":str(release),
+                              "executable":str(release/executable.name),"source_sha256":snapshot.manifest['source_sha256'],
+                              "git_commit":metadata['git_commit'],"artifacts":artifacts},ensure_ascii=False))
+            return 0
+    except (ValueError,OSError,subprocess.TimeoutExpired) as exc:
+        print(json.dumps({"build":"refused","error":str(exc)},ensure_ascii=False))
+        return 1
 
 
 if __name__=="__main__":

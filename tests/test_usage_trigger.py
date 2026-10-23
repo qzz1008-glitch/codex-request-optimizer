@@ -317,7 +317,7 @@ class UsageRelayTests(unittest.TestCase):
 class ProtectionMigrationTests(unittest.TestCase):
     def test_fresh_install_default_and_saved_choices_survive_restart(self):
         cases = (
-            (None, True),
+            (None, False),
             ({}, False),
             ({"packet_size_protection_enabled": False}, False),
             ({"packet_size_protection_enabled": True}, True),

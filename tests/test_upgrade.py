@@ -126,6 +126,57 @@ class UpgradeTests(unittest.TestCase):
         self.assertEqual(json.loads((self.data / "upgrade-result.json").read_text(encoding="utf8")), {"state": "running", "started": 123})
         self.engine._start_candidate.assert_not_called()
 
+    def test_all_upgrade_paths_keep_existing_configuration(self):
+        for mode in ("dev", "release"):
+            for kind in ("hot", "cold", "legacy"):
+                with self.subTest(mode=mode, kind=kind):
+                    directory = self.root / (mode + "-" + kind)
+                    directory.mkdir()
+                    config = directory / "config.toml"
+                    config.write_text('# preserved\nmodel="chosen"\nmodel_context_window=280000\n'
+                                      'model_auto_compact_token_limit=250000\n', encoding="utf8")
+                    data = directory / "data"
+                    data.mkdir()
+                    for name, value in {
+                        "settings.json": {"request_compression": "off", "packet_size_protection_enabled": True,
+                                          "image_isolation_enabled": True, "capacity_retry_enabled": True,
+                                          "start_on_login": False, "auto_detect_providers": False,
+                                          "ui_language": "en", "budget_bytes": 812000, "image_save_dir": "custom"},
+                        "updates.json": {"repository": "owner/repo", "automatic": True},
+                        "entry-port.json": {"port": 48765},
+                        "desktop-profile.json": {"mode": mode, "managed_ui": True},
+                        "codex-link.json": {"fixture": "preserve recovery"},
+                    }.items():
+                        atomic_json(data / name, value)
+                    protected = [config, *[data / name for name in ("settings.json", "updates.json", "entry-port.json",
+                                                                   "desktop-profile.json", "codex-link.json")]]
+                    before = {path: path.read_bytes() for path in protected}
+                    atomic_json(data / "router-state.json", {"active": "1" * 32, "token": "fixture-control"})
+                    engine = Upgrade(self.payload, data, config, 48765)
+                    engine._application_windows = Mock(return_value=[])
+                    engine._legacy_processes = Mock(return_value=[])
+                    engine._start_candidate = Mock(side_effect=lambda *_: setattr(engine, "candidate", "2" * 32))
+                    engine._start_entry = Mock()
+                    engine._wait_entry = Mock(return_value={"worker_id": "2" * 32})
+
+                    def api(_port, path, *_args, **_kwargs):
+                        if path == "/health":
+                            if kind == "cold":
+                                raise ConnectionRefusedError()
+                            return {"app": "codex-packet-inspector", **({"router_protocol": 1} if kind == "hot" else {})}
+                        if path == "/api/status":
+                            return {"data_dir": str(data), "profile": {"config_path": str(config)},
+                                    "upgrade_drain_supported": True, "active_requests": 0}
+                        return {}
+
+                    with patch("packet_inspector.upgrade.local_json", side_effect=api), \
+                            patch("packet_inspector.upgrade.control_worker"), \
+                            patch("packet_inspector.upgrade.socket.socket") as socket:
+                        socket.return_value.__enter__.return_value.connect_ex.return_value = 1
+                        self.assertEqual(engine.run()["state"], "complete")
+                    for path, raw in before.items():
+                        self.assertEqual(path.read_bytes(), raw, path.name)
+
 
 @unittest.skipUnless(os.name == "nt", "Windows process discovery")
 class LegacyWindowDiscoveryTests(unittest.TestCase):

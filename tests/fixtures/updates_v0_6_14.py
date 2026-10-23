@@ -19,7 +19,8 @@ from . import VERSION
 from .locking import file_lock
 from .router import atomic_json
 
-ASSET = "CodexRequestOptimizer-Upgrade.exe"
+ASSET = "CodexPacketInspector.exe"
+LEGACY_ASSET = "CodexRequestOptimizer-Upgrade.exe"
 REPOSITORY = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
 
 
@@ -166,11 +167,13 @@ class Updates:
                   "release_url": "https://github.com/" + repository + "/releases/tag/v" + latest}
         if newer:
             asset = next((item for item in release.get("assets", []) if item.get("name") == ASSET), None)
+            if asset is None:
+                asset = next((item for item in release.get("assets", []) if item.get("name") == LEGACY_ASSET), None)
             if not asset or not isinstance(asset.get("digest"), str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", asset["digest"]):
                 raise ValueError("新版缺少带 SHA-256 校验的升级 EXE。")
             if not isinstance(asset.get("id"), int) or not isinstance(asset.get("size"), int) or not 0 < asset["size"] <= 300 * 1024 * 1024:
                 raise ValueError("升级包信息无效。")
-            result["asset"] = {"id": asset["id"], "size": asset["size"], "sha256": asset["digest"][7:]}
+            result["asset"] = {"id": asset["id"], "name": asset["name"], "size": asset["size"], "sha256": asset["digest"][7:]}
         atomic_json(self.state_path, result)
         return result
 
@@ -183,7 +186,10 @@ class Updates:
         asset = cached["asset"]
         folder = self.directory / "updates" / cached["latest_version"]
         folder.mkdir(parents=True, exist_ok=True)
-        executable = folder / ASSET
+        asset_name = asset.get("name", ASSET)
+        if asset_name not in {ASSET, LEGACY_ASSET}:
+            raise ValueError("更新文件名无效。")
+        executable = folder / asset_name
         atomic_json(self.state_path, {**cached, "state": "downloading"})
         if not executable.exists() or self._hash(executable) != asset["sha256"]:
             temporary = executable.with_suffix(".download")
@@ -205,7 +211,7 @@ class Updates:
                 temporary.unlink(missing_ok=True)
         started = time.time()
         atomic_json(self.state_path, {**cached, "state": "upgrading", "upgrade_started": started})
-        subprocess.Popen([str(executable), "--quiet", "--data-dir", str(self.directory.resolve()),
+        subprocess.Popen([str(executable), *(["--upgrade"] if asset_name == ASSET else []), "--quiet", "--data-dir", str(self.directory.resolve()),
                           "--config", str(self.config.resolve()), "--port", str(self.port)],
                          env={**os.environ, "PYINSTALLER_RESET_ENVIRONMENT": "1"},
                          creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))

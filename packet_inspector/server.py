@@ -32,10 +32,10 @@ from .updates import Updates
 from .token_window import TokenWindows
 from .session_summary import SessionSummaries
 from .storage import Store
-from .transport import prepare_request
+from .transport import DEFAULT_ZSTD_LEVEL, prepare_request, validate_zstd_level
 from .installation import manage_installation
 from .startup import configure_startup, startup_supported
-from .capacity_retry import open_response
+from .capacity_retry import MAX_RETRIES, open_response
 from .usage_trigger import (UsageStream, raw_chunks, request_size as usage_trigger_size,
                             trigger_threshold, DEFAULT_BUDGET_BYTES, MIN_BUDGET_BYTES)
 from .overflow import CheckpointStream, OverflowCompactor, OverflowFailure
@@ -95,12 +95,19 @@ class InspectorServer(ThreadingHTTPServer):
         self.settings = {"relay_token": secrets.token_urlsafe(32),
                          "capture_enabled": True, "budget_bytes": DEFAULT_BUDGET_BYTES,
                          "max_storage_mb": 512, "max_packets": 2000,
-                         "request_compression": "zstd", "packet_size_protection_enabled": True,
+                         "request_compression": "zstd", "zstd_level": DEFAULT_ZSTD_LEVEL,
+                         "packet_size_protection_enabled": False,
+                         "ui_language": "zh",
                          "start_on_login": False, "capacity_retry_enabled": False,
+                         "capacity_retry_max_retries": MAX_RETRIES,
                          "image_isolation_enabled": False, "image_save_dir": "",
                          "auto_detect_providers": True, "provider_routes": {},
-                         **protection_settings(saved, default_enabled=not settings_exist)}
+                         **protection_settings(saved)}
         self.settings.pop("ui_token", None)
+        try:
+            self.settings["zstd_level"] = validate_zstd_level(self.settings["zstd_level"])
+        except ValueError:
+            self.settings["zstd_level"] = DEFAULT_ZSTD_LEVEL
         if upstream:
             self.settings["upstream"] = validate_upstream(upstream)
         elif not self.settings.get("upstream"):
@@ -170,7 +177,7 @@ class InspectorServer(ThreadingHTTPServer):
             if self.settings["auto_detect_providers"] and self.provider_fingerprint is not None:
                 fingerprint = self._provider_fingerprint()
                 if fingerprint != self.provider_fingerprint or time.monotonic() >= self.provider_next_scan:
-                    self.sync_providers()
+                    self.auto_sync_providers()
             self.overflow.maintenance()
             self.updates.poll()
             self.store.reclaimer.run(self.overflow.busy)
@@ -196,7 +203,7 @@ class InspectorServer(ThreadingHTTPServer):
                     self.store.max_bytes = self.settings["max_storage_mb"] * 1024 * 1024
                     self.store.max_count = self.settings["max_packets"]
                 if self.settings["auto_detect_providers"]:
-                    self.sync_providers()
+                    self.auto_sync_providers()
                 self.worker_state = "active"
                 self.maintenance_enabled = bool(data.get("maintenance", True))
             elif action == "maintenance":
@@ -223,6 +230,12 @@ class InspectorServer(ThreadingHTTPServer):
         paths.append(self.link.config.parent / "auth.json")
         return tuple((str(path), path.stat().st_mtime_ns, path.stat().st_size)
                      for path in paths if path.exists())
+
+    def auto_sync_providers(self):
+        # Only explicit activation may change a disconnected installation.
+        if not self.settings["auto_detect_providers"] or not self.connection_profile()["active"]:
+            return {"enabled": False}
+        return self.sync_providers()
 
     def sync_providers(self):
         with self.provider_guard:
@@ -271,14 +284,26 @@ class InspectorServer(ThreadingHTTPServer):
     def endpoint(self):
         return f"http://127.0.0.1:{self.public_port}/relay/{self.settings['relay_token']}"
 
+    def connection_profile(self):
+        profile = self.link.profile()
+        actual = profile.pop("base_url", "")
+        prefix = self.endpoint + "/p/"
+        matches = (actual == self.endpoint or isinstance(actual, str) and actual.startswith(prefix)
+                   and actual[len(prefix):] in self.settings["provider_routes"])
+        profile["endpoint_matches"] = bool(matches)
+        profile["active"] = bool(matches)
+        return profile
+
     def status(self):
         try:
-            profile = self.link.profile()
+            profile = self.connection_profile()
         except Exception as exc:
             profile = {"active": False, "config_error": type(exc).__name__}
         storage = self.store.stats()
         return {"version": VERSION, "ui_version": VERSION, "capture_enabled": self.settings["capture_enabled"],
                 "request_compression": self.settings["request_compression"],
+                "zstd_level": self.settings["zstd_level"],
+                "ui_language": self.settings["ui_language"],
                 "packet_size_protection_enabled": self.settings["packet_size_protection_enabled"],
                 "overflow_compaction_enabled": self.settings["packet_size_protection_enabled"],
                 "native_compact_trigger_enabled": self.settings["packet_size_protection_enabled"],
@@ -288,6 +313,7 @@ class InspectorServer(ThreadingHTTPServer):
                 "start_on_login_supported": startup_supported(self.data_dir),
                 "startup_state_known": self.startup_state_known,
                 "capacity_retry_enabled": self.settings["capacity_retry_enabled"],
+                "capacity_retry_max_retries": self.settings["capacity_retry_max_retries"],
                 "capacity_retry_supported": True,
                 "image_isolation_enabled": self.settings["image_isolation_enabled"],
                 "image_isolation_supported": True, "image_tool": self.image_config.status(),
@@ -546,6 +572,12 @@ class Handler(BaseHTTPRequestHandler):
                     if data["request_compression"] not in {"off", "zstd"}:
                         raise ValueError("invalid request compression mode")
                     candidate["request_compression"] = data["request_compression"]
+                if "zstd_level" in data:
+                    candidate["zstd_level"] = validate_zstd_level(data["zstd_level"])
+                if "ui_language" in data:
+                    if not isinstance(data["ui_language"], str) or data["ui_language"] not in {"zh", "en"}:
+                        raise ValueError("invalid interface language")
+                    candidate["ui_language"] = data["ui_language"]
                 protection_values = []
                 for key in ("packet_size_protection_enabled", "overflow_compaction_enabled", "native_compact_trigger_enabled"):
                     if key in data:
@@ -563,7 +595,7 @@ class Handler(BaseHTTPRequestHandler):
                             raise ValueError("invalid boolean setting: " + key)
                         candidate[key] = data[key]
                 for key, low, high in (("budget_bytes", MIN_BUDGET_BYTES, MAX_BODY), ("max_storage_mb", 16, 8192),
-                                       ("max_packets", 10, 20000)):
+                                       ("max_packets", 10, 20000), ("capacity_retry_max_retries", 1, 99)):
                     if key in data:
                         value = data[key]
                         if isinstance(value, bool) or not isinstance(value, int) or not low <= value <= high:
@@ -743,6 +775,15 @@ class Handler(BaseHTTPRequestHandler):
                 if suffix.startswith("//"):
                     self._json(400, {"error": "invalid_request_path"})
                     return
+        # GET on the Responses creation endpoint is a WebSocket transport probe.
+        # Intermediaries may remove every Upgrade header. Return Codex's HTTP
+        # fallback status locally instead of forwarding a GET that yields 405
+        # and consumes its reconnect retries. GET /responses/{id} still relays.
+        if self.command == "GET" and urlsplit(suffix).path.rstrip("/") == "/responses":
+            self.close_connection = True
+            self._json(426, {"error": {"code": "websocket_not_supported",
+                                      "message": "Use HTTP POST for Responses API requests through this relay."}})
+            return
         started = time.monotonic()
         packet_id = None
         if self.server.settings["capture_enabled"]:
@@ -766,6 +807,7 @@ class Handler(BaseHTTPRequestHandler):
         # uses the OS/environment proxy. Redirects and inference retries are disabled.
         with self.server.guard:
             compression = self.server.settings["request_compression"]
+            zstd_level = self.server.settings["zstd_level"]
             protection_enabled = self.server.settings["packet_size_protection_enabled"]
             budget = self.server.settings["budget_bytes"]
             image_enabled = self.server.settings["image_isolation_enabled"]
@@ -780,7 +822,7 @@ class Handler(BaseHTTPRequestHandler):
             source_body = body
             if image_enabled and not image_worker and self.command == "POST" and urlsplit(suffix).path.rstrip("/").endswith(("/responses", "/responses/compact")):
                 try:
-                    prepared = image_isolation.prepare(body, headers, suffix, compression)
+                    prepared = image_isolation.prepare(body, headers, suffix, compression, zstd_level=zstd_level)
                 except (ImageIsolationFailure, ImportError):
                     raise
                 except Exception:
@@ -792,7 +834,7 @@ class Handler(BaseHTTPRequestHandler):
                 headers = {k: v for k, v in headers.items() if k.lower() not in {"content-md5", "digest", "content-encoding"}}
                 headers["Content-Encoding"] = outbound_encoding
             else:
-                outbound_body, outbound_encoding = prepare_request(body, headers, self.command, suffix, compression)
+                outbound_body, outbound_encoding = prepare_request(body, headers, self.command, suffix, compression, zstd_level)
             if protection_enabled and not image_worker:
                 trigger_size = usage_trigger_size(body, dict(self.headers.items()), self.command, suffix, len(outbound_body), budget)
                 if trigger_size is not None:
@@ -803,7 +845,7 @@ class Handler(BaseHTTPRequestHandler):
                 outbound_body, outbound_encoding, overflow_meta = self.server.overflow.prepare(
                     outbound_body, outbound_encoding, source_body, headers, suffix, upstream, compression, budget,
                     lambda compact_body, encoding: self._checkpoint(upstream, suffix, headers, compact_body, encoding),
-                    request_scope=scope)
+                    request_scope=scope, zstd_level=zstd_level)
                 update(**overflow_meta)
         except ImageIsolationFailure as exc:
             update(state="relay_error", relay_error=exc.code, status=exc.status)
@@ -829,7 +871,8 @@ class Handler(BaseHTTPRequestHandler):
         update(relay_wire_bytes=len(outbound_body), relay_content_encoding=outbound_encoding,
                compression_applied=outbound_body is not body)
         local_upstream = urlsplit(upstream).hostname in {"localhost", "127.0.0.1", "::1"}
-        capacity_retry = (self.server.settings["capacity_retry_enabled"] and self.command == "POST"
+        retry_settings = self.server.settings
+        capacity_retry = (retry_settings["capacity_retry_enabled"] and self.command == "POST"
                           and urlsplit(suffix).path.rstrip("/").endswith("/responses"))
         if capacity_retry or trigger_size is not None:
             headers = {key: value for key, value in headers.items() if key.lower() != "accept-encoding"}
@@ -848,7 +891,7 @@ class Handler(BaseHTTPRequestHandler):
                            outbound_content_encoding=outbound_encoding)
                 opener = self.server.local_opener if local_upstream else self.server.opener
                 response = open_response(
-                    opener, request, enabled=capacity_retry,
+                    opener, request, enabled=capacity_retry, max_retries=retry_settings["capacity_retry_max_retries"],
                     on_retry=lambda attempt, delay: update(capacity_retry_count=attempt,
                                                           capacity_retry_delay_ms=round(delay * 1000),
                                                           capacity_retry_reason="server_overloaded"),
@@ -969,7 +1012,7 @@ def main(argv=None, on_started=None):
     try:
         if not args.worker_id and server.settings["auto_detect_providers"]:
             try:
-                server.sync_providers()
+                server.auto_sync_providers()
             except (OSError, ValueError, TypeError):
                 pass  # Keep already-published routes serving; expose the error in status.
         if on_started:

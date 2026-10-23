@@ -19,7 +19,7 @@ class Callbacks(list):
 class WindowLifecycleTests(unittest.TestCase):
     def setUp(self):
         self.window = Mock()
-        self.window.events = SimpleNamespace(closing=Callbacks(), closed=Callbacks())
+        self.window.events = SimpleNamespace(closing=Callbacks(), closed=Callbacks(), before_show=Callbacks())
         self.window.native = SimpleNamespace(WindowState="Normal")
         self.marked = patch("packet_inspector.window_lifecycle.window_exit_requested", return_value=False)
         self.exit_requested = self.marked.start()

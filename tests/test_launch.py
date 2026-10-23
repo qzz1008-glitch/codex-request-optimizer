@@ -1,6 +1,7 @@
 """One frozen application must keep installed entries separate from workers."""
 from pathlib import Path
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -68,6 +69,30 @@ class LaunchRoutingTests(unittest.TestCase):
                     patch.object(launch, "service_main", return_value=0):
                 self.assertEqual(launch.main(["--background", *self.arguments]), 0)
             entry.assert_not_called()
+
+    def test_tray_exit_opens_confirmation_without_stopping_service(self):
+        callbacks = {}
+        tray = SimpleNamespace(start=lambda: tray, stop=lambda: None)
+
+        def native_tray(open_window, exit_app):
+            callbacks.update(open=open_window, exit=exit_app)
+            return tray
+
+        def service(arguments, on_started):
+            server = SimpleNamespace(port=47844)
+            on_started(server)
+            callbacks["exit"]()
+            self.assertTrue(server.desktop_tray)
+            return 0
+
+        with patch.object(launch.sys, "frozen", False, create=True), \
+                patch.object(launch, "service_main", side_effect=service), \
+                patch("packet_inspector.tray.NativeTray", side_effect=native_tray), \
+                patch("packet_inspector.exit_flow.request_exit") as request, \
+                patch("packet_inspector.desktop.local_api") as api:
+            self.assertEqual(launch.main(["--background", "--tray", *self.arguments]), 0)
+        request.assert_called_once_with(self.data, callbacks["open"])
+        api.assert_not_called()
 
 
 if __name__ == "__main__":

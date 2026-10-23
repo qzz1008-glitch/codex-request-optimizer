@@ -85,6 +85,7 @@ class Updates:
         self.defaults = {"repository": channel["repository"], "automatic": False}
         self.opener = opener or github_opener()
         self.guard, self.task = threading.Lock(), None
+        self.action = ""
         self.next_poll = 0
 
     def settings(self):
@@ -110,6 +111,10 @@ class Updates:
                 cached = {**cached, "state": "complete" if result.get("state") == "complete" else "error",
                           "error": result.get("error", ""), "finished": result.get("finished")}
                 atomic_json(self.state_path, cached)
+        if self.task and self.task.is_alive() and cached.get("state") not in {"checking", "downloading", "upgrading"}:
+            # A queued thread may not have written its first state yet. Report
+            # it as busy so the UI cannot drop feedback or submit it twice.
+            cached = {**cached, "state": "checking" if self.action == "check" else "downloading", "error": ""}
         return {**self.settings(), **{key: value for key, value in cached.items() if key != "asset"},
                 "current_version": self.current_version, "supported": True}
 
@@ -170,9 +175,9 @@ class Updates:
             if asset is None:
                 asset = next((item for item in release.get("assets", []) if item.get("name") == LEGACY_ASSET), None)
             if not asset or not isinstance(asset.get("digest"), str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", asset["digest"]):
-                raise ValueError("新版缺少带 SHA-256 校验的升级 EXE。")
+                raise ValueError("新版缺少带 SHA-256 校验的正式版 EXE。")
             if not isinstance(asset.get("id"), int) or not isinstance(asset.get("size"), int) or not 0 < asset["size"] <= 300 * 1024 * 1024:
-                raise ValueError("升级包信息无效。")
+                raise ValueError("正式版文件信息无效。")
             result["asset"] = {"id": asset["id"], "name": asset["name"], "size": asset["size"], "sha256": asset["digest"][7:]}
         atomic_json(self.state_path, result)
         return result
@@ -201,11 +206,11 @@ class Updates:
                     while chunk := response.read(1024 * 1024):
                         received += len(chunk)
                         if received > asset["size"]:
-                            raise ValueError("升级包大小与版本信息不符。")
+                            raise ValueError("正式版文件大小与版本信息不符。")
                         stream.write(chunk)
                         digest.update(chunk)
                 if received != asset["size"] or digest.hexdigest() != asset["sha256"]:
-                    raise ValueError("升级包 SHA-256 校验失败。")
+                    raise ValueError("正式版文件 SHA-256 校验失败。")
                 temporary.replace(executable)
             finally:
                 temporary.unlink(missing_ok=True)
@@ -228,6 +233,7 @@ class Updates:
         with self.guard:
             if self.task and self.task.is_alive():
                 return self.status()
+            self.action = action
             def run():
                 try:
                     with file_lock(self.directory / "update-check.lock", blocking=False):

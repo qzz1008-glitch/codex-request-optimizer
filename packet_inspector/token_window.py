@@ -12,10 +12,28 @@ import re
 import sqlite3
 import threading
 import time
+from urllib.parse import urlsplit
 
 READ_BUDGET = 8 * 1024 * 1024
 LINE_LIMIT = 2 * 1024 * 1024
 MAX_EVENTS = 20000
+
+
+def is_token_request(packet, *, include_compaction=False):
+    """Auxiliary HTTP calls cannot own a model's native usage notification."""
+    if (packet.get("method", "POST") != "POST" or packet.get("request_kind") == "tool_search"
+            or not include_compaction and packet.get("is_compaction")):
+        return False
+    path = packet.get("path")
+    if not path:
+        return True  # Older metadata may omit the endpoint.
+    if not isinstance(path, str):
+        return False
+    try:
+        endpoint = urlsplit(path).path.rstrip("/")
+    except ValueError:
+        return False
+    return endpoint.endswith("/responses") or include_compaction and endpoint.endswith("/responses/compact")
 
 
 def _number(value):
@@ -189,7 +207,7 @@ class TokenWindows:
 
     def lookup(self, packet, next_created=None):
         unavailable = {"state": "unavailable"}
-        if (packet.get("method") != "POST" or packet.get("is_compaction")
+        if (not is_token_request(packet) or packet.get("method") != "POST"
                 or packet.get("status") != 200 or packet.get("state") not in {"complete", "streaming"}):
             return unavailable
         created = packet.get("created")
@@ -224,6 +242,8 @@ class TokenWindows:
 
     def lookup_ready(self, packet, next_created=None):
         """Read consecutive bounded chunks without waiting for the browser's next poll."""
+        if not is_token_request(packet):
+            return {"state": "unavailable"}
         usage = packet.get("upstream_usage")
         if (isinstance(usage, dict) and packet.get("status") == 200
                 and packet.get("state") in {"streaming", "complete"}

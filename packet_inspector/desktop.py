@@ -19,6 +19,7 @@ from .desktop_ui import DesktopUI, window_geometry
 from .app_icon import APP_ICON
 from .frontend_dev import load_profile, validate_ui_dir, resolve_profile, remember_profile, installed_profile
 from .window_lifecycle import WindowLifecycle, window_control_prefix
+from .window_chrome import WindowChrome
 
 
 def app_command():
@@ -63,7 +64,8 @@ def ensure_service(options):
                 raise RuntimeError("此端口正在使用另一个数据目录。")
             if Path(status["profile"]["config_path"]).resolve() != options.config.resolve():
                 raise RuntimeError("此端口正在使用另一份 Codex 配置。")
-            if status.get("provider_routing_supported") and status.get("auto_detect_providers"):
+            if (status.get("provider_routing_supported") and status.get("auto_detect_providers")
+                    and status.get("profile", {}).get("active")):
                 local_api(options.port, "/api/providers/sync", {}, timeout=10)
                 status = local_api(options.port, "/api/status")
             return status
@@ -169,21 +171,27 @@ def run(arguments):
             ui_dir = profile.ui_dir
         status = ensure_service(options)
         remember_profile(options.data_dir, profile)
-        ui = DesktopUI(options.port, ui_dir=ui_dir, live_reload=profile.development).start()
+        ui = DesktopUI(options.port, ui_dir=ui_dir, live_reload=profile.development,
+                       exit_data_dir=options.data_dir).start()
         import webview
 
         webview.settings["ALLOW_DOWNLOADS"] = True
+        webview.settings["DRAG_REGION_SELECTOR"] = ".desktop-titlebar .app-header, .desktop-titlebar .brand, .desktop-titlebar .brand strong"
+        webview.settings["DRAG_REGION_DIRECT_TARGET_ONLY"] = True
         # Explicitly require Chromium. Do not fall back to an external browser or IE.
         title = "Codex 请求优化器 · 开发版" if profile.development else "Codex 请求优化器"
+        chrome = WindowChrome()
         window = webview.create_window(title, ui.ui_url,
                                        **window_geometry(ui_dir), maximized=False,
-                                       text_select=True, background_color="#f5f7fb", hidden=bool(options.desktop_check))
+                                       js_api=chrome, text_select=True, background_color="#f5f7fb", hidden=bool(options.desktop_check))
+        chrome._bind(window)
         loaded = threading.Event()
         lifecycle = WindowLifecycle(window, lambda: tray_available(options.data_dir, status))
         window.events.loaded += loaded.set
 
         def show():
             try:
+                ui.window_opened += 1
                 lifecycle.show()
             except Exception:
                 pass
