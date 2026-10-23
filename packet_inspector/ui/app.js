@@ -1726,9 +1726,6 @@ function renderHeaders(m) {
   const session=sessionSummaries.find(row=>row.thread_id===m.thread_id);
   const auxiliary=auxiliarySessionKind(session),purpose=purposeFromMetadata(m);
   const specialKind=[purpose,m.request_kind,auxiliary].find(kind=>kind&&kind!=="subagent"&&Object.hasOwn(auxiliaryLabels,kind));
-  const body=requestBodyView?.id===m.id?requestBodyView.body:null, paths=requestImagePaths(m,body);
-  const hasImage=auxiliary==="image_analysis"||specialKind==="image_analysis"||m.image_isolation_removed>0||paths.length>0||
-    (Array.isArray(body?.input)&&body.input.some(item=>item?.role==="user"&&Array.isArray(item.content)&&item.content.some(part=>part?.type==="input_image")));
   fact(p,t("响应状态"),String(m.status||t("尚未收到")));
   fact(p,t("响应头耗时"),Number.isFinite(m.headers_ms)&&m.headers_ms>=0?m.headers_ms+" ms":"—");
   const upload=uploadBytes(m);
@@ -1751,7 +1748,8 @@ function renderHeaders(m) {
     fact(context,t("任务类型"),t(auxiliaryLabels[specialKind]));
     root.append(context);
   }
-  if(hasImage) {
+  if(specialKind==="image_analysis") {
+    const body=requestBodyView?.id===m.id?requestBodyView.body:null,paths=requestImagePaths(m,body);
     const images=panel(t("图片信息"));images.id="request-image-info";
     fact(images,t("图片路径"),paths.length?paths.join("\n"):t("未记录图片路径")).classList.add("request-context","request-image-paths");
     root.append(images);
