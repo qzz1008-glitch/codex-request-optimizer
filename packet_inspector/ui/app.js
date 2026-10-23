@@ -1659,7 +1659,12 @@ function localImagePath(value) {
   return !/[\r\n]/.test(value)&&/\.(png|jpe?g|webp|gif|bmp|tiff?|heic|heif|avif)$/i.test(value)&&(/^(?:[A-Za-z]:[/\\]|\/|\\\\)/.test(value))?value:null;
 }
 function requestImagePaths(meta,body) {
-  const paths=new Set(), add=value=>{const path=localImagePath(value);if(path&&paths.size<32)paths.add(path);};
+  const rewrites=new Map();
+  if(meta.image_path_rewrites&&typeof meta.image_path_rewrites==="object"&&!Array.isArray(meta.image_path_rewrites))
+    for(const [from,to] of Object.entries(meta.image_path_rewrites).slice(0,32)) {
+      const source=localImagePath(from),target=localImagePath(to);if(source&&target)rewrites.set(source,target);
+    }
+  const paths=new Set(), add=value=>{const path=localImagePath(value);if(path&&paths.size<32)paths.add(rewrites.get(path)||path);};
   if(Array.isArray(meta.image_paths))meta.image_paths.forEach(add);
   for(const item of Array.isArray(body?.input)?body.input:[]) {
     if(item?.role!=="user")continue;
