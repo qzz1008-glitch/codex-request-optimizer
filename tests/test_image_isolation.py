@@ -12,7 +12,6 @@ import tempfile
 import tomllib
 import unittest
 from unittest.mock import patch
-from types import SimpleNamespace
 
 from tests import test_packet_inspector as fixtures
 import zstandard
@@ -21,7 +20,16 @@ from packet_inspector.analyzer import decode_body, encode
 from packet_inspector.config_link import ConfigLink
 from packet_inspector.image_config import ImageToolConfig, VISION_PROVIDER, WORKER_HEADER, find_codex_cli
 from packet_inspector.image_isolation import ImageIsolation, ImageIsolationFailure
-from packet_inspector.image_tool import ImageToolRPC, disabled_mcp_override
+
+
+def native_config(original):
+    data = deepcopy(original)
+    data.setdefault("tools", {})["view_image"] = True
+    if data.get("features", {}).get("view_image") is False:
+        data["features"].pop("view_image")
+        if not data["features"]:
+            data.pop("features")
+    return data
 
 
 def image_part():
@@ -76,7 +84,7 @@ class ImageConfigurationTests(unittest.TestCase):
             '[mcp_servers.isolated_vision]\ncommand="original-reader"\nargs=["existing.py"]\n'
             '[mcp_servers.other]\ncommand="unrelated"\n', encoding="utf8")
         self.manager = ImageToolConfig(ConfigLink(self.config, self.root / "link.json"), self.root,
-            lambda: "http://127.0.0.1:43210", lambda: "http://127.0.0.1:43210/relay/test")
+            lambda: "http://127.0.0.1:43210/relay/test")
 
     def enable(self):
         with patch("packet_inspector.image_config.shutil.which", return_value="fake-codex"), patch.object(
@@ -96,7 +104,7 @@ class ImageConfigurationTests(unittest.TestCase):
         self.assertFalse(self.manager.status()["managed_tool_installed"])
         with self.manager.change(False):
             pass
-        self.assertEqual(tomllib.loads(self.config.read_text(encoding="utf8")), original)
+        self.assertEqual(tomllib.loads(self.config.read_text(encoding="utf8")), native_config(original))
 
     def test_disabled_mode_needs_no_cli_and_restores_both_tools(self):
         original = tomllib.loads(self.config.read_text(encoding="utf8"))
@@ -108,11 +116,11 @@ class ImageConfigurationTests(unittest.TestCase):
         self.assertIs(configured["mcp_servers"]["isolated_vision"]["enabled"], False)
         self.assertEqual(configured["mcp_servers"]["other"], original["mcp_servers"]["other"])
         self.assertFalse(self.manager.profile_path.exists())
-        reloaded = ImageToolConfig(self.manager.link, self.root, self.manager.api_base, self.manager.relay_endpoint)
+        reloaded = ImageToolConfig(self.manager.link, self.root, self.manager.relay_endpoint)
         self.assertEqual(reloaded.status()["mode"], "disabled")
         with reloaded.change("native"):
             pass
-        self.assertEqual(tomllib.loads(self.config.read_text(encoding="utf8")), original)
+        self.assertEqual(tomllib.loads(self.config.read_text(encoding="utf8")), native_config(original))
 
     def test_all_mode_transitions_keep_the_original_configuration(self):
         original = tomllib.loads(self.config.read_text(encoding="utf8"))
@@ -127,7 +135,7 @@ class ImageConfigurationTests(unittest.TestCase):
                 if mode == "disabled":
                     self.assertIs(data["mcp_servers"]["isolated_vision"]["enabled"], False)
                 elif mode == "native":
-                    self.assertEqual(data, original)
+                    self.assertEqual(data, native_config(original))
 
     def test_optimized_to_disabled_removes_the_managed_tool(self):
         self.config.write_text('model="test"\n', encoding="utf8")
@@ -139,7 +147,7 @@ class ImageConfigurationTests(unittest.TestCase):
         self.assertIs(data["tools"]["view_image"], False)
         with self.manager.change("native"):
             pass
-        self.assertEqual(tomllib.loads(self.config.read_text(encoding="utf8")), {"model": "test"})
+        self.assertEqual(tomllib.loads(self.config.read_text(encoding="utf8")), {"model": "test", "tools": {"view_image": True}})
 
     def test_failed_mode_transition_restores_disabled_configuration_and_state(self):
         with self.manager.change("disabled"):
@@ -174,15 +182,16 @@ class ImageConfigurationTests(unittest.TestCase):
             pass
         self.assertEqual(self.config.read_text(encoding="utf8"), changed)
 
-    def test_missing_isolated_tool_gets_text_only_http_fallback(self):
+    def test_missing_isolated_tool_installs_independent_stdio_tool(self):
         self.config.write_text('model="test"\n', encoding="utf8")
         self.enable()
         data = tomllib.loads(self.config.read_text(encoding="utf8"))
-        self.assertTrue(data["mcp_servers"]["isolated_vision"]["url"].startswith("http://127.0.0.1:43210/mcp/image/"))
+        self.assertNotIn("url", data["mcp_servers"]["isolated_vision"])
+        self.assertTrue(Path(data["mcp_servers"]["isolated_vision"]["args"][-1]).is_file())
         self.assertTrue(self.manager.status()["managed_tool_installed"])
         with self.manager.change(False):
             pass
-        self.assertEqual(tomllib.loads(self.config.read_text(encoding="utf8")), {"model": "test"})
+        self.assertEqual(tomllib.loads(self.config.read_text(encoding="utf8")), {"model": "test", "tools": {"view_image": True}})
         self.assertFalse(self.manager.status()["managed_tool_installed"])
 
     def test_failed_enable_rolls_back_both_files(self):
@@ -239,7 +248,7 @@ class ImageConfigurationTests(unittest.TestCase):
         self.assertEqual(worker["http_headers"]["X-Company"], "test")
         with self.manager.change(False):
             pass
-        self.assertEqual(tomllib.loads(self.config.read_text(encoding="utf8")), original)
+        self.assertEqual(tomllib.loads(self.config.read_text(encoding="utf8")), native_config(original))
 
     def test_legacy_vision_profile_migrates_and_keeps_its_model_preferences(self):
         with self.config.open("a", encoding="utf8") as out:
@@ -300,7 +309,7 @@ class ImageConfigurationTests(unittest.TestCase):
         profile = tomllib.loads(self.manager.profile_path.read_text(encoding="utf8"))
         environment = dict(os.environ)
         environment["CODEX_HOME"] = str(self.root)
-        result = subprocess.run([cli, "--profile", "isolated-vision", "-c", disabled_mcp_override(data, profile),
+        result = subprocess.run([cli, "--profile", "isolated-vision", "-c", "mcp_servers={" + ",".join(json.dumps(name) + "={enabled=false}" for name in sorted(set(data.get("mcp_servers", {})) | set(profile.get("mcp_servers", {})))) + "}",
             "mcp", "list", "--json"], env=environment, capture_output=True, text=True, encoding="utf8", errors="replace",
             timeout=15, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         self.assertEqual(result.returncode, 0, "CLI rejected isolated profile or MCP override")
@@ -605,115 +614,30 @@ class ImageRelayTests(unittest.TestCase):
         self.assertIs(self.server.image_isolation, original)
         self.assertEqual(self.server.settings_path.read_bytes(), before)
 
-    def mcp(self, message, session=None, method="POST"):
-        connection = http.client.HTTPConnection("127.0.0.1", self.server.port, timeout=5)
-        headers = {"Content-Type": "application/json"}
-        if session:
-            headers["Mcp-Session-Id"] = session
-        connection.request(method, self.server.image_config.mcp_path(), encode(message) if message is not None else None, headers)
-        response = connection.getresponse()
-        result = response.read()
-        value = (response.status, json.loads(result) if result else None, response.getheader("Mcp-Session-Id"))
-        connection.close()
-        return value
-
-    def test_new_user_installs_bundled_tool_and_cli_loads_registration(self):
+    def test_new_user_installs_stdio_tool_and_uninstall_restores_native(self):
         if not find_codex_cli():
             self.skipTest("Codex CLI is not installed")
         original = tomllib.loads(self.config.read_text(encoding="utf8"))
-        self.assertNotIn("isolated_vision", original.get("mcp_servers", {}))
         model_requests = len(self.up.requests)
         code, status = self.api("/api/settings", {"image_isolation_enabled": True})
         self.assertEqual(code, 200, status)
         self.assertTrue(status["image_tool"]["managed_tool_installed"])
-        installed = tomllib.loads(self.config.read_text(encoding="utf8"))
-        registration = installed["mcp_servers"]["isolated_vision"]
-        self.assertTrue(registration["url"].endswith(self.server.image_config.mcp_path()))
-        self.assertNotIn("command", registration)
+        self.assertEqual(status["image_tool"]["transport"], "stdio")
+        registration = tomllib.loads(self.config.read_text(encoding="utf8"))["mcp_servers"]["isolated_vision"]
+        self.assertNotIn("url", registration)
+        self.assertTrue(Path(registration["args"][-1]).is_file())
+        self.assertFalse(hasattr(self.server, "image_tool"))
         self.assertEqual(self.api("/api/settings", {"image_isolation_enabled": True})[0], 200)
-        reloaded = ImageToolConfig(self.server.link, self.server.data_dir,
-            self.server.image_config.api_base, self.server.image_config.relay_endpoint)
-        self.assertTrue(reloaded.status()["managed_tool_installed"])
-        _, _, session = self.mcp({"jsonrpc": "2.0", "id": 1, "method": "initialize"})
-        self.assertTrue(session)
-        code, listing, _ = self.mcp({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}, session)
-        self.assertEqual(code, 200)
-        self.assertEqual([tool["name"] for tool in listing["result"]["tools"]], ["analyze_image"])
         self.assertEqual(len(self.up.requests), model_requests)
         self.assertEqual(self.api("/api/settings", {"image_isolation_enabled": False})[0], 200)
-        self.assertEqual(tomllib.loads(self.config.read_text(encoding="utf8")), original)
-        self.assertEqual(self.mcp({"jsonrpc": "2.0", "id": 3, "method": "tools/list"}, session)[0], 404)
+        self.assertEqual(tomllib.loads(self.config.read_text(encoding="utf8")), native_config(original))
+        self.assertFalse(Path(registration["args"][-1]).exists())
+        self.assertFalse(self.server.image_config.status()["managed_tool_installed"])
 
-    def test_fallback_mcp_returns_only_text_and_enforces_call_limit(self):
-        self.enable()
-        code, initialized, session = self.mcp({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-06-18"}})
-        self.assertEqual(code, 200)
-        self.assertTrue(session)
-        self.assertEqual(self.mcp({"jsonrpc": "2.0", "method": "notifications/initialized"}, session)[0], 202)
-        listed = self.mcp({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}, session)[1]
-        self.assertEqual(listed["result"]["tools"][0]["name"], "analyze_image")
-        call = {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "analyze_image", "arguments": {"path": "dummy"}}}
-        with patch.object(self.server.image_tool, "analyze", return_value="Visible error text") as analyze:
-            for _ in range(24):
-                result = self.mcp(call, session)[1]["result"]
-                self.assertEqual(result["content"], [{"type": "text", "text": "Visible error text"}])
-            self.assertTrue(self.mcp(call, session)[1]["result"]["isError"])
-            self.assertEqual(analyze.call_count, 24)
-        self.assertEqual(self.mcp({"jsonrpc": "2.0", "id": 4, "method": "tools/list"}, "bad-session")[0], 404)
-        self.assertEqual(self.mcp(None, session, "GET")[0], 405)
-        self.assertEqual(self.mcp(None, session, "DELETE")[0], 204)
-
-    def test_fallback_runs_a_fresh_cli_with_path_and_returns_text(self):
-        self.enable()
-        image = Path(self.temp.name) / "synthetic.png"
-        image.write_bytes(b"\x89PNG\r\n\x1a\nsynthetic")
-        observed = []
-        def run(command, **kwargs):
-            observed.append((command, kwargs))
-            Path(command[command.index("--output-last-message") + 1]).write_text("Parsed error message", encoding="utf8")
-            return SimpleNamespace(returncode=0)
-        with patch("packet_inspector.image_tool.find_codex_cli", return_value="fake-codex"), patch(
-                "packet_inspector.image_tool.subprocess.run", side_effect=run):
-            answer = self.server.image_tool.analyze({"path": str(image), "instruction": "Read the error"})
-        self.assertEqual(answer, "Parsed error message")
-        command, options = observed[0]
-        self.assertIn("--ephemeral", command)
-        self.assertEqual(command[command.index("--image") + 1], str(image.resolve()))
-        override = command[command.index("-c") + 1]
-        self.assertIn('"isolated_vision"={enabled=false}', override)
-        self.assertEqual(options["env"]["CODEX_HOME"], str(self.config.parent))
-
-    def test_bundled_tool_rediscovers_cli_after_desktop_update(self):
-        self.enable()
-        self.server.image_config.state["cli"] = str(Path(self.temp.name) / "removed-cli.exe")
-        image = Path(self.temp.name) / "synthetic.png"
-        image.write_bytes(b"\x89PNG\r\n\x1a\nsynthetic")
-        def run(command, **kwargs):
-            self.assertEqual(command[0], "updated-codex")
-            Path(command[command.index("--output-last-message") + 1]).write_text("Image text", encoding="utf8")
-            return SimpleNamespace(returncode=0)
-        with patch("packet_inspector.image_tool.find_codex_cli", return_value="updated-codex"), patch(
-                "packet_inspector.image_tool.subprocess.run", side_effect=run):
-            self.assertEqual(self.server.image_tool.analyze({"path": str(image)}), "Image text")
-
-    def test_image_analysis_is_counted_while_running_and_respects_upgrade_drain(self):
-        self.enable()
-        _, _, session = self.mcp({"jsonrpc": "2.0", "id": 1, "method": "initialize"})
-        call = {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "analyze_image", "arguments": {"path": "dummy"}}}
-        def analyze(arguments):
-            self.assertGreaterEqual(self.server.active_requests, 1)
-            return "Visible text"
-        with patch.object(self.server.image_tool, "analyze", side_effect=analyze):
-            self.assertEqual(self.mcp(call, session)[0], 200)
-        self.assertEqual(self.server.active_requests, 0)
-        self.server.upgrade_draining = True
-        try:
-            with patch.object(self.server.image_tool, "analyze") as analyze:
-                self.assertEqual(self.mcp(call, session)[0], 503)
-                analyze.assert_not_called()
-        finally:
-            self.server.upgrade_draining = False
-        self.assertEqual(self.server.active_requests, 0)
+    def test_http_image_tool_endpoint_is_retired(self):
+        code, result = self.api("/mcp/image/retired", {"jsonrpc": "2.0", "id": 1, "method": "initialize"})
+        self.assertEqual(code, 404)
+        self.assertEqual(result["error"], "image_tool_uses_stdio")
 
 
 if __name__ == "__main__":

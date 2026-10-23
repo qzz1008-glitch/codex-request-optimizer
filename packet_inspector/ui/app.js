@@ -850,7 +850,7 @@ function fillImageAnalysisMode() {
     input.disabled=settingsSaving||!!s.ui_read_only||!(s.image_isolation_supported||hasModes)||unavailable;
     input.closest("label").title=unavailable?t("当前后台暂不支持禁用模式，升级后可用。"):"";
   }
-  const descriptions={native:"使用原生图片工具，图片随主请求发送",disabled:"关闭原生与优化图片工具",
+  const descriptions={native:"卸载优化工具，恢复原生图片解析",disabled:"关闭原生与优化图片工具",
     optimized:"主请求仅保留图片路径"};
   $("image-isolation-hint").textContent=t(s.image_isolation_supported||hasModes?
     descriptions[selectedImageAnalysisMode()]:"当前中转暂不支持此功能。");
