@@ -766,7 +766,7 @@ function fillImageAnalysisMode() {
     input.closest("label").title=unavailable?t("当前后台暂不支持禁用模式，升级后可用。"):"";
   }
   const descriptions={native:"使用原生图片工具，图片随主请求发送",disabled:"关闭原生与优化图片工具",
-    optimized:"主请求仅保留图片路径和文字结果，降低大小"};
+    optimized:"主请求仅保留图片路径"};
   $("image-isolation-hint").textContent=t(s.image_isolation_supported||hasModes?
     descriptions[selectedImageAnalysisMode()]:"当前中转暂不支持此功能。");
 }
