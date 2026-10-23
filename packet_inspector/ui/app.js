@@ -97,9 +97,11 @@ function sessionGroups() {
   return [...groups.values()];
 }
 function otherTaskSessions() {return sessionGroups().find(group=>group.thread_id===OTHER_SESSION_GROUP)?.members||[];}
-function selectedSessionGroup() {
-  const value=state.filters.thread,id=value===OTHER_SESSION_GROUP?value:value==="unknown"?"":value.slice(7);
-  return sessionGroups().find(group=>group.thread_id===id||group.members.some(row=>row.thread_id===id));
+function selectedSessionGroup(groups=sessionGroups()) {
+  const value=state.filters.thread;
+  if(!value)return;
+  const id=value===OTHER_SESSION_GROUP?value:value==="unknown"?"":value.slice(7);
+  return groups.find(group=>group.thread_id===id||group.members.some(row=>row.thread_id===id));
 }
 function purposeFromMetadata(meta) {
   if(meta.image_isolation_worker===true)return "image_analysis";
@@ -286,7 +288,9 @@ async function refreshSessionSummaries() {
     sessionSummaries=await enrichSessionPurposes(results);
   } finally {
     sessionMetadataAt=Date.now();sessionMetadataLoading=false;
-    const group=state.filters.thread?(selectedSessionGroup()||sessionGroups().find(group=>group.members.some(row=>row.thread_id===state.detail?.thread_id))):null;
+    const groups=sessionGroups();
+    const group=selectedSessionGroup(groups)||groups.find(group=>group.members.some(row=>row.thread_id===state.detail?.thread_id))||
+      groups.slice().sort((a,b)=>(b.updated_at||0)-(a.updated_at||0))[0];
     const selection=group?(group.thread_id===OTHER_SESSION_GROUP?OTHER_SESSION_GROUP:"thread:"+group.thread_id):"";
     if(selection!==state.filters.thread)await selectSession(selection);
     else {
@@ -424,6 +428,7 @@ async function selectSession(value) {
   if(value===state.filters.thread)return;
   cancelTokenRead();tokenWindow=null;
   state.filters.thread=value;
+  state.listController?.abort();state.listRequest++;
   state.detailRequest++;
   state.selected=null;state.detail=null;state.detailVersion="";state.text=null;
   requestBodyCache=null;requestBodyView=null;requestBodySequence++;clearJsonFocus();clearJsonDownload();
@@ -734,6 +739,8 @@ function loadMorePackets() {
   return loadPackets(true).catch(fail);
 }
 async function loadPackets(append=false,background=false) {
+  // The middle pane must always belong to a selected session, including at startup.
+  if(!state.filters.thread||!selectedSessionGroup())return;
   if((append || background) && state.listController)return;
   state.listController?.abort();
   if(state.sort!=="input_tokens")tokenSortCache?.controller?.abort();
@@ -1879,4 +1886,4 @@ async function poll() {
 }
 const pollTimer=setInterval(poll,2000);
 document.addEventListener("visibilitychange",()=>{if(!document.hidden){loadTokenWindow();loadMorePackets();loadListTokens();}});
-(async()=>{state.polling=true;try{await Promise.all([refreshStatus(true),refreshFilters(),loadPackets()]);await refreshSessionSummaries();}finally{state.polling=false;}})().catch(fail);
+(async()=>{state.polling=true;try{await Promise.all([refreshStatus(true),refreshFilters()]);await refreshSessionSummaries();}finally{state.polling=false;}})().catch(fail);
