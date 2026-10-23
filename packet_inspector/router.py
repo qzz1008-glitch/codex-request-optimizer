@@ -575,6 +575,7 @@ def main(argv=None):
         server.start_monitor()
         if args.tray and os.name == "nt":
             from packet_inspector.tray import NativeTray
+            from packet_inspector.exit_flow import request_exit
             def open_window():
                 worker = worker_info(args.data_dir, server.state["active"])
                 subprocess.Popen([worker["executable"], "--port", str(server.port), "--data-dir", str(args.data_dir),
@@ -582,13 +583,10 @@ def main(argv=None):
                                  creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
             def exit_app():
                 try:
-                    local_json(server.port, "/api/stop", {})
-                except (OSError, ValueError, http.client.HTTPException) as error:
-                    open_window()
+                    request_exit(args.data_dir, open_window)
+                except (OSError, ValueError):
                     import ctypes
-                    message = ("仍有请求正在转发，服务继续运行。请在请求完成后从托盘退出。"
-                               if str(error) == "control HTTP 409" else "退出未完成，中转服务继续运行。请稍后重试。")
-                    ctypes.windll.user32.MessageBoxW(0, message, "Codex 请求优化器", 0x40)
+                    ctypes.windll.user32.MessageBoxW(0, "无法打开退出确认，中转服务继续运行。请稍后重试。", "Codex 请求优化器", 0x40)
             tray = NativeTray(open_window, exit_app).start()
         server.serve_forever(poll_interval=.1)
     finally:

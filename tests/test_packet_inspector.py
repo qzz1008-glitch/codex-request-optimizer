@@ -20,7 +20,7 @@ from urllib.request import Request
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / ".local" / "builddeps"))
 import zstandard
 
-from packet_inspector.analyzer import (JsonBytes, compare_packets, describe_node,
+from packet_inspector.analyzer import (CLASSIFICATION_VERSION, JsonBytes, compare_packets, compressed_packet_size, describe_node,
                                       encode, inspect_request, resolve, search_body)
 from packet_inspector.config_link import ConfigLink, PROVIDER
 from packet_inspector.server import InspectorServer, outbound_proxies
@@ -61,7 +61,56 @@ class TransportTests(unittest.TestCase):
             self.assertEqual(prepare_request(raw,{},method,path,mode),(raw,"identity"))
 
 
+class ZstdLevelTests(unittest.TestCase):
+    def test_all_selectable_levels_preserve_uncompressed_bytes(self):
+        raw = encode({"input": [{"role": "user", "content": "retained content " * 1500}]})
+        for level in range(1, 18):
+            with self.subTest(level=level):
+                wire, coding = prepare_request(raw, {}, "POST", "/responses", "zstd", level)
+                self.assertEqual(coding, "zstd")
+                self.assertEqual(zstandard.ZstdDecompressor().decompress(wire), raw)
+                self.assertEqual(wire, zstandard.ZstdCompressor(level=level).compress(raw))
+
+    def test_recompression_keeps_the_smaller_packet_and_opaque_invalid_input(self):
+        raw = encode({"input": "repeated source text " * 4000})
+        incoming = zstandard.ZstdCompressor(level=1).compress(raw)
+        expected = zstandard.ZstdCompressor(level=16).compress(raw)
+        wire, coding = prepare_request(incoming, {"Content-Encoding": "zstd"},
+                                       "POST", "/responses", "zstd", 16)
+        self.assertEqual(coding, "zstd")
+        self.assertEqual(zstandard.ZstdDecompressor().decompress(wire), raw)
+        self.assertEqual(len(wire), min(len(incoming), len(expected)))
+        self.assertEqual(prepare_request(incoming, {"Content-Encoding": "zstd"},
+                                        "POST", "/responses", "off", 16), (incoming, "zstd"))
+        invalid = b"opaque invalid zstd frame"
+        self.assertEqual(prepare_request(invalid, {"Content-Encoding": "zstd"},
+                                        "POST", "/responses", "zstd", 16), (invalid, "zstd"))
+
+    def test_settings_reload_preserves_valid_level_and_defaults_legacy_config(self):
+        for saved, expected in (({}, 3), ({"zstd_level": 17, "request_compression": "off"}, 17),
+                                ({"zstd_level": 22}, 3), ({"zstd_level": True}, 3)):
+            with self.subTest(saved=saved), tempfile.TemporaryDirectory() as folder:
+                root = Path(folder)
+                config = root / "config.toml"
+                config.write_text('model="test"', encoding="utf8")
+                data = root / "data"
+                data.mkdir()
+                (data / "settings.json").write_text(json.dumps(saved), encoding="utf8")
+                with InspectorServer(("127.0.0.1", 0), data, config, "http://127.0.0.1:9/v1") as server:
+                    self.assertEqual(server.status()["zstd_level"], expected)
+                    self.assertEqual(server.settings["request_compression"], saved.get("request_compression", "zstd"))
+                    self.assertEqual(json.loads(server.settings_path.read_text(encoding="utf8"))["zstd_level"], expected)
+
+
 class AnalyzerTests(unittest.TestCase):
+    def test_tool_search_is_not_a_generation_or_compaction_request(self):
+        for path in ("/alpha/search", "/v1/alpha/search/?source=test"):
+            with self.subTest(path=path):
+                meta, _ = inspect_request(encode({"query": "find a tool", "model": "m"}),
+                                          {"x-codex-turn-metadata": '{"request_kind":"compaction"}'}, path)
+                self.assertEqual(meta["request_kind"], "tool_search")
+                self.assertFalse(meta["is_compaction"])
+
     def test_upload_comparison_uses_final_bytes_and_keeps_unknown(self):
         old={"wire_bytes":1100000,"outbound_wire_bytes":400000}
         new={"wire_bytes":1000000,"outbound_wire_bytes":500000}
@@ -71,6 +120,27 @@ class AnalyzerTests(unittest.TestCase):
         self.assertIsNone(compare_packets({"wire_bytes":2000000},new)["upload_delta"])
         self.assertIsNone(compare_packets(old,{"wire_bytes":2000000})["upload_delta"])
         self.assertEqual(compare_packets({"outbound_wire_bytes":0},{"outbound_wire_bytes":0})["upload_delta"],0)
+
+    def test_compressed_comparison_excludes_summary_replacement(self):
+        old = {"decoded_bytes": 2000000, "overflow_original_wire_bytes": 1100000,
+               "outbound_wire_bytes": 100000}
+        new = {"decoded_bytes": 2100000, "overflow_original_wire_bytes": 1200000,
+               "outbound_wire_bytes": 50000}
+        diff = compare_packets(old, new)
+        self.assertEqual(diff["compressed_delta"], 100000)
+        self.assertEqual(diff["decoded_delta"], 100000)
+        self.assertEqual(diff["upload_delta"], -50000)
+        self.assertEqual(compressed_packet_size({"usage_override_request_bytes": 950000,
+                                                "outbound_wire_bytes": 200000}), 950000)
+        self.assertEqual(compressed_packet_size({"overflow_original_wire_bytes": 0,
+                                                "outbound_wire_bytes": 200000}), 0)
+        self.assertEqual(compressed_packet_size({"outbound_wire_bytes": 559669}), 559669)
+        for invalid in (None, True, -1, "559669"):
+            self.assertIsNone(compressed_packet_size({"outbound_wire_bytes": invalid}))
+        self.assertIsNone(compare_packets({"wire_bytes": 100}, new)["compressed_delta"])
+        self.assertIsNone(compare_packets(old, {"decoded_bytes": 100})["compressed_delta"])
+        self.assertEqual(compare_packets({"outbound_wire_bytes": 0},
+                                        {"outbound_wire_bytes": 0})["compressed_delta"], 0)
 
     def test_compaction_dispatch_metadata_in_headers_and_body(self):
         dispatch={"request_kind":"compaction","compaction":{"trigger":"auto","reason":"context_limit",
@@ -297,6 +367,28 @@ class ConfigTests(unittest.TestCase):
 
 
 class StorageTests(unittest.TestCase):
+    def test_legacy_tool_search_is_reclassified_without_changing_the_packet(self):
+        store = Store(self.path)
+        meta, content = inspect_request(encode({"query": "find a tool", "model": "m"}), {}, "/alpha/search")
+        meta.update(method="POST", path="/alpha/search", thread_id="search-test", classification_version=1)
+        meta.pop("request_kind")
+        packet_id = store.add(meta, content)
+        store.update(packet_id, state="complete", status=200, outbound_wire_bytes=2599)
+        with store.connect() as connection:
+            original = connection.execute("SELECT content FROM packets WHERE id=?", (packet_id,)).fetchone()[0]
+        self.assertEqual(store.list(kind="generation")[0]["id"], packet_id)
+        self.assertEqual(store.reclassify_pending(), 1)
+        self.assertFalse(store.list(kind="generation"))
+        self.assertEqual(store.list(kind="other")[0]["id"], packet_id)
+        store.update(packet_id, response_bytes=47067)
+        saved, viewing_copy = store.get(packet_id, True)
+        self.assertEqual(saved["request_kind"], "tool_search")
+        self.assertEqual((saved["status"], saved["outbound_wire_bytes"]), (200, 2599))
+        self.assertEqual(viewing_copy, content)
+        self.assertEqual(store.list(kind="other")[0]["id"], packet_id)
+        with store.connect() as connection:
+            self.assertEqual(connection.execute("SELECT content FROM packets WHERE id=?", (packet_id,)).fetchone()[0], original)
+
     def test_legacy_classification_repairs_filter_without_changing_content(self):
         s=Store(self.path)
         raw=encode({"input":[{"role":"user","content":"handoff"}],
@@ -318,8 +410,8 @@ class StorageTests(unittest.TestCase):
         self.assertEqual(view,content)
         with s.connect() as c:
             self.assertEqual(c.execute("SELECT content FROM packets WHERE id=?",(pid,)).fetchone()[0],original)
-            plan=c.execute("EXPLAIN QUERY PLAN SELECT id FROM packet_summaries WHERE coalesce(json_extract(meta,'$.classification_version'),0)<1 ORDER BY created DESC,id DESC LIMIT 8").fetchall()
-        self.assertIn("packet_summary_classification_v1",str([tuple(row) for row in plan]))
+            plan=c.execute(f"EXPLAIN QUERY PLAN SELECT id FROM packet_summaries WHERE coalesce(json_extract(meta,'$.classification_version'),0)<{CLASSIFICATION_VERSION} ORDER BY created DESC,id DESC LIMIT 8").fetchall()
+        self.assertIn(f"packet_summary_classification_v{CLASSIFICATION_VERSION}",str([tuple(row) for row in plan]))
         with patch("packet_inspector.storage.zlib.decompress",side_effect=AssertionError("already analyzed")):
             self.assertEqual(s.reclassify_pending(),0)
         s.update(pid,response_bytes=456)
@@ -440,6 +532,29 @@ class StorageTests(unittest.TestCase):
         self.assertEqual([r["id"] for r in s.list(sort="upload_bytes")],[a,b])
         self.assertGreater(s.stats()["revision"],revision)
 
+    def test_compressed_size_sort_and_cursor_use_pre_summary_bytes(self):
+        store = Store(self.path)
+        cases = [
+            ({}, -1),
+            ({"outbound_wire_bytes": 0}, 0),
+            ({"outbound_wire_bytes": 200000}, 200000),
+            ({"usage_override_request_bytes": 950000, "outbound_wire_bytes": 100000}, 950000),
+            ({"overflow_original_wire_bytes": 1100000, "usage_override_request_bytes": 950000,
+              "outbound_wire_bytes": 50000}, 1100000),
+        ]
+        entries = [(store.add({"method": "POST", **meta}), size) for meta, size in cases]
+        for direction in ("asc", "desc"):
+            found, after = [], None
+            while True:
+                page = store.list(limit=2, sort="compressed_bytes", direction=direction, after=after)
+                found.extend(packet["id"] for packet in page)
+                if len(page) < 2:
+                    break
+                after = page[-1]["id"]
+            expected = [packet_id for packet_id, _ in sorted(entries, key=lambda row: row[1],
+                                                            reverse=direction == "desc")]
+            self.assertEqual(found, expected)
+
     def test_filter_options_cover_history_and_unidentified_threads(self):
         s=Store(self.path)
         old=s.add({"method":"POST","thread_id":"old","is_compaction":True,"status":413})
@@ -548,6 +663,7 @@ class RelayTests(unittest.TestCase):
         cls.server=InspectorServer(("127.0.0.1",0),root/"data",cls.config,"http://127.0.0.1:"+str(cls.up.server_port)+"/v1")
         cls.default_compression=cls.server.settings["request_compression"]
         cls.server.settings["request_compression"]="off"
+        cls.server.settings["packet_size_protection_enabled"]=False
         for s in [cls.up,cls.server]:threading.Thread(target=s.serve_forever,daemon=True).start()
 
     @classmethod
@@ -614,6 +730,28 @@ class RelayTests(unittest.TestCase):
             self.assertEqual(self.server.settings["request_compression"],"off")
         finally:
             self.api("/api/settings",{"request_compression":previous})
+
+    def test_zstd_level_settings_validate_persist_and_apply_to_existing_zstd(self):
+        previous = {key: self.server.settings[key] for key in ("zstd_level", "request_compression")}
+        try:
+            status, result = self.api("/api/settings", {"request_compression": "zstd", "zstd_level": 16})
+            self.assertEqual(status, 200)
+            self.assertEqual(result["zstd_level"], 16)
+            self.assertEqual(json.loads(self.server.settings_path.read_text(encoding="utf8"))["zstd_level"], 16)
+            for value in (0, 18, -1, 1.5, True, "16", None):
+                with self.subTest(invalid=value):
+                    self.assertEqual(self.api("/api/settings", {"zstd_level": value})[0], 400)
+                    self.assertEqual(self.server.settings["zstd_level"], 16)
+            raw = encode({"input": [{"role": "user", "content": "unchanged request semantics " * 1500}]})
+            incoming = zstandard.ZstdCompressor(level=1).compress(raw)
+            with patch("zstandard.ZstdCompressor", wraps=zstandard.ZstdCompressor) as compressor:
+                self.assertEqual(self.relay(incoming, headers={"Content-Encoding": "zstd"})[0], 200)
+                compressor.assert_any_call(level=16)
+            forwarded = self.up.requests[-1]
+            self.assertEqual(zstandard.ZstdDecompressor().decompress(forwarded["body"]), raw)
+            self.assertLessEqual(len(forwarded["body"]), len(incoming))
+        finally:
+            self.api("/api/settings", previous)
 
     def test_installation_api_cannot_modify_login_tasks_from_disposable_instances(self):
         status,result=self.api("/api/installation")

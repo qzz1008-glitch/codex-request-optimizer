@@ -4,10 +4,12 @@ from pathlib import Path
 import sqlite3
 import tempfile
 import unittest
+from unittest.mock import patch
 import zlib
 
-from packet_inspector.session_summary import INDEX_TASK_PREFIX, SessionSummaries
+from packet_inspector.session_summary import IMAGE_ANALYST_PREFIXES, INDEX_TASK_PREFIX, SessionSummaries, image_analysis_request
 from packet_inspector.token_window import TokenWindows
+from packet_inspector.request_context import NEXT_MESSAGE_PREFIX, TITLE_REQUEST_PREFIX
 from tests.test_token_window import THREAD, event
 
 
@@ -127,17 +129,24 @@ class SessionSummaryTests(unittest.TestCase):
         before = [(p.read_bytes(), p.stat().st_mtime_ns) for p in paths]
         row = self.reader.read(self.capture)["sessions"][0]
         self.assertEqual(row["title"], "子任务 · core02_builder_continue（Rawls）")
+        self.assertEqual(row["session_kind"], "subagent")
+        self.assertEqual(row["title_source"], "subagent")
         self.assertEqual(before, [(p.read_bytes(), p.stat().st_mtime_ns) for p in paths])
 
     def test_explicit_subagent_titles_override_generated_label(self):
         self.subagent()
         entry = {"id": THREAD, "thread_name": "索引中的子任务名称"}
         (self.native / "session_index.jsonl").write_text(json.dumps(entry) + "\n", encoding="utf8")
-        self.assertEqual(self.reader.read(self.capture)["sessions"][0]["title"], "索引中的子任务名称")
+        row = self.reader.read(self.capture)["sessions"][0]
+        self.assertEqual(row["title"], "索引中的子任务名称")
+        self.assertEqual(row["session_kind"], "subagent")
         with closing(sqlite3.connect(self.native / "state_5.sqlite")) as db:
             db.execute("UPDATE threads SET title='正式子任务名称'")
             db.commit()
-        self.assertEqual(self.reader.read(self.capture)["sessions"][0]["title"], "正式子任务名称")
+        row = self.reader.read(self.capture)["sessions"][0]
+        self.assertEqual(row["title"], "正式子任务名称")
+        self.assertEqual(row["session_kind"], "subagent")
+        self.assertNotIn("title_source", row)
 
     def test_subagent_native_name_and_nickname_only_sources(self):
         self.subagent({"agent_nickname": "Schrodinger"}, name="审计任务", nickname=None)
@@ -192,6 +201,7 @@ class SessionSummaryTests(unittest.TestCase):
             row = next(r for r in self.reader.read(self.capture)["sessions"] if r["thread_id"] == THREAD)
             self.assertEqual(row["title"], "会话索引 · 排查压缩失败问题 (2)")
             self.assertEqual(row["title_source"], "index_task")
+            self.assertEqual(row["session_kind"], "session_index")
             self.assertEqual(row["source_title"], "排查压缩失败问题 (2)")
             self.assertEqual(row["token_window"]["state"], "unavailable")
         self.assertEqual(before, [(p.read_bytes(), p.stat().st_mtime_ns) for p in paths])
@@ -211,6 +221,64 @@ class SessionSummaryTests(unittest.TestCase):
         self.index_request(raw=b"not a zlib stream")
         row = next(r for r in self.reader.read(self.capture)["sessions"] if r["thread_id"] == THREAD)
         self.assertIsNone(row["title"])
+
+    def image_request(self, *, remove_native=True, text=None):
+        text = text or '<image name=[Image #1] path="C:\\example.png">\n</image>\n' + IMAGE_ANALYST_PREFIXES[0]
+        self.index_request(remove_native=remove_native, last_user=text)
+        with closing(sqlite3.connect(self.capture / "packets.sqlite")) as db:
+            db.execute("UPDATE packets SET meta=?", (json.dumps({"input_items": [
+                {"kind": "message:user", "label": text[:140]}]}),))
+            db.commit()
+
+    def test_temporary_image_task_has_kind_without_inventing_native_title(self):
+        self.image_request()
+        paths = [self.capture / "packets.sqlite", self.rollout]
+        before = [(p.read_bytes(), p.stat().st_mtime_ns) for p in paths]
+        row = next(r for r in self.reader.read(self.capture)["sessions"] if r["thread_id"] == THREAD)
+        self.assertIsNone(row["title"])
+        self.assertEqual(row["session_kind"], "image_analysis")
+        self.assertNotIn("title_source", row)
+        self.assertEqual(before, [(p.read_bytes(), p.stat().st_mtime_ns) for p in paths])
+
+    def test_native_title_has_priority_over_temporary_task_kind(self):
+        self.image_request(remove_native=False)
+        row = self.reader.read(self.capture)["sessions"][0]
+        self.assertEqual(row["title"], "会话名称")
+        self.assertNotIn("session_kind", row)
+
+    def test_ordinary_image_request_keeps_missing_name_state(self):
+        self.image_request(text='<image name=[Image #1] path="C:\\example.png">\n</image>\n帮我看看这张图')
+        row = next(r for r in self.reader.read(self.capture)["sessions"] if r["thread_id"] == THREAD)
+        self.assertIsNone(row["title"])
+        self.assertNotIn("session_kind", row)
+
+    def test_auxiliary_metadata_is_classified_without_decompressing_body(self):
+        self.image_request(text=NEXT_MESSAGE_PREFIX)
+        for prefix, kind in ((NEXT_MESSAGE_PREFIX, "next_message_suggestion"),
+                             (TITLE_REQUEST_PREFIX, "title_generation")):
+            with self.subTest(kind=kind):
+                self.reader._request_labels.clear()
+                with closing(sqlite3.connect(self.capture / "packets.sqlite")) as db:
+                    db.execute("UPDATE packets SET content=?,meta=?", (b"unreadable", json.dumps({"input_items": [
+                        {"kind": "message:user", "label": prefix[:140]}]})))
+                    db.commit()
+                with patch("packet_inspector.session_summary.zlib.decompressobj", side_effect=AssertionError("body read")):
+                    row = next(r for r in self.reader.read(self.capture)["sessions"] if r["thread_id"] == THREAD)
+                self.assertIsNone(row["title"])
+                self.assertEqual(row["session_kind"], kind)
+
+    def test_image_task_detection_requires_latest_user_and_known_prompt(self):
+        for prefix in IMAGE_ANALYST_PREFIXES:
+            for content in (prefix, [{"type": "input_text", "text": prefix}]):
+                with self.subTest(content=content):
+                    body = {"input": [{"role": "user", "content": content}]}
+                    self.assertTrue(image_analysis_request(body))
+        for text in ("Continue the actual task", "A quote: " + IMAGE_ANALYST_PREFIXES[0],
+                     '<image name=[Image #1] path="C:\\example.png">' + IMAGE_ANALYST_PREFIXES[0]):
+            with self.subTest(text=text):
+                body = {"input": [{"role": "user", "content": IMAGE_ANALYST_PREFIXES[0]},
+                                  {"role": "user", "content": text}]}
+                self.assertFalse(image_analysis_request(body))
 
 
 if __name__ == "__main__":

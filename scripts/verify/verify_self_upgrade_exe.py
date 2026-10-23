@@ -1,4 +1,4 @@
-"""Run the original v0.6.9 settings updater against the integrated main EXE."""
+"""Run the published v0.6.14 updater against the formal release files."""
 import argparse
 import hashlib
 import io
@@ -17,15 +17,16 @@ from packet_inspector.router import control_worker, local_json, process_alive, w
 from packet_inspector.updates import ASSET
 from packet_inspector.upgrade import Upgrade, free_port
 from scripts.verify.verify_upgrade_exe import wait_for
+from scripts.build_inspector import PUBLIC_FILES
 
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def legacy_updater():
+def previous_updater():
     # Preserve the old asset selection and command unchanged. __file__ resolves
     # the shared release channel, just as it did in the original application.
-    source = ROOT / "tests" / "fixtures" / "updates_v0_6_9.py"
-    module = types.ModuleType("packet_inspector.legacy_updates_fixture")
+    source = ROOT / "tests" / "fixtures" / "updates_v0_6_14.py"
+    module = types.ModuleType("packet_inspector.previous_updates_fixture")
     module.__package__ = "packet_inspector"
     module.__file__ = str(ROOT / "packet_inspector" / "updates.py")
     exec(compile(source.read_text(encoding="utf8"), str(source), "exec"), module.__dict__)
@@ -70,7 +71,7 @@ def verify_mode(release, directory, mode):
     data, config = directory / (mode + "-data"), directory / (mode + "-config.toml")
     config.write_text('model="test-only"\n', encoding="utf8")
     port = free_port()
-    initial = release / ("CodexPacketInspector-Dev.exe" if mode == "dev" else ASSET)
+    initial = release / "CodexPacketInspector-Dev.exe" if mode == "dev" else release / "publish" / ASSET
     try:
         process = subprocess.Popen([str(initial), "--upgrade", "--quiet", "--port", str(port),
                                     "--data-dir", str(data), "--config", str(config)],
@@ -96,21 +97,29 @@ def verify_mode(release, directory, mode):
         assert ready["passed"], ready
         old_pid = ready["pid"]
 
-        package = release / ASSET
+        package = release / "publish" / ASSET
         with package.open("rb") as stream:
             checksum = hashlib.file_digest(stream, "sha256").hexdigest()
-        legacy = legacy_updater()
+        previous = previous_updater()
+        assets = []
+        for index, name in enumerate(PUBLIC_FILES, 123):
+            path = release / "publish" / name
+            with path.open("rb") as stream:
+                digest = hashlib.file_digest(stream, "sha256").hexdigest()
+            assets.append({"id":index, "name":name, "size":path.stat().st_size, "digest":"sha256:" + digest})
         metadata = {"tag_name":"v" + VERSION, "prerelease":False, "draft":False,
-                    "assets":[{"id":123, "name":legacy.ASSET, "size":package.stat().st_size, "digest":"sha256:" + checksum}]}
+                    "assets":list(reversed(assets))}
         class LocalDownload:
             def open(self, request, **_kwargs):
                 if request.full_url.endswith("/releases/latest"):
                     return io.BytesIO(json.dumps(metadata).encode())
                 assert request.full_url.endswith("/releases/assets/123")
                 return package.open("rb")
-        updates = legacy.Updates(data, config, port, current_version="0.6.9", opener=LocalDownload())
-        with patch.object(legacy, "github_credential", return_value=None):
-            assert updates.check()["state"] == "available"
+        updates = previous.Updates(data, config, port, current_version="0.6.14", opener=LocalDownload())
+        with patch.object(previous, "github_credential", return_value=None):
+            available = updates.check()
+            assert available["state"] == "available" and available["asset"]["name"] == ASSET
+            assert available["asset"]["sha256"] == checksum
             assert updates.install()["state"] == "upgrading"
         wait_for(lambda: updates.status()["state"] == "complete", seconds=120)
         assert old_window.wait(timeout=30) == 0 and not process_alive(old_pid)
@@ -130,7 +139,7 @@ def verify_mode(release, directory, mode):
         worker = worker_info(data, after["worker_id"])
         check_window(Path(worker["executable"]), data, config, port, mode == "dev", "after-update", external)
         assert list((data / "updates/staging").iterdir()) == []
-        print(json.dumps({"mode":mode,"original_v0_6_9_updater":True,"single_public_asset":True,
+        print(json.dumps({"mode":mode,"original_v0_6_14_updater":True,"formal_release_selected":True,
                           "old_window_closed_new_window_opened":True,"mode_preserved":True,
                           "native_window_verified":True,"staging_cleaned":True}), flush=True)
     finally:

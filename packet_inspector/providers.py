@@ -105,7 +105,7 @@ class ProviderManager:
                     route_id = secrets.token_hex(12)
                 routes[route_id] = {"identity": identity, "provider": provider_id, "upstream": upstream}
                 applied = self.endpoint + "/p/" + route_id
-                self._record(records, data, keys, applied)
+                self._record(records, data, keys, applied, original=upstream if upstream != current else None)
                 _put(document, keys, applied)
                 if len(keys) > 1:
                     ws_keys = keys[:-1] + ["supports_websockets"]
@@ -161,10 +161,12 @@ class ProviderManager:
         return "https://api.openai.com/v1" if mode == "apikey" else "https://chatgpt.com/backend-api/codex"
 
     @staticmethod
-    def _record(records, data, keys, applied):
+    def _record(records, data, keys, applied, original=None):
         present, before = _get(data, keys)
         record = next((value for value in records if value["keys"] == keys), None)
         if record is None:
+            if original is not None:
+                before = original
             records.append({"keys": keys, "present": present, "before": before, "applied": applied})
         else:
             if before != record["applied"] or not present:

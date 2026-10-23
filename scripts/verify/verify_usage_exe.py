@@ -66,7 +66,8 @@ def main():
         else:
             raise RuntimeError("Frozen usage test startup timed out")
         config_before = config.read_bytes()
-        assert status["packet_size_protection_enabled"] is True
+        # Match the fresh-install default before enabling the test scenario.
+        assert status["packet_size_protection_enabled"] is False
         assert status["native_compact_trigger_bytes"] == 950000
         assert api("/api/settings", {"packet_size_protection_enabled": False})["packet_size_protection_enabled"] is False
         assert api("/api/settings", {"packet_size_protection_enabled": True})["packet_size_protection_enabled"]

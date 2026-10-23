@@ -3,7 +3,6 @@ import ctypes
 import json
 from pathlib import Path
 import sys
-from urllib.error import HTTPError
 
 from packet_inspector.server import main as service_main, default_data_dir, argument_parser
 
@@ -44,7 +43,8 @@ def main(argv=None):
 
         def started(server):
             nonlocal tray
-            from packet_inspector.desktop import service_arguments, start_process, local_api
+            from packet_inspector.desktop import service_arguments, start_process
+            from packet_inspector.exit_flow import request_exit
             from packet_inspector.server import argument_parser
             from packet_inspector.tray import NativeTray
             options = argument_parser().parse_args(arguments)
@@ -54,18 +54,9 @@ def main(argv=None):
 
             def exit_app():
                 try:
-                    local_api(server.port, "/api/stop", {}, timeout=5)
-                except HTTPError as exc:
-                    try:
-                        reason = json.load(exc).get("error", "退出未完成，请稍后重试。")
-                    except Exception:
-                        reason = "退出未完成，请稍后重试。"
-                    if reason == "requests_in_flight":
-                        reason = "仍有请求正在转发，服务继续运行。请在请求完成后从托盘退出。"
-                    open_window()
-                    ctypes.windll.user32.MessageBoxW(0, str(reason), "Codex 请求优化器", 0x40)
+                    request_exit(options.data_dir, open_window)
                 except OSError:
-                    pass
+                    ctypes.windll.user32.MessageBoxW(0, "无法打开退出确认，中转服务继续运行。请稍后重试。", "Codex 请求优化器", 0x40)
 
             tray = NativeTray(open_window, exit_app).start()
             server.desktop_tray = True

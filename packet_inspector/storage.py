@@ -24,6 +24,7 @@ def summary_values(row):
     return f"""{row}.id,{row}.created,{row}.thread,{row}.status,
         upper(coalesce(json_extract({row}.meta,'$.method'),'')),
         CASE WHEN json_extract({row}.meta,'$.is_compaction') THEN 'compaction'
+             WHEN json_extract({row}.meta,'$.request_kind')='tool_search' THEN 'other'
              WHEN upper(coalesce(json_extract({row}.meta,'$.method'),''))='POST' THEN 'generation' ELSE 'other' END,
         CASE WHEN coalesce({row}.status,0)>0 THEN 'http:'||{row}.status
              ELSE 'state:'||coalesce(json_extract({row}.meta,'$.state'),'unknown') END,
@@ -84,7 +85,8 @@ class Store:
         c.execute("INSERT OR IGNORE INTO packet_index_state VALUES(1,0)")
         for event in ("INSERT", "UPDATE"):
             remove_old = "DELETE FROM packet_summaries WHERE id=OLD.id;" if event == "UPDATE" else ""
-            c.execute(f"""CREATE TRIGGER IF NOT EXISTS packet_summary_{event.lower()} AFTER {event} ON packets BEGIN
+            c.execute(f"DROP TRIGGER IF EXISTS packet_summary_{event.lower()}")
+            c.execute(f"""CREATE TRIGGER packet_summary_{event.lower()} AFTER {event} ON packets BEGIN
                 {remove_old}
                 INSERT OR REPLACE INTO packet_summaries ({SUMMARY_COLUMNS}) VALUES({summary_values('NEW')});
                 UPDATE packet_index_state SET revision=revision+1 WHERE singleton=1;
@@ -183,7 +185,7 @@ class Store:
                     fields.update(classify_request(view.get("body"), meta.get("headers"), meta.get("path", "")))
                 except (ValueError, zlib.error, AttributeError) as exc:
                     fields["classification_error"] = type(exc).__name__
-            elif meta.get("path", "").split("?", 1)[0].rstrip("/").endswith("/compact"):
+            elif meta.get("path", "").split("?", 1)[0].rstrip("/").endswith(("/compact", "/alpha/search")):
                 fields.update(classify_request(None, path=meta["path"]))
             # update() merges under a write lock, retaining concurrent response
             # sizes, statuses and progress written by the old exit process.
@@ -199,7 +201,7 @@ class Store:
             "upload_bytes": "coalesce(json_extract(meta,'$.outbound_wire_bytes'),-1)",
             "compressed_bytes": COMPRESSED_SIZE_SQL,
             "decoded_bytes": "coalesce(json_extract(meta,'$.decoded_bytes'),-1)",
-            "kind": "CASE WHEN json_extract(meta,'$.is_compaction') THEN '上下文压缩' WHEN json_extract(meta,'$.method')='POST' THEN '对话生成' ELSE coalesce(json_extract(meta,'$.method'),'未知') END",
+            "kind": "CASE WHEN json_extract(meta,'$.is_compaction') THEN '上下文压缩' WHEN json_extract(meta,'$.request_kind')='tool_search' THEN '工具搜索' WHEN json_extract(meta,'$.method')='POST' THEN '对话生成' ELSE coalesce(json_extract(meta,'$.method'),'未知') END",
             "status": "coalesce(status,-1)",
             "thread": "thread",
         }

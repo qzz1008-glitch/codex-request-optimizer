@@ -12,11 +12,13 @@ import threading
 from urllib.parse import urlencode, urlsplit
 
 from . import VERSION
-from .token_window import TokenWindows
+from .build_info import build_info
+from .token_window import TokenWindows, is_token_request
 from .session_summary import SessionSummaries
 from .entry_port import port_status, save_port
 from .updates import Updates
 from .http_io import discard_small_body
+from .exit_flow import ExitError, ExitRequests, perform_exit
 
 UI_DIR = Path(__file__).with_name("ui")
 UI_FILES = {"/": ("index.html", "text/html; charset=utf-8"),
@@ -53,7 +55,7 @@ def ui_build_id(ui_dir=None):
 class DesktopUI(ThreadingHTTPServer):
     daemon_threads = True
 
-    def __init__(self, relay_port, *, ui_port=0, live_reload=False, read_only=False, ui_dir=None):
+    def __init__(self, relay_port, *, ui_port=0, live_reload=False, read_only=False, ui_dir=None, exit_data_dir=None):
         if not 1 <= relay_port <= 65535:
             raise ValueError("invalid forwarding service port")
         self.relay_port = relay_port
@@ -64,6 +66,8 @@ class DesktopUI(ThreadingHTTPServer):
         self.session_summaries = SessionSummaries(self.token_windows)
         self.updates = None
         self.updates_guard = threading.Lock()
+        self.exit_requests = ExitRequests(exit_data_dir) if exit_data_dir is not None else None
+        self.window_opened = 0
         self.thread = None
         super().__init__(("127.0.0.1", ui_port), UIHandler)
         self.port = self.server_address[1]
@@ -114,10 +118,14 @@ class UIHandler(BaseHTTPRequestHandler):
         discard_small_body(self)
         self._json(status, value)
 
-    def _relay_json(self, path):
+    def _relay_json(self, path, data=None):
         connection = http.client.HTTPConnection("127.0.0.1", self.server.relay_port, timeout=5)
         try:
-            connection.request("GET", path)
+            body = None if data is None else json.dumps(data).encode()
+            headers = {"Origin": f"http://127.0.0.1:{self.server.relay_port}"}
+            if body is not None:
+                headers["Content-Type"] = "application/json"
+            connection.request("GET" if data is None else "POST", path, body, headers)
             response = connection.getresponse()
             data = response.read(4 * 1024 * 1024 + 1)
             if len(data) > 4 * 1024 * 1024:
@@ -126,19 +134,65 @@ class UIHandler(BaseHTTPRequestHandler):
         finally:
             connection.close()
 
+    def _exit(self):
+        requests = self.server.exit_requests
+        if requests is None:
+            self._json(404, {"error": "ui_route_not_found"})
+            return
+        if self.server.read_only:
+            self._json(409, {"error": "开发预览为只读，日常中转设置未修改。"})
+            return
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            if self.headers.get("Transfer-Encoding") or not 0 < length <= 1024:
+                raise ValueError()
+            raw = self.rfile.read(length)
+            if len(raw) != length:
+                raise ValueError()
+            data = json.loads(raw)
+            if not isinstance(data, dict) or data.get("action") not in {"restore", "direct", "disconnected", "cancel"}:
+                raise ValueError()
+        except (ValueError, TypeError):
+            self._json(400, {"error": "invalid_ui_request_body"})
+            return
+        try:
+            requests.begin(data.get("request_id"))
+        except ValueError as exc:
+            self._json(409, {"error": str(exc)})
+            return
+        completed = False
+        try:
+            result = ({"cancelled": True} if data["action"] == "cancel"
+                      else perform_exit(self._relay_json, data["action"]))
+            completed = True
+            self._json(200, result)
+        except ExitError as exc:
+            self._json(exc.status, {"error": str(exc)})
+        except (OSError, ValueError, TypeError, http.client.HTTPException):
+            self._json(502, {"error": "退出未完成，请检查中转服务后重试。"})
+        finally:
+            requests.finish(completed=completed)
+
     def _token_window(self, packet_id):
         try:
             status, packet = self._relay_json("/api/packets/" + packet_id)
             if status != 200:
                 self._json(status, {"state": "unavailable"})
                 return
-            query = urlencode({"thread": packet.get("thread_id", ""), "limit": 1,
+            if not is_token_request(packet):
+                self._json(200, {"state": "unavailable"})
+                return
+            query = urlencode({"thread": packet.get("thread_id", ""), "limit": 32,
                                "sort": "created", "direction": "asc", "after": packet_id})
             status, following = self._relay_json("/api/packets?" + query)
             if status != 200 or not isinstance(following, list):
                 self._json(200, {"state": "unavailable"})
                 return
-            next_created = following[0].get("created") if following else None
+            following_model = next((row for row in following if is_token_request(row, include_compaction=True)), None)
+            if following_model is None and len(following) >= 32:
+                self._json(200, {"state": "unavailable"})
+                return
+            next_created = following_model.get("created") if following_model else None
             self._json(200, self.server.token_windows.lookup_ready(packet, next_created))
         except (OSError, http.client.HTTPException, ValueError, TypeError, AttributeError):
             self._json(200, {"state": "unavailable"})
@@ -231,6 +285,9 @@ class UIHandler(BaseHTTPRequestHandler):
             self._reject_json(400, {"error": "invalid_ui_path"})
             return
         path = target.path
+        if path == "/api/exit" and self.command == "POST":
+            self._exit()
+            return
         if path == "/api/updates" and self.command in {"GET", "POST"}:
             self._updates()
             return
@@ -329,8 +386,13 @@ class UIHandler(BaseHTTPRequestHandler):
                     raise ValueError("status response too large")
                 status = json.loads(data)
                 status["ui_version"] = VERSION
+                status["ui_build"] = build_info()
                 status["ui_read_only"] = self.server.read_only
                 status["ui_live_reload"] = self.server.live_reload
+                status["ui_desktop"] = self.server.exit_requests is not None
+                status["ui_window_opened"] = self.server.window_opened
+                if self.server.exit_requests is not None and not self.server.read_only:
+                    status["ui_exit_request"] = self.server.exit_requests.current()
                 if isinstance(status.get("data_dir"), str):
                     status["entry_port_supported"] = True
                     status["entry_port"] = port_status(status["data_dir"], self.server.relay_port)

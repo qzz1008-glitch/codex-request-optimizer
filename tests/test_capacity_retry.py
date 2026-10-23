@@ -114,6 +114,29 @@ class CapacityRetryTests(unittest.TestCase):
         self.assertEqual(len(opener.requests), MAX_RETRIES + 1)
         self.assertEqual(retries, [1, 2, 3])
 
+    def test_configured_retry_limit_counts_retries_after_initial_request(self):
+        for limit in [1, 7, 99]:
+            with self.subTest(limit=limit):
+                responses = [Response(FAILED, extra={"Retry-After": "0"}) for _ in range(limit + 1)]
+                data, opener, waits, retries = self.run_response(*responses, max_retries=limit)
+                self.assertEqual(data, FAILED)
+                self.assertEqual(len(opener.requests), limit + 1)
+                self.assertEqual(waits, [0] * limit)
+                self.assertEqual(retries, list(range(1, limit + 1)))
+
+    def test_invalid_retry_limits_are_rejected_before_opening_request(self):
+        for limit in [0, -1, 100, True, False, "3", 2.5, None]:
+            with self.subTest(limit=limit):
+                opener = Opener()
+                with self.assertRaises(ValueError):
+                    open_response(opener, self.request(), enabled=True, max_retries=limit)
+                self.assertEqual(opener.requests, [])
+
+    def test_large_retry_limit_still_obeys_retry_window(self):
+        data, opener, waits, retries = self.run_response(
+            Response(FAILED, extra={"Retry-After": "91"}), max_retries=99)
+        self.assertEqual((data, len(opener.requests), waits, retries), (FAILED, 1, [], []))
+
     def test_other_errors_are_not_retried(self):
         for status, code in [(429, "rate_limit_exceeded"), (503, "maintenance"), (200, "invalid_prompt")]:
             with self.subTest(status=status, code=code):

@@ -2,10 +2,12 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from contextlib import closing
 import json
 from pathlib import Path
 import re
 import shutil
+import sqlite3
 import tomllib
 from urllib.parse import urlsplit
 
@@ -136,11 +138,11 @@ class ConfigLink:
         return json.loads(self.state_path.read_text(encoding="utf8")) if self.state_path.exists() else {}
 
     def profile(self):
-        _, data = self._read()
+        text, data = self._read()
         selected = data.get("model_provider", "openai")
         state = self._state()
         all_providers = state.get("mode") == "all-providers-v1"
-        active = selected == PROVIDER
+        active = selected == PROVIDER and bool(state) and BEGIN in text
         provider = data.get("model_providers", {}).get(selected, {})
         upstream = state.get("upstream", "") if active else provider.get("base_url", "")
         if all_providers:
@@ -162,6 +164,7 @@ class ConfigLink:
                     pass
             upstream = "https://api.openai.com/v1" if auth_mode == "apikey" else "https://chatgpt.com/backend-api/codex"
         return {"config_path": str(self.config), "provider": selected, "active": active,
+                "base_url": data.get("openai_base_url", "") if selected == "openai" else provider.get("base_url", ""),
                 "upstream": validate_upstream(upstream), "can_restore": active and bool(state),
                 "all_providers": all_providers,
                 "websockets_supported_by_capture": False}
@@ -238,6 +241,33 @@ class ConfigLink:
         staging.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf8")
         staging.replace(self.state_path)
 
+    def _provider_is_referenced(self, provider_id, data):
+        def references(document):
+            return any(profile.get("model_provider") == provider_id
+                       for profile in document.get("profiles", {}).values())
+        if references(data):
+            return True
+        for profile in self.config.parent.glob("*.config.toml"):
+            if profile.resolve() == self.config.resolve():
+                continue
+            try:
+                document = tomllib.loads(profile.read_text(encoding="utf-8-sig"))
+                if document.get("model_provider") == provider_id or references(document):
+                    return True
+            except (OSError, ValueError):
+                return True
+        databases = list(self.config.parent.glob("state_*.sqlite"))
+        uncertain = not databases and (self.config.parent / "sessions").is_dir()
+        for database in databases:
+            try:
+                with closing(sqlite3.connect(database.resolve().as_uri() + "?mode=ro", uri=True, timeout=1)) as connection:
+                    if connection.execute("SELECT 1 FROM threads WHERE model_provider=? LIMIT 1", (provider_id,)).fetchone():
+                        return True
+            except (OSError, sqlite3.Error):
+                # An unavailable index cannot prove that a provider is unused.
+                uncertain = True
+        return uncertain
+
     def restore(self):
         text, data = self._read()
         state = self._state()
@@ -252,5 +282,13 @@ class ConfigLink:
         text = re.sub(pattern, "\n", text, flags=re.S)
         if data.get("model_provider") == PROVIDER:
             text = self._select(text, state.get("previous_provider"))
+        retained = self._provider_is_referenced(PROVIDER, data)
+        if retained:
+            provider = dict(data["model_providers"][PROVIDER])
+            provider.update(base_url=validate_upstream(state["upstream"]), supports_websockets=False)
+            text = text.rstrip() + "\n\n# Compatibility provider for saved Codex sessions.\n"
+            text += "[model_providers." + PROVIDER + "]\n"
+            text += "".join(json.dumps(key) + " = " + toml_value(value) + "\n" for key, value in provider.items())
         backup = self._write(text)
-        return {"active": False, "backup": backup, "reload_required": True}
+        self._write_state({})
+        return {"active": False, "backup": backup, "reload_required": True, "retained_provider": retained}

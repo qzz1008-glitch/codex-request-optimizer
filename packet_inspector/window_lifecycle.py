@@ -9,6 +9,8 @@ from pathlib import Path
 import threading
 import time
 
+from .taskbar import TaskbarAttention
+
 
 EXIT_PROPERTY = "CodexRequestOptimizer.ExitWindow"
 
@@ -51,6 +53,7 @@ class WindowLifecycle:
         self.exiting = threading.Event()
         self.closed = threading.Event()
         self.hidden = threading.Event()
+        self.attention = TaskbarAttention(window)
         window.events.closing += self.on_closing
         window.events.closed += self.closed.set
         window._optimizer_exit = self.exit
@@ -73,6 +76,7 @@ class WindowLifecycle:
         if str(self.window.native.WindowState) == "Minimized":
             self.window.restore()
         self.window.show()
+        self.attention.clear()
         self.hidden.clear()
 
     def wait_loaded(self, loaded, timeout=25):

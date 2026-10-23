@@ -8,7 +8,7 @@ Windows 上的 Codex 请求分析与无损传输压缩工具。双击一个 EXE 
 
 ## 使用
 
-1. 从 [Releases](https://github.com/qzz1008-glitch/codex-request-optimizer/releases/latest) 下载 **`CodexRequestOptimizer-Upgrade.exe`**，双击安装或升级。这就是完整主程序，文件名保留旧版设置的升级兼容入口。一个 EXE 已内置前端、后台和首次安装所需的固定入口，无需 Python 或管理员权限。
+1. 从 [Releases](https://github.com/qzz1008-glitch/codex-request-optimizer/releases/latest) 下载正式主程序 **`CodexPacketInspector.exe`**，双击安装或升级。一个 EXE 已内置前端、后台和首次安装所需的固定入口，无需 Python 或管理员权限。其他发布附件仅为 README、项目许可证和第三方许可证，不需要另下升级包。
 2. 安装或升级完成后自动打开优化器，也可从开始菜单打开。后台会检测用户配置及独立 profile 的 HTTP provider，备份后统一接入默认 47844 入口，各 provider 的名称、认证、附加请求头和上游保持对应。
 3. 首次接入或更改入口端口后，**重启 ChatGPT App 生效**。运行中的聊天可能仍缓存旧出口；固定端口下的后续优化器升级不需要重启 ChatGPT App。
 
@@ -17,9 +17,9 @@ Windows 上的 Codex 请求分析与无损传输压缩工具。双击一个 EXE 
 ## 两种升级方式
 
 - **本地代码升级**：运行 `python -m scripts.build_inspector --output-dir release/<新的目录名>`，将生成的 `CodexPacketInspector.exe` 交给用户。EXE 内置这一次构建的代码，双击后同时升级已经运行的后台和优化器桌面窗口。
-- **GitHub 在线升级**：在设置的“版本与升级”中点击“检查更新”→“立即升级”。下载使用 GitHub API 返回的大小和 SHA-256 校验，验证通过后使用主程序内置的升级流程，自动关闭旧界面并打开新版。旧版设置使用原下载入口即可完成升级，无需先手动安装。
+- **GitHub 在线升级**：v0.6.14 及更新版本可在设置的“版本与升级”中点击“检查更新”→“立即升级”，直接下载正式主程序。下载使用 GitHub API 返回的大小和 SHA-256 校验，验证通过后使用主程序内置的升级流程，自动关闭旧界面并打开新版。更早的只识别旧升级文件名的版本，请手动下载并运行正式主程序。
 
-仓库当前为私有；读取私有 Release 需要有访问权限，并已通过 GitHub CLI 登录，或在启动环境中设置 `GH_TOKEN`。凭据只在内存中使用，不写入源码、升级包或更新状态。公开仓库的 Release 无需登录。预发布版和草稿不作为自动升级目标。
+仓库当前为私有；读取私有 Release 需要有访问权限，并已通过 GitHub CLI 登录，或在启动环境中设置 `GH_TOKEN`。凭据只在内存中使用，不写入源码、发布文件或更新状态。公开仓库的 Release 无需登录。预发布版和草稿不作为自动升级目标。
 
 程序版本分别存放，采集记录与统计始终沿用原数据目录下的同一个 `packets.sqlite`。兼容的历史记录、详情和统计随升级继续可用。
 
@@ -35,7 +35,7 @@ provider 配置变更由同一中转服务检测并热加载，无需重启中�
 
 源码服务未指定 `--port` 时读取上述配置，默认 47844；显式 `--port` 优先，`--port 0` 仍用于隔离验证。旧版 EXE 不识别新增的端口配置，需要入口升级后应用。
 
-迭代构建和测试使用独立目录、随机端口、临时配置，不停止当前中转。需要命令行升级时，可运行 `scripts/windows/update_inspector_service.ps1 -SourceExecutable <升级 EXE 路径>`；`-Port` 可省略，由升级器读取当前入口。脚本不再提供强制结束进程的升级方式。
+迭代构建和测试使用独立目录、随机端口、临时配置，不停止当前中转。需要命令行升级时，可运行 `CodexPacketInspector.exe --upgrade`；源码开发者也可用 `scripts/windows/update_inspector_service.ps1 -SourceExecutable <正式版 EXE 路径>`。`-Port` 可省略，由升级器读取当前入口。脚本不提供强制结束进程的升级方式。
 
 ## 设置
 

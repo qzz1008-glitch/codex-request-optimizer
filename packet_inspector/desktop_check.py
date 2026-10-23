@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import time
+import ctypes
 
 
 def check_window(window, options, instance, ui):
@@ -36,7 +37,11 @@ def check_window(window, options, instance, ui):
         })""")
 
     def ready():
-        return wait_until(lambda: state()["ready"], "status did not render")
+        result = wait_until(lambda: state()["ready"], "status did not render")
+        wait_until(lambda: window.evaluate_js("typeof connectChecking === 'undefined' || !connectChecking"),
+                   "first-run connection check did not finish")
+        window.evaluate_js("if(document.getElementById('connect-confirm-dialog')?.open)document.getElementById('connect-confirm-cancel').click(); true")
+        return result
 
     def reload(action, expected=True):
         prior = loads[0]
@@ -50,6 +55,47 @@ def check_window(window, options, instance, ui):
 
     try:
         ready()
+        wait_until(lambda: window.evaluate_js("document.documentElement.classList.contains('desktop-titlebar')"),
+                   "desktop title bar did not initialize")
+        user = ctypes.WinDLL("user32", use_last_error=True)
+        user.GetWindowLongW.argtypes = [ctypes.c_void_p, ctypes.c_int]
+        user.GetWindowLongW.restype = ctypes.c_long
+        hwnd = int(window.native.Handle.ToInt64())
+
+        def native_frame():
+            style = user.GetWindowLongW(hwnd, -16)
+            assert not style & 0x00C00000, "duplicate native caption is still visible"
+            assert style & 0x00040000, "native resize border was removed"
+
+        native_frame()
+        header = window.evaluate_js("""(() => {
+          const header=document.querySelector('.app-header'),r=header.getBoundingClientRect();
+          const groups=[...header.children].filter(n=>n.getBoundingClientRect().width);
+          return {height:r.height,controls:!document.getElementById('window-controls').hidden,
+            fits:groups.every(n=>{const b=n.getBoundingClientRect();return b.left>=r.left&&b.right<=r.right&&b.top>=r.top&&b.bottom<=r.bottom;})};
+        })()""")
+        assert header == {"height": 48, "controls": True, "fits": True}, header
+        window.evaluate_js("document.getElementById('window-maximize').click(); true")
+        wait_until(lambda: str(window.native.WindowState) == "Maximized", "maximize button did not maximize")
+        wait_until(lambda: window.evaluate_js("document.documentElement.classList.contains('desktop-maximized')"),
+                   "maximize icon did not update")
+        window.evaluate_js("document.getElementById('window-maximize').click(); true")
+        wait_until(lambda: str(window.native.WindowState) == "Normal", "restore button did not restore")
+        native_frame()
+        window.evaluate_js("document.getElementById('window-minimize').click(); true")
+        wait_until(lambda: str(window.native.WindowState) == "Minimized", "minimize button did not minimize")
+        window.restore()
+        wait_until(lambda: str(window.native.WindowState) == "Normal", "window did not restore after minimize")
+        window.evaluate_js("document.getElementById('window-close').click(); true")
+        lifecycle = window._optimizer_lifecycle
+        wait_until(lambda: lifecycle.hidden.is_set() or str(window.native.WindowState) == "Minimized",
+                   "close button did not use the existing tray lifecycle")
+        assert not lifecycle.closed.is_set(), "close button destroyed the desktop process"
+        window.restore()
+        report.update(single_title_bar=True, native_resize_border=True, window_buttons=True)
+        attention = window._optimizer_lifecycle.attention
+        assert attention.hwnd, "taskbar attention suppression was not installed"
+        report["taskbar_attention_suppression"] = True
         current = state()
         assert not current["developerSettings"], "runtime developer settings still exist"
         assert current["refreshHidden"] is (not ui.live_reload)
@@ -79,6 +125,13 @@ def check_window(window, options, instance, ui):
         report["passed"] = True
     except Exception as exc:
         report["error"] = type(exc).__name__ + ": " + str(exc)
+        try:
+            report["ui_diagnostic"] = window.evaluate_js("""({
+              notice:document.getElementById('notice')?.textContent?.slice(0,300),
+              dialogs:[...document.querySelectorAll('dialog[open]')].map(n=>n.id)
+            })""")
+        except Exception:
+            pass
     finally:
         options.desktop_check.write_text(json.dumps(report), encoding="utf8")
         getattr(window, "_optimizer_exit", window.destroy)()

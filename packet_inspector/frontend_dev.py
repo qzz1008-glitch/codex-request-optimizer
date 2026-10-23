@@ -8,6 +8,8 @@ import os
 import shutil
 import sys
 
+from .build_info import build_info
+
 PROFILE_NAME = "_build_profile.json"
 RESOURCES = ("index.html", "i18n.js", "app.js", "style.css")
 DESKTOP_PROFILE = "desktop-profile.json"
@@ -83,7 +85,9 @@ def resolve_profile(profile, data_dir):
         except ValueError:
             pass
     from . import VERSION
-    directory = Path(data_dir).resolve() / "development" / "ui" / VERSION
+    identity = build_info()
+    resource_version = VERSION + "-" + identity["source_sha256"][:16] if identity else VERSION
+    directory = Path(data_dir).resolve() / "development" / "ui" / resource_version
     directory.mkdir(parents=True, exist_ok=True)
     for name in RESOURCES:
         target = directory / name

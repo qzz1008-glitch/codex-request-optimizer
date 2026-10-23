@@ -108,7 +108,7 @@ class ImageIsolation:
             protected.add(target)
             return target.resolve()
 
-    def prepare(self, raw, headers, path, compression):
+    def prepare(self, raw, headers, path, compression, *, zstd_level=3):
         coding = next((v for k, v in headers.items() if k.lower() == "content-encoding"), "identity")
         try:
             decoded = decode_body(raw, coding)
@@ -187,8 +187,9 @@ class ImageIsolation:
         changed = decoded
         for start, end, replacement in sorted(replacements, reverse=True):
             changed = changed[:start] + replacement + changed[end:]
-        wire, encoding = encode_changed(changed, headers, path, compression)
+        wire, encoding = encode_changed(changed, headers, path, compression, zstd_level)
         return wire, encoding, {"image_isolation_applied": True, "image_isolation_removed": images_removed,
                                 "native_image_tools_hidden": hidden_tools,
+                                "image_paths": sorted(str(path.resolve()) for path in protected),
                                 "image_isolation_decoded_before": len(decoded),
                                 "image_isolation_decoded_after": len(changed)}

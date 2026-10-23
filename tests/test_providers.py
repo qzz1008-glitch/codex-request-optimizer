@@ -1,4 +1,6 @@
 import json
+import sqlite3
+from contextlib import closing
 from pathlib import Path
 import tempfile
 import threading
@@ -105,6 +107,74 @@ class ProviderConfigTests(unittest.TestCase):
         self.assertTrue(self.sync()["changed"])
         self.link.restore()
         self.assertEqual(tomllib.loads(self.config.read_text()), {"model": "m"})
+
+    def test_restore_retains_legacy_provider_referenced_by_saved_or_archived_sessions(self):
+        for archived in [False, True]:
+            with self.subTest(archived=archived):
+                self.config.write_text('model="m"\n')
+                self.link.activate(self.manager.endpoint, "https://legacy.invalid/v1")
+                with closing(sqlite3.connect(self.root / "state_5.sqlite")) as connection:
+                    connection.execute("CREATE TABLE IF NOT EXISTS threads (model_provider TEXT, archived INTEGER)")
+                    connection.execute("DELETE FROM threads")
+                    connection.execute("INSERT INTO threads VALUES (?, ?)", (PROVIDER, archived))
+                    connection.commit()
+                self.sync()
+                self.link.restore()
+                data = tomllib.loads(self.config.read_text())
+                self.assertNotIn("model_provider", data)
+                self.assertEqual(data["model_providers"][PROVIDER]["base_url"], "https://legacy.invalid/v1")
+                self.assertFalse(data["model_providers"][PROVIDER]["supports_websockets"])
+                self.assertFalse(self.link.profile()["active"])
+                self.sync()
+                self.assertIn("/p/", tomllib.loads(self.config.read_text())["model_providers"][PROVIDER]["base_url"])
+                self.link.restore()
+
+    def test_restore_keeps_legacy_auth_when_the_session_index_is_unavailable(self):
+        self.config.write_text('model_provider="custom"\n[model_providers.custom]\n'
+                               'base_url="https://custom.invalid/v1"\nenv_key="PROVIDER_API_KEY"\n'
+                               'http_headers={"X-Required"="fixture"}\n')
+        self.link.activate(self.manager.endpoint, "https://custom.invalid/v1")
+        (self.root / "state_5.sqlite").write_bytes(b"unavailable database")
+        result = self.link.restore()
+        data = tomllib.loads(self.config.read_text())
+        self.assertTrue(result["retained_provider"])
+        retained = data["model_providers"][PROVIDER]
+        self.assertEqual(retained["base_url"], "https://custom.invalid/v1")
+        self.assertEqual(retained["env_key"], "PROVIDER_API_KEY")
+        self.assertEqual(retained["http_headers"], {"X-Required": "fixture"})
+        self.config.write_text(self.config.read_text().replace('model_provider = "custom"',
+                                                             'model_provider = "' + PROVIDER + '"'))
+        self.assertFalse(self.link.profile()["active"])
+
+    def test_existing_routes_without_recovery_restore_real_upstreams(self):
+        self.config.write_text('model_provider="a"\n[model_providers.a]\n'
+                               'base_url="https://a.invalid/v1"\n')
+        self.sync()
+        self.link.state_path.unlink()
+        self.sync()
+        self.link.restore()
+        data = tomllib.loads(self.config.read_text())
+        self.assertEqual(data["model_providers"]["a"]["base_url"], "https://a.invalid/v1")
+        self.assertFalse(data["openai_base_url"].startswith(self.manager.endpoint))
+
+    def test_restore_keeps_provider_referenced_by_a_profile_or_unindexed_history(self):
+        for reference in ["named_profile", "profile_file", "unindexed_history"]:
+            with self.subTest(reference=reference):
+                self.config.write_text('model="m"\n')
+                self.link.activate(self.manager.endpoint, "https://legacy.invalid/v1")
+                if reference == "named_profile":
+                    self.config.write_text(self.config.read_text() + '\n[profiles.saved]\nmodel_provider="' + PROVIDER + '"\n')
+                elif reference == "profile_file":
+                    (self.root / "saved.config.toml").write_text('model_provider="' + PROVIDER + '"\n')
+                else:
+                    (self.root / "sessions").mkdir()
+                    (self.root / "sessions" / "fixture.jsonl").write_text('saved session must stay unchanged\n')
+                result = self.link.restore()
+                self.assertTrue(result["retained_provider"])
+                retained = tomllib.loads(self.config.read_text())["model_providers"][PROVIDER]
+                self.assertEqual(retained["base_url"], "https://legacy.invalid/v1")
+                (self.root / "saved.config.toml").unlink(missing_ok=True)
+        self.assertEqual((self.root / "sessions" / "fixture.jsonl").read_text(), 'saved session must stay unchanged\n')
 
     def test_restoring_migrated_legacy_preserves_later_default_provider(self):
         self.config.write_text('model="m"\n[model_providers.a]\nbase_url="https://a.invalid"\n')

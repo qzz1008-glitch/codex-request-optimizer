@@ -58,6 +58,16 @@ class TokenWindowTests(unittest.TestCase):
         self.reader.lookup(self.packet, 103)
         self.assertEqual(before, [(p.read_bytes(), p.stat().st_mtime_ns) for p in files])
 
+    def test_tool_search_cannot_claim_an_adjacent_predictive_usage_event(self):
+        self.write(event(inputs=500000, outputs=256))
+        for path in ("/alpha/search", "/v1/alpha/search/?query=tool", "/other-api"):
+            packet = {**self.packet, "path": path}
+            with self.subTest(path=path), patch.object(self.reader, "_rollout", side_effect=AssertionError("not a model request")):
+                self.assertEqual(self.reader.lookup(packet, 103), {"state": "unavailable"})
+                self.assertEqual(self.reader.lookup_ready(packet, 103), {"state": "unavailable"})
+                packet["upstream_usage"] = {"input_tokens": 500000, "output_tokens": 256, "total_tokens": 500256}
+                self.assertEqual(self.reader.lookup_ready(packet, 103), {"state": "unavailable"})
+
     def test_duplicate_native_notifications_are_not_two_responses(self):
         self.write(event(), event(at=102.5))
         self.assertEqual(self.reader.lookup(self.packet, 103)["state"], "available")

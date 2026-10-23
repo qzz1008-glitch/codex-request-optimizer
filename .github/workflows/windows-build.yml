@@ -1,6 +1,8 @@
 name: Windows build
 on:
   workflow_dispatch:
+  pull_request:
+    branches: [main]
   push:
     branches: [main]
     tags: ['v*']
@@ -13,6 +15,8 @@ jobs:
       PYTHONUTF8: '1'
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -24,15 +28,28 @@ jobs:
       - run: python -m pip install -r requirements-dev.txt
       - run: python -m unittest discover -s tests -t . -p "test_*.py" -q
       - run: python -m scripts.build_inspector --output-dir release/ci
+        if: github.event_name != 'pull_request'
+      - run: python -m scripts.verify.verify_desktop_exe --release-dir release/ci
+        if: github.event_name != 'pull_request'
       - run: python -m scripts.verify.verify_inspector_exe --release-dir release/ci
+        if: github.event_name != 'pull_request'
       - run: python -m scripts.verify.verify_overflow_exe --release-dir release/ci
+        if: github.event_name != 'pull_request'
       - run: python -m scripts.verify.verify_usage_exe --release-dir release/ci
+        if: github.event_name != 'pull_request'
       - run: python -m scripts.verify.verify_upgrade_exe --release-dir release/ci --desktop
+        if: github.event_name != 'pull_request'
       - run: python -m scripts.verify.verify_self_upgrade_exe --release-dir release/ci
+        if: github.event_name != 'pull_request'
       - uses: actions/upload-artifact@v4
+        if: github.event_name != 'pull_request'
         with:
           name: CodexRequestOptimizer-Windows-x64
-          path: release/ci/CodexPacketInspector.exe
+          path: |
+            release/ci/CodexPacketInspector.exe
+            release/ci/BUILD-SOURCE.json
+            release/ci/SHA256SUMS.txt
+            release/ci/publish/*
   publish:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: build
@@ -41,18 +58,21 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/download-artifact@v4
         with:
           name: CodexRequestOptimizer-Windows-x64
           path: release
-      - name: Verify tag matches source version
+      - name: Verify release source and executable
         env:
           RELEASE_TAG: ${{ github.ref_name }}
-        run: python -c "import os; from packet_inspector import VERSION; assert os.environ['RELEASE_TAG'] == 'v' + VERSION"
+        run: |
+          python -m scripts.build_inspector --check-source
+          python -m scripts.verify.verify_build_artifact --release-dir release --tag "$RELEASE_TAG"
       - name: Publish verified release
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          cp release/CodexPacketInspector.exe release/CodexRequestOptimizer-Upgrade.exe
-          gh release create "$RELEASE_TAG" release/CodexRequestOptimizer-Upgrade.exe --verify-tag --title "Codex Request Optimizer $RELEASE_TAG" --notes-file .github/RELEASE_NOTES.md
+          gh release create "$RELEASE_TAG" release/publish/CodexPacketInspector.exe release/publish/README.md release/publish/LICENSE release/publish/THIRD_PARTY_NOTICES.txt --verify-tag --title "Codex Request Optimizer $RELEASE_TAG" --notes-file .github/RELEASE_NOTES.md

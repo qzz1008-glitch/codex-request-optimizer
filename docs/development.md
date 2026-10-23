@@ -8,7 +8,9 @@
 
 日常流程是先修改前端、在预览页确认交互，再在确认后打包新 EXE。Python 预览服务代码变动时只需重启预览进程，前端文件变动会自动刷新。预览进程可随时重启，无需再次确认；正在使用的中转服务保持运行。
 
-HTML 预览按 1200 × 760 的固定画布居中显示，不随浏览器全屏拉伸；页面较小时可滚动查看。窗口最小宽度为 1120 像素，此时三栏宽度为 260 / 380 / 480；左栏固定 260、右栏固定 480，拉宽窗口时中栏扩展。桌面窗口从同一份 CSS 尺寸配置读取默认宽高与最小尺寸，升级重新打开界面后生效。
+HTML 预览按 CSS 中的桌面尺寸居中显示；三栏宽度及最小尺寸以 `packet_inspector/ui/style.css` 为准。桌面窗口也读取同一份尺寸配置，原生窗口尺寸及 Python 窗口代码修改需要重新构建并打开；前端样式修改可在开发版实时生效。桌面顶栏整合窗口按钮，模式药丸居中。
+
+设置中的 zstd 压缩等级范围为 1–17，首次及旧配置缺省为 3，升级保留已保存的等级。保存后作用于新请求，也会无损重压缩已有 zstd 的 Responses 正文，仅在新包更小时替换；仅分析、gzip 及未经验证的端点仍原样转发。图片处理、超限兜底和其摘要子请求使用同一等级。各等级的大小估算相对原始未压缩 JSON，耗时占比为本地压缩中位数 / 历史整次请求中位数；基于 200 个本机脱敏副本、每级三轮测试，未计上传变小的收益，实际随内容、设备和网络变化。
 
 右侧的“Token 窗口占用”优先使用预测保护前保存的真实上游用量，其他请求只读本机 Codex 历史中的单次 `token_count`；窗口上限仍读取原生记录。百分比按输入 token / 窗口上限计算，输出 token 单独列出；缺失或无法匹配时显示“—”。
 
@@ -40,12 +42,13 @@ python -m scripts.build_inspector --mode dev --output-dir .local/desktop-dev-bui
 Start-Process .local/desktop-dev-build/CodexPacketInspector-Dev.exe
 ```
 
-开发版默认输出到 `.local/dev-builds`，只生成开发 EXE 和校验文件；正式发布默认使用 `--mode release`，生成的安装包和发布归档不包含开发 EXE。同一数据目录只允许一个桌面窗口，开发版、发布版及不同构建之间也互斥；重复启动或从托盘打开会恢复已有窗口。点击窗口“×”收到托盘，保留页面状态，中转继续运行；如果连接的是没有托盘的独立服务，则最小化到任务栏，避免窗口无法找回。停止整套程序请使用托盘中的“退出程序”；仍有请求时提示并保持运行，请求完成后可再次退出。退出保留 provider 配置，下次打开继续使用；退出期间本机中转不可用。单独使用浏览器预览仍可运行 `python -m scripts.dev_inspector_ui --open`。
+开发版默认输出到 `.local/dev-builds`，只生成开发 EXE 和校验文件；正式发布默认使用 `--mode release`，用户发布文件集中在 `publish/`，不包含开发 EXE。同一数据目录只允许一个桌面窗口，开发版、发布版及不同构建之间也互斥；重复启动或从托盘打开会恢复已有窗口。点击窗口“×”收到托盘，保留页面状态，中转继续运行；如果连接的是没有托盘的独立服务，则最小化到任务栏，避免窗口无法找回。停止整套程序请使用托盘中的“退出程序”；仍有请求时提示并保持运行，请求完成后可再次退出。退出保留 provider 配置，下次打开继续使用；退出期间本机中转不可用。单独使用浏览器预览仍可运行 `python -m scripts.dev_inspector_ui --open`。
 
-构建单文件 EXE 和干净的源码包：
+构建正式版 EXE、用户必要文件及内部验证产物：
 
 ```powershell
 python -m scripts.build_inspector --output-dir release/local-build
+python -m scripts.verify.verify_desktop_exe --release-dir release/local-build
 python -m scripts.verify.verify_inspector_exe --release-dir release/local-build
 python -m scripts.verify.verify_overflow_exe --release-dir release/local-build
 python -m scripts.verify.verify_usage_exe --release-dir release/local-build
@@ -53,8 +56,56 @@ python -m scripts.verify.verify_upgrade_exe --release-dir release/local-build --
 python -m scripts.verify.verify_self_upgrade_exe --release-dir release/local-build
 ```
 
-结果位于指定的全新目录，包含正式主程序、仅供本地验证的开发程序和构建验证资料。GitHub Release 仅上传一个完整主程序，下载名为 `CodexRequestOptimizer-Upgrade.exe`，与本地构建的 `CodexPacketInspector.exe` 内容相同；保留该文件名使旧版设置可直接升级。不发布开发版、独立升级器、脚本、源码归档或校验文件。主程序同时承载界面、后台、固定入口和安装升级功能。开发版的设置页使用同一更新来源，升级后继续保持开发模式。已有发布目录不覆盖。源码包使用文件白名单，不包含本机配置、请求数据库、认证、调查记录或原 App 资源。GitHub Actions 在 Windows 上运行测试、构建与 EXE 升级验证；推送与源码版本一致的 `vX.Y.Z` 标签会在全部验证通过后发布 GitHub Release。
+结果位于指定的全新目录。`publish/` 固定只包含 `CodexPacketInspector.exe`、`README.md`、`LICENSE`、`THIRD_PARTY_NOTICES.txt`，GitHub Release 也只上传这四个文件。第三方许可证全文汇总在 notices 文件中，并内嵌在 EXE 中。主程序同时承载界面、后台、固定入口和安装升级功能；不再生成独立升级包、旧文件名别名、源码归档或便携 ZIP。仅供验证的开发版 EXE、`BUILD-SOURCE.json` 和校验文件留在输出根目录，不进入用户发布文件。
+
+更新功能直接选择正式版 EXE，并兼容读取历史 Release 的旧别名。EXE 兼容性验证使用已发布 v0.6.14 更新器的原始代码，针对实际发布的四个文件检查下载、升级及模式保留；更早的只识别旧别名的客户端需手动运行正式主程序。开发版的设置页使用同一更新来源，升级后继续保持开发模式。已有发布目录不覆盖。源码快照仍覆盖完整产品、测试、文档及构建工具，排除本机配置、请求数据库、认证和调查记录。GitHub Actions 在 Windows 上运行测试、构建与 EXE 升级验证；推送与源码版本一致的 `vX.Y.Z` 标签会在全部验证通过后发布 GitHub Release。发布前再次校验源码、每个公开文件的哈希、公开目录精确白名单及正式 EXE 与已验证程序一致，阻止开发产物混入。
 
 测试只向临时本机后端发送合成请求，不使用真实认证，不调用云端模型。安装入口需要正式 EXE 和默认数据目录，测试实例不能更改登录任务。
+
+## 固定分支与工作树流程
+
+采用 GitHub Flow，规则固定在仓库根目录 `AGENTS.md`，所有 agent 都遵守。`main` 是唯一长期集成和交付分支；功能、修复、整理分别使用 `feat/<任务>`、`fix/<任务>`、`chore/<任务>` 短期分支。没有独立的长期发布工作树或 `develop` 分支，版本通过 `vX.Y.Z` 标签标记。
+
+默认保留一个主工作树。单任务从最新 `main` 开任务分支，完成后提交、验证、合入，再删除分支并让主目录回到 `main`：
+
+```powershell
+git fetch origin
+git switch main
+git pull --ff-only
+git switch -c feat/task-name
+# 完成修改和相关测试后提交
+git add <本任务文件>
+git commit -m "Describe the completed change"
+# 若 main 已有新提交，先在任务分支合并最新 main 并重新验证
+git switch main
+git merge --ff-only feat/task-name
+git branch -d feat/task-name
+```
+
+多人或多个 agent 并行时，每个任务使用独立的临时工作树和分支，不能在另一个任务正在使用的目录切分支、提交或覆盖文件。完成后将整个任务分支合入主目录 `main`，清理分支及工作树；应用托管的工作树由所属会话先保存需要的忽略文件，再使用应用归档工具清理。禁止把一个长期发布工作树当作另一份产品源码。GitHub 协作使用 PR，CI 通过后合入 `main`；本地整合保持可快进合并，不强推 `main`。
+
+## 所有 agent 共用的构建来源
+
+交付和正式发布只允许从主工作树的干净 `main` 构建；CI 可从指向最新 `main` 的版本标签构建。完成的产品改动必须先合入 `main`，不能只留在其他分支或未提交状态。正式构建前后联网检查远端。
+
+任务分支可以用 `--mode dev` 构建验证包，但必须包含最新本地 `main` 和已知 `origin/main`；验证包不作用户交付。其他尚未完成的任务分支不自动进入发布，也不阻止干净 `main` 构建。主目录存在未提交产品源码时，先整合这些改动，再从其他工作树构建。`main` 代表所有已整合改动的唯一来源。
+
+```powershell
+python -m scripts.build_inspector --mode dev --check-source
+python -m scripts.build_inspector --mode dev
+python -m scripts.build_inspector --mode release
+```
+
+构建持有整个仓库共享的锁，先复制完整源码快照，再从快照编译。正式与开发 EXE 使用同一份快照。每个 EXE 内嵌提交号、版本、源码 SHA-256 和逐文件指纹；编译后检查内嵌清单、四个前端文件和桌面窗口模块。构建期间如有 agent 修改、增加或删除源码，或提交发生变化，本次构建直接失败，不向交付目录复制产物。输出目录必须全新，禁止覆盖、复用旧包。
+
+输出目录中的 `BUILD-SOURCE.json` 保存完整来源清单；桌面 `/api/status` 的 `ui_build` 返回当前 EXE 的版本、提交和源码指纹，`ui_version` 仍用于判断桌面与服务版本。开发版前端保留实时更新，因此其磁盘资源可晚于 EXE，`/__dev__/state` 返回当前页面资源指纹。托管开发资源目录按版本与源码指纹区分，同版本重打包也不会沿用旧构建缓存；明确指定的本地源码目录仍保留实时读取。
+
+本仓库使用 `.githooks/pre-push` 检查 `main` 和 `v*` 发布标签：只允许发布已整合的当前主目录提交，拒绝非快进覆盖远端 `main` 和替换已发布标签，禁止把旧工作树提交作为新版本发布。首次在新克隆中配置共享钩子路径（绝对路径对所有关联工作树生效）：
+
+```powershell
+git config core.hooksPath "$((Get-Location).Path)/.githooks"
+```
+
+GitHub Actions 对 PR 运行回归测试；`main` 和版本标签还会构建并验证桌面窗口、两种运行模式和升级路径。发布前重新检查远端、当前源码清单、版本与 EXE 校验值；主分支在构建期间有更新时，旧构建不能发布。不得跳过这些校验或直接运行 PyInstaller。
 
 本项目采用 MIT 许可证。运行时组件的许可证见 `THIRD_PARTY_NOTICES.txt`。发布包未做代码签名，Windows 是否提示未知发行者取决于本机策略。
