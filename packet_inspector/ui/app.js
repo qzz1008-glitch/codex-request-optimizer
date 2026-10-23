@@ -1057,7 +1057,7 @@ function updateSettingsSaveState(clearMessage=true) {
   for(const node of $("settings-dialog").querySelectorAll("[data-settings-field]"))
     node.classList.toggle("settings-dirty",changed.has(node.dataset.settingsField));
   $("settings-save").disabled=settingsSaving||!!linkSaving||!dirty;
-  $("settings-cancel").disabled=settingsSaving;$("settings-close").disabled=settingsSaving;
+  $("settings-restore").disabled=settingsSaving||!dirty;$("settings-close").disabled=settingsSaving;
   if(clearMessage&&settingsEditing&&!settingsSaving)setSettingsMessage(dirty?t("有未保存的修改"):"");
   if(state.status)renderEntryPortStatus();
 }
@@ -1548,6 +1548,12 @@ function discardSettingsDraft() {
   if(state.status)fillSettings();if(contextSettings)fillContextSettings(contextSettings);renderUpdates();
   setSettingsMessage("");
 }
+function restoreSettings() {
+  if(!settingsEditing||settingsSaving||$("settings-restart-dialog").open)return;
+  discardSettingsDraft();
+  settingsLanguage=uiI18n.language;settingsBaseline=readSettingsDraft();settingsEditing=true;
+  renderLanguageSelection();renderConnectionActions();updateSettingsSaveState();
+}
 function closeSettings() {
   if(settingsSaving||$("settings-restart-dialog").open)return;
   $("settings-dialog").close();discardSettingsDraft();
@@ -1556,7 +1562,7 @@ action("settings-restart-confirm",()=>{
   $("settings-restart-dialog").close();settingsRestartChanges.clear();closeSettings();
 });
 $("settings-restart-dialog").addEventListener("cancel",event=>event.preventDefault());
-action("settings-close",closeSettings);action("settings-cancel",closeSettings);
+action("settings-close",closeSettings);action("settings-restore",restoreSettings);
 $("settings-dialog").addEventListener("cancel",event=>{event.preventDefault();closeSettings();});
 $("settings-dialog").addEventListener("close",()=>{
   if(!$("settings-dialog").open)discardSettingsDraft();
