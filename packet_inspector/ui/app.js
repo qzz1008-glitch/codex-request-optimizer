@@ -955,7 +955,7 @@ function fillImageDirectory() {
   const defaultPath=imageDefaultDirectory();
   if(!settingsEditing)input.value=s.image_save_dir||defaultPath;
   input.placeholder=defaultPath;
-  for(const id of ["image-save-dir","image-save-dir-reset"])$(id).disabled=settingsSaving||!!s.ui_read_only||!supported;
+  for(const id of ["image-save-dir","image-save-dir-reset"])$(id).disabled=settingsSaving||!!s.ui_read_only||!supported||selectedImageAnalysisMode()!=="optimized";
 }
 function fillEntryPort() {
   const s=state.status,port=s.entry_port,supported=!!s.entry_port_supported&&!!port;
@@ -1567,7 +1567,7 @@ $("capacity-retry-count").addEventListener("input",event=>{
 $("settings-dialog").querySelector(".settings-content").addEventListener("input",()=>updateSettingsSaveState());
 $("settings-dialog").querySelector(".settings-content").addEventListener("change",()=>updateSettingsSaveState());
 $("zstd-level").addEventListener("change",fillZstdLevel);
-$("image-analysis-mode").addEventListener("change",fillImageAnalysisMode);
+$("image-analysis-mode").addEventListener("change",()=>{fillImageAnalysisMode();fillImageDirectory();});
 action("settings-save",saveSettings);
 action("ui-refresh",()=>{if(state.status?.ui_live_reload)location.reload();});
 action("updates-check",()=>performUpdate("check"));action("updates-install",()=>performUpdate("install"));
@@ -1602,7 +1602,7 @@ for(const key of ["context","compact"]) {
   });
 }
 action("image-save-dir-reset",()=>{
-  if(settingsSaving||state.status.ui_read_only||!state.status.image_save_dir_supported)return;
+  if(settingsSaving||state.status.ui_read_only||!state.status.image_save_dir_supported||selectedImageAnalysisMode()!=="optimized")return;
   $("image-save-dir").value=imageDefaultDirectory();updateSettingsSaveState();
 });
 async function applyLinkAction(which) {
