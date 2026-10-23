@@ -1585,19 +1585,19 @@ function renderHeaders(m) {
     fact(p,t("采集入口正文"),bytes(m.wire_bytes)+" · "+(m.content_encoding||"identity"));
   }
   root.append(p);
-  const context=panel(t("会话信息"));context.id="request-session-info";
-  fact(context,"session_id",m.thread_id||"—").classList.add("request-context");
-  const nativeTitle=session?.title_source==="index_task"||session?.title_source==="subagent"?null:session?.title;
-  fact(context,t("会话名称"),nativeTitle||"—").classList.add("request-context");
   const parentId=session?.parent_thread_id||m.parent_thread_id;
-  if(parentId) {
+  if(parentId&&parentId!==m.thread_id) {
+    const context=panel(t("会话信息"));context.id="request-session-info";
+    fact(context,"session_id",m.thread_id||"—").classList.add("request-context");
+    const nativeTitle=session?.title_source==="index_task"||session?.title_source==="subagent"?null:session?.title;
+    fact(context,t("会话名称"),nativeTitle||"—").classList.add("request-context");
     fact(context,"parent_session_id",parentId).classList.add("request-context");
     const parent=sessionSummaries.find(row=>row.thread_id===parentId);
     const parentTitle=parent?.title_source==="index_task"||parent?.title_source==="subagent"?null:parent?.title;
     fact(context,t("父会话名称"),parentTitle||"—").classList.add("request-context");
+    if(auxiliary)fact(context,t("任务类型"),t(auxiliaryLabels[auxiliary]));
+    root.append(context);
   }
-  if(auxiliary)fact(context,t("任务类型"),t(auxiliaryLabels[auxiliary]));
-  root.append(context);
   if(hasImage) {
     const images=panel(t("图片信息"));images.id="request-image-info";
     fact(images,t("图片路径"),paths.length?paths.join("\n"):t("未记录图片路径")).classList.add("request-context","request-image-paths");
