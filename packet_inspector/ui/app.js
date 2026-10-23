@@ -640,7 +640,7 @@ function renderList() {
     if(flags.overflow)protection.push(t("超限保护"));
     if(p.overflow_compaction_calls>0)protection.push(t("生成摘要 ")+nf.format(p.overflow_compaction_calls)+t(" 次"));
     if(p.overflow_cache_hit===true)protection.push(t("复用摘要"));
-    const row=el("tr",["request-"+packetStatus(p),state.selected===p.id?"selected":""].filter(Boolean).join(" ")), date=new Date(p.created*1000);
+    const row=el("tr",["request-"+packetStatus(p),state.selected===p.id?"selected":"",flags.retry?"capacity-retried":""].filter(Boolean).join(" ")), date=new Date(p.created*1000);
     const time=el("button","packet-open");
     time.append(el("span","packet-date",dateFormat.format(date)),el("span","packet-clock",clockFormat.format(date)));
     time.title=timestampFormat.format(date);
@@ -652,14 +652,10 @@ function renderList() {
     const after=el("span","packet-size",compact(upload));
     after.title=upload===null?t("压缩包大小未记录"):t("压缩包：")+bytes(upload);
     row.dataset.packetId=p.id;row.dataset.session=p.thread_id||"";row.title=(states[p.state]||p.state)+(p.status?" · HTTP "+p.status:"")+"\n"+(p.thread_id?"session_id: "+p.thread_id:t("会话未识别"));
+    if(flags.retry)row.title+="\n"+t("自动重试：{count} 次").replace("{count}",nf.format(capacityRetryCount(p)));
     if(protection.length)after.title+=t("\n已触发请求大小保护：")+protection.join(" · ");
     for (const [index,value] of [time,type,before].entries()) {
       const td=el("td",index===1?"packet-kind":"");
-      if(index===1&&flags.retry) {
-        td.classList.add("capacity-retried");
-        td.title=t("自动重试：{count} 次").replace("{count}",nf.format(capacityRetryCount(p)));
-        row.title+="\n"+td.title;
-      }
       if(value instanceof Node)td.append(value);else td.textContent=value;
       row.append(td);
     }
