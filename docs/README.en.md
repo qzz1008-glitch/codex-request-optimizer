@@ -13,10 +13,11 @@ A Windows tool for analyzing and optimizing Codex requests. Browse requests, tok
 Browse request records by session to see what each request sent, how much space it used, and how it was handled.
 
 - View session names, request times, models, response statuses, and elapsed times.
-- Group auxiliary task requests under their confirmed parent session; requests with an unknown name or ownership appear under “Other.”
+- Group image analysis, automatic titles, and similar auxiliary requests under their parent session. Regular subtasks keep separate rows with parent-child links; unidentified requests appear under “Other.”
 - Check context-window usage and input/output token counts; unavailable data is clearly marked.
 - See how messages, tool outputs, reasoning content, and other parts contribute to request size.
 - Explore structured request JSON, compare sizes before and after processing, and download a sanitized copy.
+- Select and copy text, preserving valid selections during live updates and sorting.
 
 ### 🗜️ Lossless zstd transport compression
 
