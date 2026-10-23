@@ -64,6 +64,7 @@ const listTokenObserver = new IntersectionObserver(entries=>{
   loadListTokens();
 },{root:$("packet-list"),rootMargin:"100px"});
 let sessionSummaries = [], sessionMetadataAt = 0, sessionMetadataProbeAt = 0, sessionMetadataLoading = false, sessionMetadataSupported = null;
+const sessionConnectionObserver=new ResizeObserver(()=>renderSessionConnections());
 const OTHER_SESSION_GROUP="group:other";
 const auxiliaryLabels={image_analysis:"图片解析",next_message_suggestion:"消息建议",title_generation:"自动标题",session_index:"会话索引",subagent:"子任务"};
 const requestPurposeCache=new Map();
@@ -78,11 +79,15 @@ function sessionGroups() {
     for(let depth=0;current&&depth<32;depth++) {
       if(visited.has(current.thread_id))break;
       visited.add(current.thread_id);
-      if(typeof current.title==="string"&&current.title.trim()&&!auxiliarySessionKind(current)) {owner=current;break;}
+      const kind=auxiliarySessionKind(current);
+      if(kind==="subagent"||!kind&&typeof current.title==="string"&&current.title.trim()) {owner=current;break;}
       current=rows.get(current.parent_thread_id);
     }
     const id=owner?.thread_id||OTHER_SESSION_GROUP;
-    if(!groups.has(id))groups.set(id,{...(owner||{}),thread_id:id,title:owner?.title||t("其他"),members:[],packet_count:0,updated_at:owner?.updated_at||0});
+    if(!groups.has(id)) {
+      const title=typeof owner?.title==="string"&&owner.title.trim()?owner.title:t(owner?"子任务":"其他");
+      groups.set(id,{...(owner||{}),thread_id:id,title,members:[],packet_count:0,updated_at:owner?.updated_at||0});
+    }
     const group=groups.get(id);group.members.push(member);
     group.packet_count+=Number.isFinite(member.packet_count)?member.packet_count:
       state.status?.storage?.threads?.find(row=>(row.thread||"")===member.thread_id)?.count||0;
@@ -92,9 +97,11 @@ function sessionGroups() {
   return [...groups.values()];
 }
 function otherTaskSessions() {return sessionGroups().find(group=>group.thread_id===OTHER_SESSION_GROUP)?.members||[];}
-function selectedSessionGroup() {
-  const value=state.filters.thread,id=value===OTHER_SESSION_GROUP?value:value==="unknown"?"":value.slice(7);
-  return sessionGroups().find(group=>group.thread_id===id||group.members.some(row=>row.thread_id===id));
+function selectedSessionGroup(groups=sessionGroups()) {
+  const value=state.filters.thread;
+  if(!value)return;
+  const id=value===OTHER_SESSION_GROUP?value:value==="unknown"?"":value.slice(7);
+  return groups.find(group=>group.thread_id===id||group.members.some(row=>row.thread_id===id));
 }
 function purposeFromMetadata(meta) {
   if(meta.image_isolation_worker===true)return "image_analysis";
@@ -274,7 +281,7 @@ function requestKind(p) {
   if(p.request_kind==="tool_search" || /\/alpha\/search\/*(?:\?.*)?$/.test(p.path||""))return t("工具搜索");
   if(p.is_compaction)return t("上下文压缩");
   const purpose=purposeFromMetadata(p)||requestPurposeCache.get(p.id)||auxiliarySessionKind(sessionSummaries.find(row=>row.thread_id===p.thread_id));
-  return purpose?t(auxiliaryLabels[purpose]):p.method==="POST"?t("对话生成"):String(p.method||t("未知")).slice(0,10);
+  return purpose&&purpose!=="subagent"?t(auxiliaryLabels[purpose]):p.method==="POST"?t("对话生成"):String(p.method||t("未知")).slice(0,10);
 }
 const requestKinds = uiI18n.labels({generation:"对话生成",compaction:"上下文压缩",other:"其他请求"});
 const filterLabels = uiI18n.labels({kind:"类型",status:"状态"});
@@ -339,7 +346,9 @@ async function refreshSessionSummaries() {
     sessionSummaries=await enrichSessionPurposes(results);
   } finally {
     sessionMetadataAt=Date.now();sessionMetadataLoading=false;
-    const group=state.filters.thread?(selectedSessionGroup()||sessionGroups().find(group=>group.members.some(row=>row.thread_id===state.detail?.thread_id))):null;
+    const groups=sessionGroups();
+    const group=selectedSessionGroup(groups)||groups.find(group=>group.members.some(row=>row.thread_id===state.detail?.thread_id))||
+      groups.slice().sort((a,b)=>(b.updated_at||0)-(a.updated_at||0))[0];
     const selection=group?(group.thread_id===OTHER_SESSION_GROUP?OTHER_SESSION_GROUP:"thread:"+group.thread_id):"";
     if(selection!==state.filters.thread)await selectSession(selection);
     else {
@@ -353,10 +362,58 @@ function hasTextSelectionWithin(node) {
   const selection=window.getSelection();
   return !!selection&&!selection.isCollapsed&&selection.containsNode(node,true);
 }
+function sessionConnections(groups,selected) {
+  const rows=new Map(groups.filter(group=>group.thread_id!==OTHER_SESSION_GROUP).map(group=>[group.thread_id,group]));
+  const focus=[...rows.values()].find(group=>selected==="thread:"+group.thread_id||group.members.some(row=>selected==="thread:"+row.thread_id));
+  if(!focus)return [];
+  const parents=new Map([...rows.values()].filter(group=>group.parent_thread_id!==group.thread_id&&rows.has(group.parent_thread_id)).map(group=>[group.thread_id,group.parent_thread_id]));
+  const valid=id=>{
+    const visited=new Set();
+    while(parents.has(id)) {if(visited.has(id))return false;visited.add(id);id=parents.get(id);}
+    return true;
+  };
+  return [...parents].filter(([child,parent])=>(child===focus.thread_id||parent===focus.thread_id)&&valid(child)).map(([child,parent])=>({parent,child}));
+}
+function renderSessionConnections() {
+  const list=$("session-list"),items=list.querySelector(".session-items");
+  if(!items)return;
+  items.querySelector(".session-connections")?.remove();
+  const nodes=new Map(Array.from(items.querySelectorAll(".session-item"),item=>{
+    item.classList.remove("session-linked");return [item.dataset.session,item];
+  }));
+  const connections=sessionConnections(sessionGroups(),state.filters.thread).filter(link=>nodes.has("thread:"+link.parent)&&nodes.has("thread:"+link.child));
+  if(!connections.length)return;
+  const bounds=items.getBoundingClientRect(),svg=document.createElementNS("http://www.w3.org/2000/svg","svg");
+  svg.setAttribute("class","session-connections");svg.setAttribute("aria-hidden","true");
+  svg.setAttribute("width","14");svg.setAttribute("height",String(bounds.height));
+  const add=(tag,attributes)=>{
+    const node=document.createElementNS(svg.namespaceURI,tag);
+    for(const [name,value] of Object.entries(attributes))node.setAttribute(name,String(value));
+    svg.append(node);return node;
+  };
+  const positions=new Map(),parents=[...new Set(connections.map(link=>link.parent))];
+  // The incoming parent uses the outer rail; this session's children use the inner rail.
+  parents.sort((a,b)=>Number("thread:"+a===state.filters.thread)-Number("thread:"+b===state.filters.thread));
+  for(const id of new Set(connections.flatMap(link=>[link.parent,link.child]))) {
+    const item=nodes.get("thread:"+id),heading=item.querySelector(".session-heading").getBoundingClientRect();
+    positions.set(id,Math.round((heading.top-bounds.top+Math.min(heading.height,20)/2)*2)/2);
+    item.classList.add("session-linked");
+  }
+  for(const {parent,child} of connections) {
+    const rail=2+parents.indexOf(parent)*4;
+    add("path",{class:"session-connection-path",d:`M 9 ${positions.get(parent)} H ${rail} V ${positions.get(child)} H 9`});
+  }
+  for(const [id,y] of positions) {
+    const selected="thread:"+id===state.filters.thread,attributes={class:"session-connection-node"+(selected?" selected":"")};
+    if(parents.includes(id))add("rect",{...attributes,x:7,y:y-2,width:4,height:4,rx:.7});
+    else add("circle",{...attributes,cx:9,cy:y,r:2});
+  }
+  items.append(svg);
+}
 function renderSessions() {
   const list=$("session-list");
   if(!state.status)return;
-  const groups=sessionGroups(),summaries=new Map(groups.map(group=>[group.thread_id,group]));
+  const groups=sessionGroups(),summaries=new Map(groups.map(group=>[group.thread_id,group])),connections=sessionConnections(groups,state.filters.thread);
   const ids=groups.map(group=>group.thread_id),selected=state.filters.thread;
   ids.sort((a,b)=>(summaries.get(b)?.updated_at||0)-(summaries.get(a)?.updated_at||0));
   const query=$("session-search").value.trim().toLowerCase();
@@ -371,7 +428,7 @@ function renderSessions() {
   const anchor=selectedItem&&visible(selectedItem)?selectedItem:items.find(visible);
   const anchorId=anchor?.dataset.session, anchorOffset=anchor?anchor.getBoundingClientRect().top-bounds.top:0;
   const focusedId=list.contains(document.activeElement)?document.activeElement.closest(".session-item")?.dataset.session:null;
-  const fragment=document.createDocumentFragment();
+  const fragment=el("div","session-items");
   for(const id of ids) {
     const otherGroup=id===OTHER_SESSION_GROUP;
     const value=otherGroup?OTHER_SESSION_GROUP:id?"thread:"+id:"unknown", data=summaries.get(id)||{};
@@ -380,6 +437,11 @@ function renderSessions() {
     const item=el("button","session-item"+(otherGroup?" other-session-group":"")+(value===selected?" selected":""));
     item.type="button";item.dataset.session=value;
     item.title=otherGroup?title:title+"\n"+(id||t("未识别会话"));
+    for(const link of connections) {
+      if(link.child===id)item.title+="\n"+t("父会话名称")+"："+summaries.get(link.parent).title;
+      if(link.parent===id)item.title+="\n"+t("子任务")+"："+summaries.get(link.child).title;
+    }
+    item.setAttribute("aria-label",item.title);
     if(value===selected)item.setAttribute("aria-current","page");
     const heading=el("div","session-heading");heading.append(el("span","session-title",title));
     item.append(heading);
@@ -405,7 +467,9 @@ function renderSessions() {
     const empty=el("p","session-empty",query?t("未找到匹配的会话"):t("暂无会话"));
     empty.setAttribute("role","status");fragment.append(empty);
   }
+  sessionConnectionObserver.disconnect();
   reconcileContent(list,fragment);
+  renderSessionConnections();sessionConnectionObserver.observe(list.querySelector(".session-items"));
   const updatedItems=Array.from(list.querySelectorAll(".session-item"));
   const nextAnchor=updatedItems.find(item=>item.dataset.session===anchorId),nextFocus=updatedItems.find(item=>item.dataset.session===focusedId);
   $("session-metadata-note").hidden=sessionMetadataSupported!==false;
@@ -417,6 +481,7 @@ async function selectSession(value) {
   if(value===state.filters.thread)return;
   cancelTokenRead();tokenWindow=null;
   state.filters.thread=value;
+  state.listController?.abort();state.listRequest++;
   state.detailRequest++;
   state.selected=null;state.detail=null;state.detailVersion="";state.text=null;
   requestBodyCache=null;requestBodyView=null;requestBodySequence++;clearJsonFocus();clearJsonDownload();
@@ -730,6 +795,8 @@ function loadMorePackets() {
   return loadPackets(true).catch(fail);
 }
 async function loadPackets(append=false,background=false) {
+  // The middle pane must always belong to a selected session, including at startup.
+  if(!state.filters.thread||!selectedSessionGroup())return;
   if((append || background) && state.listController)return;
   state.listController?.abort();
   if(state.sort!=="input_tokens")tokenSortCache?.controller?.abort();
@@ -1680,19 +1747,19 @@ function renderHeaders(m) {
     fact(p,t("采集入口正文"),bytes(m.wire_bytes)+" · "+(m.content_encoding||"identity"));
   }
   root.append(p);
-  const context=panel(t("会话信息"));context.id="request-session-info";
-  fact(context,"session_id",m.thread_id||"—").classList.add("request-context");
-  const nativeTitle=session?.title_source==="index_task"||session?.title_source==="subagent"?null:session?.title;
-  fact(context,t("会话名称"),nativeTitle||"—").classList.add("request-context");
   const parentId=session?.parent_thread_id||m.parent_thread_id;
-  if(parentId) {
+  if(parentId&&parentId!==m.thread_id) {
+    const context=panel(t("会话信息"));context.id="request-session-info";
+    fact(context,"session_id",m.thread_id||"—").classList.add("request-context");
+    const nativeTitle=session?.title_source==="index_task"||session?.title_source==="subagent"?null:session?.title;
+    fact(context,t("会话名称"),nativeTitle||"—").classList.add("request-context");
     fact(context,"parent_session_id",parentId).classList.add("request-context");
     const parent=sessionSummaries.find(row=>row.thread_id===parentId);
     const parentTitle=parent?.title_source==="index_task"||parent?.title_source==="subagent"?null:parent?.title;
     fact(context,t("父会话名称"),parentTitle||"—").classList.add("request-context");
+    if(auxiliary)fact(context,t("任务类型"),t(auxiliaryLabels[auxiliary]));
+    root.append(context);
   }
-  if(auxiliary)fact(context,t("任务类型"),t(auxiliaryLabels[auxiliary]));
-  root.append(context);
   if(hasImage) {
     const images=panel(t("图片信息"));images.id="request-image-info";
     fact(images,t("图片路径"),paths.length?paths.join("\n"):t("未记录图片路径")).classList.add("request-context","request-image-paths");
@@ -1877,4 +1944,4 @@ async function poll() {
 }
 const pollTimer=setInterval(poll,2000);
 document.addEventListener("visibilitychange",()=>{if(!document.hidden){loadTokenWindow();loadMorePackets();loadListTokens();}});
-(async()=>{state.polling=true;try{await Promise.all([refreshStatus(true),refreshFilters(),loadPackets()]);await refreshSessionSummaries();}finally{state.polling=false;}})().catch(fail);
+(async()=>{state.polling=true;try{await Promise.all([refreshStatus(true),refreshFilters()]);await refreshSessionSummaries();}finally{state.polling=false;}})().catch(fail);

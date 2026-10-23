@@ -51,6 +51,29 @@ class TokenWindowTests(unittest.TestCase):
         self.assertEqual((result["used_tokens"], result["window_tokens"]), (40500, 270000))
         self.assertEqual((result["input_tokens"], result["output_tokens"]), (40000, 500))
 
+    def test_subagent_usage_survives_inherited_parent_headers(self):
+        self.prefix.insert(1, {"type": "session_meta", "payload": {"id": "parent-session"}})
+        self.write(event())
+        result = self.reader.lookup(self.packet, 103)
+        self.assertEqual(result["state"], "available")
+        self.assertEqual((result["input_tokens"], result["used_tokens"]), (40000, 40500))
+        self.assertEqual(self.reader.latest(THREAD)["used_tokens"], result["used_tokens"])
+
+    def test_inherited_header_cannot_validate_wrong_file_owner(self):
+        self.prefix[0]["payload"]["id"] = "other-session"
+        self.prefix.insert(1, {"type": "session_meta", "payload": {"id": THREAD}})
+        self.write(event())
+        self.assertEqual(self.reader.lookup(self.packet, 103), {"state": "unavailable"})
+
+    def test_subagent_file_owner_survives_resumed_bounded_reads(self):
+        self.prefix.insert(1, {"type": "session_meta", "payload": {"id": "parent-session"}})
+        self.write(event())
+        with patch("packet_inspector.token_window.READ_BUDGET", 50):
+            results = [self.reader.lookup(self.packet, 103) for _ in range(8)]
+        self.assertTrue(any(result["state"] == "loading" for result in results))
+        self.assertEqual(results[-1]["state"], "available")
+        self.assertEqual(results[-1]["input_tokens"], 40000)
+
     def test_history_files_and_database_unchanged(self):
         self.write(event())
         files = [self.path, self.home / "state_5.sqlite"]
@@ -83,6 +106,37 @@ class TokenWindowTests(unittest.TestCase):
         self.assertEqual(self.reader.lookup(self.packet, 102)["state"], "unavailable")
         self.packet["model"] = "different-model"
         self.assertEqual(self.reader.lookup(self.packet, 104)["state"], "unavailable")
+
+    def test_delayed_native_usage_matches_before_the_next_request(self):
+        self.write(event(at=112.8, inputs=45000))
+        result = self.reader.lookup(self.packet, 113)
+        self.assertEqual(result["state"], "available")
+        self.assertEqual((result["input_tokens"], result["recorded_at"]), (45000, 112.8))
+
+    def test_completed_request_keeps_waiting_for_delayed_history(self):
+        self.write()
+        with patch("packet_inspector.token_window.time.time", return_value=110):
+            self.assertEqual(self.reader.lookup(self.packet), {"state": "pending"})
+        with self.path.open("a", encoding="utf8") as stream:
+            stream.write(json.dumps(event(at=112.8, inputs=45000)) + "\n")
+        with patch("packet_inspector.token_window.time.time", return_value=113):
+            self.assertEqual(self.reader.lookup(self.packet)["input_tokens"], 45000)
+        self.write()
+        with patch("packet_inspector.token_window.time.time", return_value=162):
+            self.assertEqual(self.reader.lookup(self.packet), {"state": "unavailable"})
+
+    def test_late_usage_never_crosses_the_next_request_boundary(self):
+        self.write(event(at=113))
+        self.assertEqual(self.reader.lookup(self.packet, 113), {"state": "unavailable"})
+        self.assertEqual(self.reader.lookup(self.packet, 114)["state"], "available")
+
+    def test_ambiguous_delayed_usage_is_not_assigned(self):
+        self.write(event(at=111), event(at=112, cumulative=1040499))
+        self.assertEqual(self.reader.lookup(self.packet, 113), {"state": "unavailable"})
+
+    def test_late_usage_has_a_bounded_settle_period(self):
+        self.write(event(at=162))
+        self.assertEqual(self.reader.lookup(self.packet, 200), {"state": "unavailable"})
 
     def test_compaction_estimates_and_failed_requests_are_not_actual_usage(self):
         estimate = event(inputs=0, outputs=0)
