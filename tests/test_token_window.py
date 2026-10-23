@@ -51,6 +51,29 @@ class TokenWindowTests(unittest.TestCase):
         self.assertEqual((result["used_tokens"], result["window_tokens"]), (40500, 270000))
         self.assertEqual((result["input_tokens"], result["output_tokens"]), (40000, 500))
 
+    def test_subagent_usage_survives_inherited_parent_headers(self):
+        self.prefix.insert(1, {"type": "session_meta", "payload": {"id": "parent-session"}})
+        self.write(event())
+        result = self.reader.lookup(self.packet, 103)
+        self.assertEqual(result["state"], "available")
+        self.assertEqual((result["input_tokens"], result["used_tokens"]), (40000, 40500))
+        self.assertEqual(self.reader.latest(THREAD)["used_tokens"], result["used_tokens"])
+
+    def test_inherited_header_cannot_validate_wrong_file_owner(self):
+        self.prefix[0]["payload"]["id"] = "other-session"
+        self.prefix.insert(1, {"type": "session_meta", "payload": {"id": THREAD}})
+        self.write(event())
+        self.assertEqual(self.reader.lookup(self.packet, 103), {"state": "unavailable"})
+
+    def test_subagent_file_owner_survives_resumed_bounded_reads(self):
+        self.prefix.insert(1, {"type": "session_meta", "payload": {"id": "parent-session"}})
+        self.write(event())
+        with patch("packet_inspector.token_window.READ_BUDGET", 50):
+            results = [self.reader.lookup(self.packet, 103) for _ in range(8)]
+        self.assertTrue(any(result["state"] == "loading" for result in results))
+        self.assertEqual(results[-1]["state"], "available")
+        self.assertEqual(results[-1]["input_tokens"], 40000)
+
     def test_history_files_and_database_unchanged(self):
         self.write(event())
         files = [self.path, self.home / "state_5.sqlite"]

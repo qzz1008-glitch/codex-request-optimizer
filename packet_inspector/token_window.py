@@ -149,6 +149,7 @@ class TokenWindows:
         with path.open("rb") as stream:
             stream.seek(entry["offset"])
             while remaining > 0:
+                line_start = stream.tell()
                 line = stream.readline(LINE_LIMIT)
                 if not line:
                     break
@@ -170,7 +171,10 @@ class TokenWindows:
                     item = json.loads(line)
                     payload = item.get("payload") or {}
                     if item.get("type") == "session_meta":
-                        entry["session"] = payload.get("id")
+                        # Forked rollouts retain parent headers after their own.
+                        # Only the first record identifies this file's owner.
+                        if line_start == 0:
+                            entry["session"] = payload.get("id")
                     elif item.get("type") == "turn_context":
                         entry["model"] = payload.get("model")
                     elif item.get("type") == "event_msg" and payload.get("type") == "token_count":
