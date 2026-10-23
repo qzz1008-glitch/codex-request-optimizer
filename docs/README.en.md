@@ -14,6 +14,7 @@ Browse request records by session to see what each request sent, how much space 
 
 - View session names, request times, models, response statuses, and elapsed times.
 - Group image analysis, automatic titles, and similar auxiliary requests under their parent session. Regular subtasks keep separate rows with parent-child links; unidentified requests appear under “Other.”
+- Show image information only for separate image-analysis sessions; regular sessions do not show it when carrying historical images or image paths.
 - Check actual input/output token counts for requests; unavailable data is clearly marked.
 - See how messages, tool outputs, reasoning content, and other parts contribute to request size.
 - Explore structured request JSON, compare sizes before and after processing, and download a sanitized copy.
