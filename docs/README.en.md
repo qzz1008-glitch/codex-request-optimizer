@@ -13,6 +13,7 @@ A Windows tool for analyzing and optimizing Codex requests. Browse requests, tok
 Browse request records by session to see what each request sent, how much space it used, and how it was handled.
 
 - View session names, request times, models, response statuses, and elapsed times.
+- Group auxiliary task requests under their confirmed parent session; requests with an unknown name or ownership appear under “Other.”
 - Check context-window usage and input/output token counts; unavailable data is clearly marked.
 - See how messages, tool outputs, reasoning content, and other parts contribute to request size.
 - Explore structured request JSON, compare sizes before and after processing, and download a sanitized copy.
@@ -23,7 +24,7 @@ Reduce upload size while preserving the original content and meaning.
 
 Choose from **compression levels 1–17** and compare compressed sizes and estimated local processing times. Requests already using zstd can also be recompressed; the new body is used only when it is smaller.
 
-With request size protection enabled, you can select “Choose compression level automatically.” The current original body takes priority: if its uncompressed size is below 90% of the configured limit, skip extra compression and preserve any existing zstd body unchanged. For other requests, the previous main request’s compressed size in the same session determines the level: switch to level 17 at 90% of the configured limit, return to level 1 at 80%, and keep the current mode between those thresholds. Each body tries at most one level. Fast mode preserves existing zstd bodies; an already oversized zstd body goes directly to level 17. The manual level is disabled in automatic mode and restored when automatic selection is turned off.
+With request size protection enabled, use **automatic compression by packet size**. Smaller requests keep their original body; other requests automatically choose between fast level 1 and high-compression level 17 based on the session's upload sizes. Turning automatic mode off restores the manual level. See the user guide for the exact thresholds.
 
 ### 🧠 Context settings
 
@@ -42,11 +43,17 @@ For request body limits such as **1M (1,000,000 bytes)**, set a custom size limi
 
 When an explicit model capacity error occurs, retry automatically according to your settings, keeping the same model and request content.
 
+> Selected model is at capacity. Please try a different model.
+
 ### 🖼️ Image request optimization
 
-Optionally save images from requests as local files and let the main session use their paths, reducing repeated transmission of image data in request history.
+Choose from **Native / Disabled / Optimized** image analysis modes. Native is the default.
 
-Image handling can be replaced with a tool that analyzes images in a separate session and returns the results to the main session, reducing the context occupied by images. These options can be enabled individually in Settings.
+- **Native**: use the native Codex image tool and uninstall the optimization tool installed by this application.
+- **Disabled**: disable the native image tool and the separate image tool managed by this application.
+- **Optimized**: save images locally and use their paths in the main request. A separate image analysis session returns text results, reducing the context occupied by images in the main session.
+
+You can choose a custom image directory. Reload the Codex client after changing the image tool entry points.
 
 ---
 
@@ -67,7 +74,13 @@ Use the desktop window or open the interface in a browser. The default browser a
 
 **[http://127.0.0.1:47844/](http://127.0.0.1:47844/)**
 
-Closing the desktop window keeps the application in the system tray. Use the tray menu to exit the entire application. Language selection and launch at sign-in are available in Settings.
+The top bar switches between Disconnected, Analyze, and Optimize. Select a session on the left, browse requests in the middle, and view request information, size composition, request JSON, and changes on the right. JSON browsing supports search, path navigation, and downloading a sanitized copy.
+
+Closing the desktop window keeps the application in the system tray. When exiting from the tray, you can restore the original upstream first or exit while keeping the relay configuration. The application stays running until active requests finish. Language selection and launch at sign-in are available in Settings.
+
+### Settings and saving
+
+Use Save at the bottom of Settings to apply changes and view the result of each step. Restore discards changes that have not yet been saved; Default beside a context setting restores the model default. Settings that require a Codex restart are identified separately.
 
 ### Online updates
 
@@ -149,7 +162,7 @@ python -m scripts.build_inspector --mode release
 
 The build freezes a complete source snapshot, records the Git commit and file fingerprints, and verifies embedded EXE resources and frontend content. Official releases use a clean, integrated `main` branch. If the source changes during a build, the build is discarded and must be repeated.
 
-See **[development and builds (Chinese)](https://github.com/qzz1008-glitch/codex-request-optimizer/blob/main/docs/development.md)** for environment setup, previews, tests, and the build workflow.
+See **[development and builds (Chinese)](https://github.com/qzz1008-glitch/codex-request-optimizer/blob/main/docs/development.md)** for environment setup, frontend live updates, tests, and the build workflow.
 
 ---
 
