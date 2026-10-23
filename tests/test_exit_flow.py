@@ -248,21 +248,13 @@ class DesktopExitTests(unittest.TestCase):
         self.assertTrue(self.control.active)
         self.assertTrue(self.control.stopped)
 
-    def test_preview_cannot_consume_tray_intents_or_stop_relay(self):
+    def test_ui_without_exit_data_cannot_consume_tray_intents_or_stop_relay(self):
         self.ui.close()
         self.ui = DesktopUI(self.relay.server_port, live_reload=True).start()
         request_exit(self.folder, lambda: None)
         self.assertNotIn("ui_exit_request", self.request("/api/status")[1])
         self.assertTrue((self.folder / REQUEST_FILE).is_file())
         self.assertEqual(self.request("/api/exit", {"request_id": "a" * 32, "action": "direct"})[0], 404)
-        self.assertFalse(self.control.stopped)
-
-    def test_read_only_ui_cannot_consume_or_confirm_exit(self):
-        self.ui.read_only = True
-        request_exit(self.folder, lambda: None)
-        self.assertNotIn("ui_exit_request", self.request("/api/status")[1])
-        self.assertTrue((self.folder / REQUEST_FILE).is_file())
-        self.assertEqual(self.request("/api/exit", {"request_id": "a" * 32, "action": "direct"})[0], 409)
         self.assertFalse(self.control.stopped)
 
     def test_invalid_action_leaves_pending_exit_available(self):

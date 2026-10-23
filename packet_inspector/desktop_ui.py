@@ -30,7 +30,7 @@ GET_PATHS = {"/api/status", "/api/context-settings", "/api/packet-filters", "/ap
 
 
 def window_geometry(ui_dir=None):
-    """Use the same logical dimensions for the native window and HTML preview."""
+    """Read the native window dimensions from the shared UI stylesheet."""
     css = (Path(ui_dir or UI_DIR) / "style.css").read_text(encoding="utf8")
     values = {}
     for key in ("width", "height", "min-width", "min-height"):
@@ -55,11 +55,10 @@ def ui_build_id(ui_dir=None):
 class DesktopUI(ThreadingHTTPServer):
     daemon_threads = True
 
-    def __init__(self, relay_port, *, ui_port=0, live_reload=False, read_only=False, ui_dir=None, exit_data_dir=None):
+    def __init__(self, relay_port, *, live_reload=False, ui_dir=None, exit_data_dir=None):
         if not 1 <= relay_port <= 65535:
             raise ValueError("invalid forwarding service port")
         self.relay_port = relay_port
-        self.read_only = read_only
         self.ui_dir = Path(ui_dir or UI_DIR)
         self.live_reload = bool(live_reload)
         self.token_windows = TokenWindows()
@@ -69,7 +68,7 @@ class DesktopUI(ThreadingHTTPServer):
         self.exit_requests = ExitRequests(exit_data_dir) if exit_data_dir is not None else None
         self.window_opened = 0
         self.thread = None
-        super().__init__(("127.0.0.1", ui_port), UIHandler)
+        super().__init__(("127.0.0.1", 0), UIHandler)
         self.port = self.server_address[1]
 
     @property
@@ -138,9 +137,6 @@ class UIHandler(BaseHTTPRequestHandler):
         requests = self.server.exit_requests
         if requests is None:
             self._json(404, {"error": "ui_route_not_found"})
-            return
-        if self.server.read_only:
-            self._json(409, {"error": "开发预览为只读，日常中转设置未修改。"})
             return
         try:
             length = int(self.headers.get("Content-Length", "0"))
@@ -303,9 +299,8 @@ class UIHandler(BaseHTTPRequestHandler):
             return
         if self.command == "GET" and self.server.live_reload and path == "/__dev__/state":
             try:
-                self._json(200, {"app": "codex-packet-inspector-ui-preview", "build": ui_build_id(self.server.ui_dir),
-                                 "ui_version": VERSION, "relay_port": self.server.relay_port,
-                                 "read_only": self.server.read_only})
+                self._json(200, {"app": "codex-packet-inspector-desktop-ui", "build": ui_build_id(self.server.ui_dir),
+                                 "ui_version": VERSION, "relay_port": self.server.relay_port})
             except OSError:
                 self._json(503, {"error": "ui_files_updating"})
             return
@@ -368,9 +363,6 @@ class UIHandler(BaseHTTPRequestHandler):
             except ValueError:
                 self._json(400, {"error": "invalid_ui_request_body"})
                 return
-        if self.command == "POST" and self.server.read_only:
-            self._json(409, {"error": "开发预览为只读，日常中转设置未修改。"})
-            return
         connection = http.client.HTTPConnection("127.0.0.1", self.server.relay_port, timeout=30)
         sent = False
         try:
@@ -387,16 +379,14 @@ class UIHandler(BaseHTTPRequestHandler):
                 status = json.loads(data)
                 status["ui_version"] = VERSION
                 status["ui_build"] = build_info()
-                status["ui_read_only"] = self.server.read_only
                 status["ui_live_reload"] = self.server.live_reload
                 status["ui_desktop"] = self.server.exit_requests is not None
                 status["ui_window_opened"] = self.server.window_opened
-                if self.server.exit_requests is not None and not self.server.read_only:
+                if self.server.exit_requests is not None:
                     status["ui_exit_request"] = self.server.exit_requests.current()
                 if isinstance(status.get("data_dir"), str):
                     status["entry_port_supported"] = True
                     status["entry_port"] = port_status(status["data_dir"], self.server.relay_port)
-                    status["ui_entry_port_editable"] = True
                 sent = True
                 self._json(200, status)
             else:
