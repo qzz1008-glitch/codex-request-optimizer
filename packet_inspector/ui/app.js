@@ -31,6 +31,7 @@ const nf = new Intl.NumberFormat("zh-CN");
 let requestBodyCache=null, requestBodyDownloadUrl="", requestBodySequence=0;
 let treeQueryTimer=null,requestBodyView=null,requestBodyHighlight=null;
 let contextSettings = null;
+const contextCustomValues = new Map();
 let settingsEditing = false, settingsSaving = false, settingsOpening = false, settingsRevision = 0;
 let linkSaving = "", linkRevision = 0;
 let settingsBaseline = null, settingsLanguage = null;
@@ -968,9 +969,21 @@ function syncContextDefaults() {
     const unavailable=settingsSaving||!contextSettings||!!state.status?.ui_read_only;
     const input=$(key+"-tokens"),useDefault=$(key+"-default").checked;
     $(key+"-default").disabled=unavailable;
-    if(useDefault)input.value="";
-    input.disabled=unavailable||useDefault;
+    if(useDefault) {
+      if(input.value&&input.validity.valid)contextCustomValues.set(key,input.value);
+      input.value="";
+    }
+    input.disabled=unavailable;
+    input.readOnly=useDefault;
   }
+}
+function editContextValue(key) {
+  if(!settingsEditing||settingsSaving||!contextSettings||state.status?.ui_read_only)return;
+  const useDefault=$(key+"-default");
+  if(!useDefault.checked)return;
+  useDefault.checked=false;
+  $(key+"-tokens").value=contextCustomValues.get(key)||"";
+  syncContextDefaults();contextMessage("");updateSettingsSaveState();
 }
 function fillContextSettings(data) {
   contextSettings=data;
@@ -979,7 +992,10 @@ function fillContextSettings(data) {
   for(const [key,value] of [["context",data.context_tokens],["compact",data.compact_tokens]]) {
     if(!settingsEditing)$(key+"-default").checked=value==null;
     $(key+"-tokens").max=String(maximum);
-    if(!settingsEditing)$(key+"-tokens").value=value==null?"":String(value/1000);
+    if(!settingsEditing) {
+      $(key+"-tokens").value=value==null?"":String(value/1000);
+      if(value!=null)contextCustomValues.set(key,String(value/1000));
+    }
   }
   syncContextDefaults();
 }
@@ -1554,8 +1570,15 @@ function fillPacketProtection() {
 }
 $("packet-size-protection").addEventListener("change",fillPacketProtection);
 for(const key of ["context","compact"]) {
-  $(key+"-tokens").addEventListener("input",()=>contextMessage(""));
-  $(key+"-default").addEventListener("change",()=>{syncContextDefaults();contextMessage("");});
+  const input=$(key+"-tokens"),useDefault=$(key+"-default");
+  input.closest(".context-value").addEventListener("click",()=>{
+    editContextValue(key);if(!input.disabled)input.focus();
+  });
+  input.addEventListener("input",()=>contextMessage(""));
+  useDefault.addEventListener("change",()=>{
+    if(!useDefault.checked)input.value=contextCustomValues.get(key)||"";
+    syncContextDefaults();contextMessage("");
+  });
 }
 action("image-save-dir-reset",()=>{
   if(settingsSaving||state.status.ui_read_only||!state.status.image_save_dir_supported)return;
