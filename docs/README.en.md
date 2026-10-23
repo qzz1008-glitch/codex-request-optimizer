@@ -23,6 +23,8 @@ Reduce upload size while preserving the original content and meaning.
 
 Choose from **compression levels 1–17** and compare compressed sizes and estimated local processing times. Requests already using zstd can also be recompressed; the new body is used only when it is smaller.
 
+With request size protection enabled, you can select “Choose compression level automatically.” The previous main request’s compressed size in the same session determines the next level: switch to level 17 at 90% of the configured limit, return to level 1 at 80%, and keep the current mode between those thresholds. Each body tries only one level. Fast mode preserves existing zstd bodies; an already oversized zstd body goes directly to level 17. The manual level is disabled in automatic mode and restored when automatic selection is turned off.
+
 ### 🧠 Context settings
 
 Adjust the context window and automatic compaction threshold used by the Codex client, or restore the model defaults.

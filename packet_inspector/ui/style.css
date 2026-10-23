@@ -232,6 +232,10 @@ code.session-id{font-family:Consolas,"Cascadia Mono",monospace;font-size:11px;wo
 #settings-dialog .entry-port-status:is([data-state=pending],[data-state=unsaved]){color:var(--warn)}
 #settings-dialog .entry-port-status[data-state=error]{color:var(--danger)}
 #settings-dialog .zstd-level-control{display:grid;grid-template-columns:var(--settings-label-width) minmax(0,1fr);align-items:center;gap:16px;margin:0}
+#settings-dialog .zstd-level-selection{display:flex;align-items:center;gap:12px;min-width:0}
+#settings-dialog .zstd-level-selection .zstd-level-trigger{flex:none}
+#zstd-level-auto-note{margin:0;font-size:13px;line-height:1.5}
+#settings-dialog .auto-zstd-row .runtime-toggle{grid-column:1 / -1}
 #settings-dialog .zstd-level-trigger{width:var(--settings-number-width);max-width:100%;justify-self:start;font-variant-numeric:tabular-nums;display:flex;align-items:center;justify-content:flex-end;gap:12px;text-align:right}
 #zstd-level-dialog{width:min(520px,calc(100vw - 32px));max-height:min(640px,calc(100vh - 40px));padding:20px;overflow:hidden}
 #zstd-level-dialog[open]{display:flex;flex-direction:column}
