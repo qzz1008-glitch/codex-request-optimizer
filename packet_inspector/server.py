@@ -31,6 +31,7 @@ from .providers import ProviderManager, config_paths
 from .entry_port import ConfiguredPortParser, port_status, save_port
 from .updates import Updates
 from .token_window import TokenWindows
+from .response_usage import packet_usage
 from .session_summary import SessionSummaries
 from .storage import Store
 from .transport import CompressionHistory, DEFAULT_ZSTD_LEVEL, prepare_request_info, validate_zstd_level
@@ -658,6 +659,9 @@ class Handler(BaseHTTPRequestHandler):
             meta, content = self.server.store.get(packet_id, content=bool(action) and action != "token-window")
             if action == "token-window":
                 try:
+                    if packet_usage(meta) is not None:
+                        self._json(200, self.server.token_windows.lookup_ready(meta))
+                        return
                     following = self.server.store.list(limit=1, thread=meta.get("thread_id", ""),
                                                        sort="created", direction="asc", after=packet_id)
                     next_created = following[0].get("created") if following else None
@@ -950,8 +954,9 @@ class Handler(BaseHTTPRequestHandler):
                 response = exc
             with response:
                 status = response.status
-                usage_stream = UsageStream(response, update) if trigger_size is not None else None
-                rewrite_response = usage_stream is not None and usage_stream.enabled
+                observe_usage = self.command == "POST" and urlsplit(suffix).path.rstrip("/").endswith("/responses")
+                usage_stream = UsageStream(response, update, rewrite=trigger_size is not None) if observe_usage else None
+                rewrite_response = usage_stream is not None and usage_stream.enabled and usage_stream.rewrite_usage
                 update(status=status, state="streaming", response_type=response.headers.get("Content-Type", ""),
                        headers_ms=round((time.monotonic() - started) * 1000, 1))
                 self.send_response(status, response.reason)

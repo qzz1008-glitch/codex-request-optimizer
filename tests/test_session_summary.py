@@ -14,6 +14,15 @@ from tests.test_token_window import THREAD, event
 
 
 class SessionSummaryTests(unittest.TestCase):
+    def test_missing_title_and_timestamp_columns_do_not_hide_available_native_name(self):
+        with closing(sqlite3.connect(self.native / "state_6.sqlite")) as db:
+            db.execute("CREATE TABLE threads(id TEXT,name TEXT)")
+            db.execute("INSERT INTO threads VALUES (?,?)", (THREAD, "Name from a different schema"))
+            db.commit()
+        row = self.reader.read(self.capture)["sessions"][0]
+        self.assertEqual(row["title"], "Name from a different schema")
+        self.assertEqual(row["updated_at"], 105)
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)
@@ -49,7 +58,7 @@ class SessionSummaryTests(unittest.TestCase):
         self.assertEqual(rows[0]["packet_count"], 2)
         self.assertEqual(rows[0]["latest_packet"], {"id": "b", "created": 105, "wire_bytes": 4000})
         self.assertEqual(rows[0]["token_window"]["used_tokens"], 40500)
-        self.assertEqual(rows[0]["token_window"]["window_tokens"], 270000)
+        self.assertNotIn("window_tokens", rows[0]["token_window"])
 
     def test_unknown_session_does_not_use_uncompressed_bytes_as_upload_size(self):
         row = next(r for r in self.reader.read(self.capture)["sessions"] if not r["thread_id"])
@@ -64,10 +73,11 @@ class SessionSummaryTests(unittest.TestCase):
         with closing(sqlite3.connect(self.capture / "packets.sqlite")) as db:
             db.execute("UPDATE packet_summaries SET meta=? WHERE id='b'", (json.dumps(meta),))
             db.commit()
-        row = self.reader.read(self.capture)["sessions"][0]
+        with patch.object(self.reader.tokens, "latest", side_effect=AssertionError("Native usage must not be read")):
+            row = self.reader.read(self.capture)["sessions"][0]
         self.assertEqual(row["token_window"]["input_tokens"], 123456)
         self.assertEqual(row["token_window"]["used_tokens"], 123529)
-        self.assertEqual(row["token_window"]["window_tokens"], 270000)
+        self.assertNotIn("window_tokens", row["token_window"])
         self.assertEqual(row["token_window"]["source"], "upstream_response")
 
     def test_missing_real_sidebar_usage_never_falls_back_to_override(self):

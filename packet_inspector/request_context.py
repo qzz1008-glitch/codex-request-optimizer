@@ -54,16 +54,26 @@ def temporary_request_kind(body):
 def temporary_kind_from_metadata(meta):
     if meta.get("image_isolation_worker") is True:
         return "image_analysis"
-    kind = meta.get("session_kind") or meta.get("request_kind")
-    if isinstance(kind, str) and kind in AUXILIARY_KINDS:
-        return kind
+    kinds = [meta.get(key) for key in ("request_purpose", "request_kind", "session_kind")]
+    for kind in kinds:
+        if isinstance(kind, str) and kind in AUXILIARY_KINDS - {"subagent"}:
+            return kind
     items = meta.get("input_items")
     if isinstance(items, list):
         for item in reversed(items):
             if isinstance(item, dict) and item.get("kind") == "message:user":
                 # These complete app-generated prefixes fit in the saved 140-character label.
-                return temporary_request_kind({"input": [{"role": "user", "content": item.get("label")}]})
-    return None
+                kind = temporary_request_kind({"input": [{"role": "user", "content": item.get("label")}]})
+                if kind:
+                    return kind
+                break
+    return "subagent" if "subagent" in kinds else None
+
+
+def packet_metadata(meta):
+    """Expose a canonical purpose without rewriting stored or native history."""
+    kind = temporary_kind_from_metadata(meta)
+    return {**meta, "request_purpose": kind} if kind else meta
 
 
 def session_id(value):
@@ -95,7 +105,7 @@ def request_session_context(body, headers=None):
         trigger = candidate.get("turn_trigger")
         if source == "thread_description" or trigger == "thread_description":
             kind = "session_index"
-        elif isinstance(source, str) and source in AUXILIARY_KINDS:
+        elif isinstance(source, str) and source in AUXILIARY_KINDS and (source != "subagent" or not kind):
             kind = source
         for key in ("parent_thread_id", "parent_session_id", "forked_from_thread_id"):
             parent = session_id(candidate.get(key))

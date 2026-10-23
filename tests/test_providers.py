@@ -315,7 +315,7 @@ class ProviderRelayTests(unittest.TestCase):
     def test_same_service_exposes_request_token_lookup(self):
         self.post(self.server.endpoint + "/responses")
         packet = self.server.store.list()[0]
-        expected = {"state": "available", "input_tokens": 123, "window_tokens": 270000}
+        expected = {"state": "available", "input_tokens": 123, "output_tokens": 7}
         with patch.object(self.server.token_windows, "lookup_ready", return_value=expected) as lookup:
             with self.opener.open(self.server.ui_url + "api/packets/" + packet["id"] + "/token-window", timeout=3) as response:
                 self.assertEqual(json.load(response), expected)

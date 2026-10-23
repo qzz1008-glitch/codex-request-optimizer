@@ -8,6 +8,7 @@ import re
 from urllib.parse import urlsplit
 
 from .analyzer import classify_request, decode_body
+from .response_usage import token_values
 
 DEFAULT_BUDGET_BYTES = 1_000_000
 TOKEN_HEADROOM_BYTES = 50_000
@@ -57,9 +58,12 @@ class UsageStream:
     This does not manufacture native history events. The user-enabled option
     changes only the successful Responses usage reported to its client.
     """
-    def __init__(self, response, record):
+    def __init__(self, response, record, *, rewrite=True):
         self.response, self.record = response, record
+        self.rewrite_usage = rewrite
         self.mode = response.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
+        if self.mode.startswith("application/") and self.mode.endswith("+json"):
+            self.mode = "application/json"
         encoding = response.headers.get("Content-Encoding", "identity").strip().lower()
         self.enabled = response.status == 200 and encoding in {"", "identity"} and self.mode in {
             "", "text/event-stream", "application/json"}
@@ -73,10 +77,12 @@ class UsageStream:
         if not isinstance(response, dict) or response.get("status") in {"failed", "incomplete", "cancelled"}:
             return False
         usage = response.get("usage")
-        if not isinstance(usage, dict) or not all(type(usage.get(k)) is int and usage[k] >= 0
-                for k in ("input_tokens", "output_tokens", "total_tokens")):
+        if token_values(usage) is None:
             return False
         original = deepcopy(usage)
+        if not self.rewrite_usage:
+            self.record(upstream_usage=original)
+            return False
         changed = usage["input_tokens"] < REPORTED_INPUT_TOKENS
         if changed:
             usage["input_tokens"] = REPORTED_INPUT_TOKENS
@@ -87,7 +93,8 @@ class UsageStream:
         return changed
 
     def _frame(self, frame):
-        lines = frame.splitlines(keepends=True)
+        bom = b"\xef\xbb\xbf" if frame.startswith(b"\xef\xbb\xbf") else b""
+        lines = frame[len(bom):].splitlines(keepends=True)
         data = [line[5:].lstrip(b" ").rstrip(b"\r\n") for line in lines if line.startswith(b"data:")]
         if not data:
             return frame
@@ -106,11 +113,55 @@ class UsageStream:
                 ending = b"\r\n" if line.endswith(b"\r\n") else b"\n" if line.endswith(b"\n") else b""
                 result.append(b"data: " + encoded + ending)
                 inserted = True
-        return b"".join(result)
+        return bom + b"".join(result)
+
+    def _sniff_mode(self, prefix):
+        if len(prefix) < 3 and b"\xef\xbb\xbf".startswith(prefix):
+            return False
+        stripped = prefix.removeprefix(b"\xef\xbb\xbf").lstrip()
+        if not stripped and len(prefix) < 4096:
+            return False
+        self.mode = "application/json" if stripped.startswith(b"{") else "text/event-stream"
+        return True
+
+    def _observe(self):
+        """Inspect bounded copies; forward each original chunk without buffering it."""
+        pending = bytearray()
+        passthrough = False
+        for chunk in raw_chunks(self.response):
+            pending.extend(chunk)
+            if not self.mode:
+                self._sniff_mode(pending)
+            if self.mode == "application/json":
+                if len(pending) > MAX_EVENT_BYTES:
+                    passthrough = True
+                    pending.clear()
+            elif self.mode:
+                while match := BOUNDARY.search(pending):
+                    frame = bytes(pending[:match.start()])
+                    del pending[:match.end()]
+                    if not passthrough and len(frame) <= MAX_EVENT_BYTES:
+                        self._frame(frame)
+                    passthrough = False
+                if len(pending) > MAX_EVENT_BYTES:
+                    del pending[:-3]
+                    passthrough = True
+            yield chunk
+        if pending and not passthrough:
+            if self.mode == "application/json":
+                try:
+                    self._rewrite(json.loads(pending))
+                except (ValueError, UnicodeError):
+                    pass
+            else:
+                self._frame(bytes(pending))
 
     def chunks(self):
         if not self.enabled:
             yield from raw_chunks(self.response)
+            return
+        if not self.rewrite_usage:
+            yield from self._observe()
             return
         pending = bytearray()
         chunks = raw_chunks(self.response)
@@ -119,10 +170,8 @@ class UsageStream:
             prefix = bytearray()
             for chunk in chunks:
                 prefix.extend(chunk)
-                stripped = bytes(prefix).removeprefix(b"\xef\xbb\xbf").lstrip()
-                if stripped or len(prefix) >= 4096:
+                if self._sniff_mode(prefix):
                     break
-            self.mode = "application/json" if prefix.removeprefix(b"\xef\xbb\xbf").lstrip().startswith(b"{") else "text/event-stream"
             chunks = chain((bytes(prefix),), chunks)
         if self.mode == "application/json":
             for chunk in chunks:
