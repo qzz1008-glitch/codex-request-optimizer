@@ -122,7 +122,7 @@
     <section id="request-protection-settings"><h3>请求保护</h3>
       <div class="packet-size-controls">
         <div class="overflow-toggle" data-settings-field="packet_size_protection_enabled"><input id="packet-size-protection" type="checkbox" aria-labelledby="packet-size-protection-label"><span id="packet-size-protection-label">请求大小保护</span></div>
-        <label class="packet-size-limit" for="budget" data-settings-field="budget"><span>压缩包上限（kB）</span><input id="budget" type="number" min="50.001" max="134217.728" step="0.001" value="1000" required disabled></label>
+        <label class="packet-size-limit" for="budget" data-settings-field="budget"><span id="budget-label">压缩包上限</span><span class="packet-size-value"><input id="budget" type="number" min="50.001" max="134217.728" step="0.001" value="1000" aria-labelledby="budget-label" aria-describedby="budget-unit" required disabled><span id="budget-unit" class="packet-size-unit">kB</span></span></label>
       </div>
       <p id="packet-size-message" class="help" role="status" hidden></p>
       <div class="runtime-setting-row runtime-retry-row"><div class="runtime-toggle" data-settings-field="capacity_retry_enabled"><input id="capacity-retry" type="checkbox" aria-labelledby="capacity-retry-label"><span id="capacity-retry-label">模型容量不足时自动重试</span></div><div class="capacity-retry-limit" data-settings-field="capacity_retry_max_retries"><label for="capacity-retry-count">重试次数</label><input id="capacity-retry-count" type="number" min="1" max="99" step="1" value="3" inputmode="numeric" required><span>次</span></div></div>
