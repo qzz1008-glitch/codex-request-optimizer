@@ -56,6 +56,60 @@ class AutomaticTransportTests(unittest.TestCase):
                 self.assertEqual(prepared.zstd_level, level)
                 self.assertEqual(zstandard.ZstdDecompressor().decompress(prepared.body), raw)
 
+    def test_current_original_size_takes_priority_at_the_strict_configured_boundary(self):
+        empty_size = len(encode({'input': ''}))
+        for budget in (1000, 1753, 200000):
+            boundary = (budget * 90 + 99) // 100
+            for size in (boundary - 1, boundary):
+                raw = encode({'input': 'x' * (size - empty_size)})
+                for level in (1, 17):
+                    with self.subTest(budget=budget, size=size, level=level), patch(
+                            'zstandard.ZstdCompressor', wraps=zstandard.ZstdCompressor) as compressor:
+                        result = prepare_request_info(raw, {}, 'POST', '/responses', 'zstd', level,
+                                                      auto_zstd_level=True, budget_bytes=budget)
+                        if size < boundary:
+                            compressor.assert_not_called()
+                            self.assertTrue(result.body is raw, 'small original must pass through unchanged')
+                            self.assertEqual(result.encoding, 'identity')
+                            self.assertIsNone(result.zstd_level)
+                        else:
+                            compressor.assert_called_once_with(level=level)
+                            self.assertEqual(result.zstd_level, level)
+                            self.assertEqual(zstandard.ZstdDecompressor().decompress(result.body), raw)
+
+    def test_small_native_zstd_is_preserved_even_in_high_mode(self):
+        raw = encode({'input': 'small original ' * 20})
+        incoming = zstandard.ZstdCompressor(level=1).compress(raw)
+        for level in (1, 17):
+            with self.subTest(level=level), patch('zstandard.ZstdCompressor', wraps=zstandard.ZstdCompressor) as compressor:
+                result = prepare_request_info(incoming, {'Content-Encoding': 'zstd'}, 'POST', '/responses', 'zstd', level,
+                                              auto_zstd_level=True, budget_bytes=1000)
+                compressor.assert_not_called()
+                self.assertIs(result.body, incoming)
+                self.assertEqual(result.encoding, 'zstd')
+                self.assertIsNone(result.zstd_level)
+
+    def test_small_native_wire_with_large_original_still_tries_high_mode(self):
+        raw = encode({'input': 'large original ' * 10000})
+        incoming = zstandard.ZstdCompressor(level=1).compress(raw)
+        self.assertLess(len(incoming), 9000)
+        self.assertGreater(len(raw), 9000)
+        with patch('zstandard.ZstdCompressor', wraps=zstandard.ZstdCompressor) as compressor:
+            result = prepare_request_info(incoming, {'Content-Encoding': 'zstd'}, 'POST', '/responses', 'zstd', 17,
+                                          auto_zstd_level=True, budget_bytes=10000)
+            compressor.assert_called_once_with(level=17)
+            self.assertLessEqual(len(result.body), len(incoming))
+            self.assertEqual(zstandard.ZstdDecompressor().decompress(result.body), raw)
+
+    def test_manual_mode_still_compresses_small_originals(self):
+        raw = encode({'input': 'small manual request ' * 20})
+        with patch('zstandard.ZstdCompressor', wraps=zstandard.ZstdCompressor) as compressor:
+            result = prepare_request_info(raw, {}, 'POST', '/responses', 'zstd', 9,
+                                          auto_zstd_level=False, budget_bytes=1000000)
+            compressor.assert_called_once_with(level=9)
+            self.assertEqual(result.zstd_level, 9)
+            self.assertEqual(zstandard.ZstdDecompressor().decompress(result.body), raw)
+
     def test_fast_mode_keeps_native_zstd_and_oversized_native_packet_goes_straight_to_17(self):
         raw = encode({'input': base64.b64encode(random.Random(3).randbytes(90000)).decode()})
         incoming = zstandard.ZstdCompressor(level=1).compress(raw)
@@ -86,11 +140,18 @@ class AutomaticTransportTests(unittest.TestCase):
 
     def test_rebuilt_bodies_use_the_selected_mode_and_report_the_actual_level(self):
         raw = encode({'input': 'retained ' * 10000})
-        for level in (1, 17):
-            result = encode_changed_info(raw, {'Content-Encoding': 'zstd'}, '/responses', 'zstd', level,
-                                         auto_zstd_level=True, budget_bytes=100000)
-            self.assertEqual(result.zstd_level, level)
-            self.assertEqual(zstandard.ZstdDecompressor().decompress(result.body), raw)
+        for budget in (100000, 110000):
+            for level in (1, 17):
+                with self.subTest(budget=budget, level=level):
+                    result = encode_changed_info(raw, {'Content-Encoding': 'zstd'}, '/responses', 'zstd', level,
+                                                 auto_zstd_level=True, budget_bytes=budget)
+                    if budget == 110000:
+                        self.assertTrue(result.body is raw, 'small rebuilt original must pass through unchanged')
+                        self.assertEqual(result.encoding, 'identity')
+                        self.assertIsNone(result.zstd_level)
+                    else:
+                        self.assertEqual(result.zstd_level, level)
+                        self.assertEqual(zstandard.ZstdDecompressor().decompress(result.body), raw)
 
     def test_saved_settings_preserve_manual_level_and_require_size_protection(self):
         for saved, enabled in (({}, False),
@@ -107,16 +168,17 @@ class AutomaticTransportTests(unittest.TestCase):
                     self.assertEqual(server.status()['auto_zstd_level_enabled'], enabled)
                     self.assertEqual(server.settings['zstd_level'], 9)
 
-    def test_image_rewrite_uses_one_selected_level_and_keeps_paths(self):
+    def test_image_rewrite_skips_compression_for_small_body_and_keeps_paths(self):
         from packet_inspector.image_isolation import ImageIsolation
         from tests.test_image_isolation import request_body
         with tempfile.TemporaryDirectory() as folder:
             isolation = ImageIsolation(Path(folder))
-            result, coding, meta = isolation.prepare(encode(request_body()), {}, '/responses', 'zstd',
-                                                      zstd_level=1, auto_zstd_level=True, budget_bytes=300000)
-            self.assertEqual((coding, meta['relay_zstd_level']), ('zstd', 1))
-            decoded = zstandard.ZstdDecompressor().decompress(result)
-            self.assertNotIn(b'data:image', decoded)
+            with patch('zstandard.ZstdCompressor', wraps=zstandard.ZstdCompressor) as compressor:
+                result, coding, meta = isolation.prepare(encode(request_body()), {}, '/responses', 'zstd',
+                                                          zstd_level=17, auto_zstd_level=True, budget_bytes=300000)
+                compressor.assert_not_called()
+            self.assertEqual((coding, meta['relay_zstd_level']), ('identity', None))
+            self.assertNotIn(b'data:image', result)
             self.assertTrue(meta['image_paths'])
 
 
@@ -166,13 +228,17 @@ class AutomaticRelayTests(unittest.TestCase):
         big = encode({'input': random_text})
         small = encode({'input': 'small retained request ' * 20})
         headers = {'session_id': 'adaptive-session'}
-        for raw, expected in ((big, 1), (big, 17), (small, 17), (small, 1)):
+        for raw, expected in ((big, 1), (big, 17), (small, None), (small, None), (big, 1)):
             with self.subTest(expected=expected, size=len(raw)), patch('zstandard.ZstdCompressor', wraps=zstandard.ZstdCompressor) as compressor:
                 self.assertEqual(self.relay(raw, headers=headers)[0], 200)
-                compressor.assert_called_once_with(level=expected)
+                if expected is None:
+                    compressor.assert_not_called()
+                else:
+                    compressor.assert_called_once_with(level=expected)
                 meta, _ = self.latest()
                 self.assertEqual(meta['relay_zstd_level'], expected)
-                self.assertEqual(zstandard.ZstdDecompressor().decompress(self.up.requests[-1]['body']), raw)
+                uploaded = self.up.requests[-1]['body']
+                self.assertEqual(zstandard.ZstdDecompressor().decompress(uploaded) if expected else uploaded, raw)
                 self.assertLessEqual(len(self.up.requests[-1]['body']), 300000)
         self.assertEqual(self.relay(big, headers={'session_id': 'separate-session'})[0], 200)
         self.assertEqual(self.latest()[0]['relay_zstd_level'], 1)
@@ -219,7 +285,7 @@ class AutomaticRelayTests(unittest.TestCase):
         small = encode({'input': 'small manual request ' * 100})
         self.assertEqual(self.relay(small, headers=headers)[0], 200)
         self.enable()
-        self.assertEqual(self.relay(small, headers=headers)[0], 200)
+        self.assertEqual(self.relay(raw, headers=headers)[0], 200)
         self.assertEqual(self.latest()[0]['relay_zstd_level'], 1)
 
 
