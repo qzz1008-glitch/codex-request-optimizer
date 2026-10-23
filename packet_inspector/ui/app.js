@@ -1375,11 +1375,12 @@ function renderUpdates() {
   if(checking||installing)updateFeedbackVisible=true;
   $("updates-check").setAttribute("aria-busy",String(checking));
   $("updates-install").setAttribute("aria-busy",String(installing));
-  $("updates-check-label").textContent=t(checking?"正在检查…":"检查更新");
-  $("updates-install-label").textContent=t(installing?"正在升级…":"立即升级");
+  $("updates-check-label").textContent=t(checking?"检查中":"检查更新");
+  $("updates-install-label").textContent=t(installing?"升级中":"立即升级");
   const message=$("updates-message");
   message.hidden=!updateFeedbackVisible;
   message.textContent=displayedState==="error"?u.error:t(labels[displayedState]||labels.idle);
+  message.title=message.textContent;
   message.classList.toggle("error",displayedState==="error");
 }
 async function loadUpdates() {
