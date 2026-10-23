@@ -132,13 +132,13 @@
       <div class="context-grid">
         <div class="context-control" role="group" aria-labelledby="context-label" data-settings-field="context_tokens">
           <label id="context-label" class="context-label" for="context-tokens" title="有效上下文">有效上下文</label>
-          <div class="context-value"><input id="context-tokens" type="number" min="4" max="10000" step="0.001" value="240" required aria-describedby="context-unit"><span id="context-unit" class="context-unit">k tokens</span></div>
-          <div class="context-default"><input id="context-default" type="checkbox" aria-labelledby="context-label context-default-label"><span id="context-default-label">模型默认</span></div>
+          <div class="context-value"><input id="context-tokens" type="number" min="4" max="10000" step="0.001" required aria-describedby="context-unit"><span id="context-unit" class="context-unit">k tokens</span></div>
+          <div class="context-default"><input id="context-default" type="checkbox" aria-labelledby="context-label context-default-label"><span id="context-default-label">默认</span></div>
         </div>
         <div class="context-control" role="group" aria-labelledby="compact-label" data-settings-field="compact_tokens">
           <label id="compact-label" class="context-label" for="compact-tokens" title="自动压缩阈值">自动压缩阈值</label>
-          <div class="context-value"><input id="compact-tokens" type="number" min="1" max="10000" step="0.001" value="220" required aria-describedby="compact-unit"><span id="compact-unit" class="context-unit">k tokens</span></div>
-          <div class="context-default"><input id="compact-default" type="checkbox" aria-labelledby="compact-label compact-default-label"><span id="compact-default-label">模型默认</span></div>
+          <div class="context-value"><input id="compact-tokens" type="number" min="1" max="10000" step="0.001" required aria-describedby="compact-unit"><span id="compact-unit" class="context-unit">k tokens</span></div>
+          <div class="context-default"><input id="compact-default" type="checkbox" aria-labelledby="compact-label compact-default-label"><span id="compact-default-label">默认</span></div>
         </div>
       </div>
       <p id="context-message" class="help" role="status" hidden></p>
