@@ -113,10 +113,6 @@ code.session-id{font-family:Consolas,"Cascadia Mono",monospace;font-size:11px;wo
 .image-path-list{list-style:none;margin:0;padding:0;min-width:0}
 .image-path-item{display:flex;align-items:flex-start;gap:8px;min-width:0;padding:8px 0;border-top:1px solid var(--line)}
 .image-path-name{flex:1;min-width:0;color:var(--ink);font:12px/1.6 Consolas,"Cascadia Mono",monospace;white-space:pre-wrap;overflow-wrap:anywhere;user-select:text}
-.image-path-copy{flex:none;width:60px;padding:4px 6px;font-size:11px;line-height:18px}
-.image-path-copy.copied{color:var(--green);border-color:#bad7c5;background:#eaf6ef}
-.image-path-copy.copy-error{color:var(--danger);border-color:#edc0be;background:#fff0ef}
-.image-path-clipboard{position:fixed;top:0;left:-10000px;opacity:0;pointer-events:none}
 .session-title{font-size:13px;font-weight:600;line-height:1.5;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .session-meta{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:4px;font-size:10px;line-height:1.6;color:var(--muted);font-variant-numeric:tabular-nums;white-space:nowrap}
 .session-token{justify-self:start;font-size:inherit;line-height:1.6;color:var(--muted);font-variant-numeric:tabular-nums;white-space:nowrap}
