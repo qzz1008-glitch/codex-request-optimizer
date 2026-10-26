@@ -13,7 +13,7 @@ let checks=0;
 function test(name,fn){return Promise.resolve().then(fn).then(()=>{checks++;}).catch(error=>{error.message=name+': '+error.message;throw error;});}
 function view(services={}) {
  const result=Object.create(View.prototype);
- Object.assign(result,{active:true,loading:false,hydrating:false,packets:new Map(),native:new Map(),hidden:new Set(),hours:0,revision:null,lastFull:0,query:'',error:false,limited:false,
+ Object.assign(result,{active:true,loading:false,hydrating:false,packets:new Map(),native:new Map(),hours:0,revision:null,lastFull:0,query:'',error:false,limited:false,
   services:{api:async()=>[],status:()=>({storage:{revision:1}}),sessions:()=>[],peek:()=>null,isGeneration:context.isGeneration,...services},
   render(){},hydrate(){},scheduleRender(){}});
  return result;
@@ -48,8 +48,8 @@ function view(services={}) {
   const model=result.model();assert.equal(model.series.length,1);assert.equal(model.unknown,1);
   assert.deepEqual(Array.from(model.visible[0].points,p=>p.input),[30,null,null]);
   assert.equal(model.visible[0].points[2].events[0],'compact');
-  result.hidden.add('session-a');assert.equal(result.model().visible.length,0);
-  result.hidden.clear();result.query='missing';assert.equal(result.model().matched.length,0);
+  assert.equal(model.visible.length,model.matched.length);
+  result.query='missing';assert.equal(result.model().matched.length,0);
  });
  await test('full snapshot pages without duplicates, and deltas stop on overlap',async()=>{
   const rows=Array.from({length:303},(_,i)=>packet(i+1)),queries=[];let revision=1;
