@@ -140,8 +140,7 @@ def rebuild_prefix(items, summary, max_user_tokens=RETAINED_USER_TOKENS):
 
 def safe_cuts(items):
     """Only compact closed tool groups; always leave the last item/group intact."""
-    pending = Counter()
-    cuts = []
+    seen_calls, last_items = set(), {}
     for index, item in enumerate(items):
         kind = item.get("type", "message")
         if kind in CALL_TYPES | OUTPUT_TYPES:
@@ -149,12 +148,22 @@ def safe_cuts(items):
             if not isinstance(call_id, str) or not call_id:
                 raise OverflowFailure("overflow_tool_pairing", "工具调用缺少标识，无法安全切分压缩上下文。")
             if kind in CALL_TYPES:
-                pending[call_id] += 1
-            else:
-                if not pending[call_id]:
-                    raise OverflowFailure("overflow_tool_pairing", "发现没有对应调用的工具结果，未修改该请求。")
-                pending[call_id] -= 1
-        if not any(pending.values()) and index + 1 < len(items) and kind != "reasoning":
+                seen_calls.add(call_id)
+            elif call_id not in seen_calls:
+                raise OverflowFailure("overflow_tool_pairing", "发现没有对应调用的工具结果，未修改该请求。")
+            last_items[call_id] = index
+    pending, cuts = set(), []
+    for index, item in enumerate(items):
+        kind = item.get("type", "message")
+        if kind in CALL_TYPES:
+            pending.add(item.get("call_id") or item.get("id"))
+        elif kind in OUTPUT_TYPES:
+            call_id = item.get("call_id") or item.get("id")
+            # notify can append results after the primary result and other turns.
+            # Close the whole group only at its last result in this request.
+            if index == last_items[call_id]:
+                pending.remove(call_id)
+        if not pending and index + 1 < len(items) and kind != "reasoning":
             cuts.append(index + 1)
     return cuts
 
@@ -434,7 +443,8 @@ class OverflowCompactor:
             covered, replacement = 0, []
             if mapping:
                 count = mapping["covered"]
-                if mapping["scope"] == scope and count <= len(items) and digest(items[:count]) == mapping["fingerprint"]:
+                if (mapping["scope"] == scope and count <= len(items)
+                        and digest(items[:count]) == mapping["fingerprint"] and count in safe_cuts(items)):
                     covered, replacement = count, mapping["output"]
                     metrics["overflow_cache_hit"] = True
                 else:
