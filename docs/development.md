@@ -149,7 +149,11 @@ python -m scripts.build_inspector --mode release
 
 输出目录中的 `BUILD-SOURCE.json` 保存完整来源清单；桌面 `/api/status` 的 `ui_build` 返回当前 EXE 的版本、提交和源码指纹，`ui_version` 仍用于判断桌面与服务版本。开发版前端保留实时更新，因此其磁盘资源可晚于 EXE，`/__dev__/state` 返回当前页面资源指纹。托管开发资源目录按版本与源码指纹区分，同版本重打包也不会沿用旧构建缓存；明确指定的本地源码目录仍保留实时读取。
 
-本仓库使用 `.githooks/pre-push` 检查 `main` 和 `v*` 发布标签：只允许发布已整合的当前主目录提交，拒绝非快进覆盖远端 `main` 和替换已发布标签，禁止把旧工作树提交作为新版本发布。首次在新克隆中配置共享钩子路径（绝对路径对所有关联工作树生效）：
+本仓库使用 `.githooks/pre-push` 检查 `main` 和 `v*` 发布标签：只允许发布已整合的当前主目录提交，拒绝非快进覆盖远端 `main` 和替换已发布标签，禁止把旧工作树提交作为新版本发布。
+
+仅当用户明确要求保留失败发布的版本号时，可重试尚未创建 GitHub Release 的标签。推送时用临时 Git 配置 `codex.retryUnpublishedRelease=<标签>:<旧标签对象 SHA>` 指定本次授权，并对该标签使用精确的 `--force-with-lease`；`main` 仍只允许快进。钩子必须联网确认 Release 不存在、该标签的既有 CI 全部已失败或取消，并确认旧源码是当前 `main` 的祖先；任何状态缺失、成功构建或仍在执行的任务均阻止替换。旧标签对象保留在本地 `refs/archive/unpublished-release-tags/`，不得跳过钩子或用删除再创建绕过检查。
+
+首次在新克隆中配置共享钩子路径（绝对路径对所有关联工作树生效）：
 
 ```powershell
 git config core.hooksPath "$((Get-Location).Path)/.githooks"
