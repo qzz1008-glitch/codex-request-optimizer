@@ -72,12 +72,12 @@
   </main>
   <main id="token-trend-view" class="token-trend-view" aria-label="会话请求趋势" hidden>
     <aside class="trend-sidebar" aria-label="会话">
-      <div class="trend-sidebar-controls"><input id="trend-search" type="search" placeholder="搜索会话" aria-label="筛选图表会话" autocomplete="off"><button id="trend-show-all" type="button">全部显示</button></div>
-      <nav id="trend-series" class="trend-series" aria-label="显示或隐藏会话曲线"></nav>
+      <div class="trend-sidebar-controls"><input id="trend-search" type="search" placeholder="搜索会话" aria-label="筛选图表会话" autocomplete="off"></div>
+      <div id="trend-series" class="trend-series" role="list" aria-label="会话"></div>
     </aside>
     <section class="trend-main">
       <div class="trend-toolbar">
-        <div class="trend-event-legend" aria-label="机制标记"><span class="trend-predictive">◆ <span>预测保护</span></span><span class="trend-overflow">▲ <span>超限保护</span></span><span class="trend-retry">○ <span>自动重试</span></span></div>
+        <div class="trend-event-legend" aria-label="机制标记"><span class="trend-predictive"><svg class="trend-legend-marker" data-trend-marker="predictive" viewBox="-10 -10 20 20" aria-hidden="true"></svg><span>预测保护</span></span><span class="trend-overflow"><svg class="trend-legend-marker" data-trend-marker="overflow" viewBox="-10 -10 20 20" aria-hidden="true"></svg><span>超限保护</span></span><span class="trend-retry"><svg class="trend-legend-marker" data-trend-marker="retry" viewBox="-10 -10 20 20" aria-hidden="true"></svg><span>自动重试</span></span></div>
         <div id="trend-range" class="view-toggle" role="group" aria-label="时间范围"><button type="button" data-hours="1" aria-pressed="false">1 小时</button><button type="button" data-hours="6" aria-pressed="true">6 小时</button><button type="button" data-hours="24" aria-pressed="false">24 小时</button><button type="button" data-hours="0" aria-pressed="false">全部记录</button></div>
       </div>
       <div id="trend-charts" class="trend-charts">
