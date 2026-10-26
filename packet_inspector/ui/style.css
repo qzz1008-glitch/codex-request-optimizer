@@ -339,10 +339,11 @@ code.session-id{font-family:Consolas,"Cascadia Mono",monospace;font-size:11px;wo
 #settings-dialog #updates-versions{display:flex;align-items:center;flex:none;min-width:0;min-height:var(--settings-control-height);margin:0;white-space:nowrap}
 #settings-dialog .updates-actions{display:grid;grid-template-columns:var(--settings-label-width) minmax(0,1fr);align-items:center;gap:16px;margin:0;overflow-x:auto;overflow-y:hidden;overscroll-behavior-x:contain;scrollbar-width:thin}
 #settings-dialog .updates-buttons{display:flex;align-items:center;flex-wrap:nowrap;gap:8px;min-width:0}
-#settings-dialog .updates-actions button{width:min(82px,calc((var(--settings-label-width) - 8px) / 2));padding-inline:8px}
+#settings-dialog .updates-actions button{width:min(82px,calc((var(--settings-label-width) - 8px) / 2));gap:6px;padding-inline:8px}
 #settings-dialog .updates-actions button[aria-busy=true]{padding-inline:8px}
 #settings-dialog .updates-actions button:focus-visible{outline-offset:-3px}
-#settings-dialog .updates-actions .update-spinner{inset-inline-start:3px;top:calc(50% - 6px);width:12px;height:12px}
+#settings-dialog .updates-actions .update-spinner{position:static;display:none;flex:none;width:12px;height:12px}
+#settings-dialog .updates-actions button[aria-busy=true] .update-spinner{display:block}
 #settings-dialog .updates-details{display:flex;align-items:center;gap:12px;min-width:384px}
 #settings-dialog .updates-status{flex:1 1 auto;min-width:0;margin:0;overflow:hidden;text-align:left;text-overflow:ellipsis;white-space:nowrap}
 #settings-dialog>.settings-footer{flex:none;display:grid;grid-template-columns:minmax(0,1fr) auto auto;align-items:center;gap:12px;padding:16px var(--settings-padding);border-top:1px solid var(--line);background:var(--panel)}
@@ -357,10 +358,10 @@ code.session-id{font-family:Consolas,"Cascadia Mono",monospace;font-size:11px;wo
 #settings-dialog .settings-save-log li[data-state=running]{color:var(--accent)}
 #settings-dialog .settings-save-log li[data-state=done] .settings-step-icon{color:var(--green)}
 #settings-dialog .settings-save-log li[data-state=error]{color:var(--danger)}
-#settings-dialog #settings-save{position:relative;min-width:96px}
+#settings-dialog #settings-save{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-width:96px}
 #settings-dialog #settings-save[aria-busy=true]{cursor:wait;opacity:1}
-.settings-save-spinner{position:absolute;left:8px;top:calc(50% - 7px);width:14px;height:14px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;visibility:hidden}
-#settings-save[aria-busy=true] .settings-save-spinner{visibility:visible;animation:update-spin .8s linear infinite}
+.settings-save-spinner{display:none;flex:none;width:14px;height:14px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;visibility:hidden}
+#settings-save[aria-busy=true] .settings-save-spinner{display:block;visibility:visible;animation:update-spin .8s linear infinite}
 @container settings-dialog (max-width:660px){
   #settings-dialog .packet-size-controls{grid-template-columns:minmax(0,1fr)}
   #settings-dialog .packet-size-limit{grid-template-columns:var(--settings-label-width) max-content;gap:16px}
