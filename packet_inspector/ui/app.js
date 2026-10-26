@@ -1964,7 +1964,7 @@ function isTrendGeneration(packet) {
 class TokenTrendView {
   constructor(services) {
     this.services=services;this.active=false;this.loading=false;this.hydrating=false;
-    this.packets=new Map();this.native=new Map();this.hidden=new Set();this.hours=6;
+    this.packets=new Map();this.native=new Map();this.hours=6;
     this.revision=null;this.lastFull=0;this.query="";this.error=false;this.limited=false;
     this.points=[];this.series=[];this.hover=null;this.pinned=false;this.frame=null;this.legendVersion="";
     this.svg=$("trend-chart");this.plot=$("trend-plot");this.tooltip=$("trend-tooltip");
@@ -1977,8 +1977,7 @@ class TokenTrendView {
       this.hours=Number(button.dataset.hours);try {localStorage.setItem("packet-inspector-trend-hours",String(this.hours));} catch(_) {}
       this.cancelPending();this.lastFull=0;this.pinned=false;this.hover=null;this.refresh(true);
     };
-    $("trend-search").oninput=event=>{this.query=event.currentTarget.value.trim().toLowerCase();this.pinned=false;this.hover=null;this.render();};
-    $("trend-show-all").onclick=()=>{this.hidden.clear();this.query="";$("trend-search").value="";this.hover=null;this.pinned=false;this.render();};
+    $("trend-search").oninput=event=>{this.query=event.currentTarget.value.trim().toLowerCase();this.pinned=false;this.hover=null;this.emphasis=null;this.render();};
     this.resize=new ResizeObserver(()=>this.scheduleRender());this.resize.observe(this.plot);
     this.svg.onpointermove=event=>{if(!this.pinned)this.pointAt(event);};
     this.svg.onpointerleave=()=>{if(!this.pinned){this.hover=null;this.renderFocus();}};
@@ -2096,7 +2095,7 @@ class TokenTrendView {
     const series=[...groups.values()].sort((a,b)=>b.latest-a.latest||a.id.localeCompare(b.id));
     for(const group of series)group.points.sort((a,b)=>a.packet.created-b.packet.created||a.packet.id.localeCompare(b.packet.id));
     const matched=series.filter(group=>!this.query||(group.title+" "+group.id).toLowerCase().includes(this.query));
-    return {series,matched,visible:matched.filter(group=>!this.hidden.has(group.id)),unknown,now};
+    return {series,matched,visible:matched,unknown,now};
   }
   svgNode(tag,attrs={},text) {const node=document.createElementNS("http://www.w3.org/2000/svg",tag);for(const [name,value]of Object.entries(attrs))node.setAttribute(name,String(value));if(text!==undefined)node.textContent=text;return node;}
   time(value,withSeconds=false) {
@@ -2109,16 +2108,15 @@ class TokenTrendView {
     return t({predictive:"预测保护",overflow:"超限保护",compact:"上下文压缩"}[key]||key);
   }
   renderLegend(model) {
-    const signature=JSON.stringify([uiI18n.language,this.query,model.matched.map(group=>[group.id,group.title,this.hidden.has(group.id)])]);
+    const signature=JSON.stringify([uiI18n.language,this.query,model.matched.map(group=>[group.id,group.title])]);
     if(signature===this.legendVersion)return;this.legendVersion=signature;
     const fragment=document.createDocumentFragment();
     for(const group of model.matched) {
-      const button=el("button",""),swatch=el("span","trend-series-swatch"),label=el("span","",group.title);
-      button.type="button";button.dataset.renderKey="trend-series:"+group.id;button.style.setProperty("--series-color",group.color);
-      button.setAttribute("aria-pressed",String(!this.hidden.has(group.id)));button.title=group.title+"\n"+group.id;
-      button.onclick=()=>{if(this.hidden.has(group.id))this.hidden.delete(group.id);else this.hidden.add(group.id);this.hover=null;this.pinned=false;this.render();};
-      button.onpointerenter=()=>{this.emphasis=group.id;this.renderFocus();};button.onpointerleave=()=>{this.emphasis=null;this.renderFocus();};
-      button.append(swatch,label);fragment.append(button);
+      const item=el("div","trend-series-item"),swatch=el("span","trend-series-swatch"),label=el("span","",group.title);
+      item.dataset.renderKey="trend-series:"+group.id;item.style.setProperty("--series-color",group.color);
+      item.setAttribute("role","listitem");item.title=group.title+"\n"+group.id;
+      item.onpointerenter=()=>{this.emphasis=group.id;this.renderFocus();};item.onpointerleave=()=>{this.emphasis=null;this.renderFocus();};
+      item.append(swatch,label);fragment.append(item);
     }
     reconcileContent($("trend-series"),fragment);
   }
@@ -2165,7 +2163,7 @@ class TokenTrendView {
     }
     this.focusLayer=this.svgNode("g",{"pointer-events":"none"});root.append(this.focusLayer);this.svg.replaceChildren(root);
     const empty=$("trend-empty");empty.hidden=known.length>0||this.points.length>0;
-    empty.textContent=t(this.loading&&!this.packets.size?"正在加载趋势…":this.error&&!this.packets.size?"暂时无法加载趋势，请稍后重试":!model.matched.length?(this.query?"没有匹配的会话":"此时间范围内没有请求"):!model.visible.length?"曲线已隐藏，点击“全部显示”恢复":"暂无可确认的 Token 用量");
+    empty.textContent=t(this.loading&&!this.packets.size?"正在加载趋势…":this.error&&!this.packets.size?"暂时无法加载趋势，请稍后重试":!model.matched.length?(this.query?"没有匹配的会话":"此时间范围内没有请求"):"暂无可确认的 Token 用量");
     this.renderFocus();
   }
   pointAt(event) {
