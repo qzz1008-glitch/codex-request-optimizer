@@ -154,22 +154,30 @@ function dualRows(){return [
   size.svg.onpointermove({clientX:missing.x,clientY:missing.y});
   assert.equal(result.hover,missing.packet.id);assert.equal(size.tooltip.hidden,false);assert.equal(token.tooltip.hidden,true);
   assert.equal(chartNodes(size,'trend-focus-line').length,1);assert.equal(chartNodes(token,'trend-focus-line').length,1);
-  assert.equal(chartNodes(token,'trend-focus-dot').length,0);assert.ok(nodeText(size.tooltip).includes('输入 Token · —'));
-  assert.ok(nodeText(size.tooltip).includes('实际上传'));
+  assert.equal(chartNodes(token,'trend-focus-dot').length,0);assert.equal(size.tooltip.children.length,2);
+  assert.ok(nodeText(size.tooltip).includes('压缩包 ·'));assert.ok(nodeText(size.tooltip).includes('244.1 KiB'));
+  for(const text of ['输入 Token','实际上传','原始包',missing.packet.id])assert.ok(!nodeText(size.tooltip).includes(text));
   for(const chart of result.charts){assert.equal(chart.svg.onclick,undefined);assert.equal(chart.svg.onkeydown,undefined);}
   assert.equal('pinned' in result,false);
   const next=token.points.at(-1);token.svg.onpointermove({clientX:next.x,clientY:next.y});
   assert.equal(result.hover,id(103));assert.equal(token.tooltip.hidden,false);assert.equal(size.tooltip.hidden,true);
+  assert.equal(token.tooltip.children.length,2);assert.ok(nodeText(token.tooltip).replace(/\s+/g,' ').includes('输入 Token · 300'));
   assert.equal(chartNodes(size,'trend-focus-dot').length,1);
   token.svg.onpointerleave();assert.equal(result.hover,null);assert.equal(result.hoverChart,null);
   for(const chart of result.charts){assert.equal(chart.tooltip.hidden,true);assert.equal(chartNodes(chart,'trend-focus-line').length,0);}
  });
  await test('a shared sidebar searches and highlights both metrics together',()=>{
   const {result,ids}=rendered([...dualRows(),packet(105,{thread_id:'session-b',created:now-10,upstream_usage:{input_tokens:900},outbound_wire_bytes:900000})]);
-  const list=ids.get('trend-series'),a=list.children.find(node=>node.dataset.renderKey==='trend-series:session-a');
+  const list=ids.get('trend-series'),a=list.children.find(node=>node.dataset.renderKey==='trend-series:session-a'),b=list.children.find(node=>node.dataset.renderKey==='trend-series:session-b');
+  const selected=()=>list.children.filter(node=>node.attrs.class.split(' ').includes('active'));
+  const [size,token]=result.charts,first=size.points.find(point=>point.series.id==='session-a'),next=token.points.find(point=>point.series.id==='session-b');
+  size.svg.onpointermove({clientX:first.x,clientY:first.y});assert.deepEqual(selected(),[a]);assert.equal(a.attrs['aria-current'],'true');
+  token.svg.onpointermove({clientX:next.x,clientY:next.y});assert.deepEqual(selected(),[b]);assert.equal(a.attrs['aria-current'],'false');
+  token.svg.onpointerleave();assert.deepEqual(selected(),[]);
   assert.equal(a.onclick,undefined);a.onpointerenter();
+  assert.deepEqual(selected(),[a]);
   for(const chart of result.charts){const b=chart.svg.querySelectorAll('[data-series]').find(node=>node.dataset.series==='session-b');assert.ok(b.attrs.class.includes('dimmed'));}
-  a.onpointerleave();for(const chart of result.charts)assert.equal(new Set(chart.points.map(point=>point.series.id)).size,2);
+  a.onpointerleave();assert.deepEqual(selected(),[]);for(const chart of result.charts)assert.equal(new Set(chart.points.map(point=>point.series.id)).size,2);
   ids.get('trend-search').oninput({currentTarget:{value:'session-a'}});
   for(const chart of result.charts)assert.ok(chart.points.every(point=>point.series.id==='session-a'));
   ids.get('trend-search').oninput({currentTarget:{value:'missing'}});

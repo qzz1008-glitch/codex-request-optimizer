@@ -2104,11 +2104,6 @@ class TokenTrendView {
     const date=new Date(value*1000),locale=uiI18n.language==="en"?"en-GB":"zh-CN";
     return date.toLocaleString(locale,{month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit",...(withSeconds?{second:"2-digit"}:{})});
   }
-  eventLabel(key,packet) {
-    if(key==="retry")return t("自动重试")+" · "+nf.format(packet.capacity_retry_count)+t(" 次");
-    if(key==="overflow"&&packet.overflow_cache_hit)return t("超限保护")+" · "+t("复用摘要");
-    return t({predictive:"预测保护",overflow:"超限保护",compact:"上下文压缩"}[key]||key);
-  }
   renderLegend(model) {
     const signature=JSON.stringify([uiI18n.language,this.query,model.matched.map(group=>[group.id,group.title])]);
     if(signature===this.legendVersion)return;this.legendVersion=signature;
@@ -2184,6 +2179,10 @@ class TokenTrendView {
   renderFocus() {
     if(!this.active)return;
     const anchor=this.charts.map(chart=>chart.points.find(value=>value.packet.id===this.hover)).find(Boolean),emphasis=this.emphasis||anchor?.series.id;
+    for(const item of $("trend-series").children) {
+      const active=!!emphasis&&item.dataset.renderKey==="trend-series:"+emphasis;
+      item.classList.toggle("active",active);item.setAttribute("aria-current",String(active));
+    }
     for(const chart of this.charts) {
       chart.tooltip.hidden=true;
       if(!chart.bounds||!chart.focusLayer)continue;
@@ -2194,14 +2193,9 @@ class TokenTrendView {
       if(point)chart.focusLayer.append(this.svgNode("circle",{cx:point.x,cy:point.y,r:7,class:"trend-focus-dot"}));
       if(!point||this.hoverChart!==chart.key)continue;
       chart.tooltip.hidden=false;
-      const fragment=document.createDocumentFragment();fragment.append(el("h3","",point.series.title),el("p","",this.time(point.packet.created,true)));
-      const amount=el("p","");amount.append(el("strong","",chart.key==="size"?compact(point.value):nf.format(point.value)),document.createTextNode(" "+t(chart.key==="size"?"压缩包":"输入 Token")));fragment.append(amount);
-      fragment.append(el("p","",chart.key==="size"?t("输入 Token")+" · "+(point.input===null?"—":nf.format(point.input)):t("压缩包")+" · "+compact(point.size)));
-      fragment.append(el("p","",t("原始包")+" · "+compact(originalBytes(point.packet))));
-      const uploaded=uploadBytes(point.packet);if(uploaded!==null&&uploaded!==point.size)fragment.append(el("p","",t("实际上传")+" · "+compact(uploaded)));
-      if(point.packet.model)fragment.append(el("p","",t("模型")+" · "+point.packet.model));
-      for(const event of point.events)fragment.append(el("p","trend-tooltip-event",this.eventLabel(event,point.packet)));
-      fragment.append(el("code","",point.packet.id));chart.tooltip.replaceChildren(fragment);
+      const fragment=document.createDocumentFragment(),amount=el("p","");
+      amount.append(document.createTextNode(t(chart.key==="size"?"压缩包":"输入 Token")+" · "),el("strong","",chart.key==="size"?compact(point.value):nf.format(point.value)));
+      fragment.append(amount,el("p","",this.time(point.packet.created,true)));chart.tooltip.replaceChildren(fragment);
       const area=this.tooltipHost.getBoundingClientRect(),rect=chart.svg.getBoundingClientRect();
       const px=rect.left-area.left+point.x*rect.width/chart.bounds.width,py=rect.top-area.top+point.y*rect.height/chart.bounds.height;
       const left=Math.max(8,Math.min(this.tooltipHost.clientWidth-chart.tooltip.offsetWidth-8,px+16)),top=py-chart.tooltip.offsetHeight-14;
