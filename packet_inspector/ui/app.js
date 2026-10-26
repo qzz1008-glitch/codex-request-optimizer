@@ -1971,7 +1971,7 @@ class TokenTrendView {
       ...chart,svg:$(chart.prefix+"-chart"),plot:$(chart.prefix+"-plot"),tooltip:$(chart.prefix+"-tooltip"),empty:$(chart.prefix+"-empty"),points:[],bounds:null,focusLayer:null
     }));
     this.tooltipHost=$("trend-charts");
-    this.timeAxis=$("trend-time-axis");this.guide=$("trend-focus");
+    this.timeAxis=$("trend-time-axis");this.guide=$("trend-focus");this.timeTooltip=$("trend-time-tooltip");
     for(const icon of document.querySelectorAll("[data-trend-marker]")) {
       const key=icon.dataset.trendMarker,shape=TokenTrendView.markerShape(key);if(!shape)continue;
       const {tag,...attrs}=shape;icon.replaceChildren(this.svgNode(tag,{...attrs,class:"trend-event trend-event-"+key}));
@@ -2022,7 +2022,7 @@ class TokenTrendView {
   }
   static color(id) {let hash=2166136261;for(const char of id)hash=Math.imul(hash^char.charCodeAt(0),16777619);return "hsl("+((hash>>>0)%360)+" 62% 42%)";}
   cancelPending() {this.controller?.abort();this.nativeController?.abort();this.controller=null;this.nativeController=null;this.loading=false;this.hydrating=false;}
-  setActive(active) {this.active=active;this.hover=null;this.hoverChart=null;this.emphasis=null;if(!active){this.cancelPending();this.guide.replaceChildren();for(const chart of this.charts)chart.tooltip.hidden=true;}else{this.render();this.refresh();}}
+  setActive(active) {this.active=active;this.hover=null;this.hoverChart=null;this.emphasis=null;if(!active){this.cancelPending();this.guide.replaceChildren();this.timeTooltip.hidden=true;for(const chart of this.charts)chart.tooltip.hidden=true;}else{this.render();this.refresh();}}
   scheduleRender() {if(!this.active||this.frame!==null)return;this.frame=requestAnimationFrame(()=>{this.frame=null;this.render();});}
   async refresh(force=false) {
     if(!this.active||document.hidden||this.loading)return;
@@ -2202,12 +2202,18 @@ class TokenTrendView {
       item.classList.toggle("active",active);item.setAttribute("aria-current",String(active));
     }
     this.guide.replaceChildren();
+    this.timeTooltip.hidden=true;
+    const host=this.tooltipHost.getBoundingClientRect(),originX=host.left+(this.tooltipHost.clientLeft||0),originY=host.top+(this.tooltipHost.clientTop||0);
     if(anchor&&this.charts[0].bounds) {
       const first=this.charts[0],area=this.guide.getBoundingClientRect(),rect=first.svg.getBoundingClientRect(),axis=this.timeAxis.getBoundingClientRect();
       if(area.width&&area.height) {
         this.guide.setAttribute("viewBox",`0 0 ${area.width} ${area.height}`);
         const px=rect.left-area.left+first.bounds.x(anchor.packet.created)*rect.width/first.bounds.width;
         this.guide.append(this.svgNode("line",{x1:px,x2:px,y1:rect.top-area.top+first.bounds.top*rect.height/first.bounds.height,y2:axis.top-area.top+5,class:"trend-focus-line"}));
+        this.timeTooltip.textContent=this.time(anchor.packet.created,true);this.timeTooltip.hidden=false;
+        const timeX=rect.left-originX+first.bounds.x(anchor.packet.created)*rect.width/first.bounds.width;
+        this.timeTooltip.style.left=Math.max(8,Math.min(this.tooltipHost.clientWidth-this.timeTooltip.offsetWidth-8,timeX-this.timeTooltip.offsetWidth/2))+"px";
+        this.timeTooltip.style.top=axis.top-originY+Math.max(0,(axis.height-this.timeTooltip.offsetHeight)/2)+"px";
       }
     }
     for(const chart of this.charts) {
@@ -2217,15 +2223,15 @@ class TokenTrendView {
       chart.focusLayer.replaceChildren();if(!anchor)continue;
       const point=chart.points.find(value=>value.packet.id===this.hover);
       if(point)chart.focusLayer.append(this.svgNode("circle",{cx:point.x,cy:point.y,r:7,class:"trend-focus-dot"}));
-      if(!point||this.hoverChart!==chart.key)continue;
       chart.tooltip.hidden=false;
-      const fragment=document.createDocumentFragment(),amount=el("p","");
-      amount.append(document.createTextNode(t(chart.key==="size"?"压缩包":"输入 Token")+" · "),el("strong","",chart.key==="size"?compact(point.value):nf.format(point.value)));
-      fragment.append(amount,el("p","",this.time(point.packet.created,true)));chart.tooltip.replaceChildren(fragment);
-      const area=this.tooltipHost.getBoundingClientRect(),rect=chart.svg.getBoundingClientRect();
-      const px=rect.left-area.left+point.x*rect.width/chart.bounds.width,py=rect.top-area.top+point.y*rect.height/chart.bounds.height;
-      const left=Math.max(8,Math.min(this.tooltipHost.clientWidth-chart.tooltip.offsetWidth-8,px+16)),top=py-chart.tooltip.offsetHeight-14;
-      chart.tooltip.style.left=left+"px";chart.tooltip.style.top=Math.max(8,Math.min(this.tooltipHost.clientHeight-chart.tooltip.offsetHeight-8,top>=8?top:py+16))+"px";
+      chart.tooltip.replaceChildren(el("span","",t(chart.key==="size"?"压缩包":"输入 Token")),el("strong","",point?(chart.key==="size"?compact(point.value):nf.format(point.value)):"—"));
+      const rect=chart.svg.getBoundingClientRect(),panelTop=rect.top-originY;
+      const px=rect.left-originX+chart.bounds.x(anchor.packet.created)*rect.width/chart.bounds.width;
+      const py=panelTop+(point?point.y:(chart.bounds.top+chart.bounds.height-chart.bounds.bottom)/2)*rect.height/chart.bounds.height;
+      const width=chart.tooltip.offsetWidth,height=chart.tooltip.offsetHeight,minTop=panelTop+6,maxTop=panelTop+rect.height-height-6;
+      const left=px+14+width>this.tooltipHost.clientWidth-8?px-width-14:px+14,top=py-height-10;
+      chart.tooltip.style.left=Math.max(8,Math.min(this.tooltipHost.clientWidth-width-8,left))+"px";
+      chart.tooltip.style.top=Math.max(minTop,Math.min(maxTop,top<minTop?py+10:top))+"px";
     }
   }
 }
