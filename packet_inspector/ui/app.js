@@ -945,7 +945,6 @@ function fillZstdLevel() {
   input.value=String(selected);
   input.disabled=settingsSaving||!supported||automatic;
   $("zstd-level-open").disabled=input.disabled;
-  $("zstd-level-auto-note").hidden=!automatic;
   $("zstd-level-value").textContent=t("{level}级").replace("{level}",selected);
   if($("zstd-level-dialog").open) {
     if(input.disabled)closeZstdLevelPicker();else renderZstdLevelRows();
@@ -1920,7 +1919,7 @@ function fillPacketProtection() {
   $("packet-size-protection").disabled=settingsSaving||!supported;
   $("budget").disabled=$("packet-size-protection").disabled||!$("packet-size-protection").checked;
   automatic.disabled=$("packet-size-protection").disabled||!$("packet-size-protection").checked||!autoSupported;
-  automatic.closest("label").title=!autoSupported?t("当前中转暂不支持按包大小自动压缩。"):!$("packet-size-protection").checked?t("请先开启请求大小保护"):"";
+  automatic.closest(".runtime-toggle").title=!autoSupported?t("当前中转暂不支持按包大小自动压缩。"):!$("packet-size-protection").checked?t("请先开启请求大小保护"):"";
   $("packet-size-message").hidden=supported;
   if(!supported)$("packet-size-message").textContent=t("当前中转暂不支持此功能。");
   fillZstdLevel();

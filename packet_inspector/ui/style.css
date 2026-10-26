@@ -254,7 +254,7 @@ code.session-id{font-family:Consolas,"Cascadia Mono",monospace;font-size:11px;wo
 #settings-dialog>.settings-content::-webkit-scrollbar-thumb{border:2px solid var(--panel);border-radius:8px;background:#c3ccd8}
 #settings-dialog>.settings-content::-webkit-scrollbar-thumb:hover{background:#9aa9c5}
 #settings-dialog .settings-content>section{margin:0;padding:20px 0;padding-inline-start:var(--settings-section-indent);border-top:1px solid var(--line)}
-#settings-dialog .settings-content>section>:is(h3,.context-heading,.compression-heading){margin-inline-start:calc(-1 * var(--settings-section-indent))}
+#settings-dialog .settings-content>section>:is(h3,.context-heading){margin-inline-start:calc(-1 * var(--settings-section-indent))}
 #settings-dialog .settings-content>section:last-child{padding-bottom:0}
 #settings-dialog label{margin:0;color:var(--ink);font-size:14px;line-height:22px;font-weight:400}
 #settings-dialog :is(button,input,select){font:inherit;font-size:14px}
@@ -286,14 +286,10 @@ code.session-id{font-family:Consolas,"Cascadia Mono",monospace;font-size:11px;wo
 #settings-dialog .entry-port-status:is([data-state=pending],[data-state=unsaved]){color:var(--warn)}
 #settings-dialog .entry-port-status[data-state=error]{color:var(--danger)}
 #settings-dialog .zstd-level-control{display:grid;grid-template-columns:var(--settings-label-width) minmax(0,1fr);align-items:center;gap:16px;margin:0}
-#settings-dialog .compression-heading{display:flex;align-items:center;flex-wrap:wrap;gap:8px 32px;margin:0 0 16px}
-#settings-dialog .compression-heading h3{margin:0}
-#settings-dialog #zstd-level-auto-note{margin:0;font-size:13px;line-height:20px}
 #settings-dialog #compression-settings.is-automatic{--ink:var(--muted);position:relative;isolation:isolate;color:var(--muted)}
 #settings-dialog #compression-settings.is-automatic::before{content:"";position:absolute;inset:8px -12px;border:1px solid #d8dee7;border-radius:10px;background:#eef0f3;pointer-events:none;z-index:-1}
 #settings-dialog #compression-settings.is-automatic :is(h3,.zstd-level-control){opacity:.65}
 #settings-dialog #compression-settings.is-automatic .zstd-level-trigger:disabled{background:#e3e7ed;border-color:#cbd2dc;opacity:1}
-#settings-dialog .auto-zstd-row .runtime-toggle{grid-column:1 / -1}
 #settings-dialog .auto-zstd-row:is(:hover,:focus-within),
 #settings-dialog .settings-content:has(#compression-settings.is-automatic:hover) .auto-zstd-row{border-radius:8px;background:var(--soft);box-shadow:0 0 0 1px #b9c9ed}
 #settings-dialog .zstd-level-trigger{width:var(--settings-number-width);max-width:100%;justify-self:start;font-variant-numeric:tabular-nums;display:flex;align-items:center;justify-content:flex-end;gap:12px;text-align:right}
