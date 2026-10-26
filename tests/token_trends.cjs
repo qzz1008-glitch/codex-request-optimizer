@@ -15,7 +15,7 @@ function view(services={}) {
  const result=Object.create(View.prototype);
  Object.assign(result,{active:true,loading:false,hydrating:false,packets:new Map(),native:new Map(),hidden:new Set(),hours:0,revision:null,lastFull:0,query:'',error:false,limited:false,
   services:{api:async()=>[],status:()=>({storage:{revision:1}}),sessions:()=>[],peek:()=>null,isGeneration:context.isGeneration,...services},
-  render(){},renderLive(){},hydrate(){},scheduleRender(){}});
+  render(){},hydrate(){},scheduleRender(){}});
  return result;
 }
 (async()=>{
