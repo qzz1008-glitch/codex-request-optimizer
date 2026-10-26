@@ -48,6 +48,8 @@ When an explicit model capacity error occurs, retry automatically according to y
 
 > Selected model is at capacity. Please try a different model.
 
+Retry detection and diagnostics share structural event classification: response metadata and its extensions keep waiting for the result; output items, reasoning, or tool calls end replay eligibility. Events with unknown semantics pass through unchanged with the reason recorded. Successful responses preserve their original bytes. Only explicit capacity errors are retried; HTTP 403, 413, ordinary 5xx responses, and connection failures do not introduce retries.
+
 Like the other protection mechanisms, “Automatic retries” in request details only shows whether it was triggered, based on retries actually started. Background diagnostic logs are retained separately from request bodies: retries and abnormal outcomes for up to 30 days; ordinary successful requests for 24 hours, limited to 2,000 records. Automatic cleanup also applies a 20,000-record and 32 MiB content budget. Logs contain only timestamps, settings, and structural events, without conversation text, tool content, or authentication data.
 
 ### 🖼️ Image request optimization

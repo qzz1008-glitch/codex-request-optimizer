@@ -75,6 +75,33 @@ class RetryDiagnosticsTests(unittest.TestCase):
         self.assertEqual(record["outcome"], "capacity_error")
         self.assertEqual(record["retry_count"], 0)
 
+    def test_metadata_is_not_reported_as_output_before_a_capacity_retry(self):
+        metadata = frame("response.metadata", metadata={"private": "do not retain"})
+        body, opener, record = self.run_response(Response(CREATED + metadata + FAILED), Response(metadata + SUCCESS))
+        self.assertEqual((body, len(opener.requests), record["retry_count"]), (metadata + SUCCESS, 2, 1))
+        self.assertEqual(record["first_output_event"], "response.output_text.delta")
+        self.assertEqual(record["outcome"], "success")
+        self.assertTrue(any(e["event"] == "control_event" and e["event_type"] == "response.metadata"
+                            and e["event_class"] == "control" for e in record["events"]))
+        self.assertNotIn("do not retain", json.dumps(record))
+
+    def test_metadata_and_capacity_failure_without_retry_does_not_invent_output(self):
+        payload = frame("codex.response.metadata.updated", metadata={"new": True}) + FAILED
+        body, opener, record = self.run_response(Response(payload, chunk=7), enabled=False)
+        self.assertEqual((body, len(opener.requests), record["retry_count"]), (payload, 1, 0))
+        self.assertNotIn("first_output_event", record)
+        self.assertEqual(record["outcome"], "capacity_error")
+
+    def test_unknown_event_is_logged_separately_from_generated_output(self):
+        payload = frame("response.future_revision", new_field=True) + FAILED
+        body, opener, record = self.run_response(Response(payload))
+        self.assertEqual((body, len(opener.requests), record["retry_count"]), (payload, 1, 0))
+        self.assertEqual(record["stop_reason"], "unknown_event")
+        self.assertNotIn("first_output_event", record)
+        self.assertTrue(any(e["event"] == "unclassified_event" and e["event_class"] == "unknown"
+                            for e in record["events"]))
+        self.assertEqual(record["outcome"], "capacity_error")
+
     def test_error_with_partial_output_is_still_a_capacity_error_in_audit(self):
         payload = frame("response.failed", response={"output": [{"type": "message"}],
                          "error": {"code": "server_is_overloaded"}})

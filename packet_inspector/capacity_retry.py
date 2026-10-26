@@ -24,6 +24,7 @@ MAX_PROBE_BYTES = 1024 * 1024
 CAPACITY_MESSAGE = "Selected model is at capacity. Please try a different model."
 CAPACITY_CODES = {"server_is_overloaded", "server_overloaded", "model_overloaded", "model_at_capacity"}
 HANDSHAKE_EVENTS = {"response.created", "response.in_progress", "response.queued", "ping", "keepalive"}
+TERMINAL_EVENTS = {"response.completed", "response.failed", "response.incomplete", "error"}
 EVENT_BOUNDARY = re.compile(br"\r?\n\r?\n")
 
 
@@ -120,15 +121,54 @@ def event_shape(payload):
             "has_encrypted_content": bool(item.get("encrypted_content"))}
 
 
+def stream_event_class(payload):
+    """Classify protocol structure, never user text or opaque metadata values.
+
+    Output evidence wins over labels, including empty output-item lifecycles.
+    Metadata extensions stay opaque; other unknown semantics are passed through
+    rather than treated as proof that replay is safe. This does not identify or
+    broaden the capacity errors eligible for retry.
+    """
+    if not isinstance(payload, dict):
+        return "unknown"
+    response = payload.get("response")
+    if payload.get("output") or isinstance(response, dict) and response.get("output"):
+        return "output"
+    if any(key in payload for key in ("item", "part", "delta", "output_index")):
+        return "output"
+    kind = payload.get("type")
+    if isinstance(kind, str):
+        # Output families and positions also cover new item/media/tool types.
+        if (kind.endswith(".delta") or kind.startswith(("response.output_", "response.content_part.",
+                "response.reasoning_", "response.function_call_", "response.custom_tool_call_"))
+                or kind.startswith("response.") and any(part.endswith("_call") for part in kind.split("."))):
+            return "output"
+    if isinstance(payload.get("error"), dict) or isinstance(kind, str) and kind in TERMINAL_EVENTS:
+        return "terminal"
+    status = payload.get("status")
+    if not kind and isinstance(status, str) and status in {"completed", "failed", "incomplete"}:
+        return "terminal"
+    if not isinstance(kind, str):
+        return "unknown"
+    if kind in HANDSHAKE_EVENTS:
+        return "control"
+    # Codex consumes these as response metadata, not generated output. Match the
+    # family so new metadata subevents/fields do not need individual allowlists.
+    native_kind = kind.removeprefix("codex.")
+    if native_kind == "response.metadata" or native_kind.startswith("response.metadata."):
+        return "control"
+    return "unknown"
+
+
 def inspect_prefix(response, *, on_event=None):
-    """Only empty/handshake events may be held; the first output commits the stream."""
+    """Hold control events; output or unknown semantics commit the original bytes."""
     def done(prefix, overloaded, reason, payload=None):
         payload = payload if isinstance(payload, dict) else {}
         error = (payload.get("response") or {}).get("error") if isinstance(payload.get("response"), dict) else None
         error = error or payload.get("error") or (payload if payload.get("type") == "error" else {})
         notify(on_event, "probe_finished", reason=reason, capacity=capacity_error(payload, include_output=True),
                event_type=payload.get("type"), error_code=error.get("code") if isinstance(error, dict) else None,
-               probe_bytes=len(prefix), **event_shape(payload))
+               event_class=stream_event_class(payload), probe_bytes=len(prefix), **event_shape(payload))
         return bytes(prefix), overloaded
 
     if response.status not in {200, 429, 500, 502, 503, 504}:
@@ -161,7 +201,7 @@ def inspect_prefix(response, *, on_event=None):
                 payload = json.loads(prefix)
             except (ValueError, UnicodeError):
                 continue
-            overloaded = capacity_error(payload)
+            overloaded = stream_event_class(payload) != "output" and capacity_error(payload)
             return done(prefix, overloaded, "capacity_error" if overloaded else "not_capacity", payload)
         while (boundary := EVENT_BOUNDARY.search(prefix, offset)) is not None:
             frame = bytes(prefix[offset:boundary.start()])
@@ -177,14 +217,16 @@ def inspect_prefix(response, *, on_event=None):
                 event_names = [line[6:].strip() for line in frame.splitlines() if line.startswith(b"event:")]
                 if event_names:
                     payload = {**payload, "type": event_names[-1].decode("utf8", errors="replace")}
+            event_class = stream_event_class(payload)
+            if event_class == "output":
+                native_response = payload.get("response")
+                existing = payload.get("output") or isinstance(native_response, dict) and native_response.get("output")
+                return done(prefix, False, "existing_output" if existing else "stream_committed", payload)
             if capacity_error(payload):
                 return done(prefix, True, "capacity_error", payload)
-            if (not isinstance(payload, dict) or not isinstance(payload.get("type"), str)
-                    or payload["type"] not in HANDSHAKE_EVENTS):
-                return done(prefix, False, "stream_committed", payload)
-            native_response = payload.get("response")
-            if isinstance(native_response, dict) and native_response.get("output"):
-                return done(prefix, False, "existing_output", payload)
+            if event_class != "control":
+                return done(prefix, False, "unknown_event" if event_class == "unknown" else "not_capacity", payload)
+            notify(on_event, "control_event", event_type=payload.get("type"), event_class=event_class)
     return done(prefix, False, "probe_limit")
 
 

@@ -146,7 +146,8 @@ class RuntimeSettingsTests(unittest.TestCase):
 
     def test_enabled_retry_replays_same_request_and_records_retry(self):
         self.api("/api/settings", {"capacity_retry_enabled": True})
-        first = Response(CREATED + FAILED, extra={"Retry-After": "0"})
+        first = Response(CREATED + frame("response.metadata", metadata={"future_field": True}) + FAILED,
+                         extra={"Retry-After": "0"})
         second = Response(SUCCESS)
         raw = b'{"model":"original","stream":true,"input":[]}'
         with patch.object(self.server.local_opener, "open", side_effect=[first, second]) as opened:
