@@ -142,10 +142,10 @@ code.session-id{font-family:Consolas,"Cascadia Mono",monospace;font-size:11px;wo
 .trend-grid{stroke:#e8edf3;stroke-width:1;vector-effect:non-scaling-stroke}.trend-axis-label{fill:var(--muted);font:11px "Segoe UI",sans-serif}.trend-axis-title{fill:var(--muted);font:11px "Segoe UI",sans-serif}
 .trend-curve{fill:none;stroke-width:2;stroke-linejoin:round;stroke-linecap:round;vector-effect:non-scaling-stroke}
 .trend-series-line{transition:opacity .12s}.trend-series-line.dimmed{opacity:.13}
-.trend-event{fill:var(--series-color,currentColor);stroke:var(--panel);stroke-width:1.5;vector-effect:non-scaling-stroke}
-.trend-event-retry{fill:var(--panel);stroke:var(--series-color,currentColor);stroke-width:2}
+.trend-event{fill:none;stroke:var(--series-color,currentColor);stroke-width:2;vector-effect:non-scaling-stroke}
+
 .trend-event-count{fill:var(--ink);font:9px "Segoe UI",sans-serif;paint-order:stroke;stroke:white;stroke-width:3px}
-.trend-focus-line{stroke:#9baabd;stroke-dasharray:4 4;stroke-width:1;pointer-events:none}.trend-focus-dot{fill:white;stroke:var(--ink);stroke-width:2;pointer-events:none}
+.trend-focus-line{stroke:#9baabd;stroke-dasharray:4 4;stroke-width:1;pointer-events:none}.trend-focus-dot{fill:none;stroke:var(--ink);stroke-width:2;pointer-events:none}
 .trend-empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:13px;pointer-events:none;padding:30px;text-align:center;background:#ffffffd9}
 .trend-tooltip{position:absolute;z-index:2;width:max-content;max-width:calc(100% - 16px);max-height:calc(100% - 16px);background:#fffffffa;border:1px solid #cdd7e4;border-radius:9px;box-shadow:0 8px 28px #1628421f;padding:12px;font-size:12px;pointer-events:none;overflow:hidden;overflow-wrap:anywhere}
 
