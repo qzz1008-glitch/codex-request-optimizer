@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import gzip
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 import http.client
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -657,10 +658,11 @@ class RelayTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.temp=tempfile.TemporaryDirectory();root=Path(cls.temp.name)
-        cls.up=ThreadingHTTPServer(("127.0.0.1",0),Upstream);cls.up.daemon_threads=True
+        cls.up=ThreadingHTTPServer(("127.0.0.1",0),Upstream);cls.up.daemon_threads=False
         cls.up.requests=[];cls.up.first=threading.Event();cls.up.release=threading.Event()
         cls.config=root/"config.toml";cls.config.write_text('model="test"',encoding="utf8")
         cls.server=InspectorServer(("127.0.0.1",0),root/"data",cls.config,"http://127.0.0.1:"+str(cls.up.server_port)+"/v1")
+        cls.server.daemon_threads=False
         cls.server.settings["auto_detect_providers"]=False
         cls.server.settings["packet_size_protection_enabled"]=False
         for s in [cls.up,cls.server]:threading.Thread(target=s.serve_forever,daemon=True).start()
@@ -671,13 +673,16 @@ class RelayTests(unittest.TestCase):
         for s in [cls.server,cls.up]:s.shutdown();s.server_close()
         cls.temp.cleanup()
 
-    def relay(self,raw,path="/responses",headers=None,chunked=False):
-        c=http.client.HTTPConnection("127.0.0.1",self.server.port,timeout=5)
-        h={"Content-Type":"application/json","session_id":"test-thread",**(headers or {})}
-        if chunked:h["Transfer-Encoding"]="chunked"
-        c.request("POST",self.server.endpoint.split(str(self.server.port),1)[1]+path,[raw[:4],raw[4:]] if chunked else raw,h,encode_chunked=chunked)
-        r=c.getresponse();status=r.status;result=r.read();c.close()
-        return status,result
+    def relay(self,raw,path="/responses",headers=None,chunked=False,*,timeout=5):
+        c=http.client.HTTPConnection("127.0.0.1",self.server.port,timeout=timeout)
+        try:
+            h={"Content-Type":"application/json","session_id":"test-thread",**(headers or {})}
+            if chunked:h["Transfer-Encoding"]="chunked"
+            c.request("POST",self.server.endpoint.split(str(self.server.port),1)[1]+path,[raw[:4],raw[4:]] if chunked else raw,h,encode_chunked=chunked)
+            r=c.getresponse()
+            return r.status,r.read()
+        finally:
+            c.close()
 
     def api(self,path,data=None,extra=None):
         c=http.client.HTTPConnection("127.0.0.1",self.server.port,timeout=5)
@@ -971,10 +976,11 @@ class RelayTests(unittest.TestCase):
 
     def test_concurrent_requests_remain_separate(self):
         bodies=[encode({"input":"parallel-"+str(i)}) for i in range(8)]
-        results=[]
-        threads=[threading.Thread(target=lambda raw:results.append(self.relay(raw)[0]),args=(body,)) for body in bodies]
-        for t in threads:t.start()
-        for t in threads:t.join(5)
+        # Check isolation, with a bounded I/O guard rather than a CI latency limit.
+        # Futures also surface every worker exception in the test thread.
+        with ThreadPoolExecutor(max_workers=len(bodies)) as pool:
+            futures=[pool.submit(self.relay,body,timeout=30) for body in bodies]
+            results=[future.result(timeout=35)[0] for future in futures]
         self.assertEqual(results,[200]*8)
         received=[r["body"] for r in self.up.requests[-8:]]
         self.assertCountEqual(received,bodies)

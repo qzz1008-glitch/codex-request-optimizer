@@ -490,6 +490,8 @@ class OverflowRelayTests(unittest.TestCase):
                                       "http://127.0.0.1:" + str(self.up.server_port) + "/v1")
         self.server.settings.update(packet_size_protection_enabled=True, budget_bytes=4000, auto_detect_providers=False)
         for server in (self.up, self.server):
+            # server_close must finish SQLite writes before fixture cleanup.
+            server.daemon_threads = False
             threading.Thread(target=server.serve_forever, daemon=True).start()
         self.addCleanup(self.cleanup)
 
