@@ -5,13 +5,21 @@ from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 import json
 import math
-import random
+import queue
 import re
+import socket
+import threading
 import time
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 
 MAX_RETRIES = 3
-MAX_RETRY_SECONDS = 90
+RETRY_LIMIT = 9
+RETRY_INTERVAL = 50
+# The fixed local entry waits 600 seconds for response headers. Leave time for
+# returning the last real capacity error, even after slow upstream attempts.
+MAX_RETRY_SECONDS = 570
+MIN_ATTEMPT_SECONDS = 10
+UPSTREAM_TIMEOUT = 600
 MAX_PROBE_BYTES = 1024 * 1024
 CAPACITY_MESSAGE = "Selected model is at capacity. Please try a different model."
 CAPACITY_CODES = {"server_is_overloaded", "server_overloaded", "model_overloaded", "model_at_capacity"}
@@ -79,17 +87,17 @@ def retry_delay(headers, attempt, now=None):
         try:
             delay = float(value)
             if math.isfinite(delay) and delay >= 0:
-                return delay
+                return max(RETRY_INTERVAL, delay)
         except (ValueError, TypeError):
             pass
         try:
             target = parsedate_to_datetime(value)
             if target.tzinfo is None:
                 target = target.replace(tzinfo=timezone.utc)
-            return max(0, (target - (now or datetime.now(timezone.utc))).total_seconds())
+            return max(RETRY_INTERVAL, (target - (now or datetime.now(timezone.utc))).total_seconds())
         except (ValueError, TypeError, OverflowError):
             pass
-    return min(30, 2 ** attempt * random.uniform(1, 1.25))
+    return RETRY_INTERVAL
 
 
 def notify(callback, event, **fields):
@@ -191,61 +199,200 @@ def wait_for_retry(delay, cancelled):
         time.sleep(min(.2, remaining))
 
 
+def _open(opener, request, timeout, on_event):
+    try:
+        response = opener.open(request, timeout=timeout)
+    except HTTPError as exc:
+        response = exc
+    notify(on_event, "response_headers", status=response.status,
+           content_type=response.headers.get("Content-Type", "").split(";", 1)[0],
+           content_encoding=response.headers.get("Content-Encoding", "identity"),
+           upstream_request_id=response.headers.get("X-Request-Id", ""))
+    return response
+
+
+def _response_socket(response):
+    stream = response
+    for _ in range(5):
+        if stream is None:
+            break
+        sock = getattr(stream, "_sock", None)
+        if sock is not None:
+            return sock
+        stream = getattr(stream, "fp", None) or getattr(stream, "raw", None)
+    return None
+
+
+class _RetryAttempt:
+    """Bound a retry's open AND prefix read without changing the original request.
+
+    urllib's timeout is a socket inactivity limit, not a wall-clock deadline.
+    Only retries use this worker: a known, untouched capacity response remains
+    available to return if this attempt exceeds the remaining header budget.
+    Diagnostic callbacks are drained by the caller, never by an abandoned worker.
+    """
+
+    def __init__(self, opener, request, timeout, attempt):
+        self.events = queue.SimpleQueue()
+        self.done, self.abandoned = threading.Event(), threading.Event()
+        self.guard = threading.Lock()
+        self.response = self.result = self.error = None
+        self.phase = "open"
+        self.thread = threading.Thread(target=self._run, args=(opener, request, timeout, attempt),
+                                       name="capacity-retry", daemon=True)
+        self.thread.start()
+
+    def record(self, event, **fields):
+        if not self.abandoned.is_set():
+            self.events.put((event, fields))
+
+    def _run(self, opener, request, timeout, attempt):
+        response = None
+        try:
+            self.record("attempt_started", attempt=attempt, timeout_ms=round(timeout * 1000))
+            response = _open(opener, request, timeout, self.record)
+            with self.guard:
+                self.response = response
+            if self.abandoned.is_set():
+                return
+            self.phase = "inspect"
+            prefix, overloaded = inspect_prefix(response, on_event=self.record)
+            # Once selected, an ordinary response stream keeps its original
+            # network timeout; the retry budget must not truncate generation.
+            sock = _response_socket(response)
+            if sock is not None and not self.abandoned.is_set():
+                sock.settimeout(UPSTREAM_TIMEOUT)
+            self.result = BufferedResponse(response, prefix), overloaded
+        except BaseException as exc:
+            self.error = exc
+        finally:
+            try:
+                if response is not None and (self.error is not None or self.abandoned.is_set()):
+                    response.close()
+            finally:
+                self.done.set()
+
+    def drain(self, on_event):
+        while True:
+            try:
+                event, fields = self.events.get_nowait()
+            except queue.Empty:
+                return
+            notify(on_event, event, **fields)
+
+    def abandon(self):
+        self.abandoned.set()
+        with self.guard:
+            response = self.response
+        # close() can wait on the buffered reader's lock. Interrupt the socket
+        # first; its owning worker closes the response when the read unwinds.
+        sock = _response_socket(response)
+        if sock is not None:
+            try:
+                sock.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+        if self.done.is_set() and self.result is not None:
+            self.result[0].close()
+
+    def receive(self, deadline, cancelled, still_enabled, on_event):
+        selected = False
+        try:
+            while True:
+                self.drain(on_event)
+                if cancelled():
+                    raise BrokenPipeError("Client disconnected during capacity retry")
+                if not still_enabled():
+                    return None, "disabled_during_attempt"
+                if time.monotonic() >= deadline:
+                    return None, "time_budget"
+                if self.done.is_set():
+                    self.drain(on_event)
+                    if self.error is not None:
+                        error = self.error.reason if isinstance(self.error, URLError) else self.error
+                        # Socket timeouts use the remaining budget but can fire
+                        # slightly before the monotonic deadline (OS rounding).
+                        # Return the known capacity error rather than a new 502.
+                        if isinstance(error, TimeoutError):
+                            return None, "time_budget"
+                        raise self.error
+                    selected = True
+                    return self.result, None
+                self.done.wait(min(.1, max(0, deadline - time.monotonic())))
+        finally:
+            if not selected:
+                self.abandon()
+
+
 def open_response(opener, request, *, enabled=False, max_retries=MAX_RETRIES, on_retry=None, cancelled=lambda: False,
-                  still_enabled=lambda: True, wait=wait_for_retry, on_event=None):
-    if isinstance(max_retries, bool) or not isinstance(max_retries, int) or not 1 <= max_retries <= 99:
-        raise ValueError("max_retries must be an integer from 1 to 99")
-    deadline = time.monotonic() + MAX_RETRY_SECONDS
-    for attempt in range(max_retries + 1):
+                  still_enabled=lambda: True, wait=wait_for_retry, on_event=None, deadline=None):
+    if isinstance(max_retries, bool) or not isinstance(max_retries, int) or not 1 <= max_retries <= RETRY_LIMIT:
+        raise ValueError("max_retries must be an integer from 1 to 9")
+    now = time.monotonic()
+    deadline = min(now + MAX_RETRY_SECONDS, deadline) if deadline is not None else now + MAX_RETRY_SECONDS
+    notify(on_event, "retry_policy", budget_ms=MAX_RETRY_SECONDS * 1000, interval_ms=RETRY_INTERVAL * 1000,
+           remaining_ms=round(max(0, deadline - now) * 1000))
+    response, phase = None, "open"
+    try:
         if cancelled():
             notify(on_event, "cancelled", reason="client_disconnected", phase="before_open")
             raise BrokenPipeError("Client disconnected before capacity retry")
-        notify(on_event, "attempt_started", attempt=attempt + 1)
-        try:
-            response = opener.open(request, timeout=600)
-        except HTTPError as exc:
-            response = exc
-        except Exception as exc:
-            notify(on_event, "attempt_error", error_type=type(exc).__name__, phase="open")
-            raise
-        notify(on_event, "response_headers", status=response.status,
-               content_type=response.headers.get("Content-Type", "").split(";", 1)[0],
-               content_encoding=response.headers.get("Content-Encoding", "identity"),
-               upstream_request_id=response.headers.get("X-Request-Id", ""))
+        # Do not shorten an ordinary slow generation. The hard retry deadline
+        # applies only after an explicit capacity failure has been received.
+        notify(on_event, "attempt_started", attempt=1, timeout_ms=UPSTREAM_TIMEOUT * 1000)
+        response = _open(opener, request, UPSTREAM_TIMEOUT, on_event)
         if not enabled:
             notify(on_event, "response_selected", reason="disabled")
             return response
         phase = "inspect"
-        try:
-            prefix, overloaded = inspect_prefix(response, on_event=on_event)
-            buffered = BufferedResponse(response, prefix)
+        prefix, overloaded = inspect_prefix(response, on_event=on_event)
+        response = BufferedResponse(response, prefix)
+        for attempt in range(max_retries + 1):
             if not overloaded:
                 notify(on_event, "response_selected", reason="probe_passed_through")
-                return buffered
+                return response
             if attempt == max_retries:
                 notify(on_event, "response_selected", reason="retry_limit")
-                return buffered
+                return response
             if not still_enabled():
                 notify(on_event, "response_selected", reason="setting_disabled")
-                return buffered
+                return response
             delay = retry_delay(response.headers, attempt + 1)
-            if delay > deadline - time.monotonic():
-                notify(on_event, "response_selected", reason="time_budget",
+            if delay + MIN_ATTEMPT_SECONDS > deadline - time.monotonic():
+                notify(on_event, "response_selected", reason="time_budget", phase="before_wait",
+                       remaining_ms=round(max(0, deadline - time.monotonic()) * 1000),
                        delay_ms=round(delay * 1000) if delay < 1e12 else None)
-                return buffered
+                return response
             notify(on_event, "retry_scheduled", retry=attempt + 1, delay_ms=round(delay * 1000),
-                   delay_source="retry_after" if response.headers.get("Retry-After") is not None else "backoff")
+                   delay_source="retry_after" if delay > RETRY_INTERVAL else "fixed_interval")
+            phase = "retry_callback"
             if on_retry:
-                phase = "retry_callback"
                 on_retry(attempt + 1, delay)
             phase = "wait"
             wait(delay, cancelled)
             if not still_enabled():
                 notify(on_event, "response_selected", reason="disabled_during_wait")
-                return buffered
-        except BaseException as exc:
-            notify(on_event, "attempt_error", error_type=type(exc).__name__, phase=phase)
+                return response
+            remaining = deadline - time.monotonic()
+            if remaining < MIN_ATTEMPT_SECONDS:
+                notify(on_event, "response_selected", reason="time_budget", phase="after_wait",
+                       remaining_ms=round(max(0, remaining) * 1000))
+                return response
+            phase = "retry_attempt"
+            pending = _RetryAttempt(opener, request, remaining, attempt + 2)
+            result, reason = pending.receive(deadline, cancelled, still_enabled, on_event)
+            if result is None:
+                notify(on_event, "response_selected", reason=reason, phase=pending.phase, status=response.status,
+                       error_type=type(pending.error).__name__ if pending.error is not None else "",
+                       remaining_ms=round(max(0, deadline - time.monotonic()) * 1000))
+                return response
+            previous = response
+            response, overloaded = result
+            previous.close()
+        raise AssertionError("Capacity retry loop exhausted without a response")
+    except BaseException as exc:
+        notify(on_event, "cancelled" if isinstance(exc, (BrokenPipeError, ConnectionResetError)) else "attempt_error",
+               error_type=type(exc).__name__, phase=phase)
+        if response is not None:
             response.close()
-            raise
-        response.close()
-    raise AssertionError("Capacity retry loop exhausted without a response")
+        raise
