@@ -16,7 +16,7 @@ Browse request records by session to see what each request sent, how much space 
 - Group image analysis, automatic titles, and similar auxiliary requests under their parent session. Regular subtasks keep separate rows with parent-child links; unidentified requests appear under “Other.”
 - Show image information only for separate image-analysis sessions; regular sessions do not show it when carrying historical images or image paths.
 - Check actual input/output token counts for requests; unavailable data is clearly marked.
-- Switch between Records and Trends at the top. Compare input tokens for all sessions on one live timeline; leave missing usage empty and give over-limit protection markers priority.
+- Switch between Records and Trends at the top. Compare input tokens for all sessions on one live timeline; connect known usage points across missing values and give over-limit protection markers priority.
 - See how messages, tool outputs, reasoning content, and other parts contribute to request size.
 - Explore structured request JSON, compare sizes before and after processing, and download a sanitized copy.
 - Select and copy text, preserving valid selections during live updates and sorting.
