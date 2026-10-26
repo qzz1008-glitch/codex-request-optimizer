@@ -2144,7 +2144,7 @@ class TokenTrendView {
       const layer=this.svgNode("g",{class:"trend-series-line","data-series":group.id}),events=this.svgNode("g");let path="",pen=false;
       for(const source of group.points) {
         if(source.packet.is_compaction)continue;
-        if(source.input===null){pen=false;continue;}
+        if(source.input===null)continue;
         const point={...source,series:group,x:x(source.packet.created),y:y(source.input)};
         path+=(pen?"L":"M")+point.x.toFixed(2)+","+point.y.toFixed(2);pen=true;this.points.push(point);
         if(point.events.length)this.marker(point,events);
