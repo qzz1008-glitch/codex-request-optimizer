@@ -13,10 +13,11 @@
 # 双语 README
 
 - 修改 README 的功能、使用或实现说明时，同步维护 `README.md` 和 `docs/README.en.md`，保持两版章节与信息一致，不把英文版保留为内容不全的简版。
+- 两版 README 的下载及版本链接固定指向 `https://github.com/qzz1008-glitch/codex-request-optimizer/releases`，不写具体版本号，也不使用 `/releases/latest` 自动跳转。
 
 # 发布平台与双语更新说明
 
-- 当前公开构建面向 Windows x64（64 位）。GitHub Release 标题及中英文 README 开头和下载入口明确标注平台；公开文件名继续遵循固定白名单，保持自动更新兼容性。
+- 当前公开构建面向 Windows x64（64 位），在中英文 README 及更新说明正文中提及即可，不在产品名、发布标题或下载入口突出平台。公开文件名继续遵循固定白名单，保持自动更新兼容性。
 - 每次发布的 `.github/RELEASE_NOTES.md` 同时提供内容一致的简体中文和英文说明，包含平台、此次变化和升级说明；发布前同步更新，不能沿用上一版本内容。
 
 # 固定分支与工作树规则（适用于所有 agent）
