@@ -261,9 +261,8 @@ function originalBytes(p) { return Number.isFinite(p.decoded_bytes) && p.decoded
 function compact(n) { if (n === undefined || n === null) return "—"; return n >= 1048576 ? (n/1048576).toFixed(2)+" MiB" : n >= 1024 ? (n/1024).toFixed(1)+" KiB" : n+" B"; }
 function renderStorageInfo() {
   const storage=state.status?.storage;if(!storage)return;
-  const sessions=state.filterRevision!==null?nf.format(sessionGroups().filter(group=>group.thread_id!==OTHER_SESSION_GROUP).length):"—";
   reconcileContent($("storage-info"),
-    el("span","",t("{count} 会话").replace("{count}",sessions)),
+    el("span","",t("存储 {size}").replace("{size}",compact(storage.disk_bytes))),
     el("span","",t("{count} 请求").replace("{count}",nf.format(storage.count)))
   );
 }
