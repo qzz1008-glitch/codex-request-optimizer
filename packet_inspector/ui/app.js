@@ -1393,7 +1393,8 @@ async function saveSettings() {
 }
 function renderUpdates() {
   const u=updateStatus, busy=settingsSaving||updateBusy||["checking","downloading","upgrading"].includes(u?.state);
-  if(u?.current_version)$("updates-versions").textContent=t("当前版本：{version}").replace("{version}",u.current_version)+(u.latest_version?" · "+t("最新版本：{version}").replace("{version}",u.latest_version):"");
+  const currentVersion=u?.current_version||state.status?.version;
+  $("updates-versions").textContent=currentVersion?t("当前版本：{version}").replace("{version}",currentVersion):"";
   $("updates-check").disabled=busy;$("updates-install").disabled=busy||u?.state!=="available";
   const labels={idle:"可检查 GitHub 上的最新版本。",checking:"正在检查更新…",current:"已是最新版本。",available:"发现新版本，可以升级。",downloading:"正在下载并校验升级包…",upgrading:"正在升级，旧请求继续完成…",complete:"升级已完成。"};
   const displayedState=updateBusy?(updateAction==="check"?"checking":"downloading"):u?.state;
@@ -1405,7 +1406,7 @@ function renderUpdates() {
   $("updates-install-label").textContent=t(installing?"升级中":"立即升级");
   const message=$("updates-message");
   message.hidden=!updateFeedbackVisible;
-  message.textContent=displayedState==="error"?u.error:t(labels[displayedState]||labels.idle);
+  message.textContent=displayedState==="error"?u.error:displayedState==="available"&&u.latest_version?t("最新版本：{version}").replace("{version}",u.latest_version):t(labels[displayedState]||labels.idle);
   message.title=message.textContent;
   message.classList.toggle("error",displayedState==="error");
 }
@@ -1430,6 +1431,7 @@ async function performUpdate(which) {
 async function openSettings() {
   if(settingsOpening||compressionSaving||exitSaving||connectSaving||connectChecking||$("connect-confirm-dialog").open||$("exit-confirm-dialog").open||$("compression-confirm-dialog").open||$("settings-restart-dialog").open||$("settings-dialog").open)return;
   settingsOpening=true;
+  updateFeedbackVisible=updateBusy||["checking","downloading","upgrading"].includes(updateStatus?.state);
   try {
     await Promise.all([refreshStatus(true),loadContextSettings(),loadUpdates()]);
     settingsLanguage=uiI18n.language;
