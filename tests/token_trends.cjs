@@ -208,5 +208,34 @@ function dualRows(){return [
   result.refresh=()=>{};result.setActive(true);
   for(const chart of result.charts){assert.equal(chart.tooltip.hidden,true);assert.equal(chartNodes(chart,'trend-focus-line').length,0);}
  });
+ await test('live refresh never publishes bright background curves while a point is hovered',()=>{
+  const {result}=rendered([...dualRows(),packet(201,{thread_id:'session-b',created:now-5,upstream_usage:{input_tokens:500},outbound_wire_bytes:500000})]);
+  result.hover=id(101);result.hoverChart='token';result.renderFocus();let published=0;
+  for(const chart of result.charts){const replace=chart.svg.replaceChildren.bind(chart.svg);chart.svg.replaceChildren=(fragment)=>{
+   for(const node of fragment.querySelectorAll('[data-series]'))assert.equal((node.attrs.class||'').includes('dimmed'),node.dataset.series!=='session-a','curve brightness changed during SVG publication');
+   published++;replace(fragment);
+  };}
+  for(let index=0;index<5;index++){
+   const next=packet(202+index,{thread_id:'session-b',created:now+index/10,upstream_usage:{input_tokens:600+index},outbound_wire_bytes:600000+index});
+   result.packets.set(next.id,next);result.render();assert.equal(result.hover,id(101));
+   for(const chart of result.charts)assert.equal(chartNodes(chart,'trend-focus-line').length,1);
+  }
+  assert.equal(published,10);
+ });
+ await test('native backfill and sidebar emphasis keep redraw brightness stable until hover ends',async()=>{
+  const pending=packet(301,{created:now-10,outbound_wire_bytes:200000});
+  const {result,frames}=rendered([pending,packet(302,{thread_id:'session-b',created:now-5,upstream_usage:{input_tokens:500},outbound_wire_bytes:500000})]);
+  result.hover=pending.id;result.hoverChart='size';result.renderFocus();let active='session-a',published=0;
+  for(const chart of result.charts){const replace=chart.svg.replaceChildren.bind(chart.svg);chart.svg.replaceChildren=(fragment)=>{
+   for(const node of fragment.querySelectorAll('[data-series]'))assert.equal((node.attrs.class||'').includes('dimmed'),!!active&&node.dataset.series!==active,'backfill or sidebar redraw changed curve brightness');
+   published++;replace(fragment);
+  };}
+  result.services.read=async()=>({state:'available',input_tokens:1234});await result.hydrate();frames.shift()();
+  assert.equal(result.charts[1].points.find(point=>point.packet.id===pending.id).input,1234);assert.equal(result.hover,pending.id);
+  active='session-b';result.emphasis=active;result.render();
+  active=null;result.emphasis=null;result.charts[0].svg.onpointerleave();result.render();
+  for(const chart of result.charts)assert.equal(chartNodes(chart,'dimmed').length,0);
+  assert.equal(published,6);
+ });
  console.log(JSON.stringify({passed:checks}));
 })().catch(error=>{console.error(error);process.exitCode=1;});
