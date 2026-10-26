@@ -27,7 +27,8 @@ class InstallationSettingsTests(unittest.TestCase):
         original = self.config.read_bytes()
         server = self.server()
         status = server.status()
-        self.assertEqual(status["request_compression"], "zstd")
+        self.assertEqual(status["connection_state"], "disconnected")
+        self.assertNotIn("request_compression", server.settings)
         for key in ("packet_size_protection_enabled", "image_isolation_enabled",
                     "capacity_retry_enabled", "start_on_login"):
             self.assertIs(status[key], False, key)
@@ -53,17 +54,20 @@ class InstallationSettingsTests(unittest.TestCase):
                 original = self.config.read_bytes()
                 active = self.server()
                 for key, value in values.items():
-                    self.assertEqual(active.settings[key], value, key)
+                    if key != "request_compression":
+                        self.assertEqual(active.settings[key], value, key)
                 candidate = self.server(worker_id="a" * 32)
                 # A user edit after the candidate started must also survive cutover.
                 latest = {**values, "budget_bytes": 888000, "capacity_retry_max_retries": 9}
                 active.save_settings({**active.settings, **latest})
                 candidate.worker_control({"action": "activate", "public_port": 48765})
                 for key, value in latest.items():
-                    self.assertEqual(candidate.settings[key], value, key)
+                    if key != "request_compression":
+                        self.assertEqual(candidate.settings[key], value, key)
                 saved = json.loads(candidate.settings_path.read_text(encoding="utf8"))
                 for key, value in latest.items():
-                    self.assertEqual(saved[key], value, key)
+                    if key != "request_compression":
+                        self.assertEqual(saved[key], value, key)
                 self.assertEqual(self.config.read_bytes(), original)
 
     def test_inactive_worker_activation_does_not_implicitly_connect(self):
@@ -119,7 +123,9 @@ class InstallationSettingsTests(unittest.TestCase):
         candidate.worker_control({"action": "activate", "public_port": active.public_port})
         self.assertTrue(candidate.status()["profile"]["active"])
         for key, value in choices.items():
-            self.assertEqual(candidate.settings[key], value, key)
+            if key != "request_compression":
+                self.assertEqual(candidate.settings[key], value, key)
+        self.assertNotIn("request_compression", candidate.settings)
         self.assertEqual(self.config.read_bytes(), before)
 
 

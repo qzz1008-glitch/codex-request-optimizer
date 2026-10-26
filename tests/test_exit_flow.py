@@ -2,6 +2,7 @@
 import http.client
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+import tomllib
 from pathlib import Path
 import tempfile
 import threading
@@ -299,7 +300,10 @@ class IsolatedRelayExitTests(unittest.TestCase):
                 self.assertTrue(result["stopped"])
                 self.assertFalse(relay.link.profile()["active"])
                 self.assertFalse(relay.settings["auto_detect_providers"])
-                self.assertEqual(config.read_text(encoding="utf8").strip(), 'model="isolated-exit-test"')
+                restored = tomllib.loads(config.read_text(encoding="utf8"))
+                self.assertEqual(restored["model"], "isolated-exit-test")
+                self.assertTrue(restored["features"]["enable_request_compression"])
+                self.assertFalse(restored["model_providers"][restored["model_provider"]]["base_url"].startswith(relay.endpoint))
                 thread.join(timeout=2)
                 self.assertFalse(thread.is_alive())
                 self.assertEqual(list(data.glob("desktop-exit-request*")), [])

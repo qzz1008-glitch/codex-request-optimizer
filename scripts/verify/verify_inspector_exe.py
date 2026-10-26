@@ -57,9 +57,9 @@ def main():
                 if process.poll() is not None:raise RuntimeError("EXE stopped before startup")
                 time.sleep(.1)
         if not settings:raise RuntimeError("EXE startup timed out")
-        assert api("/api/status")["request_compression"]=="zstd"
+        assert api("/api/status")["connection_state"]=="disconnected"
         assert api("/api/installation")["supported"] is False
-        api("/api/settings",{"request_compression":"off"})
+        api("/api/link",{"action":"restore"})
         for suffix,headers in [("/responses", {}), ("/responses/?api-version=test", {
                 "Connection":"Upgrade", "Upgrade":"websocket", "Sec-WebSocket-Version":"13",
                 "Sec-WebSocket-Key":"dGhlIHNhbXBsZSBub25jZQ=="})]:
@@ -93,7 +93,7 @@ def main():
         assert detail["inspection"]=="json" and detail["is_compaction"]
         assert detail["decoded_bytes"]==byte_results[-1]["decoded"]
         assert api("/api/packets/"+rows[0]["id"]+"/diff")["added"]
-        api("/api/settings",{"request_compression":"zstd"})
+        api("/api/link",{"action":"activate"})
         compressed_results=[]
         for compact in [False,True]:
             payload={"input":[{"role":"user","content":"Synthetic retained payload "*400}]+([{"type":"compaction_trigger"}] if compact else [])}
@@ -136,7 +136,7 @@ def main():
             assert tool_check.returncode==0,tool_check.stderr[:500]
             replies=[json.loads(line) for line in tool_check.stdout.splitlines() if line.strip()]
             assert [tool["name"] for tool in replies[-1]["result"]["tools"]]==["analyze_image"]
-            api("/api/settings",{"request_compression":"off"})
+            api("/api/link",{"action":"restore"})
             connection=http.client.HTTPConnection("127.0.0.1",runtime["port"],timeout=5)
             connection.request("POST","/relay/"+settings["relay_token"]+"/responses",json.dumps(request_body()).encode(),{"Content-Type":"application/json"})
             response=connection.getresponse();assert response.status==200;response.read();connection.close()

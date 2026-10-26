@@ -61,7 +61,7 @@ class RouterTests(unittest.TestCase):
                     "active": self.first.worker_id, "draining": [], "port": 47844})
         self.router = RouterServer(("127.0.0.1", 0), self.data, self.config)
         self.first.worker_control({"action": "activate", "public_port": self.router.port})
-        self.first.save_settings({**self.first.settings, "request_compression": "off"})
+        self.first.save_settings({**self.first.settings, "auto_detect_providers": False})
         self.run_server(self.router)
         self.addCleanup(self.stop)
 

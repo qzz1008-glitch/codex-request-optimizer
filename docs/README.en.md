@@ -77,7 +77,11 @@ Use the desktop window or open the interface in a browser. The default browser a
 
 **[http://127.0.0.1:47844/](http://127.0.0.1:47844/)**
 
-The top bar switches between Disconnected, Analyze, and Optimize. Select a session on the left, browse requests in the middle, and view request information, size composition, request JSON, and changes on the right. JSON browsing supports search, path navigation, and downloading a sanitized copy.
+The top bar has only Disconnected and Connected states. Connecting disables native Codex request compression and lets this app manage zstd using the selected level or automatic policy. Disconnecting restores the original upstream and enables native compression. Restart ChatGPT App when configuration changes require it.
+
+Connections using Codex account authentication share the `OpenAI` name, and new sessions default to the stable `codex_packet_inspector` identifier. Old identifiers remain as compatibility entries without changing chat history. API key and other authentication configurations are preserved; their native compression support depends on Codex itself.
+
+Select a session on the left, browse requests in the middle, and view request information, size composition, request JSON, and changes on the right. JSON browsing supports search, path navigation, and downloading a sanitized copy.
 
 Closing the desktop window keeps the application in the system tray. When exiting from the tray, you can restore the original upstream first or exit while keeping the relay configuration. The application stays running until active requests finish. Language selection and launch at sign-in are available in Settings.
 

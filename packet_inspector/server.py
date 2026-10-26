@@ -69,6 +69,7 @@ def outbound_proxies():
 
 def protection_settings(saved, *, default_enabled=False):
     values = dict(saved)
+    values.pop("request_compression", None)  # Legacy analysis/optimization modes.
     if "packet_size_protection_enabled" not in values:
         legacy = ("overflow_compaction_enabled", "native_compact_trigger_enabled")
         values["packet_size_protection_enabled"] = (any(values.get(key) is True for key in legacy)
@@ -98,7 +99,7 @@ class InspectorServer(ThreadingHTTPServer):
         self.settings = {"relay_token": secrets.token_urlsafe(32),
                          "capture_enabled": True, "budget_bytes": DEFAULT_BUDGET_BYTES,
                          "max_storage_mb": 512, "max_packets": 2000,
-                         "request_compression": "zstd", "zstd_level": DEFAULT_ZSTD_LEVEL,
+                         "zstd_level": DEFAULT_ZSTD_LEVEL,
                          "packet_size_protection_enabled": False,
                          "ui_language": "zh",
                          "start_on_login": False, "capacity_retry_enabled": False,
@@ -128,10 +129,11 @@ class InspectorServer(ThreadingHTTPServer):
         super().__init__(address, Handler)
         self.port = self.server_address[1]
         self.public_port = public_port or self.port
-        self.provider_guard = threading.Lock()
+        self.provider_guard = threading.RLock()
         self.provider_fingerprint = None
         self.provider_sync_error = ""
         self.provider_sync_result = {}
+        self.connection_reload_required = False
         self.provider_next_scan = 0
         self.upgrade_draining = False
         self.token_windows = TokenWindows()
@@ -270,8 +272,37 @@ class InspectorServer(ThreadingHTTPServer):
             self.provider_fingerprint = self._provider_fingerprint()
             self.provider_sync_error = ""
             self.provider_sync_result = result
+            self.connection_reload_required |= result.get("reload_required", False)
             self.provider_next_scan = time.monotonic() + 30
             return result
+
+    def set_connection(self, connected):
+        with self.provider_guard:
+            previous = self.settings["auto_detect_providers"]
+            try:
+                if connected:
+                    self.save_settings({**self.settings, "auto_detect_providers": True})
+                    return self.sync_providers()
+                state = self.link._state()
+                if not state:
+                    result = {"active": False, "reload_required": False}
+                else:
+                    # Upgrade legacy recovery data before disconnecting, so old
+                    # chat IDs retain a direct, native-compression-capable route.
+                    if not state.get("connection_policy"):
+                        self.save_settings({**self.settings, "auto_detect_providers": True})
+                        self.sync_providers()
+                    result = self.link.restore()
+                self.save_settings({**self.settings, "auto_detect_providers": False})
+                self.connection_reload_required |= result.get("reload_required", False)
+                return result
+            except Exception:
+                try:
+                    keep_active = previous or self.connection_profile()["active"]
+                except (OSError, ValueError):
+                    keep_active = previous
+                self.save_settings({**self.settings, "auto_detect_providers": keep_active})
+                raise
 
     def server_close(self):
         # TCPServer also calls this when binding fails, before worker setup.
@@ -319,7 +350,8 @@ class InspectorServer(ThreadingHTTPServer):
             profile = {"active": False, "config_error": type(exc).__name__}
         storage = self.store.stats()
         return {"version": VERSION, "ui_version": VERSION, "capture_enabled": self.settings["capture_enabled"],
-                "request_compression": self.settings["request_compression"],
+                "connection_state": "connected" if profile.get("active") else "disconnected",
+                "connection_policy": 1, "connection_reload_required": self.connection_reload_required,
                 "zstd_level": self.settings["zstd_level"],
                 "auto_zstd_level_enabled": self.settings["auto_zstd_level_enabled"],
                 "ui_language": self.settings["ui_language"],
@@ -552,9 +584,7 @@ class Handler(BaseHTTPRequestHandler):
                     candidate["image_save_dir"] = "" if directory == self.server.default_image_save_dir else str(directory)
                     image_isolation = ImageIsolation(self.server.data_dir, candidate["image_save_dir"])
                 if "request_compression" in data:
-                    if data["request_compression"] not in {"off", "zstd"}:
-                        raise ValueError("invalid request compression mode")
-                    candidate["request_compression"] = data["request_compression"]
+                    raise ValueError("仅支持接入和断开；接入后由本软件管理 zstd 压缩。")
                 if "zstd_level" in data:
                     candidate["zstd_level"] = validate_zstd_level(data["zstd_level"])
                 if "ui_language" in data:
@@ -622,18 +652,15 @@ class Handler(BaseHTTPRequestHandler):
                 self.server.image_isolation = image_isolation
                 self.server.store.max_bytes = candidate["max_storage_mb"] * 1024 * 1024
                 self.server.store.max_count = candidate["max_packets"]
-                if any(candidate[key] != previous[key] for key in ("auto_zstd_level_enabled", "request_compression")):
+                if candidate["auto_zstd_level_enabled"] != previous["auto_zstd_level_enabled"]:
                     self.server.compression_history.clear()
             self._json(200, self.server.status())
         elif path == "/api/link" and self.command == "POST":
             data = json.loads(self._body(8192))
             if data.get("action") == "restore":
-                with self.server.provider_guard:
-                    self.server.save_settings({**self.server.settings, "auto_detect_providers": False})
-                    result = self.server.link.restore()
+                result = self.server.set_connection(False)
             elif data.get("action") == "activate":
-                self.server.save_settings({**self.server.settings, "auto_detect_providers": True})
-                result = self.server.sync_providers()
+                result = self.server.set_connection(True)
             else:
                 raise ValueError("invalid link action")
             self._json(200, result)
@@ -816,7 +843,9 @@ class Handler(BaseHTTPRequestHandler):
         # urllib preserves content bytes, does not decompress responses, and
         # uses the OS/environment proxy. Redirects and inference retries are disabled.
         with self.server.guard:
-            compression = self.server.settings["request_compression"]
+            # Disconnected clients may briefly retain an old relay URL until
+            # ChatGPT restarts. Keep forwarding them without extra zstd work.
+            compression = "zstd" if self.server.settings["auto_detect_providers"] else "off"
             zstd_level = self.server.settings["zstd_level"]
             protection_enabled = self.server.settings["packet_size_protection_enabled"]
             budget = self.server.settings["budget_bytes"]

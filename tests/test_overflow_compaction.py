@@ -488,7 +488,7 @@ class OverflowRelayTests(unittest.TestCase):
         self.up.requests, self.up.fail = [], False
         self.server = InspectorServer(("127.0.0.1", 0), root / "data", self.config,
                                       "http://127.0.0.1:" + str(self.up.server_port) + "/v1")
-        self.server.settings.update(packet_size_protection_enabled=True, budget_bytes=4000, request_compression="off")
+        self.server.settings.update(packet_size_protection_enabled=True, budget_bytes=4000, auto_detect_providers=False)
         for server in (self.up, self.server):
             threading.Thread(target=server.serve_forever, daemon=True).start()
         self.addCleanup(self.cleanup)
@@ -510,7 +510,7 @@ class OverflowRelayTests(unittest.TestCase):
         return status, body
 
     def test_auto_levels_skip_small_rebuilt_summaries_and_keep_uploads_bounded(self):
-        self.server.settings.update(request_compression="zstd", auto_zstd_level_enabled=True, zstd_level=9)
+        self.server.settings.update(auto_detect_providers=True, auto_zstd_level_enabled=True, zstd_level=9)
         items = [message(i) for i in range(14)]
         for current in (items, items + [message("tail", 30)]):
             status, body = self.post(current, session="auto-overflow")

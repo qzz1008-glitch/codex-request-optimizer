@@ -66,7 +66,7 @@ class ProviderConfigTests(unittest.TestCase):
         updated += '\n[model_providers.b]\nbase_url="https://b.invalid/v1"\n'
         self.config.write_text(updated)
         self.sync()
-        self.assertEqual(len(self.routes), 3)
+        self.assertEqual(len(self.routes), 4)
         self.link.restore()
         data = tomllib.loads(self.config.read_text())
         self.assertEqual(data["model"], "later")
@@ -93,7 +93,11 @@ class ProviderConfigTests(unittest.TestCase):
         self.assertEqual(self.link.profile()["upstream"], "https://legacy.invalid/v1")
         self.assertIn("https://legacy.invalid/v1", {route["upstream"] for route in self.routes.values()})
         self.link.restore()
-        self.assertEqual(tomllib.loads(self.config.read_text()), {"model": "m"})
+        restored = tomllib.loads(self.config.read_text())
+        self.assertEqual(restored["model"], "m")
+        self.assertEqual(restored["model_provider"], PROVIDER)
+        self.assertEqual(restored["model_providers"][PROVIDER]["base_url"], "https://legacy.invalid/v1")
+        self.assertTrue(restored["features"]["enable_request_compression"])
 
     def test_recovery_and_routes_exist_before_partial_config_failure(self):
         self.config.write_text('model="m"\n')
@@ -106,7 +110,10 @@ class ProviderConfigTests(unittest.TestCase):
         self.assertEqual(tomllib.loads(self.config.read_text()), {"model": "m"})
         self.assertTrue(self.sync()["changed"])
         self.link.restore()
-        self.assertEqual(tomllib.loads(self.config.read_text()), {"model": "m"})
+        restored = tomllib.loads(self.config.read_text())
+        self.assertEqual(restored["model"], "m")
+        self.assertEqual(restored["model_provider"], PROVIDER)
+        self.assertTrue(restored["features"]["enable_request_compression"])
 
     def test_restore_retains_legacy_provider_referenced_by_saved_or_archived_sessions(self):
         for archived in [False, True]:
@@ -121,7 +128,7 @@ class ProviderConfigTests(unittest.TestCase):
                 self.sync()
                 self.link.restore()
                 data = tomllib.loads(self.config.read_text())
-                self.assertNotIn("model_provider", data)
+                self.assertEqual(data["model_provider"], PROVIDER)
                 self.assertEqual(data["model_providers"][PROVIDER]["base_url"], "https://legacy.invalid/v1")
                 self.assertFalse(data["model_providers"][PROVIDER]["supports_websockets"])
                 self.assertFalse(self.link.profile()["active"])
@@ -184,7 +191,7 @@ class ProviderConfigTests(unittest.TestCase):
         self.link.restore()
         data = tomllib.loads(self.config.read_text())
         self.assertEqual(data["model_provider"], "a")
-        self.assertNotIn(PROVIDER, data["model_providers"])
+        self.assertIn(PROVIDER, data["model_providers"])
         self.assertEqual(data["model_providers"]["a"]["base_url"], "https://a.invalid")
 
     def test_native_login_mode_change_keeps_explicit_override_but_updates_implicit_default(self):
@@ -222,7 +229,8 @@ class ProviderConfigTests(unittest.TestCase):
         self.sync()
         self.assertFalse(tomllib.loads(profile.read_text())["model_providers"]["a"]["supports_websockets"])
         self.link.restore()
-        self.assertEqual(profile.read_text(), original)
+        self.assertTrue(tomllib.loads(profile.read_text())["model_providers"]["a"]["supports_websockets"])
+        self.assertTrue(tomllib.loads(profile.read_text())["features"]["enable_request_compression"])
 
 
 class ProviderRelayTests(unittest.TestCase):
@@ -253,7 +261,6 @@ class ProviderRelayTests(unittest.TestCase):
             for name, server in zip("ab", self.upstreams)))
         self.server = InspectorServer(("127.0.0.1", 0), root / "data", config,
                                       f"http://127.0.0.1:{self.upstreams[0].server_port}/legacy")
-        self.server.save_settings({**self.server.settings, "request_compression": "off"})
         self.server.sync_providers()
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
         self.config = config

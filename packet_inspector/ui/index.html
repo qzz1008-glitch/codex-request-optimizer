@@ -14,8 +14,8 @@
     <div class="brand"><strong>Codex 请求优化器</strong><span id="desktop-build" class="desktop-build" hidden>开发版</span><button id="ui-refresh" class="header-icon-action" type="button" title="刷新" aria-label="刷新" hidden><svg class="header-action-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5m-4.7-1a8 8 0 0 1 13.9-4L20 9M4 15l1.8 2A8 8 0 0 0 19.7 13"/></svg><span class="header-action-label">刷新</span></button></div>
     <div id="view-toggle" class="view-toggle" role="group" aria-label="视图"><button id="view-records" type="button" title="记录" aria-label="记录" aria-pressed="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M9 6h11M9 12h11M9 18h11M4 6h.01M4 12h.01M4 18h.01"/></svg></button><button id="view-trends" type="button" title="趋势" aria-label="趋势" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3v18h18M6 16l5-6 4 3 6-8"/></svg></button></div>
     <div class="header-actions">
-      <div class="header-compression"><div id="request-compression" class="language-toggle compression-toggle" role="group" aria-label="接入与传输模式" aria-describedby="compression-hint"><button id="compression-disconnect" type="button" data-compression="disconnected" aria-pressed="false" disabled>断开</button><button id="compression-off" type="button" data-compression="off" aria-pressed="false" disabled>分析</button><button id="compression-zstd" type="button" data-compression="zstd" aria-pressed="true" disabled>优化</button></div><span id="compression-hint" hidden></span></div>
-      <button id="header-connect" class="primary header-icon-action" type="button" title="接入 Codex" aria-label="接入 Codex" hidden><svg class="header-action-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3v5m8-5v5M6 8h12v3a6 6 0 0 1-12 0V8zm6 9v4"/></svg><span id="header-connect-label" class="header-action-label">接入 Codex</span></button><button id="settings-open" class="settings-button" type="button" title="设置" aria-label="设置"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9.5 3-.6 2.3-1.7 1-2.3-.6-2.5 4.3 1.7 1.7v2l-1.7 1.7 2.5 4.3 2.3-.6 1.7 1 .6 2.3h5l.6-2.3 1.7-1 2.3.6 2.5-4.3-1.7-1.7v-2l1.7-1.7-2.5-4.3-2.3.6-1.7-1L14.5 3z"/><circle cx="12" cy="12.7" r="3"/></svg></button>
+      <div class="header-compression"><div id="request-compression" class="language-toggle compression-toggle" role="group" aria-label="Codex 接入" aria-describedby="compression-hint"><button id="compression-disconnect" type="button" data-compression="disconnected" aria-pressed="false" disabled>断开</button><button id="compression-connect" type="button" data-compression="connected" aria-pressed="false" disabled>接入</button></div><span id="compression-hint" hidden></span></div>
+      <button id="settings-open" class="settings-button" type="button" title="设置" aria-label="设置"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9.5 3-.6 2.3-1.7 1-2.3-.6-2.5 4.3 1.7 1.7v2l-1.7 1.7 2.5 4.3 2.3-.6 1.7 1 .6 2.3h5l.6-2.3 1.7-1 2.3.6 2.5-4.3-1.7-1.7v-2l1.7-1.7-2.5-4.3-2.3.6-1.7-1L14.5 3z"/><circle cx="12" cy="12.7" r="3"/></svg></button>
     </div>
     <div id="window-controls" class="window-controls" role="group" aria-label="窗口操作" hidden>
       <button id="window-minimize" type="button" title="最小化" aria-label="最小化"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M1 6h10"/></svg></button>
@@ -92,16 +92,16 @@
     </section>
   </main>
   <dialog id="compression-confirm-dialog" aria-labelledby="compression-confirm-title" aria-describedby="compression-confirm-description compression-confirm-hint">
-    <h2 id="compression-confirm-title">切换传输模式</h2>
+    <h2 id="compression-confirm-title">取消接入</h2>
     <p id="compression-confirm-description"></p>
-    <p id="compression-confirm-hint" class="muted help">确认后立即用于新请求，无需重启。</p>
+    <p id="compression-confirm-hint" class="muted help">重启 ChatGPT App 生效。</p>
     <p id="compression-confirm-message" class="help error" role="alert" hidden></p>
     <div class="button-row"><button id="compression-confirm-cancel" type="button" autofocus>取消</button><button id="compression-confirm-apply" class="primary" type="button">确认切换</button></div>
   </dialog>
   <dialog id="connect-confirm-dialog" aria-labelledby="connect-confirm-title" aria-describedby="connect-confirm-description connect-confirm-hint">
     <h2 id="connect-confirm-title">接入 Codex</h2>
     <p id="connect-confirm-description">当前尚未接入 Codex。是否接入并启用请求中转？</p>
-    <p id="connect-confirm-hint" class="muted help">接入会备份并更新 Codex 配置，完成后需重启 ChatGPT App。</p>
+    <p id="connect-confirm-hint" class="muted help">接入后关闭原生压缩，由本软件管理 zstd。配置变更后需重启 ChatGPT App。</p>
     <p id="connect-confirm-message" class="help error" role="alert" hidden></p>
     <div class="button-row"><button id="connect-confirm-cancel" type="button" autofocus>暂不接入</button><button id="connect-confirm-apply" class="primary" type="button">确认接入</button></div>
   </dialog>

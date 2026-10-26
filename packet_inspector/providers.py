@@ -10,6 +10,7 @@ from urllib.parse import urlsplit
 import tomlkit
 
 from .config_link import ConfigLink, PROVIDER, validate_upstream
+from .connection_policy import native_compression, standardize
 
 MODE = "all-providers-v1"
 
@@ -40,6 +41,31 @@ def _put(document, keys, value, present=True):
         target.pop(keys[-1], None)
 
 
+def _write_plans(link, plans):
+    written, backups = [], []
+    try:
+        for path, original, updated in plans:
+            current = path.read_text(encoding="utf-8-sig") if path.exists() else ""
+            if current != original:
+                raise ValueError("Codex 配置在扫描期间发生变化，请重新检测")
+            before = path.read_bytes() if path.exists() else None
+            written.append((path, updated, before))
+            backups.append(ConfigLink(path, link.state_path)._write(updated))
+    except Exception:
+        for path, updated, before in reversed(written):
+            # Never overwrite a concurrent edit, even during rollback.
+            if not path.exists() or path.read_text(encoding="utf-8-sig") != updated:
+                continue
+            if before is None:
+                path.unlink()
+            else:
+                staging = path.with_name(path.name + ".inspector-rollback")
+                staging.write_bytes(before)
+                staging.replace(path)
+        raise
+    return backups
+
+
 class ProviderManager:
     def __init__(self, link, endpoint, default_upstream):
         self.link = link
@@ -49,12 +75,13 @@ class ProviderManager:
     def sync(self, saved_routes, publish):
         """Publish routes/recovery first, then atomically update each TOML file.
 
-        A failed write leaves recovery information and extra harmless routes in
-        place. Repeating sync completes partial progress without losing originals.
+        Failed batches roll back their own writes. Concurrent edits are kept,
+        with recovery information and extra routes available for a safe retry.
         """
         prior = self.link._state()
         state = deepcopy(prior) if prior.get("mode") == MODE else {
             "mode": MODE, "files": {}, "legacy": prior}
+        state["connection_policy"] = 1
         routes = deepcopy(saved_routes)
         paths = config_paths(self.link.config)
         plans, warnings = [], []
@@ -64,6 +91,11 @@ class ProviderManager:
             text = path.read_text(encoding="utf-8-sig") if path.exists() else ""
             data = tomllib.loads(text)
             document = tomlkit.parse(text)
+            standardize(document, data, base,
+                        lambda value, provider: self._original(value, provider, routes),
+                        self._native_upstream(), primary=path == self.link.config)
+            native_compression(document, False)
+            data = tomllib.loads(tomlkit.dumps(document))
             records = state["files"].setdefault(str(path.resolve()), [])
             fields = []
             providers = data.get("model_providers", {})
@@ -118,13 +150,13 @@ class ProviderManager:
         # Settings contain no credentials; headers and auth remain in Codex's TOML.
         publish(routes)
         self.link._write_state(state)
-        backups = []
-        for path, original, updated in plans:
-            current = path.read_text(encoding="utf-8-sig") if path.exists() else ""
-            if current != original:
-                raise ValueError("Codex 配置在扫描期间发生变化，请重新检测")
-            writer = ConfigLink(path, self.link.state_path)
-            backups.append(writer._write(updated))
+        try:
+            backups = _write_plans(self.link, plans)
+        except Exception:
+            if all((path.read_text(encoding="utf-8-sig") if path.exists() else "") == original
+                   for path, original, _ in plans):
+                self.link._write_state(prior)
+            raise
         return {"active": True, "changed": bool(plans), "reload_required": bool(plans),
                 "provider_count": len(detected),
                 "config_files": len(paths), "backups": backups, "warnings": warnings}
@@ -137,7 +169,8 @@ class ProviderManager:
             route = routes.get(parsed.path.rsplit("/p/", 1)[1])
             if route:
                 return route["upstream"]
-        if current == self.endpoint:
+        if (current == self.endpoint or parsed.hostname in {"localhost", "127.0.0.1", "::1"}
+                and parsed.path.rstrip("/") == urlsplit(self.endpoint).path.rstrip("/")):
             legacy = self.link._state()
             if legacy.get("mode") == MODE:
                 legacy = legacy.get("legacy", {})
@@ -175,7 +208,7 @@ class ProviderManager:
 
 
 def restore_providers(link, state):
-    backups = []
+    plans = []
     for filename, records in state["files"].items():
         path = Path(filename)
         if not path.exists():
@@ -188,11 +221,14 @@ def restore_providers(link, state):
             # Preserve later explicit user changes to any individual field.
             if present and value == record["applied"]:
                 _put(document, record["keys"], record["before"], record["present"])
+        if state.get("connection_policy"):
+            native_compression(document, True)
         updated = tomlkit.dumps(document)
         if updated != original:
-            backups.append(ConfigLink(path, link.state_path)._write(updated))
+            plans.append((path, original, updated))
+    backups = _write_plans(link, plans)
     legacy = state.get("legacy", {})
-    if legacy:
+    if legacy and not state.get("connection_policy"):
         link._write_state(legacy)
         text, _ = link._read()
         from .config_link import BEGIN

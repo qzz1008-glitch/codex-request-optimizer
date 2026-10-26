@@ -36,7 +36,7 @@ class ResponseIntegrityTests(unittest.TestCase):
             relay = InspectorServer(("127.0.0.1", 0), root / "data", config,
                                     f"http://127.0.0.1:{upstream.server_port}")
             relay.settings.update(packet_size_protection_enabled=True,
-                                  budget_bytes=120_000, request_compression="off")
+                                  budget_bytes=120_000, auto_detect_providers=False)
             for server in (upstream, relay):
                 threading.Thread(target=server.serve_forever, daemon=True).start()
             try:

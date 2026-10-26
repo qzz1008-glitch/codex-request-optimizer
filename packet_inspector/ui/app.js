@@ -50,6 +50,7 @@ const zstdLevelEstimates = [
   [16,54.81,68.89,.364],[17,54.83,76.49,.404]
 ];
 let compressionTarget = null, compressionSaving = false, compressionRevision = 0;
+let connectionRestartNotified = false;
 let exitRequest = null, exitSaving = false, exitFinished = false, exitRevision = 0;
 let connectSource = null, connectSaving = false, connectChecking = false, startupConnectChecked = false;
 let desktopOpenRevision = null;
@@ -848,13 +849,6 @@ async function refreshStatus(fill=false) {
 }
 function renderConnectionActions() {
   const s=state.status;if(!s)return;
-  const p=s.profile,disabled=!!(linkSaving||settingsSaving||compressionSaving||exitSaving||connectSaving||connectChecking);
-  const button=$("header-connect");
-  button.hidden=!!p.active;
-  button.disabled=disabled||!!p.active||!!p.config_error;
-  const label=t(linkSaving==="activate"?"正在接入…":"接入 Codex");
-  setText($("header-connect-label"),label);button.title=label;button.setAttribute("aria-label",label);
-  button.setAttribute("aria-busy",String(linkSaving==="activate"));
   renderCompressionMode();
 }
 function renderStatus(fill=false) {
@@ -869,6 +863,11 @@ function renderStatus(fill=false) {
   renderProtectionPanelState();
   renderExitRequest();
   renderConnectPrompt();
+  if(s.connection_reload_required&&!connectionRestartNotified&&!linkSaving&&!connectSaving&&!compressionSaving&&!exitSaving&&!document.querySelector("dialog[open]")) {
+    connectionRestartNotified=true;
+    $("settings-restart-items").replaceChildren(el("li","",t("Codex 接入与原生压缩")));
+    $("settings-restart-dialog").showModal();
+  }
 }
 function fillSettings() {
   const s=state.status,p=s.profile;
@@ -916,14 +915,14 @@ function fillZstdLevel() {
   const selected=settingsEditing?Number(input.value):(s.zstd_level??3);
   const automatic=$("packet-size-protection").checked&&$("auto-zstd-level").checked;
   input.value=String(selected);
-  input.disabled=settingsSaving||!supported||s.request_compression!=="zstd"||automatic;
+  input.disabled=settingsSaving||!supported||automatic;
   $("zstd-level-open").disabled=input.disabled;
   $("zstd-level-auto-note").hidden=!automatic;
   $("zstd-level-value").textContent=t("{level}级").replace("{level}",selected);
   if($("zstd-level-dialog").open) {
     if(input.disabled)closeZstdLevelPicker();else renderZstdLevelRows();
   }
-  const message=supported&&s.request_compression!=="zstd"?t("切换为「优化」后可设置等级。"):"";
+  const message="";
   $("zstd-level-message").textContent=message;$("zstd-level-message").hidden=!message;
 }
 function renderZstdLevelRows() {
@@ -974,16 +973,15 @@ function renderLanguageSelection() {
 }
 function renderCompressionMode() {
   const s=state.status;if(!s)return;
-  const mode=s.request_compression,connected=!!s.profile?.active;
-  const supported=["off","zstd"].includes(s.request_compression);
-  const unknown=!!(s.profile?.config_error||s.provider_sync_error);
+  const connected=!!s.profile?.active;
+  const unknown=!!s.profile?.config_error;
   for(const button of document.querySelectorAll("#request-compression button")) {
     const disconnect=button.dataset.compression==="disconnected";
-    button.setAttribute("aria-pressed",String(disconnect?!connected&&!unknown:connected&&button.dataset.compression===mode));
-    button.disabled=compressionSaving||settingsSaving||exitSaving||!!linkSaving||(disconnect?unknown||connected&&!s.profile.can_restore:!supported||!connected);
+    button.setAttribute("aria-pressed",String(!unknown&&(disconnect?!connected:connected)));
+    button.disabled=compressionSaving||settingsSaving||exitSaving||connectSaving||connectChecking||!!linkSaving||unknown||(disconnect?!connected||!s.profile.can_restore:connected);
   }
   $("request-compression").setAttribute("aria-busy",String(compressionSaving));
-  setText($("compression-hint"),!connected?t("接入 Codex 后可切换传输模式。"):supported?t(mode==="zstd"?"无损压缩，减小上传体积，保留完整内容。":"不额外压缩，原样转发并分析请求。"):t("当前中转暂不支持此功能。"));
+  setText($("compression-hint"),t(connected?"由本软件管理 zstd 压缩，保留完整内容。":"直连原上游，由 Codex 管理原生压缩。"));
   $("request-compression").title=$("compression-hint").textContent;
   $("compression-confirm-dialog").setAttribute("aria-busy",String(compressionSaving));
   for(const id of ["compression-confirm-cancel","compression-confirm-apply"])$(id).disabled=compressionSaving;
@@ -991,16 +989,15 @@ function renderCompressionMode() {
   if(!connected&&!compressionSaving&&$("compression-confirm-dialog").open)cancelCompressionChange();
 }
 function requestCompressionChange(mode) {
+  if(mode==="connected")return requestConnection("header");
   const s=state.status,dialog=$("compression-confirm-dialog");
   if(!s||!s.profile?.active||compressionSaving||settingsSaving||settingsOpening||settingsEditing||linkSaving||exitSaving||connectSaving||$("connect-confirm-dialog").open||$("exit-confirm-dialog").open||dialog.open)return;
   const disconnect=mode==="disconnected";
-  if(disconnect?(!s.profile.can_restore||s.profile.config_error||s.provider_sync_error):(!["off","zstd"].includes(mode)||!["off","zstd"].includes(s.request_compression)||mode===s.request_compression))return;
+  if(!disconnect||!s.profile.can_restore||s.profile.config_error)return;
   compressionTarget=mode;
-  $("compression-confirm-title").textContent=t(disconnect?"取消接入":"切换传输模式");
-  $("compression-confirm-description").textContent=t(disconnect?"切换为「断开」并恢复原出口？":mode==="zstd"?
-    "切换为「优化」？将无损压缩请求正文，减小上传体积。":
-    "切换为「分析」？将关闭 zstd 传输压缩，继续记录和分析请求。");
-  $("compression-confirm-hint").textContent=t(disconnect?"重启 ChatGPT App 生效。":"确认后立即用于新请求，无需重启。");
+  $("compression-confirm-title").textContent=t("取消接入");
+  $("compression-confirm-description").textContent=t("恢复原上游并开启 Codex 原生压缩？");
+  $("compression-confirm-hint").textContent=t("重启 ChatGPT App 生效。");
   renderCompressionMode();
   $("compression-confirm-message").hidden=true;
   dialog.showModal();
@@ -1012,20 +1009,16 @@ function cancelCompressionChange() {
 async function confirmCompressionChange() {
   const s=state.status,mode=compressionTarget,disconnect=mode==="disconnected";
   if(!s||!s.profile?.active||compressionSaving||settingsSaving||linkSaving)return;
-  if(disconnect?(!s.profile.can_restore||s.profile.config_error||s.provider_sync_error):(!["off","zstd"].includes(mode)||!["off","zstd"].includes(s.request_compression)))return;
-  if(!disconnect&&mode===s.request_compression){cancelCompressionChange();return;}
+  if(!disconnect||!s.profile.can_restore||s.profile.config_error)return;
   compressionSaving=true;compressionRevision++;renderConnectionActions();
   $("compression-confirm-message").hidden=true;
   try {
-    if(disconnect)await applyLinkAction("restore");
-    else {
-      const result=await api("/api/settings",{request_compression:mode});
-      if(result.request_compression!==mode)throw Error(t("传输模式未保存，请重试。"));
-      state.status={...state.status,...result};
-    }
+    const result=await applyLinkAction("restore");
     $("compression-confirm-dialog").close();compressionTarget=null;
+    connectionRestartNotified=true;
+    if(result.reload_required){$("settings-restart-items").replaceChildren(el("li","",t("Codex 接入与原生压缩")));$("settings-restart-dialog").showModal();}
     renderStatus();
-    message(t(disconnect?"已切换为断开。重启 ChatGPT App 生效。":mode==="zstd"?"已切换为优化。":"已切换为分析。"));
+    message(t("已断开并开启 Codex 原生压缩。重启 ChatGPT App 生效。"));
   } catch(error) {
     $("compression-confirm-message").textContent=error.message;
     $("compression-confirm-message").hidden=false;
@@ -1058,7 +1051,7 @@ async function requestConnection(source="header") {
   if(current.profile?.active||current.profile?.config_error||current.ui_exit_request||exitSaving||exitFinished||$("exit-confirm-dialog").open)return;
   connectSource=source;
   $("connect-confirm-cancel").textContent=t(source==="startup"?"暂不接入":"取消");
-  $("connect-confirm-hint").textContent=t("接入会备份并更新 Codex 配置，完成后需重启 ChatGPT App。");
+  $("connect-confirm-hint").textContent=t("接入后关闭原生压缩，由本软件管理 zstd。配置变更后需重启 ChatGPT App。");
   $("connect-confirm-message").hidden=true;renderConnectPrompt();dialog.showModal();
 }
 function cancelConnectPrompt() {
@@ -1075,7 +1068,8 @@ async function confirmConnection() {
     if(!state.status.profile.active)throw Error(t("接入未完成，请检查 Codex 配置后重试。"));
     $("connect-confirm-dialog").close();connectSource=null;
     if(result?.reload_required) {
-      $("settings-restart-items").replaceChildren(el("li","",t("Codex 接入")));
+      connectionRestartNotified=true;
+      $("settings-restart-items").replaceChildren(el("li","",t("Codex 接入与原生压缩")));
       $("settings-restart-dialog").showModal();
     }
   } catch(error) {
@@ -1938,7 +1932,6 @@ async function linkAction(which) {
     return result;
   } finally {linkSaving="";renderConnectionActions();updateSettingsSaveState(false);}
 }
-action("header-connect",()=>requestConnection("header"));
 $("session-search").addEventListener("input",renderSessions);
 $("packet-list").addEventListener("scroll",loadMorePackets,{passive:true});
 for(const b of document.querySelectorAll("[data-tab]")) b.addEventListener("click",()=>showTab(b.dataset.tab));
