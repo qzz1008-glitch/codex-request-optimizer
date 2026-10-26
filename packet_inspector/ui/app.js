@@ -1965,7 +1965,7 @@ class TokenTrendView {
   constructor(services) {
     this.services=services;this.active=false;this.loading=false;this.hydrating=false;
     this.packets=new Map();this.native=new Map();this.hidden=new Set();this.hours=6;
-    this.revision=null;this.lastFull=0;this.updated=0;this.query="";this.error=false;this.limited=false;
+    this.revision=null;this.lastFull=0;this.query="";this.error=false;this.limited=false;
     this.points=[];this.series=[];this.hover=null;this.pinned=false;this.frame=null;this.legendVersion="";
     this.svg=$("trend-chart");this.plot=$("trend-plot");this.tooltip=$("trend-tooltip");
     try {const hours=Number(localStorage.getItem("packet-inspector-trend-hours"));if([0,1,6,24].includes(hours)&&localStorage.getItem("packet-inspector-trend-hours")!==null)this.hours=hours;} catch(_) {}
@@ -2016,7 +2016,7 @@ class TokenTrendView {
     const revision=this.services.status()?.storage?.revision,now=Date.now();
     const full=force||!this.lastFull||now-this.lastFull>=30000;
     if(!full&&revision===this.revision){this.render();this.hydrate();return;}
-    const controller=new AbortController();this.controller=controller;this.loading=true;this.error=false;this.renderLive();
+    const controller=new AbortController();this.controller=controller;this.loading=true;this.error=false;
     const timeout=setTimeout(()=>controller.abort(),15000),incoming=new Map(),since=this.hours?now/1000-this.hours*3600:-Infinity;
     try {
       let after=null,limited=false;
@@ -2042,7 +2042,7 @@ class TokenTrendView {
       for(const [id,packet] of this.packets)if(packet.created<since)this.packets.delete(id);
       if(this.packets.size>12000){const keep=[...this.packets.values()].sort((a,b)=>b.created-a.created||b.id.localeCompare(a.id)).slice(0,12000);this.packets=new Map(keep.map(packet=>[packet.id,packet]));this.limited=true;}
       for(const id of this.native.keys())if(!this.packets.has(id))this.native.delete(id);
-      this.revision=revision;this.updated=Date.now();this.error=false;
+      this.revision=revision;this.error=false;
     } catch(error) {if(this.active&&this.controller===controller)this.error=true;}
     finally {
       clearTimeout(timeout);if(this.controller===controller){this.loading=false;this.controller=null;if(this.active){this.render();this.hydrate();}}
@@ -2098,11 +2098,6 @@ class TokenTrendView {
     if(key==="overflow"&&packet.overflow_cache_hit)return t("超限保护")+" · "+t("复用摘要");
     return t({predictive:"预测保护",overflow:"超限保护",compact:"上下文压缩"}[key]||key);
   }
-  renderLive() {
-    const node=$("trend-live"),initial=this.loading&&!this.packets.size;
-    node.textContent=t(this.error?"刷新失败，稍后重试":initial?"正在更新…":"实时刷新")+(!this.error&&!initial&&this.updated?" · "+new Date(this.updated).toLocaleTimeString(uiI18n.language==="en"?"en-GB":"zh-CN",{hour12:false}):"");
-    node.className="trend-live"+(this.error?" error":initial?" loading":"");
-  }
   renderLegend(model) {
     const signature=JSON.stringify([uiI18n.language,this.query,model.matched.map(group=>[group.id,group.title,this.hidden.has(group.id)])]);
     if(signature===this.legendVersion)return;this.legendVersion=signature;
@@ -2126,7 +2121,7 @@ class TokenTrendView {
   }
   render() {
     if(!this.active||!this.plot.clientWidth||!this.plot.clientHeight)return;
-    const model=this.model();this.series=model.series;this.renderLegend(model);this.renderLive();
+    const model=this.model();this.series=model.series;this.renderLegend(model);
     for(const button of document.querySelectorAll("#trend-range button"))button.setAttribute("aria-pressed",String(Number(button.dataset.hours)===this.hours));
     const width=this.plot.clientWidth,height=this.plot.clientHeight,left=70,right=28,top=58,bottom=48,plotWidth=Math.max(1,width-left-right),plotHeight=Math.max(1,height-top-bottom);
     this.bounds={width,height,left,right,top,bottom};
