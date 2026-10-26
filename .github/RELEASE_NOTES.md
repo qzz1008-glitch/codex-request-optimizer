@@ -1,13 +1,29 @@
-新增按包大小自动压缩、三种图片解析模式和可配置容量重试，并更新会话浏览、设置保存及开发版热更新体验。
+## 简体中文
 
-- **无损传输压缩**：支持 1–17 级手动压缩，已有 zstd 请求只在新包更小时替换。开启请求大小保护后，可按包大小自动选择快速或高压缩档位，较小请求保留原包。
-- **两种大小保护**：预测保护促使 Codex 提前执行原生压缩；超限保护处理已超出上限的历史内容，保留必要指令和近期内容，并复用对应结果。上限以 kB 设置，默认 1,000 kB。
-- **图片原生 / 禁用 / 优化**：优化模式将图片保存为本地附件，由独立会话返回识别文字。图片工具通过标准 stdio MCP 注册并由 Codex 管理，随 EXE 提供，支持安装、升级、卸载和配置回滚；可自定义附件目录。
-- **剪贴板图片副本**：优化模式将系统临时目录中的剪贴板图片复制到专用缓存，并在当前请求和图片信息中使用副本路径，保留原文件。
-- **容量不足重试**：识别 `Selected model is at capacity. Please try a different model.` 等明确容量错误，按设置使用原模型和请求重试，次数可设为 1–99。
-- **会话与 Token 展示**：图片解析等辅助请求合入父会话，普通子任务独立展示并标记父子关系，启动时先选中最近会话。改进响应结束后延迟写入的 Token 匹配；无法确认时显示缺失或等待状态。
-- **设置与请求详情**：统一保存和恢复未保存修改，显示各步骤的进度与结果；优化请求信息、JSON 搜索及下载、重试记录和会话信息展示。实时刷新和排序时保留有效文字选区，便于复制。
-- **开发版热更新**：前端迭代统一使用开发版 EXE，保留刷新按钮及快捷键，移除独立网页预览服务；正式版不启用开发功能。
-- **防止旧源码打包**：正式包统一从已整合的干净 `main` 构建，校验源码快照、内嵌前端和 EXE 来源；构建期间源码变化时作废重打。
+**平台：Windows x64（64 位）。**
 
-发布文件为正式主程序 **CodexPacketInspector.exe**、README 和许可证，不再提供单独升级包或旧文件名别名。双击主程序即可安装或升级；v0.6.14 及更新版本也可在设置中直接检查更新并升级。升级保留原有数据、设置及开发版／正式版模式；更早版本请手动运行正式主程序。
+新增会话 Token 趋势视图，优化桌面顶栏与设置布局，并修复超限压缩对多次工具结果的处理。
+
+- **Token 趋势**：在同一时间轴查看会话 Token 变化，随新请求更新，支持历史数据分页与按需补齐。
+- **桌面布局**：视图切换居中，重新安排顶栏控件并降低传输模式按钮高度；设置分区增加层次，加载图标与标签一起居中。
+- **设置修复**：修复移除预览功能后语言设置无法保存的问题，让更新按钮和状态始终处于稳定的一行。
+- **请求详情**：移除图片路径旁的复制按钮，简化图片信息展示。
+- **超限保护**：同一次工具调用返回多条结果或延迟通知时，始终将整组内容一起处理；复用压缩结果前重新检查分组边界，避免拆开工具调用与后续结果。
+- **构建完整性**：将 CommonJS 前端测试纳入源码快照，修复完整构建被新增测试文件阻止的问题。
+
+发布文件仅包含 **CodexPacketInspector.exe**、**README.md**、**LICENSE** 和 **THIRD_PARTY_NOTICES.txt**，不提供单独升级包或旧文件名别名。双击主程序即可安装或升级，也可在设置中检查更新。升级保留已有记录、设置及开发版／正式版模式。
+
+## English
+
+**Platform: Windows x64 (64-bit).**
+
+This release adds session token trends, refines the desktop header and settings layout, and fixes over-limit compaction of tool calls with multiple results.
+
+- **Token trends**: view session token changes on a shared timeline, updated as requests arrive, with paged history and on-demand backfill.
+- **Desktop layout**: center view switching, rearrange header controls, and reduce the height of transmission mode buttons. Make settings sections clearer and center loading icons together with their labels.
+- **Settings fixes**: fix language settings failing to save after preview removal, and keep update controls and status on one stable row.
+- **Request details**: remove copy buttons beside image paths to simplify image information.
+- **Over-limit protection**: keep all results and delayed notifications from the same tool call together. Recheck group boundaries before reusing a compacted result so calls and later outputs remain paired.
+- **Build completeness**: include CommonJS frontend tests in source snapshots, fixing full builds blocked by the new test file.
+
+Release assets contain only **CodexPacketInspector.exe**, **README.md**, **LICENSE**, and **THIRD_PARTY_NOTICES.txt**. Separate upgrade packages and legacy filename aliases are not provided. Run the EXE to install or upgrade, or check for updates in Settings. Upgrades preserve records, settings, and the installed development or release mode.

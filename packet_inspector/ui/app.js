@@ -1347,7 +1347,7 @@ async function saveSettings() {
     }
     if(changed.has("language")) {
       await runSettingsSaveStep("语言",async()=>{
-        if(editable&&["zh","en"].includes(state.status.ui_language)) {
+        if(["zh","en"].includes(state.status.ui_language)) {
           const result=await api("/api/settings",{ui_language:draft.language});
           if(result.ui_language!==draft.language)throw Error(t("语言设置未保存，请重试。"));
           state.status={...state.status,...result};
