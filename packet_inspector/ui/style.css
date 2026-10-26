@@ -145,10 +145,10 @@ code.session-id{font-family:Consolas,"Cascadia Mono",monospace;font-size:11px;wo
 .trend-grid{stroke:#edf1f6;stroke-width:1;vector-effect:non-scaling-stroke}.trend-time-tick{stroke:#ccd5e1;stroke-width:1;vector-effect:non-scaling-stroke}.trend-axis-label{fill:var(--muted);font:11px "Segoe UI",sans-serif}.trend-axis-title{fill:#53647c;font:600 11px "Segoe UI",sans-serif}
 .trend-curve{fill:none;stroke-width:2;stroke-linejoin:round;stroke-linecap:round;vector-effect:non-scaling-stroke}
 .trend-series-line{transition:opacity .12s}.trend-series-line.dimmed{opacity:.13}
-.trend-event{fill:none;stroke:var(--series-color,currentColor);stroke-width:2;vector-effect:non-scaling-stroke}
+.trend-event{fill:none;stroke:var(--series-color,currentColor);stroke-width:1.5;vector-effect:non-scaling-stroke}
 
-.trend-event-count{fill:var(--ink);font:9px "Segoe UI",sans-serif;paint-order:stroke;stroke:white;stroke-width:3px}
-.trend-focus-line{stroke:#9baabd;stroke-dasharray:4 4;stroke-width:1;pointer-events:none}.trend-focus-dot{fill:none;stroke:var(--ink);stroke-width:2;pointer-events:none}
+.trend-event-count{fill:var(--series-color,currentColor);font:9px "Segoe UI",sans-serif;paint-order:stroke;stroke:white;stroke-width:3px}
+.trend-focus-line{stroke:#9baabd;stroke-dasharray:4 4;stroke-width:1;pointer-events:none}.trend-focus-dot{fill:none;stroke:var(--series-color,currentColor);stroke-width:1.5;pointer-events:none}
 .trend-empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:13px;pointer-events:none;padding:30px;text-align:center;background:#ffffffd9}
 .trend-tooltip,.trend-time-tooltip{position:absolute;z-index:2;width:max-content;max-width:calc(100% - 16px);pointer-events:none;white-space:nowrap;font-variant-numeric:tabular-nums}
 .trend-tooltip{display:flex;align-items:baseline;gap:7px;background:#fffffffa;border:1px solid #cdd7e4;border-radius:7px;box-shadow:0 3px 12px #16284214;padding:5px 9px;font-size:11px;line-height:18px;color:var(--muted)}
