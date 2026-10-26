@@ -23,6 +23,8 @@ class EntryPortTests(unittest.TestCase):
         self.config = self.root / "config.toml"
         self.config.write_text('model="test"\n', encoding="utf8")
         self.server = InspectorServer(("127.0.0.1", 0), self.data, self.config, "http://127.0.0.1:9/v1")
+        # Join request handlers before deleting their SQLite fixture files.
+        self.server.daemon_threads = False
         self.thread = threading.Thread(target=self.server.serve_forever, kwargs={"poll_interval": .02}, daemon=True)
         self.thread.start()
         self.addCleanup(self.stop_server)
@@ -125,6 +127,7 @@ class EntryPortTests(unittest.TestCase):
                 handler.wfile.write(b"bcdef")
 
         upstream = ThreadingHTTPServer(("127.0.0.1", 0), Streaming)
+        upstream.daemon_threads = False
         upstream_thread = threading.Thread(target=upstream.serve_forever, kwargs={"poll_interval": .02}, daemon=True)
         upstream_thread.start()
         connection = http.client.HTTPConnection("127.0.0.1", self.server.port, timeout=4)
