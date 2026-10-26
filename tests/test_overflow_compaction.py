@@ -196,6 +196,86 @@ class OverflowTests(unittest.TestCase):
             outputs = [i.get("call_id") for i in request["input"] if i.get("type") in {"function_call_output", "custom_tool_call_output"}]
             self.assertEqual(sorted(calls), sorted(outputs))
 
+    def test_delayed_notifications_stay_with_their_original_call(self):
+        items = [message("before", 30),
+                 {"type": "custom_tool_call", "call_id": "a", "name": "exec", "input": "notify('progress')"},
+                 {"type": "custom_tool_call_output", "call_id": "a", "output": "primary result"}]
+        for index in range(15):
+            items.extend([message(index, 30), {"type": "custom_tool_call_output", "call_id": "a",
+                "id": f"notice-{index}", "name": "exec", "output": f"progress {index}"}])
+        items.append(message("latest", 30))
+        self.assertEqual(safe_cuts(items), [1, len(items) - 1])
+
+    def test_parallel_calls_with_multiple_outputs_are_not_split(self):
+        items = [message("before", 30),
+                 {"type": "function_call", "call_id": "a", "name": "one", "arguments": "{}"},
+                 {"type": "custom_tool_call", "call_id": "b", "name": "exec", "input": "notify('x')"},
+                 {"type": "function_call_output", "call_id": "a", "output": "one"},
+                 {"type": "custom_tool_call_output", "call_id": "b", "output": "two"},
+                 message("between", 30),
+                 {"type": "function_call_output", "call_id": "a", "output": "more one"},
+                 {"type": "custom_tool_call_output", "call_id": "b", "output": "more two"},
+                 message("latest", 30)]
+        self.assertEqual(safe_cuts(items), [1, 8])
+
+    def test_latest_notification_group_is_retained(self):
+        items = [message("before", 30),
+                 {"type": "custom_tool_call", "call_id": "a", "name": "exec", "input": "x"},
+                 {"type": "custom_tool_call_output", "call_id": "a", "output": "primary"},
+                 message("between", 30),
+                 {"type": "custom_tool_call_output", "call_id": "a", "name": "exec", "output": "later"}]
+        self.assertEqual(safe_cuts(items), [1])
+
+    def test_notifications_do_not_close_an_unfinished_parallel_call(self):
+        items = [message("before", 30),
+                 {"type": "custom_tool_call", "call_id": "a", "name": "exec", "input": "x"},
+                 {"type": "custom_tool_call_output", "call_id": "a", "output": "primary"},
+                 {"type": "function_call", "call_id": "b", "name": "pending", "arguments": "{}"},
+                 {"type": "custom_tool_call_output", "call_id": "a", "name": "exec", "output": "later"},
+                 message("latest", 30)]
+        self.assertEqual(safe_cuts(items), [1])
+
+    def test_results_before_their_call_and_missing_identifiers_are_rejected(self):
+        cases = [[{"type": "custom_tool_call_output", "call_id": "a", "output": "out of order"},
+                  {"type": "custom_tool_call", "call_id": "a", "name": "exec", "input": "x"}],
+                 [{"type": "custom_tool_call", "name": "exec", "input": "x"}],
+                 [{"type": "custom_tool_call_output", "output": "missing id"}]]
+        for items in cases:
+            with self.subTest(items=items), self.assertRaises(OverflowFailure) as error:
+                safe_cuts(items + [message("latest", 30)])
+            self.assertEqual(error.exception.code, "overflow_tool_pairing")
+
+    def test_compaction_keeps_all_sixteen_results_with_the_call(self):
+        group = [{"type": "custom_tool_call", "call_id": "a", "name": "exec", "input": "notify('progress')"}]
+        group.extend({"type": "custom_tool_call_output", "call_id": "a", "id": f"result-{index}",
+                      "name": "exec", "output": f"result {index}"} for index in range(16))
+        wire, _, _ = self.run_prepare(make_body([message("before", 30)] + group + self.items))
+        self.assertTrue(any(any(item.get("call_id") == "a" for item in request["input"]) for request in self.calls))
+        for items in [request["input"] for request in self.calls] + [json.loads(wire)["input"]]:
+            matching = [item for item in items if item.get("call_id") == "a"]
+            self.assertIn(matching, [[], group])
+        self.assertEqual(json.loads(wire)["input"][-1], self.items[-1])
+
+    def test_new_notification_invalidates_an_old_cached_cut(self):
+        original = [message("before", 30),
+                    {"type": "custom_tool_call", "call_id": "a", "name": "exec", "input": "x"},
+                    {"type": "custom_tool_call_output", "call_id": "a", "output": "primary"},
+                    message("large-one", 2000), message("large-two", 2000), message("tail", 600)]
+        self.run_prepare(make_body(original))
+        covered = self.rows()[0][2]
+        self.assertGreater(covered, 2)
+        self.assertLess(covered, len(original))
+        notification = {"type": "custom_tool_call_output", "call_id": "a", "name": "exec", "output": "later"}
+        extended = original[:covered] + [notification] + original[covered:]
+        self.calls.clear()
+        wire, _, meta = self.run_prepare(make_body(extended))
+        self.assertFalse(meta["overflow_cache_hit"])
+        self.assertTrue(meta["overflow_cache_reset"])
+        expected = [original[1], original[2], notification]
+        for items in [request["input"] for request in self.calls] + [json.loads(wire)["input"]]:
+            matching = [item for item in items if item.get("call_id") == "a"]
+            self.assertIn(matching, [[], expected])
+
     def test_invalid_pair_or_single_huge_item_fails_without_committing(self):
         bad = [{"type": "function_call_output", "call_id": "missing", "output": "done"}] + self.items
         for items in (bad, [message("huge", 12000)]):
