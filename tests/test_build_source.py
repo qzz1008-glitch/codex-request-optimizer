@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -11,7 +12,7 @@ from unittest.mock import patch
 from packet_inspector.build_info import build_info
 from scripts.build_inspector import PUBLIC_FILES, package_release, source_files
 from scripts.build_source import Snapshot, SourceError, Workspace, dirty_paths, git
-from scripts.check_build_source import check_push
+from scripts.check_build_source import check_push, github_json
 from scripts.verify.verify_build_artifact import verify
 
 
@@ -250,6 +251,52 @@ class BuildSourceTests(unittest.TestCase):
         remote = git(self.root, "commit-tree", "HEAD^{tree}", "-m", "existing published tag")
         with self.assertRaisesRegex(SourceError, "Do not replace a published version tag"):
             check_push(self.root, f"refs/tags/v0.6.14 {head} refs/tags/v0.6.14 {remote}\n")
+
+    def unpublished_retry_fixture(self):
+        old = git(self.root, "rev-parse", "HEAD")
+        self.write("packet_inspector/ui/app.js", "const fixed = true;\n")
+        self.commit()
+        head = git(self.root, "rev-parse", "HEAD")
+        git(self.root, "remote", "add", "origin", "https://github.com/example/repo.git")
+        git(self.root, "config", "codex.retryUnpublishedRelease", "v0.6.14:" + old)
+        return old, f"refs/tags/v0.6.14 {head} refs/tags/v0.6.14 {old}\n"
+
+    def test_failed_unpublished_tag_retry_preserves_old_tag_and_checks_github(self):
+        old, updates = self.unpublished_retry_fixture()
+        runs = {"workflow_runs": [{"head_branch": "v0.6.14", "status": "completed", "conclusion": "failure"}]}
+        with patch("scripts.check_build_source.github_json", side_effect=[(404, {"message": "Not Found"}), (200, runs)]) as api:
+            check_push(self.root, updates)
+        self.assertEqual(api.call_args_list[0].args, ("repos/example/repo/releases/tags/v0.6.14",))
+        self.assertEqual(git(self.root, "rev-parse", "refs/archive/unpublished-release-tags/v0.6.14/" + old), old)
+
+    def test_unpublished_retry_rejects_existing_release_unknown_state_and_active_or_successful_runs(self):
+        _old, updates = self.unpublished_retry_fixture()
+        absent = (404, {"message": "Not Found"})
+        responses = [[(200, {"id": 1})], [(403, {"message": "Forbidden"})],
+                     [absent, (200, {"workflow_runs": []})],
+                     [absent, (200, {"workflow_runs": [{"head_branch": "v0.6.14", "status": "in_progress", "conclusion": None}]})],
+                     [absent, (200, {"workflow_runs": [{"head_branch": "v0.6.14", "status": "completed", "conclusion": "success"}]})]]
+        for response in responses:
+            with self.subTest(response=response), patch("scripts.check_build_source.github_json", side_effect=response):
+                with self.assertRaises(SourceError):
+                    check_push(self.root, updates)
+
+    def test_unpublished_retry_requires_opt_in_for_the_exact_old_tag(self):
+        _old, updates = self.unpublished_retry_fixture()
+        git(self.root, "config", "codex.retryUnpublishedRelease", "v0.6.14:" + "0" * 40)
+        with patch("scripts.check_build_source.github_json") as api:
+            with self.assertRaisesRegex(SourceError, "Do not replace a published version tag"):
+                check_push(self.root, updates)
+        api.assert_not_called()
+
+    def test_github_state_lookup_requires_an_http_status_and_preserves_not_found(self):
+        missing = subprocess.CompletedProcess([], 1, 'HTTP/1.1 404 Not Found\nX-Test: value\n\n{"message":"Not Found"}')
+        with patch("scripts.check_build_source.shutil.which", return_value="gh"), patch("scripts.check_build_source.subprocess.run", return_value=missing):
+            self.assertEqual(github_json("repos/example/repo/releases/tags/v0.6.14"), (404, {"message": "Not Found"}))
+        broken = subprocess.CompletedProcess([], 1, "proxy unavailable")
+        with patch("scripts.check_build_source.shutil.which", return_value="gh"), patch("scripts.check_build_source.subprocess.run", return_value=broken):
+            with self.assertRaisesRegex(SourceError, "Could not verify"):
+                github_json("repos/example/repo/releases/tags/v0.6.14")
 
     def test_artifact_verifier_rejects_stale_source_and_changed_executable(self):
         snapshot = self.snapshot()
