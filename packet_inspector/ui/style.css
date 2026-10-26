@@ -294,6 +294,8 @@ code.session-id{font-family:Consolas,"Cascadia Mono",monospace;font-size:11px;wo
 #settings-dialog #compression-settings.is-automatic :is(h3,.zstd-level-control){opacity:.65}
 #settings-dialog #compression-settings.is-automatic .zstd-level-trigger:disabled{background:#e3e7ed;border-color:#cbd2dc;opacity:1}
 #settings-dialog .auto-zstd-row .runtime-toggle{grid-column:1 / -1}
+#settings-dialog .auto-zstd-row:is(:hover,:focus-within),
+#settings-dialog .settings-content:has(#compression-settings.is-automatic:hover) .auto-zstd-row{border-radius:8px;background:var(--soft);box-shadow:0 0 0 1px #b9c9ed}
 #settings-dialog .zstd-level-trigger{width:var(--settings-number-width);max-width:100%;justify-self:start;font-variant-numeric:tabular-nums;display:flex;align-items:center;justify-content:flex-end;gap:12px;text-align:right}
 #zstd-level-dialog{width:min(520px,calc(100vw - 32px));max-height:min(640px,calc(100vh - 40px));padding:20px;overflow:hidden}
 #zstd-level-dialog[open]{display:flex;flex-direction:column}
