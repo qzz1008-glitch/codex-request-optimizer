@@ -233,6 +233,60 @@ class GatedModel(BaseHTTPRequestHandler):
 
 
 class CleanupRelayTests(unittest.TestCase):
+    def test_request_record_eviction_does_not_interrupt_live_response(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            config = root / "config.toml"
+            config.write_text('model="test"', encoding="utf8")
+            upstream = ThreadingHTTPServer(("127.0.0.1", 0), GatedModel)
+            upstream.waiting, upstream.release = threading.Event(), threading.Event()
+            server = InspectorServer(("127.0.0.1", 0), root / "data", config,
+                                     "http://127.0.0.1:" + str(upstream.server_port))
+            server.settings.update(packet_size_protection_enabled=False, auto_detect_providers=False)
+            server.store.max_count = 1
+            results, errors = [], []
+            def post():
+                client = http.client.HTTPConnection("127.0.0.1", server.port, timeout=8)
+                try:
+                    path = server.endpoint.split(str(server.port), 1)[1] + "/responses"
+                    client.request("POST", path, make_body([message(1)]),
+                                   {"Content-Type": "application/json", "session_id": "evicted-inflight"})
+                    response = client.getresponse()
+                    results.append((response.status, response.read()))
+                except Exception as exc:
+                    errors.append(exc)
+                finally:
+                    client.close()
+            for service in (upstream, server):
+                threading.Thread(target=service.serve_forever, daemon=True).start()
+            request = threading.Thread(target=post)
+            request.start()
+            try:
+                self.assertTrue(upstream.waiting.wait(4))
+                packet = server.store.list()[0]
+                self.assertIn(packet["state"], {"captured", "streaming"})
+                recent = server.store.add({"method": "POST", "thread_id": "newer"})
+                server.store.update(recent, state="complete", status=200)
+                with self.assertRaises(KeyError):
+                    server.store.get(packet["id"])
+                upstream.release.set()
+                request.join(timeout=5)
+                self.assertFalse(request.is_alive())
+                self.assertEqual(errors, [])
+                self.assertEqual(results, [(200, complete())])
+                deadline = time.monotonic() + 2
+                while server.active_requests and time.monotonic() < deadline:
+                    time.sleep(.01)
+                self.assertEqual(server.active_requests, 0)
+                self.assertEqual(server.capture_errors, 0)
+                self.assertEqual([p["id"] for p in server.store.list()], [recent])
+            finally:
+                upstream.release.set()
+                request.join(timeout=5)
+                for service in (server, upstream):
+                    service.shutdown()
+                    service.server_close()
+
     def test_mapping_stays_protected_until_original_http_response_finishes(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)

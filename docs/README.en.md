@@ -152,6 +152,8 @@ Token usage is captured directly from successful upstream responses, independent
 
 Request records and processing results are stored in **SQLite**. Sensitive authentication headers are forwarded without saving their values in captured records. Browsing and JSON downloads use sanitized copies.
 
+When request records reach the storage size or count limit, the oldest records by request creation time are removed regardless of request state. Removing a captured record does not interrupt its ongoing relay request, and completion does not recreate that record. On startup, unfinished records left by the retired capture component are marked as interrupted.
+
 ### Desktop and background service
 
 | Technology | Purpose |
