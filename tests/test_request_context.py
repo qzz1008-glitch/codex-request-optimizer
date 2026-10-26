@@ -4,11 +4,45 @@ import unittest
 from packet_inspector.analyzer import inspect_request
 from packet_inspector.request_context import (
     IMAGE_ANALYST_PREFIXES, NEXT_MESSAGE_PREFIX, TITLE_REQUEST_PREFIX,
-    local_image_path, request_image_paths, request_session_context, temporary_kind_from_metadata, temporary_request_kind,
+    is_delegation_notice, local_image_path, request_image_paths, request_session_context, temporary_kind_from_metadata, temporary_request_kind,
 )
 
 
 class RequestContextTests(unittest.TestCase):
+    def delegation_notice(self):
+        return {"type": "function_call_output", "id": "fco_00000000-0000-0000-0000-000000000002",
+                "output": "<codex_delegation>\n  <source_thread_id>00000000-0000-0000-0000-000000000001</source_thread_id>\n"
+                          "  <input>Keep the <instruction>original content & ordering</instruction>.\n已完成交接。</input>\n</codex_delegation>"}
+
+    def test_standalone_delegation_shape_is_recognized_without_parsing_its_instructions(self):
+        notice = self.delegation_notice()
+        self.assertTrue(is_delegation_notice(notice))
+        self.assertTrue(is_delegation_notice({**notice, "output": "\n" + notice["output"] + "\n", "future_metadata": {"x": 1}}))
+
+    def test_real_call_ids_and_unrecognized_outputs_are_not_exempted(self):
+        notice = self.delegation_notice()
+        cases = [{**notice, "call_id": value} for value in ("real-call", None, "")]
+        cases += [{**notice, "id": value} for value in (None, "fco_", "ordinary-item")]
+        cases += [{**notice, "type": "custom_tool_call_output"},
+                  {key: value for key, value in notice.items() if key != "id"}]
+        cases += [{**notice, "output": value} for value in (
+            "ordinary tool result", "quoted " + notice["output"], notice["output"] + " unrelated trailing data",
+            notice["output"].replace("</codex_delegation>", ""),
+            notice["output"].replace("00000000-0000-0000-0000-000000000001", "unconfirmed"),
+            {"text": notice["output"]}, None)]
+        for value in cases:
+            with self.subTest(value=value):
+                self.assertFalse(is_delegation_notice(value))
+
+    def test_notification_items_do_not_inflate_tool_pairing_counts(self):
+        body = {"input": [self.delegation_notice(),
+                          {"type": "function_call", "call_id": "real-call", "name": "example", "arguments": "{}"},
+                          {"type": "function_call_output", "call_id": "real-call", "output": "ok"}]}
+        metadata, _ = inspect_request(json.dumps(body).encode(), {}, "/responses")
+        self.assertEqual(metadata["pairing"], {"calls": 1, "outputs": 1, "missing_outputs": 0, "orphan_outputs": 0})
+        metadata, _ = inspect_request(json.dumps({"input": [{**self.delegation_notice(), "output": "ordinary result"}]}).encode(), {}, "/responses")
+        self.assertEqual(metadata["pairing"]["orphan_outputs"], 1)
+
     def test_specific_purpose_wins_over_generic_subagent_metadata(self):
         for meta, expected in (({"session_kind": "subagent", "request_kind": "image_analysis"}, "image_analysis"),
                                ({"session_kind": "subagent", "input_items": [

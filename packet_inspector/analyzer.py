@@ -8,7 +8,7 @@ import json
 import re
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-from .request_context import request_image_paths, request_session_context, temporary_request_kind
+from .request_context import is_delegation_notice, request_image_paths, request_session_context, temporary_request_kind
 
 MAX_BODY = 128 * 1024 * 1024
 CLASSIFICATION_VERSION = 2
@@ -254,7 +254,7 @@ def summarize(decoded: bytes, value, index: JsonBytes):
             catalog_hashes[hashlib.sha256(encode(item.get("tools"))).hexdigest()] += 1
         if kind in {"function_call", "custom_tool_call"}:
             calls[item.get("call_id")] += 1
-        if kind in {"function_call_output", "custom_tool_call_output"}:
+        if kind in {"function_call_output", "custom_tool_call_output"} and not is_delegation_notice(item):
             outputs[item.get("call_id")] += 1
         items.append({"index": i, "path": path, "kind": kind, "bytes": size,
                       "name": clean_text(str(item.get("name", ""))), "label": item_label(item),
