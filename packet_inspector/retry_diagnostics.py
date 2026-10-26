@@ -10,17 +10,17 @@ import threading
 import time
 import uuid
 
-from .capacity_retry import EVENT_BOUNDARY, MAX_PROBE_BYTES, capacity_error, event_shape, notify
+from .capacity_retry import (EVENT_BOUNDARY, MAX_PROBE_BYTES, TERMINAL_EVENTS as TERMINALS,
+                             capacity_error, event_shape, notify, stream_event_class)
 from .maintenance import SQLiteReclaimer
 
 RETENTION_DAYS = 30
 MAX_RECORDS = 20000
 MAX_BYTES = 32 * 1024 * 1024
 EVENT_FIELDS = {"attempt", "retry", "reason", "phase", "status", "content_type", "content_encoding",
-                "event_type", "error_code", "error_type", "capacity", "probe_bytes", "delay_ms", "delay_source",
+                "event_type", "event_class", "error_code", "error_type", "capacity", "probe_bytes", "delay_ms", "delay_source",
                 "item_type", "summary_items", "content_items", "has_encrypted_content", "upstream_request_id",
                 "budget_ms", "interval_ms", "remaining_ms", "timeout_ms"}
-TERMINALS = {"response.completed", "response.failed", "response.incomplete", "error"}
 IDENTIFIER = re.compile(r"[A-Za-z0-9_.:/+-]{1,160}\Z")
 TYPE_FIELD = re.compile(rb'"type"\s*:\s*"([a-z_.]+)"')
 
@@ -264,6 +264,7 @@ class ResponseObservation:
         kind = headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
         self.mode = "sse" if kind == "text/event-stream" else "json" if kind == "application/json" else None
         self.buffer, self.dropping, self.output_seen = bytearray(), False, False
+        self.unknown_seen = False
         self.warnings = set()
         self.stopped = False
         encoding = headers.get("Content-Encoding", "identity").strip().lower()
@@ -302,9 +303,13 @@ class ResponseObservation:
         elif not event_type and isinstance(payload.get("error"), dict):
             self.trace.record("terminal", event_type="error", capacity=capacity_error(payload, include_output=True),
                               error_code=payload["error"].get("code"))
-        elif event_type and event_type not in {"response.created", "response.in_progress", "response.queued", "ping", "keepalive"} and not self.output_seen:
+        event_class = stream_event_class(payload)
+        if event_class == "output" and not self.output_seen:
             self.output_seen = True
-            self.trace.record("first_output", event_type=event_type, **event_shape(payload))
+            self.trace.record("first_output", event_type=event_type, event_class=event_class, **event_shape(payload))
+        elif event_class == "unknown" and not self.unknown_seen:
+            self.unknown_seen = True
+            self.trace.record("unclassified_event", event_type=event_type, event_class=event_class)
 
     def feed(self, chunk):
         if self.stopped:
