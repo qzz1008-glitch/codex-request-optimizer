@@ -21,6 +21,7 @@ from .analyzer import JsonBytes, MAX_BODY, decode_body, encode, thread_identity
 from .transport import DEFAULT_ZSTD_LEVEL, PreparedRequest, prepare_request_info, prepare_zstd
 from .maintenance import SQLiteReclaimer
 from .locking import file_lock
+from .request_context import is_delegation_notice
 
 
 CHECKPOINT_PROMPT = """You are performing a CONTEXT CHECKPOINT COMPACTION. Create a handoff summary for another LLM that will resume the task.
@@ -73,6 +74,8 @@ def user_text_parts(item):
 
 
 def protected(item):
+    if is_delegation_notice(item):
+        return True
     if item.get("role") in {"system", "developer"} or item.get("type") in CATALOG_TYPES | {"compaction", "context_compaction"}:
         return True
     if item.get("role") != "user":
@@ -141,9 +144,10 @@ def rebuild_prefix(items, summary, max_user_tokens=RETAINED_USER_TOKENS):
 def safe_cuts(items):
     """Only compact closed tool groups; always leave the last item/group intact."""
     seen_calls, last_items = set(), {}
+    notices = {index for index, item in enumerate(items) if is_delegation_notice(item)}
     for index, item in enumerate(items):
         kind = item.get("type", "message")
-        if kind in CALL_TYPES | OUTPUT_TYPES:
+        if kind in CALL_TYPES | OUTPUT_TYPES and index not in notices:
             call_id = item.get("call_id") or item.get("id")
             if not isinstance(call_id, str) or not call_id:
                 raise OverflowFailure("overflow_tool_pairing", "工具调用缺少标识，无法安全切分压缩上下文。")
@@ -157,7 +161,7 @@ def safe_cuts(items):
         kind = item.get("type", "message")
         if kind in CALL_TYPES:
             pending.add(item.get("call_id") or item.get("id"))
-        elif kind in OUTPUT_TYPES:
+        elif kind in OUTPUT_TYPES and index not in notices:
             call_id = item.get("call_id") or item.get("id")
             # notify can append results after the primary result and other turns.
             # Close the whole group only at its last result in this request.
