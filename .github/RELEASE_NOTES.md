@@ -1,6 +1,6 @@
 ## 简体中文
 
-**平台：Windows x64（64 位）。**
+适用于 Windows x64（64 位）。
 
 新增会话 Token 趋势视图，优化桌面顶栏与设置布局，并修复超限压缩对多次工具结果的处理。
 
@@ -15,7 +15,7 @@
 
 ## English
 
-**Platform: Windows x64 (64-bit).**
+For Windows x64 (64-bit).
 
 This release adds session token trends, refines the desktop header and settings layout, and fixes over-limit compaction of tool calls with multiple results.
 

@@ -2,9 +2,9 @@
 
 [简体中文](https://github.com/qzz1008-glitch/codex-request-optimizer/blob/main/README.md) · **English**
 
-A tool for **Windows x64 (64-bit)** that analyzes and optimizes Codex requests. Browse requests, token usage, and upload sizes by session, with lossless transport compression, request size protection, image handling, and automatic retries when a model is at capacity.
+A tool for Windows x64 (64-bit) that analyzes and optimizes Codex requests. Browse requests, token usage, and upload sizes by session, with lossless transport compression, request size protection, image handling, and automatic retries when a model is at capacity.
 
-**[⬇️ Download for Windows x64](https://github.com/qzz1008-glitch/codex-request-optimizer/releases/latest)** · **[📖 User guide (Chinese)](https://github.com/qzz1008-glitch/codex-request-optimizer/blob/main/docs/usage.md)**
+**[⬇️ Download](https://github.com/qzz1008-glitch/codex-request-optimizer/releases)** · **[📖 User guide (Chinese)](https://github.com/qzz1008-glitch/codex-request-optimizer/blob/main/docs/usage.md)**
 
 ## ✨ Features
 
@@ -64,7 +64,7 @@ You can choose a custom image directory. Reload the Codex client after changing 
 
 ### Download and setup
 
-1. Download `CodexPacketInspector.exe` from **[Releases](https://github.com/qzz1008-glitch/codex-request-optimizer/releases/latest)**.
+1. Download `CodexPacketInspector.exe` from **[Releases](https://github.com/qzz1008-glitch/codex-request-optimizer/releases)**.
 2. Double-click the EXE and follow the prompts to install and connect it.
 3. Adjust context settings and enable the protection, retry, and image options you need.
 4. Restart your Codex client after connecting for the first time or changing the entry port.

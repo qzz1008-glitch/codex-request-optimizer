@@ -75,4 +75,4 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          gh release create "$RELEASE_TAG" release/publish/CodexPacketInspector.exe release/publish/README.md release/publish/LICENSE release/publish/THIRD_PARTY_NOTICES.txt --verify-tag --title "Codex Request Optimizer $RELEASE_TAG - Windows x64" --notes-file .github/RELEASE_NOTES.md
+          gh release create "$RELEASE_TAG" release/publish/CodexPacketInspector.exe release/publish/README.md release/publish/LICENSE release/publish/THIRD_PARTY_NOTICES.txt --verify-tag --title "Codex Request Optimizer $RELEASE_TAG" --notes-file .github/RELEASE_NOTES.md

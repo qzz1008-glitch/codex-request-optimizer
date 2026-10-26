@@ -102,7 +102,7 @@ git commit -m "Describe the completed change"
 
 修改 README 的功能、使用或实现说明时，同时更新 `README.md` 和 `docs/README.en.md`，保持章节与信息一致。用户使用步骤放在 `docs/usage.md`，开发和构建约定放在本文件，发布摘要维护在 `.github/RELEASE_NOTES.md`；文档以最新已集成代码为准，不把尚未完成的任务写成已提供功能。
 
-当前公开构建面向 Windows x64（64 位）。Release 标题及两版 README 的开头和下载入口明确标注平台；公开文件名保持固定白名单，兼容现有更新器。每次发布都将 `.github/RELEASE_NOTES.md` 更新为内容一致的简体中文和英文说明，分别写明平台、此次变化和升级方式，再由发布工作流使用该文件创建 Release。
+当前公开构建面向 Windows x64（64 位），在两版 README 及更新说明正文中提及即可，不在产品名、Release 标题或下载入口突出平台。公开文件名保持固定白名单，兼容现有更新器。每次发布都将 `.github/RELEASE_NOTES.md` 更新为内容一致的简体中文和英文说明，分别写明平台、此次变化和升级方式，再由发布工作流使用该文件创建 Release。
 
 ## 所有 agent 共用的构建来源
 
