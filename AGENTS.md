@@ -13,6 +13,7 @@
 # 双语 README
 
 - 修改 README 的功能、使用或实现说明时，同步维护 `README.md` 和 `docs/README.en.md`，保持两版章节与信息一致，不把英文版保留为内容不全的简版。
+- 两版 README 的下载及版本链接固定指向 `https://github.com/qzz1008-glitch/codex-request-optimizer/releases`，不写具体版本号，也不使用 `/releases/latest` 自动跳转。
 
 # 发布平台与双语更新说明
 

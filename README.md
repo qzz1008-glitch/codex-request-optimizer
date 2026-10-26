@@ -6,7 +6,7 @@
 
 一款运行在 **Windows x64（64 位）** 上的 Codex 请求分析与优化工具。按会话查看请求、Token 用量和上传大小，提供无损传输压缩、请求包大小保护、图片处理和模型容量不足重试。
 
-**[⬇️ 下载 Windows x64 版](https://github.com/qzz1008-glitch/codex-request-optimizer/releases/latest)** · **[📖 使用指南](https://github.com/qzz1008-glitch/codex-request-optimizer/blob/main/docs/usage.md)**
+**[⬇️ 下载 Windows x64 版](https://github.com/qzz1008-glitch/codex-request-optimizer/releases)** · **[📖 使用指南](https://github.com/qzz1008-glitch/codex-request-optimizer/blob/main/docs/usage.md)**
 
 ## ✨ 主要功能
 
@@ -66,7 +66,7 @@
 
 ### 下载安装
 
-1. 前往 **[Releases](https://github.com/qzz1008-glitch/codex-request-optimizer/releases/latest)** 下载 `CodexPacketInspector.exe`。
+1. 前往 **[Releases](https://github.com/qzz1008-glitch/codex-request-optimizer/releases)** 下载 `CodexPacketInspector.exe`。
 2. 双击运行，按界面提示完成安装与接入。
 3. 在设置中调整上下文参数，并启用需要的保护、重试和图片功能。
 4. 首次接入或修改入口端口后，重启正在使用的 Codex 客户端。
