@@ -573,7 +573,9 @@ def main(argv=None):
         atomic_json(args.data_dir / "runtime.json", {"pid": os.getpid(), "port": server.port,
                     "version": worker_info(args.data_dir, identity)["version"], "router_version": ROUTER_VERSION})
         server.start_monitor()
-        if args.tray and os.name == "nt":
+        if args.tray and os.name == "nt" and worker_info(args.data_dir, identity).get("desktop_tray"):
+            control_worker(args.data_dir, identity, "desktop_refresh")
+        elif args.tray and os.name == "nt":
             from packet_inspector.tray import NativeTray
             from packet_inspector.exit_flow import request_exit
             def open_window():

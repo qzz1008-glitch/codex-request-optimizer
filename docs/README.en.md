@@ -87,7 +87,7 @@ Use Save at the bottom of Settings to apply changes and view the result of each 
 
 ### Online updates
 
-Check for updates and upgrade from Settings. The application verifies the download, updates the desktop window and background service, and preserves existing records and settings.
+Check for updates and upgrade from Settings. The application verifies the download, updates the desktop window and background service, and preserves existing records and settings. Upgrades also refresh the tray and this application's shortcuts, preserve the login startup setting, and reclaim expired application copies.
 
 During a normal update, new requests go to the new service while the old service finishes requests already in progress.
 

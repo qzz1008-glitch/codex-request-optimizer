@@ -9,6 +9,44 @@ import threading
 from .app_icon import APP_ICON
 
 
+def close_entry_tray(pid, executable):
+    """Close only our old entry's tray thread; its HTTP listener keeps running."""
+    if os.name != "nt" or type(pid) is not int or pid <= 0 or pid == os.getpid():
+        return False
+    user = ctypes.WinDLL("user32", use_last_error=True)
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    user.FindWindowW.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR]
+    user.FindWindowW.restype = wintypes.HWND
+    user.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+    user.PostMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+    user.PostMessageW.restype = wintypes.BOOL
+    kernel.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel.OpenProcess.restype = wintypes.HANDLE
+    kernel.QueryFullProcessImageNameW.argtypes = [wintypes.HANDLE, wintypes.DWORD, wintypes.LPWSTR,
+                                               ctypes.POINTER(wintypes.DWORD)]
+    kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+    hwnd = user.FindWindowW("CodexPacketInspectorTray-" + str(pid), None)
+    if not hwnd:
+        return False
+    owner = wintypes.DWORD()
+    user.GetWindowThreadProcessId(hwnd, ctypes.byref(owner))
+    if owner.value != pid:
+        return False
+    process = kernel.OpenProcess(0x1000, False, pid)
+    if not process:
+        return False
+    try:
+        from pathlib import Path
+        path, size = ctypes.create_unicode_buffer(32768), wintypes.DWORD(32768)
+        if not kernel.QueryFullProcessImageNameW(process, 0, path, ctypes.byref(size)):
+            return False
+        if Path(path.value).resolve() != Path(executable).resolve():
+            return False
+    finally:
+        kernel.CloseHandle(process)
+    return bool(user.PostMessageW(hwnd, 0x10, 0, 0))  # WM_CLOSE, never a process stop.
+
+
 class NativeTray:
     def __init__(self, open_window, exit_app):
         self.open_window, self.exit_app = open_window, exit_app

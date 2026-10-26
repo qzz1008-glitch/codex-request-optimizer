@@ -63,13 +63,20 @@ class Upgrade:
         self.candidate = secrets.token_hex(16)
         atomic_json(self.data_dir / "router-workers" / (self.candidate + ".json"),
                     {"id": self.candidate, "port": free_port(), "token": secrets.token_urlsafe(32),
-                     "executable": str(executable), "version": version})
+                     "executable": str(executable), "version": version, "desktop_tray": os.name == "nt"})
         self.candidate_process = start_worker(self.data_dir, self.config, self.candidate, self.port)
         self._wait_worker(self.candidate)
 
     def _stop_candidate(self):
         if not self.candidate:
             return
+        state = self.data_dir / "router-state.json"
+        if state.exists():
+            try:
+                if json.loads(state.read_text(encoding="utf8")).get("active") == self.candidate:
+                    return  # A failed rollback must never shut down the active relay.
+            except (OSError, ValueError, TypeError):
+                return  # Unclear ownership is not permission to stop a worker.
         try:
             control_worker(self.data_dir, self.candidate, "stop")
         except (OSError, ValueError, http.client.HTTPException):
@@ -242,6 +249,50 @@ class Upgrade:
             time.sleep(.1)
         raise RuntimeError("入口服务健康检查超时。")
 
+    def _refresh_integration(self, status):
+        self.progress("正在更新托盘、快捷方式和启动入口…")
+        control_worker(self.data_dir, self.candidate, "installation_refresh")
+        if status.get("desktop_refresh_supported"):
+            try:
+                control_worker(self.data_dir, self.candidate, "desktop_refresh")
+            except (OSError, ValueError, RuntimeError, http.client.HTTPException):
+                if not self._presentation_committed():
+                    raise
+                worker = healthy_worker(self.data_dir, self.candidate)
+                current = local_json(worker["port"], "/api/status", timeout=3)
+                if current.get("worker_id") != self.candidate or (worker.get("desktop_tray") and not current.get("desktop_tray")):
+                    raise RuntimeError("托盘交接状态待确认，已保留当前中转。") from None
+
+    def _presentation_committed(self):
+        try:
+            return worker_info(self.data_dir, self.candidate).get("presentation_committed") is True
+        except (OSError, ValueError, KeyError, TypeError):
+            return False
+
+    def _rollback_switch(self, identity, token):
+        data = {"worker_id": identity, "expected_active": self.candidate}
+        try:
+            return local_json(self.port, "/__router__/switch", data, token, timeout=40)
+        except (OSError, ValueError, http.client.HTTPException):
+            state = json.loads((self.data_dir / "router-state.json").read_text(encoding="utf8"))
+            if state["active"] != self.candidate:
+                raise
+            # A slow native refresh may outlive the old worker's drain grace.
+            runtime_path = self.data_dir / "router-workers" / (identity + ".runtime.json")
+            if not runtime_path.exists() or process_alive(json.loads(runtime_path.read_text(encoding="utf8")).get("pid")):
+                raise
+            process = start_worker(self.data_dir, self.config, identity, self.port)
+            deadline = time.monotonic() + 20
+            while time.monotonic() < deadline:
+                if process.poll() is not None:
+                    raise RuntimeError("旧后台未能恢复，已保留当前中转。") from None
+                try:
+                    healthy_worker(self.data_dir, identity)
+                    return local_json(self.port, "/__router__/switch", data, token, timeout=40)
+                except (OSError, ValueError, http.client.HTTPException):
+                    time.sleep(.1)
+            raise RuntimeError("旧后台恢复超时，已保留当前中转。") from None
+
     def _migrate(self, entry_payload, legacy):
         processes = self._legacy_processes() if legacy else []
         had_window = any(not item["background"] for item in processes)
@@ -294,7 +345,7 @@ class Upgrade:
                 raise RuntimeError("接入配置验证失败。")
             if legacy:
                 control_worker(self.data_dir, self.candidate, "recover", owners=["relay"])
-            control_worker(self.data_dir, self.candidate, "installation_refresh")
+            self._refresh_integration(status)
             if had_window:
                 self._open_window()
             return backup
@@ -391,8 +442,10 @@ class Upgrade:
                     status = self._wait_entry(PROTOCOL, seconds=8)
                     if status.get("worker_id") != self.candidate or status.get("provider_sync_error"):
                         raise ValueError("切换后验证失败。")
+                    self._refresh_integration(status)
                 except Exception:
-                    local_json(self.port, "/__router__/switch", {"worker_id": old, "expected_active": self.candidate}, state["token"], timeout=40)
+                    if not self._presentation_committed():
+                        self._rollback_switch(old, state["token"])
                     raise
             else:
                 backup = self._migrate(entry, legacy)
@@ -413,6 +466,18 @@ class Upgrade:
             atomic_json(self.data_dir / "upgrade-result.json", {"state": "running", "started": time.time()})
             try:
                 result = self._run()
+                runtime_path = self.data_dir / "runtime.json"
+                if runtime_path.exists():
+                    try:
+                        runtime = json.loads(runtime_path.read_text(encoding="utf8"))
+                        if not isinstance(runtime, dict):
+                            raise ValueError("invalid entry runtime")
+                        if runtime.get("port") == self.port:
+                            atomic_json(runtime_path, {**runtime, "version": result["version"], "worker_id": self.candidate})
+                    except (OSError, ValueError, TypeError):
+                        result["runtime_refresh_warning"] = True
+                from .upgrade_cleanup import cleanup_versions
+                result["cleanup"] = cleanup_versions(self.data_dir)
                 atomic_json(self.data_dir / "upgrade-result.json", {**result, "finished": time.time()})
                 return result
             except Exception as exc:

@@ -35,6 +35,9 @@ class UpgradeTests(unittest.TestCase):
         self.engine._start_candidate = Mock(side_effect=lambda *_args: setattr(self.engine, "candidate", "2" * 32))
         self.engine._stop_candidate = Mock()
         self.engine._application_windows = Mock(return_value=[])
+        control = patch("packet_inspector.upgrade.control_worker")
+        self.control = control.start()
+        self.addCleanup(control.stop)
 
     def health(self, _port, path, data=None, *_args, **_kwargs):
         if path == "/health":
@@ -52,6 +55,64 @@ class UpgradeTests(unittest.TestCase):
         self.engine._start_candidate.assert_not_called()
         self.engine._stop_candidate.assert_not_called()
         self.assertEqual(json.loads((self.data / "upgrade-result.json").read_text(encoding="utf8"))["state"], "failed")
+
+    def test_routed_upgrade_refreshes_installation_then_commits_the_new_tray(self):
+        atomic_json(self.data / "router-state.json", {"active": "1" * 32, "token": "fixture-control"})
+        self.engine._wait_entry = Mock(return_value={"worker_id": "2" * 32, "desktop_refresh_supported": True})
+        with patch("packet_inspector.upgrade.local_json", side_effect=self.health):
+            self.engine.run()
+        self.assertEqual([call.args[2] for call in self.control.call_args_list],
+                         ["installation_refresh", "desktop_refresh"])
+        self.engine._stop_candidate.assert_not_called()
+
+    def test_failed_native_refresh_rolls_back_before_retiring_the_old_tray(self):
+        atomic_json(self.data / "router-state.json", {"active": "1" * 32, "token": "fixture-control"})
+        self.engine._wait_entry = Mock(return_value={"worker_id": "2" * 32, "desktop_refresh_supported": True})
+        self.control.side_effect = lambda _data, _worker, action: (_ for _ in ()).throw(RuntimeError("tray failed")) if action == "desktop_refresh" else None
+        with patch("packet_inspector.upgrade.local_json", side_effect=self.health) as api:
+            with self.assertRaisesRegex(RuntimeError, "tray failed"):
+                self.engine.run()
+        switches = [call.args[2] for call in api.call_args_list if call.args[1] == "/__router__/switch"]
+        self.assertEqual(switches[-1], {"worker_id": "1" * 32, "expected_active": "2" * 32})
+        self.engine._stop_candidate.assert_called_once()
+
+    def test_active_candidate_is_never_stopped_when_rollback_fails(self):
+        self.engine.candidate = "2" * 32
+        atomic_json(self.data / "router-state.json", {"active": self.engine.candidate})
+        self.engine.candidate_process = Mock()
+        Upgrade._stop_candidate(self.engine)
+        self.control.assert_not_called()
+        self.engine.candidate_process.wait.assert_not_called()
+
+    def test_lost_native_reply_confirms_the_new_owner_without_rolling_back(self):
+        self.engine.candidate = "2" * 32
+        descriptor = {"id": self.engine.candidate, "port": 49123, "desktop_tray": True, "presentation_committed": True}
+        atomic_json(self.data / "router-workers" / (self.engine.candidate + ".json"), descriptor)
+        self.control.side_effect = [None, TimeoutError("reply lost")]
+        with patch("packet_inspector.upgrade.healthy_worker", return_value=descriptor), \
+                patch("packet_inspector.upgrade.local_json", return_value={"worker_id": self.engine.candidate, "desktop_tray": True}):
+            self.engine._refresh_integration({"desktop_refresh_supported": True})
+
+    def test_retired_worker_can_be_restarted_before_rollback(self):
+        self.engine.candidate = "2" * 32
+        atomic_json(self.data / "router-state.json", {"active": self.engine.candidate})
+        atomic_json(self.data / "router-workers" / ("1" * 32 + ".runtime.json"), {"pid": 12345})
+        process = Mock()
+        process.poll.return_value = None
+        with patch("packet_inspector.upgrade.local_json", side_effect=[ValueError("old retired"), {"active": "1" * 32}]), \
+                patch("packet_inspector.upgrade.process_alive", return_value=False), \
+                patch("packet_inspector.upgrade.start_worker", return_value=process) as start, \
+                patch("packet_inspector.upgrade.healthy_worker"):
+            self.engine._rollback_switch("1" * 32, "test")
+        start.assert_called_once_with(self.data.resolve(), self.config.resolve(), "1" * 32, 47844)
+
+    def test_runtime_version_updates_without_replacing_the_entry_pid(self):
+        self.engine.candidate = "2" * 32
+        atomic_json(self.data / "runtime.json", {"pid": 12345, "port": 47844, "version": "0.6.7"})
+        self.engine._run = Mock(return_value={"state": "complete", "version": "9.0.0"})
+        self.engine.run()
+        runtime = json.loads((self.data / "runtime.json").read_text(encoding="utf8"))
+        self.assertEqual(runtime, {"pid": 12345, "port": 47844, "version": "9.0.0", "worker_id": "2" * 32})
 
     def test_unresponsive_but_occupied_entry_is_never_migrated(self):
         with patch("packet_inspector.upgrade.local_json", side_effect=TimeoutError), \
