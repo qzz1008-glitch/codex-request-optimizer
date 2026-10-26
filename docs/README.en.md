@@ -48,6 +48,8 @@ When an explicit model capacity error occurs, retry automatically according to y
 
 > Selected model is at capacity. Please try a different model.
 
+Request details show actual retry attempts, why retrying stopped, and the final outcome, with a downloadable retry log. Logs are retained separately from request bodies: retries and abnormal outcomes for up to 30 days; ordinary successful requests for 24 hours, limited to 2,000 records. Automatic cleanup also applies a 20,000-record and 32 MiB content budget. Logs contain only timestamps, settings, and structural events, without conversation text, tool content, or authentication data.
+
 ### 🖼️ Image request optimization
 
 Choose from **Native / Disabled / Optimized** image analysis modes. Native is the default.

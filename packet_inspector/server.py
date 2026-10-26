@@ -37,7 +37,8 @@ from .storage import Store
 from .transport import CompressionHistory, DEFAULT_ZSTD_LEVEL, prepare_request_info, validate_zstd_level
 from .installation import manage_installation
 from .startup import configure_startup, startup_supported
-from .capacity_retry import MAX_RETRIES, open_response
+from .capacity_retry import MAX_RETRIES, notify, open_response
+from .retry_diagnostics import RetryJournal, ResponseObservation
 from .usage_trigger import (UsageStream, raw_chunks, request_size as usage_trigger_size,
                             trigger_threshold, DEFAULT_BUDGET_BYTES, MIN_BUDGET_BYTES)
 from .overflow import CheckpointStream, OverflowCompactor, OverflowFailure
@@ -140,6 +141,7 @@ class InspectorServer(ThreadingHTTPServer):
         self.session_summaries = SessionSummaries(self.token_windows)
         self.store = Store(self.data_dir, self.settings["max_storage_mb"] * 1024 * 1024,
                            self.settings["max_packets"], capture_owner="relay:" + worker_id if worker_id else "relay")
+        self.retry_journal = RetryJournal(self.data_dir)
         if not worker_id:
             self.save_settings()
         ssl_context = ssl.create_default_context()
@@ -194,6 +196,8 @@ class InspectorServer(ThreadingHTTPServer):
             self.overflow.maintenance()
             self.updates.poll()
             self.store.reclaimer.run(self.overflow.busy)
+            self.retry_journal.prune()
+            self.retry_journal.reclaimer.run(self.overflow.busy)
         except Exception:
             self.maintenance_errors += 1
         return processed
@@ -366,6 +370,9 @@ class InspectorServer(ThreadingHTTPServer):
                 "capacity_retry_enabled": self.settings["capacity_retry_enabled"],
                 "capacity_retry_max_retries": self.settings["capacity_retry_max_retries"],
                 "capacity_retry_supported": True,
+                "capacity_retry_diagnostics_supported": True,
+                "capacity_retry_diagnostics_errors": self.retry_journal.errors,
+                "capacity_retry_diagnostics_last_error": self.retry_journal.last_error,
                 "image_isolation_enabled": self.settings["image_isolation_enabled"],
                 "image_analysis_mode": self.settings["image_analysis_mode"],
                 "image_isolation_supported": True, "image_tool": self.image_config.status(),
@@ -523,6 +530,15 @@ class Handler(BaseHTTPRequestHandler):
         one = lambda k, default="": query.get(k, [default])[0]
         if path == "/api/status" and self.command == "GET":
             self._json(200, self.server.status())
+        elif path == "/api/retry-diagnostics" and self.command == "GET":
+            self._json(200, {"records": self.server.retry_journal.list(
+                session_id=one("session_id"), packet_id=one("packet_id"), limit=int(one("limit", "50")),
+                before=float(one("before")) if one("before") else None)})
+        elif path.startswith("/api/retry-diagnostics/") and self.command == "GET":
+            record = self.server.retry_journal.get(path.rsplit("/", 1)[1])
+            headers = ({"Content-Disposition": 'attachment; filename="codex-retry-' + record["id"] + '.json"'}
+                       if one("download") == "1" else None)
+            self._json(200, record, headers)
         elif path == "/api/updates" and self.command == "GET":
             self._json(200, self.server.updates.status())
         elif path == "/api/updates" and self.command == "POST":
@@ -727,6 +743,9 @@ class Handler(BaseHTTPRequestHandler):
                 self._bytes(200, encode(exported), "application/json; charset=utf-8",
                             {"Content-Disposition": 'attachment; filename="codex-packet-' + packet_id + '.json"'})
             elif not action:
+                diagnostic = meta.get("capacity_retry_diagnostic")
+                if isinstance(diagnostic, dict):
+                    diagnostic["journal_available"] = self.server.retry_journal.available(diagnostic.get("id", ""))
                 self._json(200, meta)
             else:
                 self._json(404, {"error": "unknown operation"})
@@ -966,6 +985,19 @@ class Handler(BaseHTTPRequestHandler):
         retry_settings = self.server.settings
         capacity_retry = (retry_settings["capacity_retry_enabled"] and self.command == "POST"
                           and urlsplit(suffix).path.rstrip("/").endswith("/responses"))
+        response_path = urlsplit(suffix).path.rstrip("/")
+        diagnostic = None
+        if self.command == "POST" and (response_path.endswith("/responses") or response_path.endswith("/responses/compact")):
+            try:
+                diagnostic = self.server.retry_journal.begin(
+                    packet_id=packet_id, session_id=capture_meta.get("thread_id") or thread_identity(dict(self.headers), {}),
+                    endpoint="compact" if response_path.endswith("/compact") else "responses",
+                    enabled=retry_settings["capacity_retry_enabled"], eligible=response_path.endswith("/responses"),
+                    max_retries=retry_settings["capacity_retry_max_retries"],
+                    on_summary=lambda summary: update(capacity_retry_count=summary["retry_count"],
+                                                       capacity_retry_diagnostic=summary))
+            except Exception as exc:
+                self.server.retry_journal._error(exc)
         if capacity_retry or trigger_size is not None:
             headers = {key: value for key, value in headers.items() if key.lower() != "accept-encoding"}
             headers["Accept-Encoding"] = "identity"
@@ -974,6 +1006,9 @@ class Handler(BaseHTTPRequestHandler):
                           headers=headers, method=self.command)
         sent_headers = False
         received = 0
+        observation = None
+        relay_state, relay_error, diagnostic_error = "relay_error", "", ""
+        relay_phase = "upstream_open"
         try:
             try:
                 # A separate local upstream can transform the body again, so its
@@ -984,18 +1019,24 @@ class Handler(BaseHTTPRequestHandler):
                 opener = self.server.local_opener if local_upstream else self.server.opener
                 response = open_response(
                     opener, request, enabled=capacity_retry, max_retries=retry_settings["capacity_retry_max_retries"],
-                    on_retry=lambda attempt, delay: update(capacity_retry_count=attempt,
-                                                          capacity_retry_delay_ms=round(delay * 1000),
+                    on_retry=lambda attempt, delay: update(capacity_retry_delay_ms=round(delay * 1000),
                                                           capacity_retry_reason="server_overloaded"),
                     cancelled=self._client_disconnected,
-                    still_enabled=lambda: self.server.settings["capacity_retry_enabled"])
+                    still_enabled=lambda: self.server.settings["capacity_retry_enabled"],
+                    on_event=diagnostic.record if diagnostic else None)
             except HTTPError as exc:
                 response = exc
             with response:
                 status = response.status
+                if diagnostic:
+                    try:
+                        observation = ResponseObservation(diagnostic, response.headers)
+                    except Exception as exc:
+                        self.server.retry_journal._error(exc)
                 observe_usage = self.command == "POST" and urlsplit(suffix).path.rstrip("/").endswith("/responses")
                 usage_stream = UsageStream(response, update, rewrite=trigger_size is not None) if observe_usage else None
                 rewrite_response = usage_stream is not None and usage_stream.enabled and usage_stream.rewrite_usage
+                relay_phase = "downstream_headers"
                 update(status=status, state="streaming", response_type=response.headers.get("Content-Type", ""),
                        headers_ms=round((time.monotonic() - started) * 1000, 1))
                 self.send_response(status, response.reason)
@@ -1009,23 +1050,44 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_header("Connection", "close")
                 self.end_headers()
                 sent_headers = True
+                notify(diagnostic.record if diagnostic else None, "downstream_headers_sent", status=status)
                 if self.command != "HEAD":
+                    relay_phase = "upstream_read"
                     for chunk in usage_stream.chunks() if usage_stream is not None else raw_chunks(response):
+                        if observation:
+                            observation.feed(chunk)
+                        relay_phase = "downstream_write"
                         self.wfile.write(chunk)
                         self.wfile.flush()
+                        if not received:
+                            notify(diagnostic.record if diagnostic else None, "downstream_first_bytes_sent")
                         received += len(chunk)
-                update(state="complete", response_bytes=received,
-                       duration_ms=round((time.monotonic() - started) * 1000, 1))
-        except (BrokenPipeError, ConnectionResetError):
-            update(state="client_disconnected", response_bytes=received,
-                   duration_ms=round((time.monotonic() - started) * 1000, 1))
+                        relay_phase = "upstream_read"
+                relay_state = "complete"
+        except (BrokenPipeError, ConnectionResetError) as exc:
+            relay_state = "client_disconnected"
+            diagnostic_error = type(exc).__name__
         except Exception as exc:
-            update(state="relay_error", relay_error=type(exc).__name__, response_bytes=received,
-                   duration_ms=round((time.monotonic() - started) * 1000, 1))
+            relay_error = diagnostic_error = type(exc).__name__
             if not sent_headers:
                 self._json(502, {"error": {"code": "inspector_upstream_unreachable",
                             "message": "上游连接失败: " + type(exc).__name__}})
         finally:
+            try:
+                if observation:
+                    observation.finish()
+            except Exception as exc:
+                self.server.retry_journal._error(exc)
+            try:
+                if diagnostic:
+                    diagnostic.finish(relay_state, error_type=diagnostic_error,
+                                      error_phase=relay_phase if diagnostic_error else "",
+                                      sent_headers=sent_headers, response_bytes=received)
+            except Exception as exc:
+                self.server.retry_journal._error(exc)
+            fields = {"relay_error": relay_error} if relay_error else {}
+            update(state=relay_state, response_bytes=received,
+                   duration_ms=round((time.monotonic() - started) * 1000, 1), **fields)
             self.close_connection = True
 
     def _client_disconnected(self):
