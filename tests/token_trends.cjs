@@ -13,7 +13,7 @@ let checks=0;
 function test(name,fn){return Promise.resolve().then(fn).then(()=>{checks++;}).catch(error=>{error.message=name+': '+error.message;throw error;});}
 function view(services={}) {
  const result=Object.create(View.prototype);
- Object.assign(result,{active:true,loading:false,hydrating:false,packets:new Map(),native:new Map(),hidden:new Set(),hours:0,revision:null,lastFull:0,query:'',error:false,limited:false,
+ Object.assign(result,{active:true,loading:false,hydrating:false,packets:new Map(),native:new Map(),hours:0,revision:null,lastFull:0,query:'',error:false,limited:false,
   services:{api:async()=>[],status:()=>({storage:{revision:1}}),sessions:()=>[],peek:()=>null,isGeneration:context.isGeneration,...services},
   render(){},hydrate(){},scheduleRender(){}});
  return result;
@@ -36,7 +36,7 @@ function rendered(rows){
  ids.get('trend-charts').clientHeight=492;
  const buttons=[1,6,24,0].map(hours=>{const node=new Node('button');node.dataset.hours=String(hours);return node;});
  context.document={hidden:false,createDocumentFragment:()=>new Node('#fragment'),createElementNS:(_,tag)=>new Node(tag),
-  createTextNode:text=>{const node=new Node('#text');node.textContent=text;return node;},querySelectorAll:()=>buttons};
+  createTextNode:text=>{const node=new Node('#text');node.textContent=text;return node;},querySelectorAll:selector=>selector==='#trend-range button'?buttons:[]};
  context.$=id=>ids.get(id);context.t=text=>text;context.nf=new Intl.NumberFormat('en-US');context.uiI18n={language:'en'};
  context.el=(tag,cls='',text='')=>{const node=new Node(tag);node.attrs.class=cls;node.textContent=text;return node;};
  context.reconcileContent=(target,fragment)=>target.replaceChildren(fragment);
@@ -83,8 +83,8 @@ function dualRows(){return [
   const model=result.model();assert.equal(model.series.length,1);assert.equal(model.unknown,1);
   assert.deepEqual(Array.from(model.visible[0].points,p=>p.input),[30,null,null]);
   assert.equal(model.visible[0].points[2].events[0],'compact');
-  result.hidden.add('session-a');assert.equal(result.model().visible.length,0);
-  result.hidden.clear();result.query='missing';assert.equal(result.model().matched.length,0);
+  assert.equal(model.visible.length,model.matched.length);
+  result.query='missing';assert.equal(result.model().matched.length,0);
  });
  await test('full snapshot pages without duplicates, and deltas stop on overlap',async()=>{
   const rows=Array.from({length:303},(_,i)=>packet(i+1)),queries=[];let revision=1;
@@ -162,14 +162,17 @@ function dualRows(){return [
   token.svg.onkeydown({key:'Escape'});assert.equal(result.hover,null);assert.equal(result.pinned,false);
   for(const chart of result.charts){assert.equal(chart.tooltip.hidden,true);assert.equal(chartNodes(chart,'trend-focus-line').length,0);}
  });
- await test('a shared sidebar filters and restores both metrics together',()=>{
+ await test('a shared sidebar searches and highlights both metrics together',()=>{
   const {result,ids}=rendered([...dualRows(),packet(105,{thread_id:'session-b',created:now-10,upstream_usage:{input_tokens:900},outbound_wire_bytes:900000})]);
-  const list=ids.get('trend-series'),a=list.children.find(node=>node.dataset.renderKey==='trend-series:session-a');a.onclick();
-  for(const chart of result.charts)assert.ok(chart.points.every(point=>point.series.id==='session-b'));
+  const list=ids.get('trend-series'),a=list.children.find(node=>node.dataset.renderKey==='trend-series:session-a');
+  assert.equal(a.onclick,undefined);a.onpointerenter();
+  for(const chart of result.charts){const b=chart.svg.querySelectorAll('[data-series]').find(node=>node.dataset.series==='session-b');assert.ok(b.attrs.class.includes('dimmed'));}
+  a.onpointerleave();for(const chart of result.charts)assert.equal(new Set(chart.points.map(point=>point.series.id)).size,2);
   ids.get('trend-search').oninput({currentTarget:{value:'session-a'}});
+  for(const chart of result.charts)assert.ok(chart.points.every(point=>point.series.id==='session-a'));
+  ids.get('trend-search').oninput({currentTarget:{value:'missing'}});
   for(const chart of result.charts){assert.equal(chart.points.length,0);assert.equal(chart.empty.hidden,false);}
-  ids.get('trend-show-all').onclick();
-  assert.equal(result.hidden.size,0);assert.equal(result.query,'');
+  ids.get('trend-search').oninput({currentTarget:{value:''}});assert.equal(result.query,'');
   for(const chart of result.charts)assert.equal(new Set(chart.points.map(point=>point.series.id)).size,2);
  });
  await test('one metric can render before the other and accepts later real zero usage',()=>{
