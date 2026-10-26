@@ -35,6 +35,8 @@ function rendered(rows){
  for(const match of html.matchAll(/<(\w+)\b[^>]*\bid="([^"]+)"[^>]*>/g))ids.set(match[2],new Node(match[1]));
  ids.get('trend-charts').clientHeight=512;ids.get('trend-focus').clientHeight=512;
  ids.get('trend-time-axis').clientHeight=32;ids.get('trend-time-axis').top=480;
+ for(const id of ['trend-size-tooltip','trend-tooltip']){ids.get(id).offsetWidth=150;ids.get(id).offsetHeight=30;}
+ ids.get('trend-time-tooltip').offsetWidth=128;ids.get('trend-time-tooltip').offsetHeight=24;
  const buttons=[1,6,24,0].map(hours=>{const node=new Node('button');node.dataset.hours=String(hours);return node;});
  context.document={hidden:false,createDocumentFragment:()=>new Node('#fragment'),createElementNS:(_,tag)=>new Node(tag),
   createTextNode:text=>{const node=new Node('#text');node.textContent=text;return node;},querySelectorAll:selector=>selector==='#trend-range button'?buttons:[]};
@@ -173,23 +175,53 @@ function dualRows(){return [
   assert.equal(result.guide.attrs.viewBox,'0 0 900 632');assert.equal(result.timeAxis.attrs.viewBox,'0 0 900 32');
   result.charts[1].svg.onpointerleave();assert.equal(focusLines(result).length,0);
  });
- await test('linked hover preserves missing values without pinning or stale tooltips',()=>{
+ await test('hover splits time and both metrics into three matching callouts without fabricating missing values',()=>{
   const {result}=rendered(dualRows()),[size,token]=result.charts,missing=size.points[1];
   size.svg.onpointermove({clientX:missing.x,clientY:missing.y});
-  assert.equal(result.hover,missing.packet.id);assert.equal(size.tooltip.hidden,false);assert.equal(token.tooltip.hidden,true);
+  assert.equal(result.hover,missing.packet.id);assert.equal(size.tooltip.hidden,false);assert.equal(token.tooltip.hidden,false);
+  assert.equal(result.timeTooltip.hidden,false);assert.equal(result.timeTooltip.textContent,result.time(missing.packet.created,true));
   assert.equal(focusLines(result).length,1);
   assert.equal(chartNodes(token,'trend-focus-dot').length,0);assert.equal(size.tooltip.children.length,2);
-  assert.ok(nodeText(size.tooltip).includes('压缩包 ·'));assert.ok(nodeText(size.tooltip).includes('244.1 KiB'));
-  for(const text of ['输入 Token','实际上传','原始包',missing.packet.id])assert.ok(!nodeText(size.tooltip).includes(text));
+  assert.ok(nodeText(size.tooltip).includes('压缩包'));assert.ok(nodeText(size.tooltip).includes('244.1 KiB'));
+  assert.equal(token.tooltip.children[1].textContent,'—');assert.ok(nodeText(token.tooltip).includes('输入 Token'));
+  for(const text of ['输入 Token','实际上传','原始包',missing.packet.id,':'])assert.ok(!nodeText(size.tooltip).includes(text));
   for(const chart of result.charts){assert.equal(chart.svg.onclick,undefined);assert.equal(chart.svg.onkeydown,undefined);}
   assert.equal('pinned' in result,false);
   const next=token.points.at(-1);token.svg.onpointermove({clientX:next.x,clientY:next.y});
-  assert.equal(result.hover,id(103));assert.equal(token.tooltip.hidden,false);assert.equal(size.tooltip.hidden,true);
-  assert.equal(token.tooltip.children.length,2);assert.ok(nodeText(token.tooltip).replace(/\s+/g,' ').includes('输入 Token · 300'));
+  assert.equal(result.hover,id(103));assert.equal(token.tooltip.hidden,false);assert.equal(size.tooltip.hidden,false);
+  assert.equal(token.tooltip.children.length,2);assert.ok(nodeText(token.tooltip).replace(/\s+/g,' ').includes('输入 Token 300'));
+  assert.equal(result.timeTooltip.textContent,result.time(next.packet.created,true));assert.ok(nodeText(size.tooltip).includes('390.6 KiB'));
   assert.equal(chartNodes(size,'trend-focus-dot').length,1);
   token.svg.onpointerleave();assert.equal(result.hover,null);assert.equal(result.hoverChart,null);
   for(const chart of result.charts){assert.equal(chart.tooltip.hidden,true);assert.equal(chartNodes(chart,'trend-focus-line').length,0);}
   assert.equal(focusLines(result).length,0);
+  assert.equal(result.timeTooltip.hidden,true);
+ });
+ await test('metric callouts stay in their own panels and time stays on the axis at both timeline edges',()=>{
+  const {result,ids}=rendered([packet(401,{created:now-300,upstream_usage:{input_tokens:0},outbound_wire_bytes:0}),
+   packet(402,{created:now-.1,upstream_usage:{input_tokens:1000},outbound_wire_bytes:1000000})]);
+  ids.get('trend-chart').top=240;result.timeTooltip.offsetWidth=180;
+  for(const selected of [id(401),id(402)]){
+   result.hover=selected;result.renderFocus();
+   for(const chart of result.charts){
+    const left=parseFloat(chart.tooltip.style.left),top=parseFloat(chart.tooltip.style.top),rect=chart.svg.getBoundingClientRect();
+    assert.ok(left>=8&&left+chart.tooltip.offsetWidth<=result.tooltipHost.clientWidth-8);
+    assert.ok(top>=rect.top+6&&top+chart.tooltip.offsetHeight<=rect.top+rect.height-6);
+    const px=chart.points.find(point=>point.packet.id===selected).x;assert.equal(left>px,selected===id(401));
+   }
+   const left=parseFloat(result.timeTooltip.style.left),top=parseFloat(result.timeTooltip.style.top);
+   assert.ok(left>=8&&left+result.timeTooltip.offsetWidth<=result.tooltipHost.clientWidth-8);
+   assert.ok(top>=480&&top+result.timeTooltip.offsetHeight<=512);
+  }
+ });
+ await test('missing size is shown as missing while a real zero input remains visible',()=>{
+  const {result}=rendered([packet(403,{upstream_usage:{input_tokens:0}})]);
+  result.hover=id(403);result.renderFocus();const [size,token]=result.charts;
+  assert.equal(size.tooltip.hidden,false);assert.equal(size.tooltip.children[1].textContent,'—');
+  assert.equal(chartNodes(size,'trend-focus-dot').length,0);assert.equal(token.tooltip.children[1].textContent,'0');
+  assert.equal(result.timeTooltip.hidden,false);assert.equal(chartNodes(token,'trend-focus-dot').length,1);
+  result.packets.set(id(403),{...result.packets.get(id(403)),outbound_wire_bytes:0});result.render();
+  assert.equal(size.tooltip.children[1].textContent,'0 B');assert.equal(chartNodes(size,'trend-focus-dot').length,1);
  });
  await test('a shared sidebar searches and highlights both metrics together',()=>{
   const {result,ids}=rendered([...dualRows(),packet(105,{thread_id:'session-b',created:now-10,upstream_usage:{input_tokens:900},outbound_wire_bytes:900000})]);
@@ -230,8 +262,10 @@ function dualRows(){return [
   result.emphasis='session-a';result.setActive(false);
   assert.equal(result.hover,null);assert.equal(result.hoverChart,null);assert.equal(result.emphasis,null);
   for(const chart of result.charts)assert.equal(chart.tooltip.hidden,true);
+  assert.equal(result.timeTooltip.hidden,true);
   result.refresh=()=>{};result.setActive(true);
   for(const chart of result.charts){assert.equal(chart.tooltip.hidden,true);assert.equal(chartNodes(chart,'trend-focus-line').length,0);}
+  assert.equal(result.timeTooltip.hidden,true);
  });
  await test('live refresh never publishes bright background curves while a point is hovered',()=>{
   const {result}=rendered([...dualRows(),packet(201,{thread_id:'session-b',created:now-5,upstream_usage:{input_tokens:500},outbound_wire_bytes:500000})]);
