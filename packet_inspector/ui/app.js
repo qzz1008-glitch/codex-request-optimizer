@@ -2133,14 +2133,15 @@ class TokenTrendView {
   render() {
     if(!this.active)return;
     const model=this.model();this.series=model.series;this.renderLegend(model);
+    const emphasis=this.emphasis||(this.hover?model.visible.find(group=>group.points.some(point=>point.packet.id===this.hover&&(point.input!==null||point.size!==null)))?.id:null);
     for(const button of document.querySelectorAll("#trend-range button"))button.setAttribute("aria-pressed",String(Number(button.dataset.hours)===this.hours));
     const values=model.visible.flatMap(group=>group.points);
     let start=this.hours?model.now-this.hours*3600:Math.min(...values.map(point=>point.packet.created),model.now-60),end=this.hours?model.now:Math.max(...values.map(point=>point.packet.created),model.now);
     if(end-start<60){start-=30;end+=30;}
-    for(const chart of this.charts)this.renderChart(chart,model,start,end);
+    for(const chart of this.charts)this.renderChart(chart,model,start,end,emphasis);
     this.renderFocus();
   }
-  renderChart(chart,model,start,end) {
+  renderChart(chart,model,start,end,emphasis) {
     const width=chart.plot.clientWidth,height=chart.plot.clientHeight;
     if(!width||!height){chart.points=[];chart.bounds=null;return;}
     const left=80,right=28,top=36,bottom=36,plotWidth=Math.max(1,width-left-right),plotHeight=Math.max(1,height-top-bottom);
@@ -2160,7 +2161,8 @@ class TokenTrendView {
     }
     chart.points=[];
     for(const group of model.visible) {
-      const layer=this.svgNode("g",{class:"trend-series-line","data-series":group.id}),events=this.svgNode("g");let path="",pen=false;
+      // Set brightness before attachment: layout reads can otherwise start a fade from full opacity.
+      const layer=this.svgNode("g",{class:"trend-series-line"+(emphasis&&group.id!==emphasis?" dimmed":""),"data-series":group.id}),events=this.svgNode("g");let path="",pen=false;
       for(const source of group.points) {
         const value=source[chart.field];if(value===null)continue;
         const point={...source,value,series:group,x:x(source.packet.created),y:y(value)};
