@@ -985,7 +985,7 @@ function renderCompressionMode() {
   $("request-compression").title=$("compression-hint").textContent;
   $("compression-confirm-dialog").setAttribute("aria-busy",String(compressionSaving));
   for(const id of ["compression-confirm-cancel","compression-confirm-apply"])$(id).disabled=compressionSaving;
-  setText($("compression-confirm-apply"),t(compressionTarget==="disconnected"?(compressionSaving?"正在取消接入…":"确认取消接入"):(compressionSaving?"正在切换…":"确认切换")));
+  setText($("compression-confirm-apply"),t(compressionTarget==="disconnected"?(compressionSaving?"正在取消接入…":"确认断开"):(compressionSaving?"正在切换…":"确认断开")));
   if(!connected&&!compressionSaving&&$("compression-confirm-dialog").open)cancelCompressionChange();
 }
 function requestCompressionChange(mode) {
