@@ -2160,9 +2160,6 @@ class TokenTrendView {
     this.focusLayer=this.svgNode("g",{"pointer-events":"none"});root.append(this.focusLayer);this.svg.replaceChildren(root);
     const empty=$("trend-empty");empty.hidden=known.length>0||this.points.length>0;
     empty.textContent=t(this.loading&&!this.packets.size?"正在加载趋势…":this.error&&!this.packets.size?"暂时无法加载趋势，请稍后重试":!model.matched.length?(this.query?"没有匹配的会话":"此时间范围内没有请求"):!model.visible.length?"曲线已隐藏，点击“全部显示”恢复":"暂无可确认的 Token 用量");
-    const missing=values.filter(point=>!point.packet.is_compaction&&point.input===null).length;
-    $("trend-summary").textContent=nf.format(model.visible.length)+t(" 个会话")+" · "+nf.format(known.length)+t(" 个用量点")+(missing?" · "+nf.format(missing)+t(" 条用量缺失或等待确认"):"")+(model.unknown?" · "+nf.format(model.unknown)+t(" 条请求缺少会话归属"):"");
-    $("trend-note").textContent=this.limited?t("仅展示最近 12,000 条记录"):t("缺失用量留空；点击图例可隐藏曲线。");
     this.renderFocus();
   }
   pointAt(event) {
