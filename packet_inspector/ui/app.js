@@ -2000,6 +2000,7 @@ class TokenTrendView {
     if(key==="predictive")return {tag:"path",d:"M0,-6L6,0L0,6L-6,0Z"};
     if(key==="overflow")return {tag:"path",d:"M0,-6L6,6L-6,6Z"};
     if(key==="retry")return {tag:"circle",cx:0,cy:0,r:5};
+    if(key==="compact")return {tag:"rect",x:-5,y:-5,width:10,height:10};
     return null;
   }
   static input(packet,data) {
@@ -2118,8 +2119,8 @@ class TokenTrendView {
     reconcileContent($("trend-series"),fragment);
   }
   marker(point,layer) {
-    const events=point.events.filter(value=>["overflow","predictive","retry"].includes(value));
-    const key=["overflow","predictive","retry"].find(value=>events.includes(value)),shape=TokenTrendView.markerShape(key);
+    const events=point.events.filter(value=>["overflow","compact","predictive","retry"].includes(value));
+    const key=["overflow","compact","predictive","retry"].find(value=>events.includes(value)),shape=TokenTrendView.markerShape(key);
     if(!shape)return;
     const {tag,...attrs}=shape,x=point.x,y=point.y;
     layer.append(this.svgNode(tag,{...attrs,class:"trend-event trend-event-"+key,transform:`translate(${x} ${y})`,style:"--series-color:"+point.series.color}));
@@ -2162,7 +2163,7 @@ class TokenTrendView {
         const value=source[chart.field];if(value===null)continue;
         const point={...source,value,series:group,x:x(source.packet.created),y:y(value)};
         path+=(pen?"L":"M")+point.x.toFixed(2)+","+point.y.toFixed(2);pen=true;chart.points.push(point);
-        if(point.events.some(event=>["predictive","overflow","retry"].includes(event)))this.marker(point,events);
+        if(point.events.some(event=>["predictive","overflow","retry","compact"].includes(event)))this.marker(point,events);
         else layer.append(this.svgNode("circle",{cx:point.x,cy:point.y,r:2.1,fill:group.color}));
       }
       layer.prepend(this.svgNode("path",{d:path,class:"trend-curve",stroke:group.color}));layer.append(events);root.append(layer);
