@@ -74,12 +74,10 @@
     <div class="trend-toolbar">
       <input id="trend-search" type="search" placeholder="搜索会话" aria-label="筛选图表会话" autocomplete="off">
       <div id="trend-range" class="view-toggle" role="group" aria-label="时间范围"><button type="button" data-hours="1" aria-pressed="false">1 小时</button><button type="button" data-hours="6" aria-pressed="true">6 小时</button><button type="button" data-hours="24" aria-pressed="false">24 小时</button><button type="button" data-hours="0" aria-pressed="false">全部记录</button></div>
-      <span id="trend-live" class="trend-live" role="status">实时刷新</span>
     </div>
     <div class="trend-controls"><button id="trend-show-all" type="button">全部显示</button><div class="trend-event-legend" aria-label="机制标记"><span class="trend-predictive">◆ <span>预测保护</span></span><span class="trend-overflow">▲ <span>超限保护</span></span><span class="trend-retry">○ <span>自动重试</span></span><span class="trend-compact">■ <span>上下文压缩</span></span></div></div>
     <nav id="trend-series" class="trend-series" aria-label="显示或隐藏会话曲线"></nav>
     <div id="trend-plot" class="trend-plot"><svg id="trend-chart" role="img" tabindex="0" aria-label="输入 Token 随时间变化；左右方向键查看请求，回车固定提示，Esc 关闭"></svg><div id="trend-empty" class="trend-empty" hidden></div><div id="trend-tooltip" class="trend-tooltip" role="tooltip" hidden></div></div>
-    <div class="trend-footer"><span id="trend-summary"></span><span id="trend-note">缺失用量留空；点击图例可隐藏曲线。</span></div>
   </main>
   <dialog id="compression-confirm-dialog" aria-labelledby="compression-confirm-title" aria-describedby="compression-confirm-description compression-confirm-hint">
     <h2 id="compression-confirm-title">切换传输模式</h2>
