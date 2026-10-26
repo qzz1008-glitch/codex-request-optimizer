@@ -28,17 +28,18 @@ class Node {
  replaceChildren(...nodes){this.children=[];this.append(...nodes);}
  all(test){return this.children.flatMap(child=>[...(test(child)?[child]:[]),...child.all(test)]);}
  querySelectorAll(){return this.all(node=>node.attrs['data-series']!==undefined);}
+ contains(node){return this===node||this.children.some(child=>child.contains(node));}
  getBoundingClientRect(){return {left:this.left||0,top:this.top||0,width:this.clientWidth,height:this.clientHeight};}
 }
 function rendered(rows){
- const ids=new Map(),html=fs.readFileSync('packet_inspector/ui/index.html','utf8'),frames=[];
+ const ids=new Map(),html=fs.readFileSync('packet_inspector/ui/index.html','utf8'),frames=[],events=new Map();
  for(const match of html.matchAll(/<(\w+)\b[^>]*\bid="([^"]+)"[^>]*>/g))ids.set(match[2],new Node(match[1]));
  ids.get('trend-charts').clientHeight=512;ids.get('trend-focus').clientHeight=512;
  ids.get('trend-time-axis').clientHeight=32;ids.get('trend-time-axis').top=480;
  for(const id of ['trend-size-tooltip','trend-tooltip']){ids.get(id).offsetWidth=150;ids.get(id).offsetHeight=30;}
  ids.get('trend-time-tooltip').offsetWidth=128;ids.get('trend-time-tooltip').offsetHeight=24;
  const buttons=[1,6,24,0].map(hours=>{const node=new Node('button');node.dataset.hours=String(hours);return node;});
- context.document={hidden:false,createDocumentFragment:()=>new Node('#fragment'),createElementNS:(_,tag)=>new Node(tag),
+ context.document={hidden:false,addEventListener:(type,handler)=>events.set(type,handler),createDocumentFragment:()=>new Node('#fragment'),createElementNS:(_,tag)=>new Node(tag),
   createTextNode:text=>{const node=new Node('#text');node.textContent=text;return node;},querySelectorAll:selector=>selector==='#trend-range button'?buttons:[]};
  context.$=id=>ids.get(id);context.t=text=>text;context.nf=new Intl.NumberFormat('en-US');context.uiI18n={language:'en'};
  context.el=(tag,cls='',text='')=>{const node=new Node(tag);node.attrs.class=cls;node.textContent=text;return node;};
@@ -47,7 +48,7 @@ function rendered(rows){
  context.ResizeObserver=class{constructor(callback){this.callback=callback;this.observed=[];}observe(node){this.observed.push(node);}};
  context.requestAnimationFrame=callback=>{frames.push(callback);return frames.length;};
  const result=new View(view().services);result.active=true;result.hours=0;result.packets=new Map(rows.map(row=>[row.id,row]));
- result.render();return {result,ids,buttons,frames};
+ result.render();return {result,ids,buttons,frames,events};
 }
 function chartNodes(chart,cls){return chart.svg.all(node=>(node.attrs.class||'').split(' ').includes(cls));}
 function focusLines(result){return chartNodes({svg:result.guide},'trend-focus-line');}
@@ -268,7 +269,7 @@ function dualRows(){return [
   assert.equal(result.timeTooltip.hidden,true);
  });
  await test('live refresh never publishes bright background curves while a point is hovered',()=>{
-  const {result}=rendered([...dualRows(),packet(201,{thread_id:'session-b',created:now-5,upstream_usage:{input_tokens:500},outbound_wire_bytes:500000})]);
+  const {result,events}=rendered([...dualRows(),packet(201,{thread_id:'session-b',created:now-5,upstream_usage:{input_tokens:500},outbound_wire_bytes:500000})]);
   result.hover=id(101);result.hoverChart='token';result.renderFocus();let published=0;
   for(const chart of result.charts){const replace=chart.svg.replaceChildren.bind(chart.svg);chart.svg.replaceChildren=(fragment)=>{
    for(const node of fragment.querySelectorAll('[data-series]'))assert.equal((node.attrs.class||'').includes('dimmed'),node.dataset.series!=='session-a','curve brightness changed during SVG publication');
@@ -280,6 +281,10 @@ function dualRows(){return [
    assert.equal(focusLines(result).length,1);
   }
   assert.equal(published,10);
+  events.get('pointermove')({target:result.charts[0].svg});assert.equal(result.hover,id(101));
+  events.get('pointermove')({target:new Node('header')});assert.equal(result.hover,null);assert.equal(result.hoverChart,null);
+  assert.equal(result.guide.children.length,0);assert.equal(result.timeTooltip.hidden,true);
+  for(const chart of result.charts){assert.equal(chart.tooltip.hidden,true);assert.equal(chartNodes(chart,'trend-focus-dot').length,0);}
  });
  await test('native backfill and sidebar emphasis keep redraw brightness stable until hover ends',async()=>{
   const pending=packet(301,{created:now-10,outbound_wire_bytes:200000});
