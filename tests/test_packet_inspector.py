@@ -432,16 +432,78 @@ class StorageTests(unittest.TestCase):
         self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)
         self.path=Path(self.temp.name)
 
-    def test_null_body_metadata_is_bounded_and_live_records_survive(self):
+    def test_null_body_metadata_is_bounded_and_newest_records_survive(self):
         s=Store(self.path,max_count=2,max_bytes=1000000)
         live=s.add({"wire_bytes":0},None)
+        recent=[]
         for _ in range(4):
-            p=s.add({"wire_bytes":0},None);s.update(p,state="complete",status=200)
+            p=s.add({"wire_bytes":0},None);s.update(p,state="complete",status=200);recent.append(p)
         self.assertEqual(s.stats()["count"],2)
         self.assertGreater(s.stats()["stored"],0)
-        self.assertEqual(s.get(live)[0]["state"],"captured")
+        with self.assertRaises(KeyError):
+            s.get(live)
+        self.assertCountEqual([p["id"] for p in s.list()],recent[-2:])
         reopened=Store(self.path,max_count=1)
         self.assertEqual(reopened.stats()["count"],1)
+        self.assertEqual(reopened.list()[0]["id"],recent[-1])
+
+    def test_count_limit_evicts_oldest_request_in_every_state(self):
+        for state in ("captured","streaming","complete","client_disconnected","relay_error","interrupted"):
+            with self.subTest(state=state):
+                store=Store(self.path/state,max_count=1)
+                with patch("packet_inspector.storage.time.time",return_value=1):
+                    old=store.add({"method":"POST","thread_id":"old"})
+                store.update(old,state=state)
+                with patch("packet_inspector.storage.time.time",return_value=2):
+                    recent=store.add({"method":"POST","thread_id":"recent"})
+                self.assertEqual(store.stats()["count"],1)
+                self.assertEqual(store.list()[0]["id"],recent)
+                with self.assertRaises(KeyError):
+                    store.get(old)
+                # A response finishing after eviction must not recreate its record.
+                store.update(old,state="complete",status=200,response_bytes=42)
+                self.assertEqual(store.list()[0]["id"],recent)
+                self.assertEqual(store.filter_options()["threads"],["recent"])
+
+    def test_byte_limit_evicts_streaming_request_before_newer_completed_request(self):
+        store=Store(self.path,max_bytes=5000)
+        old=store.add({"method":"POST","note":"old"*1000})
+        store.update(old,state="streaming")
+        recent=store.add({"method":"POST","note":"new"*1000})
+        store.update(recent,state="complete")
+        self.assertEqual(store.stats()["count"],1)
+        self.assertLessEqual(store.stats()["stored"],5000)
+        self.assertEqual(store.list()[0]["id"],recent)
+        with self.assertRaises(KeyError):
+            store.get(old)
+
+    def test_single_oversized_request_cannot_bypass_storage_limit(self):
+        store=Store(self.path,max_bytes=500)
+        packet=store.add({"method":"POST","note":"large"*1000})
+        store.update(packet,state="complete",status=200)
+        self.assertEqual(store.stats()["count"],0)
+        self.assertEqual(store.stats()["stored"],0)
+
+    def test_restart_recovers_own_and_retired_observer_but_not_another_relay(self):
+        store=Store(self.path)
+        own=store.add({"method":"POST"})
+        retired_pending=store.add({"method":"POST"})
+        store.update(retired_pending,capture_owner="existing_exit")
+        retired=store.add({"method":"POST"})
+        store.update(retired,capture_owner="existing_exit",state="streaming",status=200)
+        finished=store.add({"method":"POST"})
+        store.update(finished,capture_owner="existing_exit",state="complete",status=200)
+        other=store.add({"method":"POST"})
+        store.update(other,capture_owner="relay:"+"a"*32,state="streaming")
+        self.assertEqual(store.stats()["observed_active"],2)
+        reopened=Store(self.path)
+        self.assertEqual(reopened.get(own)[0]["state"],"interrupted")
+        self.assertEqual(reopened.get(retired_pending)[0]["state"],"interrupted")
+        self.assertEqual(reopened.get(retired)[0]["state"],"interrupted")
+        self.assertEqual(reopened.get(retired)[0]["status"],200)
+        self.assertEqual(reopened.get(finished)[0]["state"],"complete")
+        self.assertEqual(reopened.get(other)[0]["state"],"streaming")
+        self.assertEqual(reopened.stats()["observed_active"],0)
 
     def test_comparison_requires_identified_same_chat(self):
         s=Store(self.path)

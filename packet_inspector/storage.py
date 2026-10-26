@@ -56,9 +56,11 @@ class Store:
             c.execute("CREATE INDEX IF NOT EXISTS packets_created ON packets(created DESC)")
             c.execute("CREATE INDEX IF NOT EXISTS packets_thread ON packets(thread, created DESC)")
             self._init_summaries(c)
-            # Recover only this writer's previous requests; the other exit can
-            # still be streaming while this process is restarted.
+            # Other relay workers may still be streaming during an upgrade.
             self._recover_owner(c, self.capture_owner)
+            # The retired observer has no writer left to finish its records.
+            if self.capture_owner != "existing_exit":
+                self._recover_owner(c, "existing_exit")
             self._prune(c)
 
     @staticmethod
@@ -143,7 +145,7 @@ class Store:
     def _prune(self, c):
         count, total = c.execute("SELECT count(*),coalesce(sum(stored_bytes),0) FROM packet_summaries").fetchone()
         while count > self.max_count or total > self.max_bytes:
-            row = c.execute("SELECT id,stored_bytes AS size FROM packet_summaries WHERE state NOT IN ('captured','streaming') ORDER BY created LIMIT 1").fetchone()
+            row = c.execute("SELECT id,stored_bytes AS size FROM packet_summaries ORDER BY created,id LIMIT 1").fetchone()
             if row is None:
                 break
             c.execute("DELETE FROM packets WHERE id=?", (row["id"],))
