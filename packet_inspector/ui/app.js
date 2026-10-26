@@ -1971,6 +1971,7 @@ class TokenTrendView {
       ...chart,svg:$(chart.prefix+"-chart"),plot:$(chart.prefix+"-plot"),tooltip:$(chart.prefix+"-tooltip"),empty:$(chart.prefix+"-empty"),points:[],bounds:null,focusLayer:null
     }));
     this.tooltipHost=$("trend-charts");
+    this.timeAxis=$("trend-time-axis");this.guide=$("trend-focus");
     for(const icon of document.querySelectorAll("[data-trend-marker]")) {
       const key=icon.dataset.trendMarker,shape=TokenTrendView.markerShape(key);if(!shape)continue;
       const {tag,...attrs}=shape;icon.replaceChildren(this.svgNode(tag,{...attrs,class:"trend-event trend-event-"+key}));
@@ -2021,7 +2022,7 @@ class TokenTrendView {
   }
   static color(id) {let hash=2166136261;for(const char of id)hash=Math.imul(hash^char.charCodeAt(0),16777619);return "hsl("+((hash>>>0)%360)+" 62% 42%)";}
   cancelPending() {this.controller?.abort();this.nativeController?.abort();this.controller=null;this.nativeController=null;this.loading=false;this.hydrating=false;}
-  setActive(active) {this.active=active;this.hover=null;this.hoverChart=null;this.emphasis=null;if(!active){this.cancelPending();for(const chart of this.charts)chart.tooltip.hidden=true;}else{this.render();this.refresh();}}
+  setActive(active) {this.active=active;this.hover=null;this.hoverChart=null;this.emphasis=null;if(!active){this.cancelPending();this.guide.replaceChildren();for(const chart of this.charts)chart.tooltip.hidden=true;}else{this.render();this.refresh();}}
   scheduleRender() {if(!this.active||this.frame!==null)return;this.frame=requestAnimationFrame(()=>{this.frame=null;this.render();});}
   async refresh(force=false) {
     if(!this.active||document.hidden||this.loading)return;
@@ -2135,12 +2136,13 @@ class TokenTrendView {
     let start=this.hours?model.now-this.hours*3600:Math.min(...values.map(point=>point.packet.created),model.now-60),end=this.hours?model.now:Math.max(...values.map(point=>point.packet.created),model.now);
     if(end-start<60){start-=30;end+=30;}
     for(const chart of this.charts)this.renderChart(chart,model,start,end,emphasis);
+    this.renderTimeAxis();
     this.renderFocus();
   }
   renderChart(chart,model,start,end,emphasis) {
     const width=chart.plot.clientWidth,height=chart.plot.clientHeight;
     if(!width||!height){chart.points=[];chart.bounds=null;return;}
-    const left=80,right=28,top=36,bottom=36,plotWidth=Math.max(1,width-left-right),plotHeight=Math.max(1,height-top-bottom);
+    const left=80,right=28,top=30,bottom=12,plotWidth=Math.max(1,width-left-right),plotHeight=Math.max(1,height-top-bottom);
     const known=model.visible.flatMap(group=>group.points).filter(point=>point[chart.field]!==null);
     const maximum=Math.max(0,...known.map(point=>point[chart.field])),scale=chart.key==="size"?TokenTrendView.sizeScale(maximum):TokenTrendView.scale(maximum);
     const x=value=>left+(value-start)/(end-start)*plotWidth,y=value=>top+plotHeight-value/scale.max*plotHeight;
@@ -2152,8 +2154,8 @@ class TokenTrendView {
       root.append(this.svgNode("line",{x1:left,y1:py,x2:width-right,y2:py,class:"trend-grid"}),this.svgNode("text",{x:left-12,y:py+4,"text-anchor":"end",class:"trend-axis-label"},label));
     }
     for(let i=0;i<=5;i++) {
-      const px=left+plotWidth*i/5,stamp=start+(end-start)*i/5;
-      root.append(this.svgNode("line",{x1:px,y1:top,x2:px,y2:height-bottom,class:"trend-grid"}),this.svgNode("text",{x:px,y:height-bottom+24,"text-anchor":i===0?"start":i===5?"end":"middle",class:"trend-axis-label"},this.time(stamp,end-start<300)));
+      const px=left+plotWidth*i/5;
+      root.append(this.svgNode("line",{x1:px,y1:top,x2:px,y2:height-bottom,class:"trend-grid"}));
     }
     chart.points=[];
     for(const group of model.visible) {
@@ -2172,6 +2174,19 @@ class TokenTrendView {
     chart.empty.hidden=known.length>0;
     chart.empty.textContent=t(this.loading&&!this.packets.size?"正在加载趋势…":this.error&&!this.packets.size?"暂时无法加载趋势，请稍后重试":!model.matched.length?(this.query?"没有匹配的会话":"此时间范围内没有请求"):chart.key==="size"?"暂无可确认的包大小":"暂无可确认的 Token 用量");
   }
+  renderTimeAxis() {
+    const bounds=this.charts[0].bounds,root=document.createDocumentFragment();
+    if(bounds) {
+      const {width,left,right,start,end,x}=bounds;
+      this.timeAxis.setAttribute("viewBox",`0 0 ${width} 32`);
+      root.append(this.svgNode("line",{x1:left,y1:1,x2:width-right,y2:1,class:"trend-time-tick"}));
+      for(let i=0;i<=5;i++) {
+        const stamp=start+(end-start)*i/5,px=x(stamp);
+        root.append(this.svgNode("line",{x1:px,y1:1,x2:px,y2:5,class:"trend-time-tick"}),this.svgNode("text",{x:px,y:22,"text-anchor":i===0?"start":i===5?"end":"middle",class:"trend-axis-label"},this.time(stamp,end-start<300)));
+      }
+    }
+    this.timeAxis.replaceChildren(root);
+  }
   pointAt(event,chart) {
     if(!chart.bounds)return;
     const rect=chart.svg.getBoundingClientRect(),x=(event.clientX-rect.left)/rect.width*chart.bounds.width,y=(event.clientY-rect.top)/rect.height*chart.bounds.height;
@@ -2186,13 +2201,21 @@ class TokenTrendView {
       const active=!!emphasis&&item.dataset.renderKey==="trend-series:"+emphasis;
       item.classList.toggle("active",active);item.setAttribute("aria-current",String(active));
     }
+    this.guide.replaceChildren();
+    if(anchor&&this.charts[0].bounds) {
+      const first=this.charts[0],area=this.guide.getBoundingClientRect(),rect=first.svg.getBoundingClientRect(),axis=this.timeAxis.getBoundingClientRect();
+      if(area.width&&area.height) {
+        this.guide.setAttribute("viewBox",`0 0 ${area.width} ${area.height}`);
+        const px=rect.left-area.left+first.bounds.x(anchor.packet.created)*rect.width/first.bounds.width;
+        this.guide.append(this.svgNode("line",{x1:px,x2:px,y1:rect.top-area.top+first.bounds.top*rect.height/first.bounds.height,y2:axis.top-area.top+5,class:"trend-focus-line"}));
+      }
+    }
     for(const chart of this.charts) {
       chart.tooltip.hidden=true;
       if(!chart.bounds||!chart.focusLayer)continue;
       for(const line of chart.svg.querySelectorAll("[data-series]"))line.classList.toggle("dimmed",!!emphasis&&line.dataset.series!==emphasis);
       chart.focusLayer.replaceChildren();if(!anchor)continue;
-      const point=chart.points.find(value=>value.packet.id===this.hover),guideX=chart.bounds.x(anchor.packet.created);
-      chart.focusLayer.append(this.svgNode("line",{x1:guideX,x2:guideX,y1:chart.bounds.top,y2:chart.bounds.height-chart.bounds.bottom,class:"trend-focus-line"}));
+      const point=chart.points.find(value=>value.packet.id===this.hover);
       if(point)chart.focusLayer.append(this.svgNode("circle",{cx:point.x,cy:point.y,r:7,class:"trend-focus-dot"}));
       if(!point||this.hoverChart!==chart.key)continue;
       chart.tooltip.hidden=false;
