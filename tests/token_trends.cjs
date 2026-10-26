@@ -28,12 +28,13 @@ class Node {
  replaceChildren(...nodes){this.children=[];this.append(...nodes);}
  all(test){return this.children.flatMap(child=>[...(test(child)?[child]:[]),...child.all(test)]);}
  querySelectorAll(){return this.all(node=>node.attrs['data-series']!==undefined);}
- getBoundingClientRect(){return {left:0,top:0,width:this.clientWidth,height:this.clientHeight};}
+ getBoundingClientRect(){return {left:this.left||0,top:this.top||0,width:this.clientWidth,height:this.clientHeight};}
 }
 function rendered(rows){
  const ids=new Map(),html=fs.readFileSync('packet_inspector/ui/index.html','utf8'),frames=[];
  for(const match of html.matchAll(/<(\w+)\b[^>]*\bid="([^"]+)"[^>]*>/g))ids.set(match[2],new Node(match[1]));
- ids.get('trend-charts').clientHeight=492;
+ ids.get('trend-charts').clientHeight=512;ids.get('trend-focus').clientHeight=512;
+ ids.get('trend-time-axis').clientHeight=32;ids.get('trend-time-axis').top=480;
  const buttons=[1,6,24,0].map(hours=>{const node=new Node('button');node.dataset.hours=String(hours);return node;});
  context.document={hidden:false,createDocumentFragment:()=>new Node('#fragment'),createElementNS:(_,tag)=>new Node(tag),
   createTextNode:text=>{const node=new Node('#text');node.textContent=text;return node;},querySelectorAll:selector=>selector==='#trend-range button'?buttons:[]};
@@ -47,6 +48,7 @@ function rendered(rows){
  result.render();return {result,ids,buttons,frames};
 }
 function chartNodes(chart,cls){return chart.svg.all(node=>(node.attrs.class||'').split(' ').includes(cls));}
+function focusLines(result){return chartNodes({svg:result.guide},'trend-focus-line');}
 function nodeText(node){return node.textContent+node.children.map(nodeText).join(' ');}
 function dualRows(){return [
  packet(101,{created:now-300,upstream_usage:{input_tokens:100},outbound_wire_bytes:100000}),
@@ -149,11 +151,33 @@ function dualRows(){return [
   assert.ok(chartNodes(size,'trend-axis-title')[0].textContent.includes('包大小'));
   assert.equal(chartNodes(token,'trend-axis-title')[0].textContent,'输入 Token');
  });
+ await test('one bottom time axis aligns ticks with both equal-height metric panels',()=>{
+  const {result}=rendered(dualRows()),labels=chartNodes({svg:result.timeAxis},'trend-axis-label');
+  assert.equal(labels.length,6);assert.equal(result.timeAxis.attrs.viewBox,'0 0 640 32');
+  const [size,token]=result.charts;
+  assert.equal(size.bounds.height-size.bounds.top-size.bounds.bottom,token.bounds.height-token.bounds.top-token.bounds.bottom);
+  for(const chart of result.charts){
+   assert.ok(chartNodes(chart,'trend-axis-label').every(label=>!label.textContent.includes(':')));
+   for(let i=0;i<labels.length;i++)assert.equal(Number(labels[i].attrs.x),chart.bounds.x(chart.bounds.start+(chart.bounds.end-chart.bounds.start)*i/5));
+  }
+ });
+ await test('one hover guide spans both panels and stays aligned after a resize',()=>{
+  const {result,ids}=rendered(dualRows());ids.get('trend-chart').top=240;
+  result.hover=id(101);result.hoverChart='token';result.renderFocus();
+  let lines=focusLines(result);assert.equal(lines.length,1);assert.equal(lines[0].attrs.y1,'30');assert.equal(lines[0].attrs.y2,'485');
+  for(const chart of result.charts){assert.equal(chartNodes(chart,'trend-focus-line').length,0);assert.equal(chartNodes(chart,'trend-focus-dot').length,1);}
+  for(const chart of result.charts){chart.plot.clientWidth=900;chart.svg.clientWidth=900;chart.plot.clientHeight=300;chart.svg.clientHeight=300;}
+  ids.get('trend-chart').top=300;ids.get('trend-time-axis').top=600;result.guide.clientWidth=900;result.guide.clientHeight=632;
+  result.render();lines=focusLines(result);assert.equal(lines.length,1);assert.equal(lines[0].attrs.y2,'605');
+  assert.equal(Number(lines[0].attrs.x1),result.charts[0].points.find(point=>point.packet.id===result.hover).x);
+  assert.equal(result.guide.attrs.viewBox,'0 0 900 632');assert.equal(result.timeAxis.attrs.viewBox,'0 0 900 32');
+  result.charts[1].svg.onpointerleave();assert.equal(focusLines(result).length,0);
+ });
  await test('linked hover preserves missing values without pinning or stale tooltips',()=>{
   const {result}=rendered(dualRows()),[size,token]=result.charts,missing=size.points[1];
   size.svg.onpointermove({clientX:missing.x,clientY:missing.y});
   assert.equal(result.hover,missing.packet.id);assert.equal(size.tooltip.hidden,false);assert.equal(token.tooltip.hidden,true);
-  assert.equal(chartNodes(size,'trend-focus-line').length,1);assert.equal(chartNodes(token,'trend-focus-line').length,1);
+  assert.equal(focusLines(result).length,1);
   assert.equal(chartNodes(token,'trend-focus-dot').length,0);assert.equal(size.tooltip.children.length,2);
   assert.ok(nodeText(size.tooltip).includes('压缩包 ·'));assert.ok(nodeText(size.tooltip).includes('244.1 KiB'));
   for(const text of ['输入 Token','实际上传','原始包',missing.packet.id])assert.ok(!nodeText(size.tooltip).includes(text));
@@ -165,6 +189,7 @@ function dualRows(){return [
   assert.equal(chartNodes(size,'trend-focus-dot').length,1);
   token.svg.onpointerleave();assert.equal(result.hover,null);assert.equal(result.hoverChart,null);
   for(const chart of result.charts){assert.equal(chart.tooltip.hidden,true);assert.equal(chartNodes(chart,'trend-focus-line').length,0);}
+  assert.equal(focusLines(result).length,0);
  });
  await test('a shared sidebar searches and highlights both metrics together',()=>{
   const {result,ids}=rendered([...dualRows(),packet(105,{thread_id:'session-b',created:now-10,upstream_usage:{input_tokens:900},outbound_wire_bytes:900000})]);
@@ -218,7 +243,7 @@ function dualRows(){return [
   for(let index=0;index<5;index++){
    const next=packet(202+index,{thread_id:'session-b',created:now+index/10,upstream_usage:{input_tokens:600+index},outbound_wire_bytes:600000+index});
    result.packets.set(next.id,next);result.render();assert.equal(result.hover,id(101));
-   for(const chart of result.charts)assert.equal(chartNodes(chart,'trend-focus-line').length,1);
+   assert.equal(focusLines(result).length,1);
   }
   assert.equal(published,10);
  });

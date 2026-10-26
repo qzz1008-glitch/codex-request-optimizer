@@ -344,6 +344,7 @@ const uiI18n = (() => {
     "包大小":"Packet size",
     "实际上传":"Uploaded size",
     "时间范围":"Time range",
+    "时间轴":"Time axis",
     "1 小时":"1 hour",
     "6 小时":"6 hours",
     "24 小时":"24 hours",
