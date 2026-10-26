@@ -32,6 +32,24 @@ def wait_for(function, seconds=45):
     raise RuntimeError("Packaged upgrade verification timed out")
 
 
+def verify_presentation(data, status):
+    if os.name != "nt":
+        return
+    assert status["desktop_refresh_supported"] and status["desktop_tray"]
+    assert not status["desktop_integration_error"]
+    worker = worker_info(data, status["worker_id"])
+    assert worker["desktop_tray"] and worker["presentation_committed"]
+    import ctypes
+    from ctypes import wintypes
+    user = ctypes.WinDLL("user32", use_last_error=True)
+    user.FindWindowW.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR]
+    user.FindWindowW.restype = wintypes.HWND
+    runtime = json.loads((data / "router-workers" / (worker["id"] + ".runtime.json")).read_text(encoding="utf8"))
+    entry = json.loads((data / "runtime.json").read_text(encoding="utf8"))
+    assert user.FindWindowW("CodexPacketInspectorTray-" + str(runtime["pid"]), None)
+    wait_for(lambda: not user.FindWindowW("CodexPacketInspectorTray-" + str(entry["pid"]), None), seconds=5)
+
+
 def verify_fresh_install(release, directory):
     data, config = directory / "fresh-data", directory / "fresh-config.toml"
     config.write_text('model="test-only"\n', encoding="utf8")
@@ -44,6 +62,7 @@ def verify_fresh_install(release, directory):
         result = json.loads((data / "upgrade-result.json").read_text(encoding="utf8"))
         assert result["state"] == "complete" and result["entry_migrated"]
         assert local_json(port, "/health")["router_protocol"] == 1
+        verify_presentation(data, local_json(port, "/api/status"))
         canonical = data / "bin" / "CodexPacketInspector.exe"
         assert digest(canonical) == digest(release / "CodexPacketInspector.exe")
         print(json.dumps({"phase": "fresh_install_with_shared_application", "result": "ok"}), flush=True)
@@ -155,6 +174,7 @@ def main():
         assert digest(canonical) == digest(release / "CodexPacketInspector.exe")
         assert api("/health")["router_protocol"] == 1
         first = api("/api/status")
+        verify_presentation(data, first)
         assert first["storage"]["count"] == 1
         assert Path(first["data_dir"]).resolve() == data
         assert api("/api/packets/" + historic["id"] + "/export")["view"] == historic_view
@@ -183,6 +203,7 @@ def main():
         print(json.dumps({"phase": "upgrade_during_open_response"}), flush=True)
         updated = upgrade()
         current = api("/api/status")
+        verify_presentation(data, current)
         assert updated["entry_migrated"] is False
         assert updated["worker_id"] != first_worker
         assert current["worker_id"] == updated["worker_id"]

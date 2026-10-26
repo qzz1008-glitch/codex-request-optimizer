@@ -5,6 +5,8 @@ from pathlib import Path
 import subprocess
 import sys
 
+from .app_icon import APP_ICON
+
 
 def manage_installation(action, data_dir, config, port):
     supported = os.name == "nt" and getattr(sys, "frozen", False)
@@ -21,7 +23,7 @@ def manage_installation(action, data_dir, config, port):
     command = ["powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden",
                "-ExecutionPolicy", "Bypass", "-File", str(Path(__file__).with_name("windows_install.ps1")),
                "-Action", action, "-Executable", str(executable), "-DataDirectory", str(data_dir),
-               "-ConfigPath", str(config), "-Port", str(port)]
+                "-ConfigPath", str(config), "-Port", str(port), "-IconPath", str(APP_ICON)]
     result = subprocess.run(command, capture_output=True, encoding="utf-8", errors="replace", timeout=30,
                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     if result.returncode:

@@ -121,6 +121,7 @@ class InspectorServer(ThreadingHTTPServer):
         self.capture_errors = 0
         self.active_requests = 0
         self.worker_id, self.worker_token = worker_id, worker_token
+        self.presentation = None
         self.worker_state = "standby" if worker_id else "active"
         self.maintenance_guard = threading.RLock()
         self.maintenance_enabled = not bool(worker_id)
@@ -231,6 +232,10 @@ class InspectorServer(ThreadingHTTPServer):
                         configure_startup(True, self.data_dir, self.link.config, self.public_port)
                     self.save_settings({**self.settings, "start_on_login": bool(installed.get("login_start"))})
                     self.startup_state_known = True
+            elif action == "desktop_refresh":
+                if self.presentation is None:
+                    raise ValueError("desktop integration is unavailable")
+                self.presentation.commit()
             else:
                 raise ValueError("invalid worker action")
         return {"worker_id": self.worker_id, "state": self.worker_state}
@@ -270,6 +275,9 @@ class InspectorServer(ThreadingHTTPServer):
 
     def server_close(self):
         # TCPServer also calls this when binding fails, before worker setup.
+        presentation = getattr(self, "presentation", None)
+        if presentation is not None:
+            presentation.stop()
         stop = getattr(self, "analysis_stop", None)
         if stop is not None:
             stop.set()
@@ -347,6 +355,8 @@ class InspectorServer(ThreadingHTTPServer):
                 "provider_sync_error": self.provider_sync_error,
                 "provider_warnings": self.provider_sync_result.get("warnings", []),
                 "desktop_tray": bool(getattr(self, "desktop_tray", False)),
+                "desktop_refresh_supported": self.presentation is not None,
+                "desktop_integration_error": self.presentation.error if self.presentation else "",
                 "data_dir": str(self.data_dir), "profile": profile, "storage": storage,
                 "scope": "HTTP requests through configured providers; external overrides and WebSockets are not captured",
                 "capture_point": "Codex app exit, before any existing downstream gateway"}
@@ -449,7 +459,7 @@ class Handler(BaseHTTPRequestHandler):
                     threading.Thread(target=self.server.shutdown, daemon=True).start()
                 else:
                     self._json(200, self.server.worker_control(data))
-            except (OSError, ValueError, TypeError) as exc:
+            except (OSError, ValueError, TypeError, RuntimeError) as exc:
                 self._json(400, {"error": type(exc).__name__})
             return
         relay_prefix = "/relay/" + self.server.settings["relay_token"]
@@ -1064,6 +1074,9 @@ def main(argv=None, on_started=None):
                     if args.worker_id else args.data_dir / "runtime.json")
     runtime_path.write_text(json.dumps(runtime), encoding="utf8")
     try:
+        if args.worker_id:
+            from .presentation import WorkerPresentation
+            server.presentation = WorkerPresentation(server, enabled=os.name == "nt" and control.get("desktop_tray") is True).start()
         if not args.worker_id and server.settings["auto_detect_providers"]:
             try:
                 server.auto_sync_providers()
