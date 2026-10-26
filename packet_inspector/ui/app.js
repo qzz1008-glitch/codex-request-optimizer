@@ -2135,7 +2135,7 @@ class TokenTrendView {
     if(end-start<60){start-=30;end+=30;}
     const scale=TokenTrendView.scale(Math.max(0,...known.map(point=>point.input))),x=value=>left+(value-start)/(end-start)*plotWidth,y=value=>top+plotHeight-value/scale.max*plotHeight;
     const root=document.createDocumentFragment();this.svg.setAttribute("viewBox",`0 0 ${width} ${height}`);
-    root.append(this.svgNode("text",{x:14,y:22,class:"trend-axis-title"},t("输入 Token")),this.svgNode("text",{x:left-10,y:35,"text-anchor":"end",class:"trend-axis-label"},t("事件")));
+    root.append(this.svgNode("text",{x:14,y:22,class:"trend-axis-title"},t("输入 Token")));
     for(let value=0;value<=scale.max+scale.step*.01;value+=scale.step) {
       const py=y(value),label=value>=1000000?nf.format(value/1000000)+"M":value>=1000?nf.format(value/1000)+"k":nf.format(value);
       root.append(this.svgNode("line",{x1:left,y1:py,x2:width-right,y2:py,class:"trend-grid"}),this.svgNode("text",{x:left-12,y:py+4,"text-anchor":"end",class:"trend-axis-label"},label));
