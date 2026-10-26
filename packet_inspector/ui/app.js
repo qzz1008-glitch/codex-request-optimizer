@@ -1988,6 +1988,12 @@ class TokenTrendView {
       chart.svg.onpointermove=event=>this.pointAt(event,chart);
       chart.svg.onpointerleave=()=>{this.hover=null;this.hoverChart=null;this.renderFocus();};
     }
+    // SVG redraws can drop pointerleave when the hovered child is replaced.
+    document.addEventListener("pointermove",event=>{
+      if(this.active&&this.hoverChart&&!this.charts.some(chart=>chart.svg.contains(event.target))) {
+        this.hover=null;this.hoverChart=null;this.renderFocus();
+      }
+    },{passive:true});
   }
   static events(packet) {
     const result=[];
