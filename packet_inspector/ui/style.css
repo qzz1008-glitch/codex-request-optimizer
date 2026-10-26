@@ -121,7 +121,6 @@ code.session-id{font-family:Consolas,"Cascadia Mono",monospace;font-size:11px;wo
 @media(max-width:1360px){.desktop-titlebar .header-icon-action{display:grid;place-items:center;flex:none;width:36px;height:36px;padding:7px}.desktop-titlebar .header-action-label{display:none}.desktop-titlebar .header-action-icon{display:block;width:20px;height:20px}}
 .token-trend-view{display:flex;flex:1;flex-direction:column;min-height:0;min-width:0;padding:20px 24px 12px;gap:12px;overflow:hidden}
 .trend-toolbar{display:flex;align-items:center;gap:20px;flex:none}
-.trend-toolbar h1{font-size:18px;line-height:1.5;margin:0}
 #trend-range{margin-left:auto}
 .trend-live{font-size:11px;color:var(--green);white-space:nowrap}
 .trend-live::before{content:"";display:inline-block;width:6px;height:6px;background:currentColor;border-radius:50%;margin-right:6px}
