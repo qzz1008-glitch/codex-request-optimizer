@@ -1966,8 +1966,11 @@ class TokenTrendView {
     this.services=services;this.active=false;this.loading=false;this.hydrating=false;
     this.packets=new Map();this.native=new Map();this.hidden=new Set();this.hours=6;
     this.revision=null;this.lastFull=0;this.query="";this.error=false;this.limited=false;
-    this.points=[];this.series=[];this.hover=null;this.pinned=false;this.frame=null;this.legendVersion="";
-    this.svg=$("trend-chart");this.plot=$("trend-plot");this.tooltip=$("trend-tooltip");
+    this.series=[];this.hover=null;this.hoverChart=null;this.pinned=false;this.frame=null;this.legendVersion="";
+    this.charts=[{key:"size",field:"size",prefix:"trend-size"},{key:"token",field:"input",prefix:"trend"}].map(chart=>({
+      ...chart,svg:$(chart.prefix+"-chart"),plot:$(chart.prefix+"-plot"),tooltip:$(chart.prefix+"-tooltip"),empty:$(chart.prefix+"-empty"),points:[],bounds:null,focusLayer:null
+    }));
+    this.tooltipHost=$("trend-charts");
     try {const hours=Number(localStorage.getItem("packet-inspector-trend-hours"));if([0,1,6,24].includes(hours)&&localStorage.getItem("packet-inspector-trend-hours")!==null)this.hours=hours;} catch(_) {}
     for(const button of document.querySelectorAll("#trend-range button"))button.onclick=()=>{
       this.hours=Number(button.dataset.hours);try {localStorage.setItem("packet-inspector-trend-hours",String(this.hours));} catch(_) {}
@@ -1975,18 +1978,21 @@ class TokenTrendView {
     };
     $("trend-search").oninput=event=>{this.query=event.currentTarget.value.trim().toLowerCase();this.pinned=false;this.hover=null;this.render();};
     $("trend-show-all").onclick=()=>{this.hidden.clear();this.query="";$("trend-search").value="";this.hover=null;this.pinned=false;this.render();};
-    this.resize=new ResizeObserver(()=>this.scheduleRender());this.resize.observe(this.plot);
-    this.svg.onpointermove=event=>{if(!this.pinned)this.pointAt(event);};
-    this.svg.onpointerleave=()=>{if(!this.pinned){this.hover=null;this.renderFocus();}};
-    this.svg.onclick=event=>{if(this.pinned){this.pinned=false;this.hover=null;this.renderFocus();}else{this.pointAt(event);this.pinned=!!this.hover;}};
-    this.svg.onkeydown=event=>{
-      if(event.key==="Escape"){this.hover=null;this.pinned=false;this.renderFocus();return;}
-      if(event.key==="Enter"){this.pinned=!!this.hover;return;}
-      if(!["ArrowLeft","ArrowRight","Home","End"].includes(event.key)||!this.points.length)return;
-      event.preventDefault();const ordered=this.points.slice().sort((a,b)=>a.packet.created-b.packet.created||a.packet.id.localeCompare(b.packet.id));
-      const at=ordered.findIndex(point=>point.packet.id===this.hover),next=event.key==="Home"?0:event.key==="End"?ordered.length-1:Math.max(0,Math.min(ordered.length-1,at+(event.key==="ArrowLeft"?-1:1)));
-      this.hover=ordered[next].packet.id;this.pinned=true;this.renderFocus();
-    };
+    this.resize=new ResizeObserver(()=>this.scheduleRender());
+    for(const chart of this.charts) {
+      this.resize.observe(chart.plot);
+      chart.svg.onpointermove=event=>{if(!this.pinned)this.pointAt(event,chart);};
+      chart.svg.onpointerleave=()=>{if(!this.pinned){this.hover=null;this.renderFocus();}};
+      chart.svg.onclick=event=>{if(this.pinned){this.pinned=false;this.hover=null;this.renderFocus();}else{this.pointAt(event,chart);this.pinned=!!this.hover;this.renderFocus();}};
+      chart.svg.onkeydown=event=>{
+        if(event.key==="Escape"){this.hover=null;this.pinned=false;this.renderFocus();return;}
+        if(event.key==="Enter"){this.hoverChart=chart.key;this.pinned=!!this.hover;this.renderFocus();return;}
+        if(!["ArrowLeft","ArrowRight","Home","End"].includes(event.key)||!chart.points.length)return;
+        event.preventDefault();const ordered=chart.points.slice().sort((a,b)=>a.packet.created-b.packet.created||a.packet.id.localeCompare(b.packet.id));
+        const at=ordered.findIndex(point=>point.packet.id===this.hover),next=event.key==="Home"?0:event.key==="End"?ordered.length-1:Math.max(0,Math.min(ordered.length-1,at+(event.key==="ArrowLeft"?-1:1)));
+        this.hover=ordered[next].packet.id;this.hoverChart=chart.key;this.pinned=true;this.renderFocus();
+      };
+    }
   }
   static events(packet) {
     const result=[];
@@ -2002,6 +2008,11 @@ class TokenTrendView {
     if(packet.usage_override_applied)return null;
     return data?.state==="available"&&Number.isSafeInteger(data.input_tokens)&&data.input_tokens>=0?data.input_tokens:null;
   }
+  static size(packet) {return compressedBytes(packet);}
+  static sizeScale(maximum) {
+    const step=2**Math.ceil(Math.log2(Math.max(1,(maximum||1024)/5)));
+    return {step,max:Math.max(step,Math.ceil((maximum||1024)/step)*step)};
+  }
   static scale(maximum) {
     const rough=(maximum||1000)/5,power=10**Math.floor(Math.log10(rough));
     const step=[1,2,2.5,5,10].map(value=>value*power).find(value=>value>=rough)||power*10;
@@ -2009,7 +2020,7 @@ class TokenTrendView {
   }
   static color(id) {let hash=2166136261;for(const char of id)hash=Math.imul(hash^char.charCodeAt(0),16777619);return "hsl("+((hash>>>0)%360)+" 62% 42%)";}
   cancelPending() {this.controller?.abort();this.nativeController?.abort();this.controller=null;this.nativeController=null;this.loading=false;this.hydrating=false;}
-  setActive(active) {this.active=active;if(!active){this.cancelPending();this.tooltip.hidden=true;}else{this.render();this.refresh();}}
+  setActive(active) {this.active=active;if(!active){this.cancelPending();for(const chart of this.charts)chart.tooltip.hidden=true;}else{this.render();this.refresh();}}
   scheduleRender() {if(!this.active||this.frame!==null)return;this.frame=requestAnimationFrame(()=>{this.frame=null;this.render();});}
   async refresh(force=false) {
     if(!this.active||document.hidden||this.loading)return;
@@ -2081,7 +2092,7 @@ class TokenTrendView {
       if(typeof packet.thread_id!=="string"||!packet.thread_id){unknown++;continue;}
       if(!groups.has(packet.thread_id))groups.set(packet.thread_id,{id:packet.thread_id,title:names.get(packet.thread_id)||packet.thread_id,color:TokenTrendView.color(packet.thread_id),points:[],latest:0});
       const group=groups.get(packet.thread_id);group.latest=Math.max(group.latest,packet.created);
-      group.points.push({packet,input:packet.is_compaction?null:this.input(packet),events:TokenTrendView.events(packet)});
+      group.points.push({packet,input:packet.is_compaction?null:this.input(packet),size:TokenTrendView.size(packet),events:TokenTrendView.events(packet)});
     }
     const series=[...groups.values()].sort((a,b)=>b.latest-a.latest||a.id.localeCompare(b.id));
     for(const group of series)group.points.sort((a,b)=>a.packet.created-b.packet.created||a.packet.id.localeCompare(b.packet.id));
@@ -2120,64 +2131,83 @@ class TokenTrendView {
     layer.append(node);if(key!=="overflow"&&point.events.length>1)layer.append(this.svgNode("text",{x:x+7,y:y-7,class:"trend-event-count"},"+"+(point.events.length-1)));
   }
   render() {
-    if(!this.active||!this.plot.clientWidth||!this.plot.clientHeight)return;
+    if(!this.active)return;
     const model=this.model();this.series=model.series;this.renderLegend(model);
     for(const button of document.querySelectorAll("#trend-range button"))button.setAttribute("aria-pressed",String(Number(button.dataset.hours)===this.hours));
-    const width=this.plot.clientWidth,height=this.plot.clientHeight,left=70,right=28,top=36,bottom=48,plotWidth=Math.max(1,width-left-right),plotHeight=Math.max(1,height-top-bottom);
-    this.bounds={width,height,left,right,top,bottom};
-    const values=model.visible.flatMap(group=>group.points),known=values.filter(point=>point.input!==null);
+    const values=model.visible.flatMap(group=>group.points);
     let start=this.hours?model.now-this.hours*3600:Math.min(...values.map(point=>point.packet.created),model.now-60),end=this.hours?model.now:Math.max(...values.map(point=>point.packet.created),model.now);
     if(end-start<60){start-=30;end+=30;}
-    const scale=TokenTrendView.scale(Math.max(0,...known.map(point=>point.input))),x=value=>left+(value-start)/(end-start)*plotWidth,y=value=>top+plotHeight-value/scale.max*plotHeight;
-    const root=document.createDocumentFragment();this.svg.setAttribute("viewBox",`0 0 ${width} ${height}`);
-    root.append(this.svgNode("text",{x:14,y:22,class:"trend-axis-title"},t("输入 Token")));
+    for(const chart of this.charts)this.renderChart(chart,model,start,end);
+    this.renderFocus();
+  }
+  renderChart(chart,model,start,end) {
+    const width=chart.plot.clientWidth,height=chart.plot.clientHeight;
+    if(!width||!height){chart.points=[];chart.bounds=null;return;}
+    const left=80,right=28,top=36,bottom=36,plotWidth=Math.max(1,width-left-right),plotHeight=Math.max(1,height-top-bottom);
+    const known=model.visible.flatMap(group=>group.points).filter(point=>point[chart.field]!==null);
+    const maximum=Math.max(0,...known.map(point=>point[chart.field])),scale=chart.key==="size"?TokenTrendView.sizeScale(maximum):TokenTrendView.scale(maximum);
+    const x=value=>left+(value-start)/(end-start)*plotWidth,y=value=>top+plotHeight-value/scale.max*plotHeight;
+    chart.bounds={width,height,left,right,top,bottom,start,end,x};
+    const root=document.createDocumentFragment();chart.svg.setAttribute("viewBox",`0 0 ${width} ${height}`);
+    root.append(this.svgNode("text",{x:14,y:22,class:"trend-axis-title"},t(chart.key==="size"?"包大小":"输入 Token")));
     for(let value=0;value<=scale.max+scale.step*.01;value+=scale.step) {
-      const py=y(value),label=value>=1000000?nf.format(value/1000000)+"M":value>=1000?nf.format(value/1000)+"k":nf.format(value);
+      const py=y(value),label=chart.key==="size"?compact(value):value>=1000000?nf.format(value/1000000)+"M":value>=1000?nf.format(value/1000)+"k":nf.format(value);
       root.append(this.svgNode("line",{x1:left,y1:py,x2:width-right,y2:py,class:"trend-grid"}),this.svgNode("text",{x:left-12,y:py+4,"text-anchor":"end",class:"trend-axis-label"},label));
     }
     for(let i=0;i<=5;i++) {
       const px=left+plotWidth*i/5,stamp=start+(end-start)*i/5;
       root.append(this.svgNode("line",{x1:px,y1:top,x2:px,y2:height-bottom,class:"trend-grid"}),this.svgNode("text",{x:px,y:height-bottom+24,"text-anchor":i===0?"start":i===5?"end":"middle",class:"trend-axis-label"},this.time(stamp,end-start<300)));
     }
-    this.points=[];
+    chart.points=[];
     for(const group of model.visible) {
       const layer=this.svgNode("g",{class:"trend-series-line","data-series":group.id}),events=this.svgNode("g");let path="",pen=false;
       for(const source of group.points) {
-        if(source.packet.is_compaction)continue;
-        if(source.input===null)continue;
-        const point={...source,series:group,x:x(source.packet.created),y:y(source.input)};
-        path+=(pen?"L":"M")+point.x.toFixed(2)+","+point.y.toFixed(2);pen=true;this.points.push(point);
+        const value=source[chart.field];if(value===null)continue;
+        const point={...source,value,series:group,x:x(source.packet.created),y:y(value)};
+        path+=(pen?"L":"M")+point.x.toFixed(2)+","+point.y.toFixed(2);pen=true;chart.points.push(point);
         if(point.events.length)this.marker(point,events);
         else layer.append(this.svgNode("circle",{cx:point.x,cy:point.y,r:2.1,fill:group.color}));
       }
       layer.prepend(this.svgNode("path",{d:path,class:"trend-curve",stroke:group.color}));layer.append(events);root.append(layer);
     }
-    this.focusLayer=this.svgNode("g",{"pointer-events":"none"});root.append(this.focusLayer);this.svg.replaceChildren(root);
-    const empty=$("trend-empty");empty.hidden=known.length>0||this.points.length>0;
-    empty.textContent=t(this.loading&&!this.packets.size?"正在加载趋势…":this.error&&!this.packets.size?"暂时无法加载趋势，请稍后重试":!model.matched.length?(this.query?"没有匹配的会话":"此时间范围内没有请求"):!model.visible.length?"曲线已隐藏，点击“全部显示”恢复":"暂无可确认的 Token 用量");
-    this.renderFocus();
+    chart.focusLayer=this.svgNode("g",{"pointer-events":"none"});root.append(chart.focusLayer);chart.svg.replaceChildren(root);
+    chart.empty.hidden=known.length>0;
+    chart.empty.textContent=t(this.loading&&!this.packets.size?"正在加载趋势…":this.error&&!this.packets.size?"暂时无法加载趋势，请稍后重试":!model.matched.length?(this.query?"没有匹配的会话":"此时间范围内没有请求"):!model.visible.length?"曲线已隐藏，点击“全部显示”恢复":chart.key==="size"?"暂无可确认的包大小":"暂无可确认的 Token 用量");
   }
-  pointAt(event) {
-    if(!this.bounds)return;
-    const rect=this.svg.getBoundingClientRect(),x=(event.clientX-rect.left)/rect.width*this.bounds.width,y=(event.clientY-rect.top)/rect.height*this.bounds.height;
+  pointAt(event,chart) {
+    if(!chart.bounds)return;
+    const rect=chart.svg.getBoundingClientRect(),x=(event.clientX-rect.left)/rect.width*chart.bounds.width,y=(event.clientY-rect.top)/rect.height*chart.bounds.height;
     let nearest=null,distance=28*28;
-    for(const point of this.points){const value=(point.x-x)**2+(point.y-y)**2;if(value<distance){nearest=point;distance=value;}}
-    this.hover=nearest?.packet.id||null;this.renderFocus();
+    for(const point of chart.points){const value=(point.x-x)**2+(point.y-y)**2;if(value<distance){nearest=point;distance=value;}}
+    this.hover=nearest?.packet.id||null;this.hoverChart=chart.key;this.renderFocus();
   }
   renderFocus() {
-    if(!this.active||!this.focusLayer)return;
-    const point=this.points.find(value=>value.packet.id===this.hover),emphasis=this.emphasis||point?.series.id;
-    for(const line of this.svg.querySelectorAll("[data-series]"))line.classList.toggle("dimmed",!!emphasis&&line.dataset.series!==emphasis);
-    this.focusLayer.replaceChildren();this.tooltip.hidden=!point;if(!point){if(this.pinned)this.pinned=false;return;}
-    this.focusLayer.append(this.svgNode("line",{x1:point.x,x2:point.x,y1:this.bounds.top,y2:this.bounds.height-this.bounds.bottom,class:"trend-focus-line"}),this.svgNode("circle",{cx:point.x,cy:point.y,r:7,class:"trend-focus-dot"}));
-    const fragment=document.createDocumentFragment();fragment.append(el("h3","",point.series.title),el("p","",this.time(point.packet.created,true)));
-    const amount=el("p","");amount.append(el("strong","",point.input===null?"—":nf.format(point.input)),document.createTextNode(" "+t("输入 Token")));fragment.append(amount);
-    if(point.packet.model)fragment.append(el("p","",t("模型")+" · "+point.packet.model));
-    if(point.input===null)fragment.append(el("p","",point.packet.is_compaction?t("压缩事件不推测 Token 数值"):t("用量缺失或等待确认")));
-    for(const event of point.events)fragment.append(el("p","trend-tooltip-event",this.eventLabel(event,point.packet)));
-    fragment.append(el("code","",point.packet.id));this.tooltip.replaceChildren(fragment);
-    const left=Math.max(8,Math.min(this.bounds.width-this.tooltip.offsetWidth-8,point.x+16)),top=point.y-this.tooltip.offsetHeight-14;
-    this.tooltip.style.left=left+"px";this.tooltip.style.top=Math.max(8,Math.min(this.bounds.height-this.tooltip.offsetHeight-8,top>=8?top:point.y+16))+"px";
+    if(!this.active)return;
+    const anchor=this.charts.map(chart=>chart.points.find(value=>value.packet.id===this.hover)).find(Boolean),emphasis=this.emphasis||anchor?.series.id;
+    if(!anchor)this.pinned=false;
+    for(const chart of this.charts) {
+      chart.tooltip.hidden=true;
+      if(!chart.bounds||!chart.focusLayer)continue;
+      for(const line of chart.svg.querySelectorAll("[data-series]"))line.classList.toggle("dimmed",!!emphasis&&line.dataset.series!==emphasis);
+      chart.focusLayer.replaceChildren();if(!anchor)continue;
+      const point=chart.points.find(value=>value.packet.id===this.hover),guideX=chart.bounds.x(anchor.packet.created);
+      chart.focusLayer.append(this.svgNode("line",{x1:guideX,x2:guideX,y1:chart.bounds.top,y2:chart.bounds.height-chart.bounds.bottom,class:"trend-focus-line"}));
+      if(point)chart.focusLayer.append(this.svgNode("circle",{cx:point.x,cy:point.y,r:7,class:"trend-focus-dot"}));
+      if(!point||this.hoverChart!==chart.key)continue;
+      chart.tooltip.hidden=false;chart.tooltip.classList.toggle("pinned",this.pinned);
+      const fragment=document.createDocumentFragment();fragment.append(el("h3","",point.series.title),el("p","",this.time(point.packet.created,true)));
+      const amount=el("p","");amount.append(el("strong","",chart.key==="size"?compact(point.value):nf.format(point.value)),document.createTextNode(" "+t(chart.key==="size"?"压缩包":"输入 Token")));fragment.append(amount);
+      fragment.append(el("p","",chart.key==="size"?t("输入 Token")+" · "+(point.input===null?"—":nf.format(point.input)):t("压缩包")+" · "+compact(point.size)));
+      fragment.append(el("p","",t("原始包")+" · "+compact(originalBytes(point.packet))));
+      const uploaded=uploadBytes(point.packet);if(uploaded!==null&&uploaded!==point.size)fragment.append(el("p","",t("实际上传")+" · "+compact(uploaded)));
+      if(point.packet.model)fragment.append(el("p","",t("模型")+" · "+point.packet.model));
+      for(const event of point.events)fragment.append(el("p","trend-tooltip-event",this.eventLabel(event,point.packet)));
+      fragment.append(el("code","",point.packet.id));chart.tooltip.replaceChildren(fragment);
+      const area=this.tooltipHost.getBoundingClientRect(),rect=chart.svg.getBoundingClientRect();
+      const px=rect.left-area.left+point.x*rect.width/chart.bounds.width,py=rect.top-area.top+point.y*rect.height/chart.bounds.height;
+      const left=Math.max(8,Math.min(this.tooltipHost.clientWidth-chart.tooltip.offsetWidth-8,px+16)),top=py-chart.tooltip.offsetHeight-14;
+      chart.tooltip.style.left=left+"px";chart.tooltip.style.top=Math.max(8,Math.min(this.tooltipHost.clientHeight-chart.tooltip.offsetHeight-8,top>=8?top:py+16))+"px";
+    }
   }
 }
 tokenTrendView=new TokenTrendView({api,status:()=>state.status,sessions:()=>sessionSummaries,peek:listTokens,read:readListTokens,isGeneration:isTrendGeneration});
