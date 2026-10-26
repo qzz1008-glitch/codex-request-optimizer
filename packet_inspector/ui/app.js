@@ -2117,13 +2117,13 @@ class TokenTrendView {
     const key=["overflow","predictive","retry","compact"].find(value=>point.events.includes(value)),x=point.x,y=point.y;
     if(!key)return;
     const attrs={class:"trend-event",fill:colors[key]},node=key==="predictive"?this.svgNode("path",{...attrs,d:`M${x},${y-6}l6,6l-6,6l-6,-6Z`}):key==="overflow"?this.svgNode("path",{...attrs,d:`M${x},${y-7}l7,12h-14Z`}):key==="compact"?this.svgNode("rect",{...attrs,x:x-5,y:y-5,width:10,height:10,rx:1}):this.svgNode("circle",{...attrs,cx:x,cy:y,r:5,fill:"white",stroke:colors[key],"stroke-width":2.5});
-    layer.append(node);if(point.events.length>1)layer.append(this.svgNode("text",{x:x+7,y:y-7,class:"trend-event-count"},"+"+(point.events.length-1)));
+    layer.append(node);if(key!=="overflow"&&point.events.length>1)layer.append(this.svgNode("text",{x:x+7,y:y-7,class:"trend-event-count"},"+"+(point.events.length-1)));
   }
   render() {
     if(!this.active||!this.plot.clientWidth||!this.plot.clientHeight)return;
     const model=this.model();this.series=model.series;this.renderLegend(model);
     for(const button of document.querySelectorAll("#trend-range button"))button.setAttribute("aria-pressed",String(Number(button.dataset.hours)===this.hours));
-    const width=this.plot.clientWidth,height=this.plot.clientHeight,left=70,right=28,top=58,bottom=48,plotWidth=Math.max(1,width-left-right),plotHeight=Math.max(1,height-top-bottom);
+    const width=this.plot.clientWidth,height=this.plot.clientHeight,left=70,right=28,top=36,bottom=48,plotWidth=Math.max(1,width-left-right),plotHeight=Math.max(1,height-top-bottom);
     this.bounds={width,height,left,right,top,bottom};
     const values=model.visible.flatMap(group=>group.points),known=values.filter(point=>point.input!==null);
     let start=this.hours?model.now-this.hours*3600:Math.min(...values.map(point=>point.packet.created),model.now-60),end=this.hours?model.now:Math.max(...values.map(point=>point.packet.created),model.now);
@@ -2143,9 +2143,9 @@ class TokenTrendView {
     for(const group of model.visible) {
       const layer=this.svgNode("g",{class:"trend-series-line","data-series":group.id}),events=this.svgNode("g");let path="",pen=false;
       for(const source of group.points) {
-        const point={...source,series:group,x:x(source.packet.created),y:source.input===null?31:y(source.input)};
-        if(source.packet.is_compaction){this.points.push(point);this.marker(point,events);continue;}
-        if(source.input===null){pen=false;if(point.events.length){this.points.push(point);this.marker(point,events);}continue;}
+        if(source.packet.is_compaction)continue;
+        if(source.input===null){pen=false;continue;}
+        const point={...source,series:group,x:x(source.packet.created),y:y(source.input)};
         path+=(pen?"L":"M")+point.x.toFixed(2)+","+point.y.toFixed(2);pen=true;this.points.push(point);
         if(point.events.length)this.marker(point,events);
         else layer.append(this.svgNode("circle",{cx:point.x,cy:point.y,r:2.1,fill:group.color}));
