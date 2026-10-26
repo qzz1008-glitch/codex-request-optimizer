@@ -361,7 +361,8 @@ function sessionConnections(groups,selected) {
   const rows=new Map(groups.filter(group=>group.thread_id!==OTHER_SESSION_GROUP).map(group=>[group.thread_id,group]));
   const focus=[...rows.values()].find(group=>selected==="thread:"+group.thread_id||group.members.some(row=>selected==="thread:"+row.thread_id));
   if(!focus)return [];
-  const parents=new Map([...rows.values()].filter(group=>group.parent_thread_id!==group.thread_id&&rows.has(group.parent_thread_id)).map(group=>[group.thread_id,group.parent_thread_id]));
+  // A normal fork also carries a parent ID; only confirmed subagents form sidebar links.
+  const parents=new Map([...rows.values()].filter(group=>auxiliarySessionKind(group)==="subagent"&&group.parent_thread_id!==group.thread_id&&rows.has(group.parent_thread_id)).map(group=>[group.thread_id,group.parent_thread_id]));
   const valid=id=>{
     const visited=new Set();
     while(parents.has(id)) {if(visited.has(id))return false;visited.add(id);id=parents.get(id);}
