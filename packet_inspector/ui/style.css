@@ -117,8 +117,12 @@ code.session-id{font-family:Consolas,"Cascadia Mono",monospace;font-size:11px;wo
 #view-toggle{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%)}
 #view-toggle button{display:grid;place-items:center;width:32px;padding:4px}
 #view-toggle svg{display:block;width:18px;height:20px;pointer-events:none}
-.header-action-icon{display:none}
-@media(max-width:1360px){.desktop-titlebar .header-icon-action{display:grid;place-items:center;flex:none;width:36px;height:36px;padding:7px}.desktop-titlebar .header-action-label{display:none}.desktop-titlebar .header-action-icon{display:block;width:20px;height:20px}}
+#ui-refresh{display:inline-grid;place-items:center;align-self:center;flex:none;width:28px;height:28px;padding:5px;border:0;border-radius:7px;background:transparent;color:var(--muted);box-shadow:none;transition:background-color .12s,color .12s}
+#ui-refresh:hover{background:#eef2f7;color:#425e8a}
+#ui-refresh:active{background:#e4ebf4;color:#334d75}
+#ui-refresh:focus-visible{outline:2px solid #8baee5;outline-offset:2px}
+#ui-refresh svg{display:block;width:16px;height:16px;pointer-events:none}
+@media(prefers-reduced-motion:reduce){#ui-refresh{transition:none}}
 .token-trend-view{display:grid;grid-template-columns:260px minmax(0,1fr);flex:1;min-height:0;min-width:0;overflow:hidden}
 .trend-sidebar{display:flex;flex-direction:column;gap:12px;min-height:0;min-width:0;padding:14px 12px 12px;border-right:1px solid var(--line);background:#fafbfd;overflow:hidden}
 .trend-sidebar-controls{display:flex;align-items:center;gap:8px;flex:none}
