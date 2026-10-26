@@ -1,11 +1,13 @@
+import http.client
 import json
 from pathlib import Path
 import unittest
 import tempfile
+import sqlite3
 from unittest.mock import patch
 
 from tests import test_packet_inspector as fixtures
-from tests.test_capacity_retry import CREATED, FAILED, SUCCESS, Response
+from tests.test_capacity_retry import CREATED, FAILED, SUCCESS, Response, frame
 from packet_inspector.startup import configure_startup, startup_supported
 from packet_inspector.server import InspectorServer
 
@@ -36,6 +38,7 @@ class RuntimeSettingsTests(unittest.TestCase):
         self.assertEqual(result["capacity_retry_max_retries"], 3)
         self.assertFalse(result["start_on_login_supported"])
         self.assertTrue(result["capacity_retry_supported"])
+        self.assertTrue(result["capacity_retry_diagnostics_supported"])
 
     def test_capacity_setting_is_persisted_and_can_be_disabled(self):
         for enabled in [True, False]:
@@ -132,11 +135,26 @@ class RuntimeSettingsTests(unittest.TestCase):
         metadata, _ = self.latest()
         self.assertEqual(metadata["capacity_retry_count"], 1)
         self.assertEqual(metadata["state"], "complete")
+        diagnostic = metadata["capacity_retry_diagnostic"]
+        self.assertEqual((diagnostic["outcome"], diagnostic["state"], diagnostic["attempt_count"]), ("success", "finished", 2))
+        self.assertTrue(diagnostic["journal_saved"])
+        self.assertTrue(diagnostic["enabled"])
+        self.assertEqual(self.api("/api/packets/" + metadata["id"])[1]["capacity_retry_diagnostic"]["outcome"], "success")
+        events = self.api("/api/retry-diagnostics/" + diagnostic["id"])[1]["events"]
+        starts = [index for index, event in enumerate(events) if event["event"] == "attempt_started"]
+        headers = next(index for index, event in enumerate(events) if event["event"] == "downstream_headers_sent")
+        forwarded = next(index for index, event in enumerate(events) if event["event"] == "downstream_first_bytes_sent")
+        self.assertLess(starts[1], headers)
+        self.assertLess(headers, forwarded)
+        self.assertEqual(sum(event["event"] == "downstream_headers_sent" for event in events), 1)
 
     def test_disabled_retry_passes_failure_unchanged(self):
         with patch.object(self.server.local_opener, "open", return_value=Response(CREATED + FAILED)) as opened:
             status, data = self.relay(b"{}")
         self.assertEqual((status, data, opened.call_count), (200, CREATED + FAILED, 1))
+        diagnostic = self.latest()[0]["capacity_retry_diagnostic"]
+        self.assertEqual((diagnostic["outcome"], diagnostic["stop_reason"], diagnostic["retry_count"]), ("capacity_error", "disabled", 0))
+        self.assertFalse(diagnostic["enabled"])
 
     def test_relay_uses_configured_retry_limit(self):
         for limit in [1, 5]:
@@ -149,6 +167,84 @@ class RuntimeSettingsTests(unittest.TestCase):
                 self.assertEqual((status, data, opened.call_count), (200, FAILED, limit + 1))
                 metadata, _ = self.latest()
                 self.assertEqual(metadata["capacity_retry_count"], limit)
+                diagnostic = metadata["capacity_retry_diagnostic"]
+                self.assertEqual((diagnostic["outcome"], diagnostic["stop_reason"]), ("capacity_error", "retry_limit"))
+                record = self.api("/api/retry-diagnostics/" + diagnostic["id"])[1]
+                self.assertEqual(sum(e["event"] == "attempt_started" for e in record["events"]), limit + 1)
+
+    def test_capacity_after_empty_output_is_observed_without_replay(self):
+        self.api("/api/settings", {"capacity_retry_enabled": True})
+        body = CREATED + frame("response.output_item.added", item={"type": "reasoning", "summary": []}) + FAILED
+        with patch.object(self.server.local_opener, "open", return_value=Response(body)) as opened:
+            self.assertEqual(self.relay(b"{}"), (200, body))
+        self.assertEqual(opened.call_count, 1)
+        diagnostic = self.latest()[0]["capacity_retry_diagnostic"]
+        self.assertEqual((diagnostic["outcome"], diagnostic["stop_reason"], diagnostic["retry_count"]),
+                         ("capacity_error", "stream_committed", 0))
+        self.assertEqual(diagnostic["first_output_event"], "response.output_item.added")
+        events = self.api("/api/retry-diagnostics/" + diagnostic["id"])[1]["events"]
+        probe = next(e for e in events if e["event"] == "probe_finished")
+        self.assertEqual((probe["item_type"], probe["summary_items"], probe["content_items"]), ("reasoning", 0, 0))
+
+    def test_retry_journal_query_download_and_packet_eviction(self):
+        with patch.object(self.server.local_opener, "open", return_value=Response(FAILED)):
+            self.relay(b"{}")
+        metadata = self.latest()[0]
+        request_id = metadata["capacity_retry_diagnostic"]["id"]
+        self.assertTrue(self.api("/api/packets/" + metadata["id"])[1]["capacity_retry_diagnostic"]["journal_available"])
+        # Match normal retention: removing packet+summary must not remove the audit.
+        with self.server.store.lock, self.server.store.connect() as db:
+            db.execute("DELETE FROM packets WHERE id=?", (metadata["id"],))
+        self.assertEqual(self.api("/api/packets/" + metadata["id"])[0], 404)
+        status, result = self.api("/api/retry-diagnostics?session_id=test-thread&packet_id=" + request_id)
+        self.assertEqual((status, len(result["records"])), (200, 1))
+        self.assertNotIn("events", result["records"][0])
+        self.assertEqual(result["records"][0]["outcome"], "capacity_error")
+        self.assertEqual(self.api("/api/retry-diagnostics?limit=101")[0], 400)
+        self.assertEqual(self.api("/api/retry-diagnostics/missing")[0], 404)
+        connection = http.client.HTTPConnection("127.0.0.1", self.server.port, timeout=5)
+        try:
+            connection.request("GET", "/api/retry-diagnostics/" + request_id + "?download=1")
+            response = connection.getresponse()
+            record = json.loads(response.read())
+            self.assertEqual(response.status, 200)
+            self.assertIn("attachment", response.getheader("Content-Disposition"))
+            self.assertEqual(record["session_id"], "test-thread")
+            self.assertEqual(record["outcome"], "capacity_error")
+        finally:
+            connection.close()
+
+    def test_pruned_audit_does_not_offer_broken_download(self):
+        with patch.object(self.server.local_opener, "open", return_value=Response(SUCCESS)):
+            self.relay(b"{}")
+        metadata = self.latest()[0]
+        with self.server.retry_journal.lock, self.server.retry_journal._connect() as db:
+            db.execute("DELETE FROM retry_requests WHERE id=?", (metadata["id"],))
+        diagnostic = self.api("/api/packets/" + metadata["id"])[1]["capacity_retry_diagnostic"]
+        self.assertFalse(diagnostic["journal_available"])
+        self.assertEqual(diagnostic["outcome"], "success")
+
+    def test_paused_capture_still_audits_and_native_compact_is_not_retried(self):
+        self.api("/api/settings", {"capacity_retry_enabled": True, "capture_enabled": False})
+        try:
+            with patch.object(self.server.local_opener, "open", return_value=Response(FAILED)) as opened:
+                self.assertEqual(self.relay(b"{}", path="/responses/compact", headers={"session_id": "compact-audit"}), (200, FAILED))
+            self.assertEqual(opened.call_count, 1)
+            records = self.api("/api/retry-diagnostics?session_id=compact-audit")[1]["records"]
+            self.assertEqual(len(records), 1)
+            self.assertIsNone(records[0]["packet_id"])
+            self.assertEqual((records[0]["outcome"], records[0]["stop_reason"]), ("capacity_error", "endpoint_not_eligible"))
+            self.assertFalse(records[0]["eligible"])
+        finally:
+            self.api("/api/settings", {"capture_enabled": True})
+
+    def test_audit_failure_does_not_interrupt_forwarding(self):
+        for target in ("begin", "save"):
+            with self.subTest(target=target), patch.object(self.server.retry_journal, target, side_effect=sqlite3.OperationalError("private details")), \
+                    patch.object(self.server.local_opener, "open", return_value=Response(SUCCESS)):
+                self.assertEqual(self.relay(b"{}"), (200, SUCCESS))
+            self.assertEqual(self.latest()[0]["state"], "complete")
+        self.assertGreater(self.api("/api/status")[1]["capacity_retry_diagnostics_errors"], 0)
 
 
 class StartupHelperTests(unittest.TestCase):
