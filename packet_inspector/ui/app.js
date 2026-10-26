@@ -2001,9 +2001,9 @@ class TokenTrendView {
     return result;
   }
   static markerShape(key) {
-    if(key==="predictive")return {tag:"path",d:"M0,-5L5,0L0,5L-5,0Z"};
-    if(key==="overflow")return {tag:"path",d:"M0,-8L8,8L-8,8Z"};
-    if(key==="retry")return {tag:"circle",cx:0,cy:0,r:4};
+    if(key==="predictive")return {tag:"path",d:"M0,-6L6,0L0,6L-6,0Z"};
+    if(key==="overflow")return {tag:"path",d:"M0,-6L6,6L-6,6Z"};
+    if(key==="retry")return {tag:"circle",cx:0,cy:0,r:5};
     return null;
   }
   static input(packet,data) {
