@@ -1998,10 +1998,10 @@ class TokenTrendView {
     return result;
   }
   static markerShape(key) {
-    if(key==="predictive")return {tag:"path",d:"M0,-6L6,0L0,6L-6,0Z"};
-    if(key==="overflow")return {tag:"path",d:"M0,-6L6,6L-6,6Z"};
-    if(key==="retry")return {tag:"circle",cx:0,cy:0,r:5};
-    if(key==="compact")return {tag:"rect",x:-5,y:-5,width:10,height:10};
+    if(key==="predictive")return {tag:"path",d:"M0,-4.8L4.8,0L0,4.8L-4.8,0Z"};
+    if(key==="overflow")return {tag:"path",d:"M0,-4.8L4.8,4.8L-4.8,4.8Z"};
+    if(key==="retry")return {tag:"circle",cx:0,cy:0,r:4};
+    if(key==="compact")return {tag:"rect",x:-4,y:-4,width:8,height:8};
     return null;
   }
   static input(packet,data) {
@@ -2125,7 +2125,7 @@ class TokenTrendView {
     if(!shape)return;
     const {tag,...attrs}=shape,x=point.x,y=point.y;
     layer.append(this.svgNode(tag,{...attrs,class:"trend-event trend-event-"+key,transform:`translate(${x} ${y})`,style:"--series-color:"+point.series.color}));
-    if(key!=="overflow"&&events.length>1)layer.append(this.svgNode("text",{x:x+7,y:y-7,class:"trend-event-count"},"+"+(events.length-1)));
+    if(key!=="overflow"&&events.length>1)layer.append(this.svgNode("text",{x:x+6,y:y-6,class:"trend-event-count",style:"--series-color:"+point.series.color},"+"+(events.length-1)));
   }
   render() {
     if(!this.active)return;
@@ -2222,7 +2222,7 @@ class TokenTrendView {
       for(const line of chart.svg.querySelectorAll("[data-series]"))line.classList.toggle("dimmed",!!emphasis&&line.dataset.series!==emphasis);
       chart.focusLayer.replaceChildren();if(!anchor)continue;
       const point=chart.points.find(value=>value.packet.id===this.hover);
-      if(point)chart.focusLayer.append(this.svgNode("circle",{cx:point.x,cy:point.y,r:7,class:"trend-focus-dot"}));
+      if(point)chart.focusLayer.append(this.svgNode("circle",{cx:point.x,cy:point.y,r:5.5,class:"trend-focus-dot",style:"--series-color:"+point.series.color}));
       chart.tooltip.hidden=false;
       chart.tooltip.replaceChildren(el("span","",t(chart.key==="size"?"压缩包":"输入 Token")),el("strong","",point?(chart.key==="size"?compact(point.value):nf.format(point.value)):"—"));
       const rect=chart.svg.getBoundingClientRect(),panelTop=rect.top-originY;
