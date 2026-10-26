@@ -151,7 +151,7 @@ function dualRows(){return [
   assert.deepEqual(Array.from(token.points,p=>p.value),[100,300]);
   for(const point of token.points)assert.equal(point.x,size.points.find(p=>p.packet.id===point.packet.id).x);
   for(const chart of result.charts){const path=chartNodes(chart,'trend-curve')[0].attrs.d;assert.equal((path.match(/M/g)||[]).length,1);assert.equal((path.match(/L/g)||[]).length,chart.points.length-1);assert.ok(!path.includes('NaN'));}
-  assert.ok(chartNodes(size,'trend-axis-title')[0].textContent.includes('包大小'));
+  assert.equal(chartNodes(size,'trend-axis-title')[0].textContent,'请求大小');
   assert.equal(chartNodes(token,'trend-axis-title')[0].textContent,'输入 Token');
  });
  await test('one bottom time axis aligns ticks with both equal-height metric panels',()=>{
