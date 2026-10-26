@@ -51,6 +51,7 @@ class RetryDiagnosticsTests(unittest.TestCase):
         self.assertTrue(record["capacity_error_seen"])
         self.assertFalse(record["final_capacity_error"])
         self.assertEqual(record["terminal_event"], "response.completed")
+        self.assertEqual((record["time_budget_ms"], record["retry_interval_ms"]), (570000, 50000))
         body, opener, failed = self.run_response(*(Response(FAILED) for _ in range(4)))
         self.assertEqual(body, FAILED)
         self.assertEqual((failed["retry_count"], failed["attempt_count"]), (3, 4))
@@ -104,7 +105,7 @@ class RetryDiagnosticsTests(unittest.TestCase):
         self.assertNotIn("private details", json.dumps(record))
 
     def test_retry_after_time_budget_is_logged_without_retry(self):
-        for value in ("120", "1e300"):
+        for value in ("600", "1e300"):
             with self.subTest(value=value):
                 body, opener, record = self.run_response(Response(FAILED, extra={"Retry-After": value}))
                 self.assertEqual((body, len(opener.requests)), (FAILED, 1))

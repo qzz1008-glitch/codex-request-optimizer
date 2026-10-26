@@ -6,7 +6,7 @@ import unittest
 from urllib.error import HTTPError
 from urllib.request import Request
 
-from packet_inspector.capacity_retry import (CAPACITY_MESSAGE, MAX_PROBE_BYTES, MAX_RETRIES,
+from packet_inspector.capacity_retry import (CAPACITY_MESSAGE, MAX_PROBE_BYTES, MAX_RETRIES, RETRY_INTERVAL,
                                              capacity_error, open_response, retry_delay)
 
 
@@ -99,7 +99,7 @@ class CapacityRetryTests(unittest.TestCase):
                             io.BytesIO(b'{"error":{"code":"server_is_overloaded"}}'))
         data, opener, waits, _ = self.run_response(failure, Response(SUCCESS))
         self.assertEqual(data, SUCCESS)
-        self.assertEqual(waits, [0])
+        self.assertEqual(waits, [RETRY_INTERVAL])
         self.assertEqual(opener.requests[1].get_header("Authorization"), "Bearer test")
         self.assertEqual(opener.requests[1].get_header("Idempotency-key"), "unchanged")
 
@@ -115,17 +115,17 @@ class CapacityRetryTests(unittest.TestCase):
         self.assertEqual(retries, [1, 2, 3])
 
     def test_configured_retry_limit_counts_retries_after_initial_request(self):
-        for limit in [1, 7, 99]:
+        for limit in [1, 7, 9]:
             with self.subTest(limit=limit):
                 responses = [Response(FAILED, extra={"Retry-After": "0"}) for _ in range(limit + 1)]
                 data, opener, waits, retries = self.run_response(*responses, max_retries=limit)
                 self.assertEqual(data, FAILED)
                 self.assertEqual(len(opener.requests), limit + 1)
-                self.assertEqual(waits, [0] * limit)
+                self.assertEqual(waits, [RETRY_INTERVAL] * limit)
                 self.assertEqual(retries, list(range(1, limit + 1)))
 
     def test_invalid_retry_limits_are_rejected_before_opening_request(self):
-        for limit in [0, -1, 100, True, False, "3", 2.5, None]:
+        for limit in [0, -1, 10, 99, 100, True, False, "3", 2.5, None]:
             with self.subTest(limit=limit):
                 opener = Opener()
                 with self.assertRaises(ValueError):
@@ -134,7 +134,7 @@ class CapacityRetryTests(unittest.TestCase):
 
     def test_large_retry_limit_still_obeys_retry_window(self):
         data, opener, waits, retries = self.run_response(
-            Response(FAILED, extra={"Retry-After": "91"}), max_retries=99)
+            Response(FAILED, extra={"Retry-After": "571"}), max_retries=9)
         self.assertEqual((data, len(opener.requests), waits, retries), (FAILED, 1, [], []))
 
     def test_other_errors_are_not_retried(self):
@@ -204,7 +204,7 @@ class CapacityRetryTests(unittest.TestCase):
         self.assertEqual((data, len(opener.requests)), (FAILED, 1))
 
     def test_retry_after_beyond_budget_does_not_retry_early(self):
-        data, opener, waits, _ = self.run_response(Response(FAILED, extra={"Retry-After": "300"}))
+        data, opener, waits, _ = self.run_response(Response(FAILED, extra={"Retry-After": "600"}))
         self.assertEqual((data, len(opener.requests), waits), (FAILED, 1, []))
 
     def test_disabling_during_wait_preserves_original_failure(self):
@@ -227,11 +227,12 @@ class CapacityRetryTests(unittest.TestCase):
 
     def test_retry_after_http_date_and_invalid_values(self):
         now = datetime(2026, 10, 21, 6, 0, tzinfo=timezone.utc)
-        self.assertEqual(retry_delay({"Retry-After": "Wed, 21 Oct 2026 06:00:10 GMT"}, 1, now), 10)
+        self.assertEqual(retry_delay({"Retry-After": "Wed, 21 Oct 2026 06:00:10 GMT"}, 1, now), RETRY_INTERVAL)
+        self.assertEqual(retry_delay({"Retry-After": "Wed, 21 Oct 2026 06:02:00 GMT"}, 1, now), 120)
+        self.assertEqual(retry_delay({"Retry-After": "75"}, 1, now), 75)
         for value in ["invalid", "-1", "NaN", "inf"]:
             delay = retry_delay({"Retry-After": value}, 2, now)
-            self.assertGreaterEqual(delay, 4)
-            self.assertLessEqual(delay, 5)
+            self.assertEqual(delay, RETRY_INTERVAL)
 
 
 if __name__ == "__main__":

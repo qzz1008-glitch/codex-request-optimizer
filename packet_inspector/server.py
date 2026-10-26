@@ -37,7 +37,7 @@ from .storage import Store
 from .transport import CompressionHistory, DEFAULT_ZSTD_LEVEL, prepare_request_info, validate_zstd_level
 from .installation import manage_installation
 from .startup import configure_startup, startup_supported
-from .capacity_retry import MAX_RETRIES, notify, open_response
+from .capacity_retry import MAX_RETRIES, MAX_RETRY_SECONDS, RETRY_LIMIT, notify, open_response
 from .retry_diagnostics import RetryJournal, ResponseObservation
 from .usage_trigger import (UsageStream, raw_chunks, request_size as usage_trigger_size,
                             trigger_threshold, DEFAULT_BUDGET_BYTES, MIN_BUDGET_BYTES)
@@ -115,6 +115,10 @@ class InspectorServer(ThreadingHTTPServer):
             self.settings["zstd_level"] = validate_zstd_level(self.settings["zstd_level"])
         except ValueError:
             self.settings["zstd_level"] = DEFAULT_ZSTD_LEVEL
+        limit = self.settings["capacity_retry_max_retries"]
+        self.settings["capacity_retry_max_retries"] = (
+            min(limit, RETRY_LIMIT) if isinstance(limit, int) and not isinstance(limit, bool) and limit >= 1
+            else MAX_RETRIES)
         if upstream:
             self.settings["upstream"] = validate_upstream(upstream)
         elif not self.settings.get("upstream"):
@@ -644,7 +648,7 @@ class Handler(BaseHTTPRequestHandler):
                     candidate["image_analysis_mode"] = "optimized" if data["image_isolation_enabled"] else "native"
                 candidate["image_isolation_enabled"] = candidate["image_analysis_mode"] == "optimized"
                 for key, low, high in (("budget_bytes", MIN_BUDGET_BYTES, MAX_BODY), ("max_storage_mb", 16, 8192),
-                                       ("max_packets", 10, 20000), ("capacity_retry_max_retries", 1, 99)):
+                                       ("max_packets", 10, 20000), ("capacity_retry_max_retries", 1, RETRY_LIMIT)):
                     if key in data:
                         value = data[key]
                         if isinstance(value, bool) or not isinstance(value, int) or not low <= value <= high:
@@ -804,6 +808,7 @@ class Handler(BaseHTTPRequestHandler):
         return parser.finish()
 
     def _relay_request(self, prefix, scope):
+        retry_deadline = time.monotonic() + MAX_RETRY_SECONDS
         if self.command not in {"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"}:
             self._json(405, {"error": "method_not_supported"})
             return
@@ -1023,7 +1028,7 @@ class Handler(BaseHTTPRequestHandler):
                                                           capacity_retry_reason="server_overloaded"),
                     cancelled=self._client_disconnected,
                     still_enabled=lambda: self.server.settings["capacity_retry_enabled"],
-                    on_event=diagnostic.record if diagnostic else None)
+                    on_event=diagnostic.record if diagnostic else None, deadline=retry_deadline)
             except HTTPError as exc:
                 response = exc
             with response:

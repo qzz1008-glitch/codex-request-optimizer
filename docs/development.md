@@ -32,7 +32,11 @@
 
 ## 容量重试诊断
 
-`capacity_retry.open_response` 保持原有重试策略，通过尽力而为的事件回调记录 `attempt_started`、`response_headers`、`probe_finished`、`retry_scheduled`、`response_selected`、取消和异常。`attempt_started` 表示发起一次上游调用，不证明上游已收到正文；`retry_count` 仅在第二次及后续调用实际开始时递增，等待计划另存 `scheduled_retries`。检测只允许原有握手事件，空 reasoning 条目仍会提交响应流，不扩大可重放范围。
+`capacity_retry.open_response` 仅重试尚未转发输出的明确容量错误，次数范围 1–9、默认 3，旧配置超过 9 次时限制为 9，其他设置保留。间隔至少 50 秒，遵循更长的 `Retry-After`。`server` 从读取请求正文前计算 570 秒绝对截止时间，扣除采集、图片处理、压缩及超限保护耗时，为固定入口等待响应头的 600 秒 socket 超时留出 30 秒；开始新一次重试还须为网络阶段预留至少 10 秒。原始请求沿用 600 秒网络等待，不因重试设置截断普通生成；只有拿到明确容量错误后才进入受截止时间约束的后续尝试。
+
+重试的连接、响应头等待及前缀读取由可中止等待的工作线程执行，调用线程按绝对截止时间、客户端断开和开关状态结束等待。上一条真实容量响应保留到新尝试完成；时间耗尽或途中关闭设置时返回该响应，不合成模型事件或新的超时错误。中止时关闭已取得响应的 socket，迟到的响应在工作线程内关闭，迟到诊断不再回传；所有诊断写入仍在请求线程执行。成功提交响应前恢复上游 socket 的正常 600 秒超时，避免把剩余重试预算带入后续生成。该预算约束额外重试，不为原始上游请求或外部网络故障承诺绝对总时限。
+
+通过尽力而为的事件回调记录 `retry_policy`、`attempt_started`、`response_headers`、`probe_finished`、`retry_scheduled`、`response_selected`、取消和异常。日志保存本次预算、间隔、剩余时间和网络超时；`attempt_started` 表示发起一次上游调用，不证明上游已收到正文，`retry_count` 仅在第二次及后续调用实际开始时递增，等待计划另存 `scheduled_retries`。检测只允许原有握手事件，空 reasoning 条目仍会提交响应流，不扩大可重放范围。
 
 `ResponseObservation` 在最终响应转发路径上只读识别结构化结束和错误事件，检测退出后仍能记录容量错误；不匹配普通输出中的错误文案，不改变响应字节。`downstream_headers_sent` 和 `downstream_first_bytes_sent` 标明实际开始向 Codex 转发的位置，可与检测、重试时间对照。日志只保存事件类型、条目类型、数量、错误代码和上游请求 ID 等白名单元信息，不保存内容。响应缺失结束事件、格式不明、编码无法观察或进程中断均不补造成功。
 

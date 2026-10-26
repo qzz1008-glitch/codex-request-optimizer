@@ -26,6 +26,9 @@ class RuntimeSettingsTests(unittest.TestCase):
     latest = fixtures.RelayTests.latest
 
     def setUp(self):
+        retry_delay = patch("packet_inspector.capacity_retry.retry_delay", return_value=0)
+        retry_delay.start()
+        self.addCleanup(retry_delay.stop)
         self.server.save_settings({**self.server.settings, "start_on_login": False, "capacity_retry_enabled": False,
                                    "capacity_retry_max_retries": 3})
         self.server.startup_state_known = True
@@ -69,7 +72,7 @@ class RuntimeSettingsTests(unittest.TestCase):
                     self.assertFalse(self.server.settings[key])
 
     def test_retry_limit_is_persisted(self):
-        for limit in [1, 12, 99]:
+        for limit in [1, 5, 9]:
             with self.subTest(limit=limit):
                 status, result = self.api("/api/settings", {"capacity_retry_max_retries": limit})
                 self.assertEqual(status, 200)
@@ -79,7 +82,7 @@ class RuntimeSettingsTests(unittest.TestCase):
 
     def test_invalid_retry_limit_rejects_entire_settings_change(self):
         before = self.server.settings_path.read_bytes()
-        for limit in [0, -1, 100, True, False, "3", 2.5, None]:
+        for limit in [0, -1, 10, 99, 100, True, False, "3", 2.5, None]:
             with self.subTest(limit=limit):
                 status, _ = self.api("/api/settings", {"capacity_retry_enabled": True,
                                                       "capacity_retry_max_retries": limit})
@@ -87,6 +90,28 @@ class RuntimeSettingsTests(unittest.TestCase):
                 self.assertFalse(self.server.settings["capacity_retry_enabled"])
                 self.assertEqual(self.server.settings["capacity_retry_max_retries"], 3)
                 self.assertEqual(self.server.settings_path.read_bytes(), before)
+
+    def test_loading_previous_retry_limits_preserves_other_settings(self):
+        for limit, expected in [(3, 3), (9, 9), (12, 9), (99, 9)]:
+            with self.subTest(limit=limit), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+                config = root / "config.toml"
+                config.write_text("", encoding="utf8")
+                data = root / "data"
+                data.mkdir()
+                saved = {"capacity_retry_enabled": True, "capacity_retry_max_retries": limit,
+                         "zstd_level": 11, "packet_size_protection_enabled": True}
+                (data / "settings.json").write_text(json.dumps(saved), encoding="utf8")
+                with patch("packet_inspector.server.startup_supported", return_value=False):
+                    server = InspectorServer(("127.0.0.1", 0), data, config, "http://127.0.0.1:9/v1")
+                try:
+                    self.assertEqual(server.settings["capacity_retry_max_retries"], expected)
+                    self.assertTrue(server.settings["capacity_retry_enabled"])
+                    self.assertEqual(server.settings["zstd_level"], 11)
+                    self.assertTrue(server.settings["packet_size_protection_enabled"])
+                    self.assertEqual(json.loads(server.settings_path.read_text())["capacity_retry_max_retries"], expected)
+                finally:
+                    server.server_close()
 
     def test_login_setting_uses_installation_helper_without_stopping_service(self):
         with patch("packet_inspector.server.configure_startup") as configure:

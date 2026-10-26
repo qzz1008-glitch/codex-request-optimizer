@@ -561,7 +561,8 @@ function capacityRetryDetails(p) {
     upstream_error:"上游报错",http_error:"HTTP 错误",unobserved:"最终结果未确认",unfinished:"缺少结束记录"};
   const result=d.state!=="finished"?(d.scheduled_retries>count?"等待重试":"请求进行中"):(results[d.outcome]||"最终结果未确认");
   const reasons={disabled:"请求时未开启重试",endpoint_not_eligible:"原生压缩请求不参与容量重试",
-    retry_limit:"达到重试次数上限",time_budget:"超出 90 秒重试窗口",setting_disabled:"重试前开关已关闭",
+    retry_limit:"达到重试次数上限",time_budget:"重试剩余时间不足",setting_disabled:"重试前开关已关闭",
+    disabled_during_attempt:"重试期间开关已关闭",
     disabled_during_wait:"等待期间开关已关闭",stream_committed:"已开始转发输出",existing_output:"响应已包含输出",
     client_disconnected:"客户端已断开",upstream_exception:"请求过程异常",encoded_response:"响应带传输编码，无法识别结果",
     unsupported_content_type:"响应格式不在识别范围",unsupported_status:"HTTP 状态不在重试范围",

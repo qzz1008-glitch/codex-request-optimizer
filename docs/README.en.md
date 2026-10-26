@@ -44,7 +44,7 @@ For request body limits such as **1M (1,000,000 bytes)**, set a custom size limi
 
 ### 🔁 Automatic retries when a model is at capacity
 
-When an explicit model capacity error occurs, retry automatically according to your settings, keeping the same model and request content.
+When an explicit model capacity error occurs, retry automatically according to your settings, keeping the same model and request content. Set 1–9 retries, with a default of 3. Wait at least 50 seconds between attempts, or longer when required by the server. Retry waits and upstream attempts share a 570-second budget, including earlier request processing, leaving headroom below the local relay entry's 600-second wait limit. If time runs short, return the capacity error already received; the actual retry count can therefore be lower than configured. Requests that have started producing output are not replayed, and successful responses continue streaming normally.
 
 > Selected model is at capacity. Please try a different model.
 
