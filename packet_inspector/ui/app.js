@@ -262,7 +262,7 @@ function compact(n) { if (n === undefined || n === null) return "—"; return n 
 function renderStorageInfo() {
   const storage=state.status?.storage;if(!storage)return;
   reconcileContent($("storage-info"),
-    el("span","",t("存储 {size}").replace("{size}",compact(storage.disk_bytes))),
+    el("span","",compact(storage.disk_bytes)+"/"+compact(storage.max_bytes)),
     el("span","",t("{count} 请求").replace("{count}",nf.format(storage.count)))
   );
 }
