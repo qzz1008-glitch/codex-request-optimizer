@@ -39,6 +39,8 @@ const uiI18n = (() => {
     "退出未完成，请检查中转服务后重试。":"Exit was not completed. Check the relay service and try again.",
     "接入与传输模式":"Connection and transport mode",
     "取消接入":"Disconnect",
+    "保持接入":"Keep connected",
+    "确认断开":"Disconnect",
     "确认取消接入":"Confirm disconnect",
     "正在取消接入…":"Disconnecting…",
     "切换为「断开」并恢复原出口？":"Switch to Disconnected and restore the original endpoint?",
