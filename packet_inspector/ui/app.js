@@ -940,6 +940,8 @@ function fillZstdLevel() {
   const s=state.status,input=$("zstd-level"),supported=Number.isInteger(s.zstd_level);
   const selected=settingsEditing?Number(input.value):(s.zstd_level??3);
   const automatic=$("packet-size-protection").checked&&$("auto-zstd-level").checked;
+  $("compression-settings").classList.toggle("is-automatic",automatic);
+  $("compression-settings").setAttribute("aria-disabled",String(automatic));
   input.value=String(selected);
   input.disabled=settingsSaving||!supported||automatic;
   $("zstd-level-open").disabled=input.disabled;

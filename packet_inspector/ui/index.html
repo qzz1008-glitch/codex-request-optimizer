@@ -120,14 +120,6 @@
       <div class="entry-port-row" data-settings-field="entry_port"><label for="entry-port">入口端口</label><input id="entry-port" type="number" min="1024" max="65535" step="1" value="47844" required aria-describedby="link-status"><span id="link-status" class="entry-port-status" role="status" aria-live="polite" hidden></span></div>
       <p id="entry-port-message" class="help" role="status" hidden></p>
     </section>
-    <section><h3>传输压缩</h3>
-      <div class="zstd-level-control" data-settings-field="zstd_level">
-        <label for="zstd-level-open">压缩等级</label>
-        <input id="zstd-level" type="hidden" value="3" disabled>
-        <div class="zstd-level-selection"><button id="zstd-level-open" class="zstd-level-trigger" type="button" aria-haspopup="dialog" aria-controls="zstd-level-dialog" aria-describedby="zstd-level-auto-note" aria-expanded="false" disabled><span id="zstd-level-value">3级</span><svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></button><span id="zstd-level-auto-note" class="help muted" hidden>根据包大小自动调整</span></div>
-      </div>
-      <p id="zstd-level-message" class="help" role="status" hidden></p>
-    </section>
     <section id="context-settings"><div class="context-heading"><h3>上下文设置</h3></div>
       <div class="context-grid">
         <div class="context-control" role="group" aria-labelledby="context-label" data-settings-field="context_tokens">
@@ -152,6 +144,15 @@
       <div class="runtime-setting-row auto-zstd-row" data-settings-field="auto_zstd_level_enabled"><label class="runtime-toggle" for="auto-zstd-level"><input id="auto-zstd-level" type="checkbox" disabled><span>按包大小自动压缩</span></label></div>
       <div class="runtime-setting-row runtime-retry-row"><div class="runtime-toggle" data-settings-field="capacity_retry_enabled"><input id="capacity-retry" type="checkbox" aria-labelledby="capacity-retry-label"><span id="capacity-retry-label" title="模型容量不足时自动重试">容量不足重试</span></div><div class="capacity-retry-limit" data-settings-field="capacity_retry_max_retries"><label for="capacity-retry-count">重试次数</label><input id="capacity-retry-count" type="number" min="1" max="99" step="1" value="3" inputmode="numeric" required><span>次</span></div></div>
       <p id="runtime-settings-message" class="help" role="status" hidden></p>
+    </section>
+    <section id="compression-settings" aria-labelledby="compression-settings-title" aria-disabled="false">
+      <div class="compression-heading"><h3 id="compression-settings-title">传输压缩</h3><span id="zstd-level-auto-note" class="help muted" hidden>已打开请求保护-按包大小自动压缩</span></div>
+      <div class="zstd-level-control" data-settings-field="zstd_level">
+        <label for="zstd-level-open">压缩等级</label>
+        <input id="zstd-level" type="hidden" value="3" disabled>
+        <button id="zstd-level-open" class="zstd-level-trigger" type="button" aria-haspopup="dialog" aria-controls="zstd-level-dialog" aria-describedby="zstd-level-auto-note" aria-expanded="false" disabled><span id="zstd-level-value">3级</span><svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+      </div>
+      <p id="zstd-level-message" class="help" role="status" hidden></p>
     </section>
     <section id="image-settings" aria-labelledby="image-settings-title"><h3 id="image-settings-title">图片解析</h3>
       <div class="runtime-setting-row image-mode-row">

@@ -175,7 +175,7 @@ const uiI18n = (() => {
     "向 Codex 报告的输入 Token":"Input tokens reported to Codex",
     "请求大小保护":"Request size protection",
     "按包大小自动压缩":"Compress automatically by packet size",
-    "根据包大小自动调整":"Adjusted automatically by packet size",
+    "已打开请求保护-按包大小自动压缩":"Request protection on: automatic compression by size",
     "请先开启请求大小保护":"Enable request size protection first",
     "当前中转暂不支持按包大小自动压缩。":"The current relay does not support automatic compression by packet size yet.",
     "请求保护":"Request protection",

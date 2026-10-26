@@ -254,7 +254,7 @@ code.session-id{font-family:Consolas,"Cascadia Mono",monospace;font-size:11px;wo
 #settings-dialog>.settings-content::-webkit-scrollbar-thumb{border:2px solid var(--panel);border-radius:8px;background:#c3ccd8}
 #settings-dialog>.settings-content::-webkit-scrollbar-thumb:hover{background:#9aa9c5}
 #settings-dialog .settings-content>section{margin:0;padding:20px 0;padding-inline-start:var(--settings-section-indent);border-top:1px solid var(--line)}
-#settings-dialog .settings-content>section>:is(h3,.context-heading){margin-inline-start:calc(-1 * var(--settings-section-indent))}
+#settings-dialog .settings-content>section>:is(h3,.context-heading,.compression-heading){margin-inline-start:calc(-1 * var(--settings-section-indent))}
 #settings-dialog .settings-content>section:last-child{padding-bottom:0}
 #settings-dialog label{margin:0;color:var(--ink);font-size:14px;line-height:22px;font-weight:400}
 #settings-dialog :is(button,input,select){font:inherit;font-size:14px}
@@ -286,9 +286,10 @@ code.session-id{font-family:Consolas,"Cascadia Mono",monospace;font-size:11px;wo
 #settings-dialog .entry-port-status:is([data-state=pending],[data-state=unsaved]){color:var(--warn)}
 #settings-dialog .entry-port-status[data-state=error]{color:var(--danger)}
 #settings-dialog .zstd-level-control{display:grid;grid-template-columns:var(--settings-label-width) minmax(0,1fr);align-items:center;gap:16px;margin:0}
-#settings-dialog .zstd-level-selection{display:flex;align-items:center;gap:12px;min-width:0}
-#settings-dialog .zstd-level-selection .zstd-level-trigger{flex:none}
-#zstd-level-auto-note{margin:0;font-size:13px;line-height:1.5}
+#settings-dialog .compression-heading{display:flex;align-items:center;flex-wrap:wrap;gap:8px 12px;margin:0 0 16px}
+#settings-dialog .compression-heading h3{margin:0}
+#settings-dialog #zstd-level-auto-note{margin:0;font-size:13px;line-height:20px}
+#settings-dialog #compression-settings.is-automatic{--ink:var(--muted);color:var(--muted)}
 #settings-dialog .auto-zstd-row .runtime-toggle{grid-column:1 / -1}
 #settings-dialog .zstd-level-trigger{width:var(--settings-number-width);max-width:100%;justify-self:start;font-variant-numeric:tabular-nums;display:flex;align-items:center;justify-content:flex-end;gap:12px;text-align:right}
 #zstd-level-dialog{width:min(520px,calc(100vw - 32px));max-height:min(640px,calc(100vh - 40px));padding:20px;overflow:hidden}
