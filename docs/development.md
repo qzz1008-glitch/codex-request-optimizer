@@ -42,7 +42,7 @@
 
 `RetryJournal` 使用独立的 `retry-diagnostics.sqlite`，每次事件更新原子保存，完整时间线不进入抓包摘要；摘要只保留结果、次数及日志 ID。每条日志最多 512 个事件，超出时保留开始和最新事件并累计省略数。异常及重试记录保留最多 30 天，普通成功记录最多 24 小时 / 2,000 条；按总计 20,000 条、32 MiB 内容预算优先删除已结束的普通记录。6 小时无更新的活动记录标记 `unfinished`，空闲时复用 `SQLiteReclaimer` 回收空间。读写失败只计入 `/api/status` 的 `capacity_retry_diagnostics_errors` 和 `capacity_retry_diagnostics_last_error`，不得影响转发或重试决策。诊断能力仅覆盖进入常规上游转发阶段的 `POST /responses` 和 `/responses/compact`；后者仅观察，不新增自动重试。部署新版后开始记录，不追溯补写旧请求。
 
-`GET /api/retry-diagnostics` 支持 `session_id`、`packet_id`、`before` 和 1–100 的 `limit`，列表省略时间线；`GET /api/retry-diagnostics/<id>` 返回完整记录，`download=1` 下载 JSON。右栏展示请求当时设置及最终结果，实际重试计数继续驱动列表和趋势标记。针对性验证：`python -m unittest tests.test_capacity_retry tests.test_retry_diagnostics tests.test_runtime_settings -q`，包含原字节透传、重试耗尽、空 reasoning 后错误、取消/关闭、清理及重启后查询、诊断失败不影响转发，以及前端状态和标记。
+`GET /api/retry-diagnostics` 支持 `session_id`、`packet_id`、`before` 和 1–100 的 `limit`，列表省略时间线；`GET /api/retry-diagnostics/<id>` 返回完整记录，`download=1` 下载 JSON。右栏自动重试仅显示是否触发，不提供诊断详情或下载入口；右栏、列表和趋势标记统一以实际重试计数判断。针对性验证：`python -m unittest tests.test_capacity_retry tests.test_retry_diagnostics tests.test_runtime_settings -q`，包含原字节透传、重试耗尽、空 reasoning 后错误、取消/关闭、清理及重启后查询、诊断失败不影响转发，以及前端状态和标记。
 
 超限切分通过 `request_context.is_delegation_notice` 识别原生独立通知：`function_call_output`、没有 `call_id` 字段、具有 `fco_` 条目 ID，且输出完整匹配带有效源会话 ID 和 input 的 `codex_delegation` 结构。通知的条目 ID 不作为调用 ID；分析器的工具配对计数、`safe_cuts` 和重组原文保留使用同一判定。通知不会关闭未完成的工具组，压缩和缓存复用后保持完整对象及相对顺序。带 `call_id` 的结果、普通孤立结果或不完整通知仍执行原配对校验，不泛化为跳过孤立结果。验证覆盖混合并行调用、通知原文保留、多轮压缩、重启复用，以及本机模拟上游的 HTTP 超限处理。
 

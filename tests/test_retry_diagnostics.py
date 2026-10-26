@@ -304,7 +304,7 @@ class RetryDiagnosticsTests(unittest.TestCase):
             self.assertLessEqual(db.execute("SELECT coalesce(sum(bytes),0) FROM retry_requests").fetchone()[0], 2000)
 
     @unittest.skipUnless(shutil.which("node"), "Node.js required for retry diagnostic UI checks")
-    def test_frontend_outcomes_download_and_actual_retry_markers(self):
+    def test_frontend_trigger_status_and_actual_retry_markers(self):
         result = subprocess.run([shutil.which("node"), "tests/retry_diagnostics.cjs"],
                                 capture_output=True, text=True, timeout=20)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
