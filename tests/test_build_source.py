@@ -139,6 +139,13 @@ class BuildSourceTests(unittest.TestCase):
         self.write(".github/workflows/new-check.yml", "name: Fixture check\n")
         self.assertIn(".github/workflows/new-check.yml", self.snapshot().files)
 
+    def test_commonjs_frontend_tests_are_frozen_with_complete_source(self):
+        self.write("tests/frontend.cjs", "require('node:assert').ok(true);\n")
+        snapshot = self.snapshot()
+        self.assertIn("tests/frontend.cjs", snapshot.files)
+        self.assertEqual((snapshot.source / "tests/frontend.cjs").read_text(),
+                         "require('node:assert').ok(true);\n")
+
     def test_source_behind_origin_main_blocks(self):
         previous = git(self.root, "rev-parse", "HEAD")
         self.write("packet_inspector/ui/app.js", "new remote feature")

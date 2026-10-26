@@ -26,7 +26,7 @@ def source_files(root=None):
     files = [root / name for name in ("README.md", "LICENSE", "AGENTS.md", ".gitignore", ".gitattributes", "requirements-dev.txt",
              ".github/RELEASE_NOTES.md", ".github/workflows/windows-build.yml", ".githooks/pre-push")
              if (root / name).is_file()]
-    suffixes = {".py", ".txt", ".md", ".html", ".js", ".css", ".ps1", ".json", ".ico", ".png", ".svg",
+    suffixes = {".py", ".txt", ".md", ".html", ".js", ".cjs", ".css", ".ps1", ".json", ".ico", ".png", ".svg",
                 ".toml", ".yaml", ".yml", ".sh", ".bat", ".cmd", ".woff", ".woff2", ".ttf", ".otf",
                 ".webp", ".gif", ".jpeg", ".jpg"}
     excluded = {"__pycache__", "data", ".local", ".venv", "build", "release", "node_modules"}
