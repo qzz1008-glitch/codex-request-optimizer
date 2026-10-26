@@ -151,7 +151,7 @@ function dualRows(){return [
   assert.deepEqual(Array.from(token.points,p=>p.value),[100,300]);
   for(const point of token.points)assert.equal(point.x,size.points.find(p=>p.packet.id===point.packet.id).x);
   for(const chart of result.charts){const path=chartNodes(chart,'trend-curve')[0].attrs.d;assert.equal((path.match(/M/g)||[]).length,1);assert.equal((path.match(/L/g)||[]).length,chart.points.length-1);assert.ok(!path.includes('NaN'));}
-  assert.ok(chartNodes(size,'trend-axis-title')[0].textContent.includes('包大小'));
+  assert.equal(chartNodes(size,'trend-axis-title')[0].textContent,'请求大小');
   assert.equal(chartNodes(token,'trend-axis-title')[0].textContent,'输入 Token');
  });
  await test('one bottom time axis aligns ticks with both equal-height metric panels',()=>{
@@ -300,6 +300,52 @@ function dualRows(){return [
   active=null;result.emphasis=null;result.charts[0].svg.onpointerleave();result.render();
   for(const chart of result.charts)assert.equal(chartNodes(chart,'dimmed').length,0);
   assert.equal(published,6);
+ });
+ await test('hovering a long segment highlights its session across redraws without inventing a sample',()=>{
+  const {result,ids,events}=rendered([
+   packet(401,{created:now-600,upstream_usage:{input_tokens:100},outbound_wire_bytes:100000}),
+   packet(402,{created:now-300,outbound_wire_bytes:200000}),
+   packet(403,{created:now-1,upstream_usage:{input_tokens:300},outbound_wire_bytes:300000}),
+   packet(404,{thread_id:'session-b',created:now-600,upstream_usage:{input_tokens:500},outbound_wire_bytes:500000}),
+   packet(405,{thread_id:'session-b',created:now-1,upstream_usage:{input_tokens:500},outbound_wire_bytes:500000})
+  ]),token=result.charts[1],[a,b]=token.points.filter(p=>p.series.id==='session-a');
+  const x=(a.x+b.x)/2,y=(a.y+b.y)/2;assert.ok(Math.hypot(x-a.x,y-a.y)>28);
+  token.svg.onpointermove({clientX:x,clientY:y});
+  assert.equal(result.hover,null);assert.equal(result.hoverSeries,'session-a');
+  assert.deepEqual(ids.get('trend-series').children.filter(n=>n.attrs.class.split(' ').includes('active')).map(n=>n.dataset.renderKey),['trend-series:session-a']);
+  for(const chart of result.charts){assert.equal(chart.tooltip.hidden,true);assert.equal(chartNodes(chart,'dimmed').length,1);}
+  assert.equal(result.timeTooltip.hidden,true);assert.equal(focusLines(result).length,0);
+  for(const chart of result.charts){const replace=chart.svg.replaceChildren.bind(chart.svg);chart.svg.replaceChildren=fragment=>{
+   for(const line of fragment.querySelectorAll('[data-series]'))assert.equal(line.attrs.class.includes('dimmed'),line.dataset.series!=='session-a');replace(fragment);
+  };}
+  result.render();assert.equal(result.hoverSeries,'session-a');
+  events.get('pointermove')({target:new Node('header')});assert.equal(result.hoverSeries,null);
+  for(const chart of result.charts)assert.equal(chartNodes(chart,'dimmed').length,0);
+  token.svg.onpointermove({clientX:x,clientY:y});result.setActive(false);assert.equal(result.hoverSeries,null);
+ });
+ await test('line hits use screen distance, choose the closest series and never bridge sessions',()=>{
+  let {result}=rendered([
+   packet(501,{created:now-600,upstream_usage:{input_tokens:100},outbound_wire_bytes:100000}),
+   packet(502,{created:now-1,upstream_usage:{input_tokens:100},outbound_wire_bytes:100000}),
+   packet(503,{thread_id:'session-b',created:now-600,upstream_usage:{input_tokens:105},outbound_wire_bytes:105000}),
+   packet(504,{thread_id:'session-b',created:now-1,upstream_usage:{input_tokens:105},outbound_wire_bytes:105000})
+  ]);
+  let token=result.charts[1];
+  for(const id of ['session-a','session-b']){const [a,b]=token.points.filter(p=>p.series.id===id);token.svg.onpointermove({clientX:(a.x+b.x)/2,clientY:a.y});assert.equal(result.hoverSeries,id);assert.equal(result.hover,null);}
+  ({result}=rendered([
+   packet(505,{created:now-600,upstream_usage:{input_tokens:100}}),
+   packet(506,{created:now-1,upstream_usage:{input_tokens:100}})
+  ]));
+  token=result.charts[1];token.svg.clientWidth/=2;token.svg.clientHeight/=2;
+  let [a,b]=token.points,x=(a.x+b.x)/4,y=a.y/2;
+  token.svg.onpointermove({clientX:x,clientY:y+6});assert.equal(result.hoverSeries,'session-a');
+  token.svg.onpointermove({clientX:x,clientY:y+10});assert.equal(result.hoverSeries,null);
+  ({result}=rendered([
+   packet(507,{created:now-600,upstream_usage:{input_tokens:100}}),
+   packet(508,{thread_id:'session-b',created:now-1,upstream_usage:{input_tokens:300}})
+  ]));
+  token=result.charts[1];[a,b]=token.points;token.svg.onpointermove({clientX:(a.x+b.x)/2,clientY:(a.y+b.y)/2});
+  assert.equal(result.hoverSeries,null);assert.equal(result.hover,null);
  });
  console.log(JSON.stringify({passed:checks}));
 })().catch(error=>{console.error(error);process.exitCode=1;});

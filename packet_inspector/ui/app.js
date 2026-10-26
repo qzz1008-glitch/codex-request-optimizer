@@ -561,7 +561,8 @@ function capacityRetryDetails(p) {
     upstream_error:"上游报错",http_error:"HTTP 错误",unobserved:"最终结果未确认",unfinished:"缺少结束记录"};
   const result=d.state!=="finished"?(d.scheduled_retries>count?"等待重试":"请求进行中"):(results[d.outcome]||"最终结果未确认");
   const reasons={disabled:"请求时未开启重试",endpoint_not_eligible:"原生压缩请求不参与容量重试",
-    retry_limit:"达到重试次数上限",time_budget:"超出 90 秒重试窗口",setting_disabled:"重试前开关已关闭",
+    retry_limit:"达到重试次数上限",time_budget:"重试剩余时间不足",setting_disabled:"重试前开关已关闭",
+    disabled_during_attempt:"重试期间开关已关闭",
     disabled_during_wait:"等待期间开关已关闭",stream_committed:"已开始转发输出",existing_output:"响应已包含输出",
     client_disconnected:"客户端已断开",upstream_exception:"请求过程异常",encoded_response:"响应带传输编码，无法识别结果",
     unsupported_content_type:"响应格式不在识别范围",unsupported_status:"HTTP 状态不在重试范围",
@@ -940,10 +941,11 @@ function fillZstdLevel() {
   const s=state.status,input=$("zstd-level"),supported=Number.isInteger(s.zstd_level);
   const selected=settingsEditing?Number(input.value):(s.zstd_level??3);
   const automatic=$("packet-size-protection").checked&&$("auto-zstd-level").checked;
+  $("compression-settings").classList.toggle("is-automatic",automatic);
+  $("compression-settings").setAttribute("aria-disabled",String(automatic));
   input.value=String(selected);
   input.disabled=settingsSaving||!supported||automatic;
   $("zstd-level-open").disabled=input.disabled;
-  $("zstd-level-auto-note").hidden=!automatic;
   $("zstd-level-value").textContent=t("{level}级").replace("{level}",selected);
   if($("zstd-level-dialog").open) {
     if(input.disabled)closeZstdLevelPicker();else renderZstdLevelRows();
@@ -1392,7 +1394,8 @@ async function saveSettings() {
 }
 function renderUpdates() {
   const u=updateStatus, busy=settingsSaving||updateBusy||["checking","downloading","upgrading"].includes(u?.state);
-  if(u?.current_version)$("updates-versions").textContent=t("当前版本：{version}").replace("{version}",u.current_version)+(u.latest_version?" · "+t("最新版本：{version}").replace("{version}",u.latest_version):"");
+  const currentVersion=u?.current_version||state.status?.version;
+  $("updates-versions").textContent=currentVersion?t("当前版本：{version}").replace("{version}",currentVersion):"";
   $("updates-check").disabled=busy;$("updates-install").disabled=busy||u?.state!=="available";
   const labels={idle:"可检查 GitHub 上的最新版本。",checking:"正在检查更新…",current:"已是最新版本。",available:"发现新版本，可以升级。",downloading:"正在下载并校验升级包…",upgrading:"正在升级，旧请求继续完成…",complete:"升级已完成。"};
   const displayedState=updateBusy?(updateAction==="check"?"checking":"downloading"):u?.state;
@@ -1404,7 +1407,7 @@ function renderUpdates() {
   $("updates-install-label").textContent=t(installing?"升级中":"立即升级");
   const message=$("updates-message");
   message.hidden=!updateFeedbackVisible;
-  message.textContent=displayedState==="error"?u.error:t(labels[displayedState]||labels.idle);
+  message.textContent=displayedState==="error"?u.error:displayedState==="available"&&u.latest_version?t("最新版本：{version}").replace("{version}",u.latest_version):t(labels[displayedState]||labels.idle);
   message.title=message.textContent;
   message.classList.toggle("error",displayedState==="error");
 }
@@ -1429,6 +1432,7 @@ async function performUpdate(which) {
 async function openSettings() {
   if(settingsOpening||compressionSaving||exitSaving||connectSaving||connectChecking||$("connect-confirm-dialog").open||$("exit-confirm-dialog").open||$("compression-confirm-dialog").open||$("settings-restart-dialog").open||$("settings-dialog").open)return;
   settingsOpening=true;
+  updateFeedbackVisible=updateBusy||["checking","downloading","upgrading"].includes(updateStatus?.state);
   try {
     await Promise.all([refreshStatus(true),loadContextSettings(),loadUpdates()]);
     settingsLanguage=uiI18n.language;
@@ -1918,7 +1922,7 @@ function fillPacketProtection() {
   $("packet-size-protection").disabled=settingsSaving||!supported;
   $("budget").disabled=$("packet-size-protection").disabled||!$("packet-size-protection").checked;
   automatic.disabled=$("packet-size-protection").disabled||!$("packet-size-protection").checked||!autoSupported;
-  automatic.closest("label").title=!autoSupported?t("当前中转暂不支持按包大小自动压缩。"):!$("packet-size-protection").checked?t("请先开启请求大小保护"):"";
+  automatic.closest(".runtime-toggle").title=!autoSupported?t("当前中转暂不支持按包大小自动压缩。"):!$("packet-size-protection").checked?t("请先开启请求大小保护"):"";
   $("packet-size-message").hidden=supported;
   if(!supported)$("packet-size-message").textContent=t("当前中转暂不支持此功能。");
   fillZstdLevel();
@@ -1995,7 +1999,7 @@ class TokenTrendView {
     this.services=services;this.active=false;this.loading=false;this.hydrating=false;
     this.packets=new Map();this.native=new Map();this.hours=6;
     this.revision=null;this.lastFull=0;this.query="";this.error=false;this.limited=false;
-    this.series=[];this.hover=null;this.hoverChart=null;this.frame=null;this.legendVersion="";
+    this.series=[];this.hover=null;this.hoverChart=null;this.hoverSeries=null;this.frame=null;this.legendVersion="";
     this.charts=[{key:"size",field:"size",prefix:"trend-size"},{key:"token",field:"input",prefix:"trend"}].map(chart=>({
       ...chart,svg:$(chart.prefix+"-chart"),plot:$(chart.prefix+"-plot"),tooltip:$(chart.prefix+"-tooltip"),empty:$(chart.prefix+"-empty"),points:[],bounds:null,focusLayer:null
     }));
@@ -2008,19 +2012,19 @@ class TokenTrendView {
     try {const hours=Number(localStorage.getItem("packet-inspector-trend-hours"));if([0,1,6,24].includes(hours)&&localStorage.getItem("packet-inspector-trend-hours")!==null)this.hours=hours;} catch(_) {}
     for(const button of document.querySelectorAll("#trend-range button"))button.onclick=()=>{
       this.hours=Number(button.dataset.hours);try {localStorage.setItem("packet-inspector-trend-hours",String(this.hours));} catch(_) {}
-      this.cancelPending();this.lastFull=0;this.hover=null;this.hoverChart=null;this.refresh(true);
+      this.cancelPending();this.lastFull=0;this.hover=null;this.hoverChart=null;this.hoverSeries=null;this.refresh(true);
     };
-    $("trend-search").oninput=event=>{this.query=event.currentTarget.value.trim().toLowerCase();this.hover=null;this.hoverChart=null;this.emphasis=null;this.render();};
+    $("trend-search").oninput=event=>{this.query=event.currentTarget.value.trim().toLowerCase();this.hover=null;this.hoverChart=null;this.hoverSeries=null;this.emphasis=null;this.render();};
     this.resize=new ResizeObserver(()=>this.scheduleRender());
     for(const chart of this.charts) {
       this.resize.observe(chart.plot);
       chart.svg.onpointermove=event=>this.pointAt(event,chart);
-      chart.svg.onpointerleave=()=>{this.hover=null;this.hoverChart=null;this.renderFocus();};
+      chart.svg.onpointerleave=()=>{this.hover=null;this.hoverChart=null;this.hoverSeries=null;this.renderFocus();};
     }
     // SVG redraws can drop pointerleave when the hovered child is replaced.
     document.addEventListener("pointermove",event=>{
       if(this.active&&this.hoverChart&&!this.charts.some(chart=>chart.svg.contains(event.target))) {
-        this.hover=null;this.hoverChart=null;this.renderFocus();
+        this.hover=null;this.hoverChart=null;this.hoverSeries=null;this.renderFocus();
       }
     },{passive:true});
   }
@@ -2057,7 +2061,7 @@ class TokenTrendView {
   }
   static color(id) {let hash=2166136261;for(const char of id)hash=Math.imul(hash^char.charCodeAt(0),16777619);return "hsl("+((hash>>>0)%360)+" 62% 42%)";}
   cancelPending() {this.controller?.abort();this.nativeController?.abort();this.controller=null;this.nativeController=null;this.loading=false;this.hydrating=false;}
-  setActive(active) {this.active=active;this.hover=null;this.hoverChart=null;this.emphasis=null;if(!active){this.cancelPending();this.guide.replaceChildren();this.timeTooltip.hidden=true;for(const chart of this.charts)chart.tooltip.hidden=true;}else{this.render();this.refresh();}}
+  setActive(active) {this.active=active;this.hover=null;this.hoverChart=null;this.hoverSeries=null;this.emphasis=null;if(!active){this.cancelPending();this.guide.replaceChildren();this.timeTooltip.hidden=true;for(const chart of this.charts)chart.tooltip.hidden=true;}else{this.render();this.refresh();}}
   scheduleRender() {if(!this.active||this.frame!==null)return;this.frame=requestAnimationFrame(()=>{this.frame=null;this.render();});}
   async refresh(force=false) {
     if(!this.active||document.hidden||this.loading)return;
@@ -2165,7 +2169,8 @@ class TokenTrendView {
   render() {
     if(!this.active)return;
     const model=this.model();this.series=model.series;this.renderLegend(model);
-    const emphasis=this.emphasis||(this.hover?model.visible.find(group=>group.points.some(point=>point.packet.id===this.hover&&(point.input!==null||point.size!==null)))?.id:null);
+    if(!model.visible.some(group=>group.id===this.hoverSeries&&group.points.some(point=>point.input!==null||point.size!==null)))this.hoverSeries=null;
+    const emphasis=this.emphasis||this.hoverSeries||(this.hover?model.visible.find(group=>group.points.some(point=>point.packet.id===this.hover&&(point.input!==null||point.size!==null)))?.id:null);
     for(const button of document.querySelectorAll("#trend-range button"))button.setAttribute("aria-pressed",String(Number(button.dataset.hours)===this.hours));
     const values=model.visible.flatMap(group=>group.points);
     let start=this.hours?model.now-this.hours*3600:Math.min(...values.map(point=>point.packet.created),model.now-60),end=this.hours?model.now:Math.max(...values.map(point=>point.packet.created),model.now);
@@ -2177,13 +2182,13 @@ class TokenTrendView {
   renderChart(chart,model,start,end,emphasis) {
     const width=chart.plot.clientWidth,height=chart.plot.clientHeight;
     if(!width||!height){chart.points=[];chart.bounds=null;return;}
-    const left=80,right=28,top=30,bottom=12,plotWidth=Math.max(1,width-left-right),plotHeight=Math.max(1,height-top-bottom);
+    const left=104,right=28,top=30,bottom=12,plotWidth=Math.max(1,width-left-right),plotHeight=Math.max(1,height-top-bottom);
     const known=model.visible.flatMap(group=>group.points).filter(point=>point[chart.field]!==null);
     const maximum=Math.max(0,...known.map(point=>point[chart.field])),scale=chart.key==="size"?TokenTrendView.sizeScale(maximum):TokenTrendView.scale(maximum);
     const x=value=>left+(value-start)/(end-start)*plotWidth,y=value=>top+plotHeight-value/scale.max*plotHeight;
     chart.bounds={width,height,left,right,top,bottom,start,end,x};
     const root=document.createDocumentFragment();chart.svg.setAttribute("viewBox",`0 0 ${width} ${height}`);
-    root.append(this.svgNode("text",{x:14,y:22,class:"trend-axis-title"},t(chart.key==="size"?"包大小":"输入 Token")));
+    root.append(this.svgNode("text",{x:18,y:top+plotHeight/2,transform:`rotate(-90 18 ${top+plotHeight/2})`,"text-anchor":"middle","dominant-baseline":"central",class:"trend-axis-title"},t(chart.key==="size"?"请求大小":"输入 Token")));
     for(let value=0;value<=scale.max+scale.step*.01;value+=scale.step) {
       const py=y(value),label=chart.key==="size"?compact(value):value>=1000000?nf.format(value/1000000)+"M":value>=1000?nf.format(value/1000)+"k":nf.format(value);
       root.append(this.svgNode("line",{x1:left,y1:py,x2:width-right,y2:py,class:"trend-grid"}),this.svgNode("text",{x:left-12,y:py+4,"text-anchor":"end",class:"trend-axis-label"},label));
@@ -2224,14 +2229,29 @@ class TokenTrendView {
   }
   pointAt(event,chart) {
     if(!chart.bounds)return;
-    const rect=chart.svg.getBoundingClientRect(),x=(event.clientX-rect.left)/rect.width*chart.bounds.width,y=(event.clientY-rect.top)/rect.height*chart.bounds.height;
-    let nearest=null,distance=28*28;
-    for(const point of chart.points){const value=(point.x-x)**2+(point.y-y)**2;if(value<distance){nearest=point;distance=value;}}
-    this.hover=nearest?.packet.id||null;this.hoverChart=chart.key;this.renderFocus();
+    const rect=chart.svg.getBoundingClientRect();if(!rect.width||!rect.height)return;
+    const x=event.clientX-rect.left,y=event.clientY-rect.top,scaleX=rect.width/chart.bounds.width,scaleY=rect.height/chart.bounds.height;
+    let nearest=null,distance=28*28,line=null,lineDistance=8*8,previous=null,lastX=0,lastY=0;
+    for(const point of chart.points) {
+      const px=point.x*scaleX,py=point.y*scaleY,value=(px-x)**2+(py-y)**2;
+      if(value<distance){nearest=point;distance=value;}
+      // Match the rendered segments, including connections across missing values.
+      if(previous?.series.id===point.series.id) {
+        const dx=px-lastX,dy=py-lastY,length=dx*dx+dy*dy;
+        const ratio=length?Math.max(0,Math.min(1,((x-lastX)*dx+(y-lastY)*dy)/length)):0;
+        const gap=(lastX+ratio*dx-x)**2+(lastY+ratio*dy-y)**2;
+        if(gap<lineDistance){line=point;lineDistance=gap;}
+      }
+      previous=point;lastX=px;lastY=py;
+    }
+    const series=line&&lineDistance<distance?line.series.id:nearest?.series.id||null;
+    this.hover=nearest?.series.id===series?nearest.packet.id:null;
+    this.hoverSeries=this.hover?null:series;
+    this.hoverChart=chart.key;this.renderFocus();
   }
   renderFocus() {
     if(!this.active)return;
-    const anchor=this.charts.map(chart=>chart.points.find(value=>value.packet.id===this.hover)).find(Boolean),emphasis=this.emphasis||anchor?.series.id;
+    const anchor=this.charts.map(chart=>chart.points.find(value=>value.packet.id===this.hover)).find(Boolean),emphasis=this.emphasis||this.hoverSeries||anchor?.series.id;
     for(const item of $("trend-series").children) {
       const active=!!emphasis&&item.dataset.renderKey==="trend-series:"+emphasis;
       item.classList.toggle("active",active);item.setAttribute("aria-current",String(active));

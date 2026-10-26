@@ -18,7 +18,8 @@ MAX_RECORDS = 20000
 MAX_BYTES = 32 * 1024 * 1024
 EVENT_FIELDS = {"attempt", "retry", "reason", "phase", "status", "content_type", "content_encoding",
                 "event_type", "error_code", "error_type", "capacity", "probe_bytes", "delay_ms", "delay_source",
-                "item_type", "summary_items", "content_items", "has_encrypted_content", "upstream_request_id"}
+                "item_type", "summary_items", "content_items", "has_encrypted_content", "upstream_request_id",
+                "budget_ms", "interval_ms", "remaining_ms", "timeout_ms"}
 TERMINALS = {"response.completed", "response.failed", "response.incomplete", "error"}
 IDENTIFIER = re.compile(r"[A-Za-z0-9_.:/+-]{1,160}\Z")
 TYPE_FIELD = re.compile(rb'"type"\s*:\s*"([a-z_.]+)"')
@@ -196,6 +197,10 @@ class RetryTrace:
             for key in ("terminal_event", "probe_reason", "http_status", "first_output_event", "observation_reason"):
                 d.pop(key, None)
             d["final_capacity_error"] = False
+        elif event == "retry_policy":
+            d["time_budget_ms"] = fields["budget_ms"]
+            d["retry_interval_ms"] = fields["interval_ms"]
+            d["initial_remaining_ms"] = fields["remaining_ms"]
         elif event == "response_headers":
             d["http_status"] = fields["status"]
         elif event == "probe_finished":
@@ -203,6 +208,8 @@ class RetryTrace:
         elif event == "retry_scheduled":
             d["scheduled_retries"] = fields["retry"]
         elif event == "response_selected":
+            if "status" in fields:
+                d["http_status"] = fields["status"]
             reason = fields["reason"]
             if reason == "disabled" and not d["eligible"]:
                 reason = "endpoint_not_eligible"
