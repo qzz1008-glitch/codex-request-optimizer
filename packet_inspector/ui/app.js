@@ -1997,7 +1997,7 @@ function isTrendGeneration(packet) {
 class TokenTrendView {
   constructor(services) {
     this.services=services;this.active=false;this.loading=false;this.hydrating=false;
-    this.packets=new Map();this.native=new Map();this.hours=6;
+    this.packets=new Map();this.native=new Map();this.hours=1;
     this.revision=null;this.lastFull=0;this.query="";this.error=false;this.limited=false;
     this.series=[];this.hover=null;this.hoverChart=null;this.hoverSeries=null;this.frame=null;this.legendVersion="";
     this.charts=[{key:"size",field:"size",prefix:"trend-size"},{key:"token",field:"input",prefix:"trend"}].map(chart=>({
@@ -2009,9 +2009,8 @@ class TokenTrendView {
       const key=icon.dataset.trendMarker,shape=TokenTrendView.markerShape(key);if(!shape)continue;
       const {tag,...attrs}=shape;icon.replaceChildren(this.svgNode(tag,{...attrs,class:"trend-event trend-event-"+key}));
     }
-    try {const hours=Number(localStorage.getItem("packet-inspector-trend-hours"));if([0,1,6,24].includes(hours)&&localStorage.getItem("packet-inspector-trend-hours")!==null)this.hours=hours;} catch(_) {}
     for(const button of document.querySelectorAll("#trend-range button"))button.onclick=()=>{
-      this.hours=Number(button.dataset.hours);try {localStorage.setItem("packet-inspector-trend-hours",String(this.hours));} catch(_) {}
+      this.hours=Number(button.dataset.hours);
       this.cancelPending();this.lastFull=0;this.hover=null;this.hoverChart=null;this.hoverSeries=null;this.refresh(true);
     };
     $("trend-search").oninput=event=>{this.query=event.currentTarget.value.trim().toLowerCase();this.hover=null;this.hoverChart=null;this.hoverSeries=null;this.emphasis=null;this.render();};
