@@ -1968,6 +1968,10 @@ class TokenTrendView {
     this.revision=null;this.lastFull=0;this.query="";this.error=false;this.limited=false;
     this.points=[];this.series=[];this.hover=null;this.pinned=false;this.frame=null;this.legendVersion="";
     this.svg=$("trend-chart");this.plot=$("trend-plot");this.tooltip=$("trend-tooltip");
+    for(const icon of document.querySelectorAll("[data-trend-marker]")) {
+      const key=icon.dataset.trendMarker,shape=TokenTrendView.markerShape(key);if(!shape)continue;
+      const {tag,...attrs}=shape;icon.replaceChildren(this.svgNode(tag,{...attrs,class:"trend-event trend-event-"+key}));
+    }
     try {const hours=Number(localStorage.getItem("packet-inspector-trend-hours"));if([0,1,6,24].includes(hours)&&localStorage.getItem("packet-inspector-trend-hours")!==null)this.hours=hours;} catch(_) {}
     for(const button of document.querySelectorAll("#trend-range button"))button.onclick=()=>{
       this.hours=Number(button.dataset.hours);try {localStorage.setItem("packet-inspector-trend-hours",String(this.hours));} catch(_) {}
@@ -1995,6 +1999,12 @@ class TokenTrendView {
     if(packet.capacity_retry_count>0)result.push("retry");
     if(packet.is_compaction)result.push("compact");
     return result;
+  }
+  static markerShape(key) {
+    if(key==="predictive")return {tag:"path",d:"M0,-5L5,0L0,5L-5,0Z"};
+    if(key==="overflow")return {tag:"path",d:"M0,-8L8,8L-8,8Z"};
+    if(key==="retry")return {tag:"circle",cx:0,cy:0,r:4};
+    return null;
   }
   static input(packet,data) {
     const real=packet.upstream_usage?.input_tokens;
@@ -2113,11 +2123,12 @@ class TokenTrendView {
     reconcileContent($("trend-series"),fragment);
   }
   marker(point,layer) {
-    const colors={predictive:"#8058c1",overflow:"#dc6044",retry:"#b88212",compact:"#17856e"};
-    const key=["overflow","predictive","retry","compact"].find(value=>point.events.includes(value)),x=point.x,y=point.y;
-    if(!key)return;
-    const attrs={class:"trend-event",fill:colors[key]},node=key==="predictive"?this.svgNode("path",{...attrs,d:`M${x},${y-6}l6,6l-6,6l-6,-6Z`}):key==="overflow"?this.svgNode("path",{...attrs,d:`M${x},${y-7}l7,12h-14Z`}):key==="compact"?this.svgNode("rect",{...attrs,x:x-5,y:y-5,width:10,height:10,rx:1}):this.svgNode("circle",{...attrs,cx:x,cy:y,r:5,fill:"white",stroke:colors[key],"stroke-width":2.5});
-    layer.append(node);if(key!=="overflow"&&point.events.length>1)layer.append(this.svgNode("text",{x:x+7,y:y-7,class:"trend-event-count"},"+"+(point.events.length-1)));
+    const events=point.events.filter(value=>["overflow","predictive","retry"].includes(value));
+    const key=["overflow","predictive","retry"].find(value=>events.includes(value)),shape=TokenTrendView.markerShape(key);
+    if(!shape)return;
+    const {tag,...attrs}=shape,x=point.x,y=point.y;
+    layer.append(this.svgNode(tag,{...attrs,class:"trend-event trend-event-"+key,transform:`translate(${x} ${y})`,style:"--series-color:"+point.series.color}));
+    if(key!=="overflow"&&events.length>1)layer.append(this.svgNode("text",{x:x+7,y:y-7,class:"trend-event-count"},"+"+(events.length-1)));
   }
   render() {
     if(!this.active||!this.plot.clientWidth||!this.plot.clientHeight)return;

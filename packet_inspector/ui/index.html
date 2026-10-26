@@ -77,7 +77,7 @@
     </aside>
     <section class="trend-main">
       <div class="trend-toolbar">
-        <div class="trend-event-legend" aria-label="机制标记"><span class="trend-predictive">◆ <span>预测保护</span></span><span class="trend-overflow">▲ <span>超限保护</span></span><span class="trend-retry">○ <span>自动重试</span></span></div>
+        <div class="trend-event-legend" aria-label="机制标记"><span class="trend-predictive"><svg class="trend-legend-marker" data-trend-marker="predictive" viewBox="-10 -10 20 20" aria-hidden="true"></svg><span>预测保护</span></span><span class="trend-overflow"><svg class="trend-legend-marker" data-trend-marker="overflow" viewBox="-10 -10 20 20" aria-hidden="true"></svg><span>超限保护</span></span><span class="trend-retry"><svg class="trend-legend-marker" data-trend-marker="retry" viewBox="-10 -10 20 20" aria-hidden="true"></svg><span>自动重试</span></span></div>
         <div id="trend-range" class="view-toggle" role="group" aria-label="时间范围"><button type="button" data-hours="1" aria-pressed="false">1 小时</button><button type="button" data-hours="6" aria-pressed="true">6 小时</button><button type="button" data-hours="24" aria-pressed="false">24 小时</button><button type="button" data-hours="0" aria-pressed="false">全部记录</button></div>
       </div>
       <div id="trend-plot" class="trend-plot"><svg id="trend-chart" role="img" tabindex="0" aria-label="输入 Token 随时间变化；左右方向键查看请求，回车固定提示，Esc 关闭"></svg><div id="trend-empty" class="trend-empty" hidden></div><div id="trend-tooltip" class="trend-tooltip" role="tooltip" hidden></div></div>
