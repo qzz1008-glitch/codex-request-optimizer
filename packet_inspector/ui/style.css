@@ -142,7 +142,7 @@ code.session-id{font-family:Consolas,"Cascadia Mono",monospace;font-size:11px;wo
 .trend-time-axis{display:block;width:100%;height:32px;overflow:visible}
 .trend-focus{position:absolute;inset:0;z-index:1;display:block;width:100%;height:100%;pointer-events:none}
 
-.trend-grid{stroke:#edf1f6;stroke-width:1;vector-effect:non-scaling-stroke}.trend-time-tick{stroke:#ccd5e1;stroke-width:1;vector-effect:non-scaling-stroke}.trend-axis-label{fill:var(--muted);font:11px "Segoe UI",sans-serif}.trend-axis-title{fill:#53647c;font:600 11px "Segoe UI",sans-serif;writing-mode:vertical-rl;text-orientation:mixed;letter-spacing:.08em}
+.trend-grid{stroke:#edf1f6;stroke-width:1;vector-effect:non-scaling-stroke}.trend-time-tick{stroke:#ccd5e1;stroke-width:1;vector-effect:non-scaling-stroke}.trend-axis-label{fill:var(--muted);font:11px "Segoe UI",sans-serif}.trend-axis-title{fill:#53647c;font:600 11px "Segoe UI",sans-serif;letter-spacing:.08em}
 .trend-curve{fill:none;stroke-width:2;stroke-linejoin:round;stroke-linecap:round;vector-effect:non-scaling-stroke}
 .trend-series-line{transition:opacity .12s}.trend-series-line.dimmed{opacity:.13}
 .trend-event{fill:none;stroke:var(--series-color,currentColor);stroke-width:1.5;vector-effect:non-scaling-stroke}
