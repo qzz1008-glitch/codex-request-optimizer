@@ -554,33 +554,6 @@ function packetStatus(p) {
 function capacityRetryCount(p) {
   return Number.isInteger(p.capacity_retry_count)&&p.capacity_retry_count>0?p.capacity_retry_count:0;
 }
-function capacityRetryDetails(p) {
-  const d=p.capacity_retry_diagnostic, count=capacityRetryCount(p);
-  if(!d)return {status:count?t("已重试 {count} 次 · 结果未记录").replace("{count}",nf.format(count)):t("暂无重试日志")};
-  const results={success:"成功",capacity_error:"容量不足",cancelled:"已取消",transport_error:"连接异常",
-    upstream_error:"上游报错",http_error:"HTTP 错误",unobserved:"最终结果未确认",unfinished:"缺少结束记录"};
-  const result=d.state!=="finished"?(d.scheduled_retries>count?"等待重试":"请求进行中"):(results[d.outcome]||"最终结果未确认");
-  const reasons={disabled:"请求时未开启重试",endpoint_not_eligible:"原生压缩请求不参与容量重试",
-    retry_limit:"达到重试次数上限",time_budget:"重试剩余时间不足",setting_disabled:"重试前开关已关闭",
-    disabled_during_attempt:"重试期间开关已关闭",
-    disabled_during_wait:"等待期间开关已关闭",stream_committed:"已开始转发输出",existing_output:"响应已包含输出",
-    client_disconnected:"客户端已断开",upstream_exception:"请求过程异常",encoded_response:"响应带传输编码，无法识别结果",
-    unsupported_content_type:"响应格式不在识别范围",unsupported_status:"HTTP 状态不在重试范围",
-    unknown_format:"无法识别响应格式",end_before_terminal:"检测前缀中未收到结束事件",not_capacity:"检测前缀中未识别到容量错误",
-    malformed_event:"响应事件格式异常",malformed_json:"响应 JSON 格式异常",incomplete_event:"响应末尾事件不完整",
-    probe_limit:"重试检测前缀达到大小上限",frame_limit:"响应事件超过观察上限",body_limit:"响应正文超过观察上限",
-    observer_error:"响应观察异常",no_final_record:"未记录到请求结束"};
-  const reason=d.outcome==="unobserved"&&d.observation_reason?d.observation_reason:d.stop_reason;
-  return {
-    status:t(count?"已重试 {count} 次 · {result}":"未重试 · {result}").replace("{count}",nf.format(count)).replace("{result}",t(result)),
-    reason:(d.capacity_error_seen||count||d.state==="finished"&&d.outcome!=="success")&&reasons[reason]?t(reasons[reason]):"",
-    settings:d.enabled?t("已开启 · 最多 {count} 次").replace("{count}",nf.format(d.max_retries)):t("未开启"),
-    logId:d.journal_saved&&d.journal_available!==false&&d.journal_available!==null&&/^[A-Za-z0-9_-]{1,160}$/.test(d.id)?d.id:null,
-    logMissing:d.journal_saved===false,
-    logExpired:d.journal_saved===true&&d.journal_available===false,
-    logUnavailable:d.journal_available===null
-  };
-}
 function packetProtection(p) {
   return {
     predictive:p.usage_override_applied===true,
@@ -1485,17 +1458,7 @@ function renderCompression(m) {
   const summaryTriggered=m.overflow_compaction_calls>0||m.overflow_cache_hit===true;
   const summaryFailed=typeof m.relay_error==="string"&&m.relay_error.startsWith("overflow_");
   fact(steps,t("超限保护"),summaryFailed?t("处理失败"):triggerStatus(summaryTriggered)).dataset.protection="size";
-  const retry=capacityRetryDetails(m);
-  fact(steps,t("自动重试"),retry.status).dataset.protection="retry";
-  if(retry.settings)fact(steps,t("请求时重试设置"),retry.settings);
-  if(retry.reason)fact(steps,t("重试结束原因"),retry.reason);
-  if(retry.logId) {
-    const row=fact(steps,t("重试日志"),""), download=el("a","link-button",t("下载日志"));
-    download.href="/api/retry-diagnostics/"+encodeURIComponent(retry.logId)+"?download=1";download.download="codex-retry-"+retry.logId+".json";
-    row.lastChild.append(download);
-  } else if(retry.logMissing)fact(steps,t("重试日志"),t("保存失败，详见服务状态"));
-  else if(retry.logExpired)fact(steps,t("重试日志"),t("日志已清理"));
-  else if(retry.logUnavailable)fact(steps,t("重试日志"),t("日志暂不可用"));
+  fact(steps,t("自动重试"),triggerStatus(capacityRetryCount(m)>0)).dataset.protection="retry";
   root.append(steps);reconcileContent($("compression-content"),root);renderProtectionPanelState();
 }
 function bars(title, rows, total) {
