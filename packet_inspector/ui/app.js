@@ -1966,7 +1966,7 @@ class TokenTrendView {
     this.services=services;this.active=false;this.loading=false;this.hydrating=false;
     this.packets=new Map();this.native=new Map();this.hours=6;
     this.revision=null;this.lastFull=0;this.query="";this.error=false;this.limited=false;
-    this.points=[];this.series=[];this.hover=null;this.pinned=false;this.frame=null;this.legendVersion="";
+    this.points=[];this.series=[];this.hover=null;this.frame=null;this.legendVersion="";
     this.svg=$("trend-chart");this.plot=$("trend-plot");this.tooltip=$("trend-tooltip");
     for(const icon of document.querySelectorAll("[data-trend-marker]")) {
       const key=icon.dataset.trendMarker,shape=TokenTrendView.markerShape(key);if(!shape)continue;
@@ -1975,21 +1975,12 @@ class TokenTrendView {
     try {const hours=Number(localStorage.getItem("packet-inspector-trend-hours"));if([0,1,6,24].includes(hours)&&localStorage.getItem("packet-inspector-trend-hours")!==null)this.hours=hours;} catch(_) {}
     for(const button of document.querySelectorAll("#trend-range button"))button.onclick=()=>{
       this.hours=Number(button.dataset.hours);try {localStorage.setItem("packet-inspector-trend-hours",String(this.hours));} catch(_) {}
-      this.cancelPending();this.lastFull=0;this.pinned=false;this.hover=null;this.refresh(true);
+      this.cancelPending();this.lastFull=0;this.hover=null;this.refresh(true);
     };
-    $("trend-search").oninput=event=>{this.query=event.currentTarget.value.trim().toLowerCase();this.pinned=false;this.hover=null;this.emphasis=null;this.render();};
+    $("trend-search").oninput=event=>{this.query=event.currentTarget.value.trim().toLowerCase();this.hover=null;this.emphasis=null;this.render();};
     this.resize=new ResizeObserver(()=>this.scheduleRender());this.resize.observe(this.plot);
-    this.svg.onpointermove=event=>{if(!this.pinned)this.pointAt(event);};
-    this.svg.onpointerleave=()=>{if(!this.pinned){this.hover=null;this.renderFocus();}};
-    this.svg.onclick=event=>{if(this.pinned){this.pinned=false;this.hover=null;this.renderFocus();}else{this.pointAt(event);this.pinned=!!this.hover;}};
-    this.svg.onkeydown=event=>{
-      if(event.key==="Escape"){this.hover=null;this.pinned=false;this.renderFocus();return;}
-      if(event.key==="Enter"){this.pinned=!!this.hover;return;}
-      if(!["ArrowLeft","ArrowRight","Home","End"].includes(event.key)||!this.points.length)return;
-      event.preventDefault();const ordered=this.points.slice().sort((a,b)=>a.packet.created-b.packet.created||a.packet.id.localeCompare(b.packet.id));
-      const at=ordered.findIndex(point=>point.packet.id===this.hover),next=event.key==="Home"?0:event.key==="End"?ordered.length-1:Math.max(0,Math.min(ordered.length-1,at+(event.key==="ArrowLeft"?-1:1)));
-      this.hover=ordered[next].packet.id;this.pinned=true;this.renderFocus();
-    };
+    this.svg.onpointermove=event=>this.pointAt(event);
+    this.svg.onpointerleave=()=>{this.hover=null;this.renderFocus();};
   }
   static events(packet) {
     const result=[];
@@ -2018,7 +2009,7 @@ class TokenTrendView {
   }
   static color(id) {let hash=2166136261;for(const char of id)hash=Math.imul(hash^char.charCodeAt(0),16777619);return "hsl("+((hash>>>0)%360)+" 62% 42%)";}
   cancelPending() {this.controller?.abort();this.nativeController?.abort();this.controller=null;this.nativeController=null;this.loading=false;this.hydrating=false;}
-  setActive(active) {this.active=active;if(!active){this.cancelPending();this.tooltip.hidden=true;}else{this.render();this.refresh();}}
+  setActive(active) {this.active=active;this.hover=null;this.emphasis=null;if(!active){this.cancelPending();this.tooltip.hidden=true;}else{this.render();this.refresh();}}
   scheduleRender() {if(!this.active||this.frame!==null)return;this.frame=requestAnimationFrame(()=>{this.frame=null;this.render();});}
   async refresh(force=false) {
     if(!this.active||document.hidden||this.loading)return;
@@ -2177,7 +2168,7 @@ class TokenTrendView {
     if(!this.active||!this.focusLayer)return;
     const point=this.points.find(value=>value.packet.id===this.hover),emphasis=this.emphasis||point?.series.id;
     for(const line of this.svg.querySelectorAll("[data-series]"))line.classList.toggle("dimmed",!!emphasis&&line.dataset.series!==emphasis);
-    this.focusLayer.replaceChildren();this.tooltip.hidden=!point;if(!point){if(this.pinned)this.pinned=false;return;}
+    this.focusLayer.replaceChildren();this.tooltip.hidden=!point;if(!point)return;
     this.focusLayer.append(this.svgNode("line",{x1:point.x,x2:point.x,y1:this.bounds.top,y2:this.bounds.height-this.bounds.bottom,class:"trend-focus-line"}),this.svgNode("circle",{cx:point.x,cy:point.y,r:7,class:"trend-focus-dot"}));
     const fragment=document.createDocumentFragment();fragment.append(el("h3","",point.series.title),el("p","",this.time(point.packet.created,true)));
     const amount=el("p","");amount.append(el("strong","",point.input===null?"—":nf.format(point.input)),document.createTextNode(" "+t("输入 Token")));fragment.append(amount);

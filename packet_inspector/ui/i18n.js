@@ -348,7 +348,7 @@ const uiI18n = (() => {
     "全部记录":"All retained",
     "筛选图表会话":"Filter chart sessions",
     "机制标记":"Event markers",
-    "输入 Token 随时间变化；左右方向键查看请求，回车固定提示，Esc 关闭":"Input tokens over time. Use arrow keys to inspect requests, Enter to pin, and Escape to dismiss.",
+    "输入 Token 随时间变化；悬停查看请求":"Input tokens over time. Hover to inspect requests.",
     "正在加载趋势…":"Loading trends…",
     "暂时无法加载趋势，请稍后重试":"Trends could not be loaded. Retrying shortly.",
     "没有匹配的会话":"No matching sessions",

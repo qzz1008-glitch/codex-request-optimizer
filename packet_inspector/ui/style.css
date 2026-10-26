@@ -137,7 +137,6 @@ code.session-id{font-family:Consolas,"Cascadia Mono",monospace;font-size:11px;wo
 .trend-series-swatch{display:block;width:9px;height:9px;background:var(--series-color);border-radius:50%;flex:none}
 .trend-plot{position:relative;flex:1;min-height:200px;min-width:0;background:white;border:1px solid var(--line);border-radius:10px;overflow:hidden}
 #trend-chart{display:block;width:100%;height:100%;outline:0;touch-action:pan-y}
-#trend-chart:focus-visible{outline:2px solid var(--accent);outline-offset:-3px}
 .trend-grid{stroke:#e8edf3;stroke-width:1;vector-effect:non-scaling-stroke}.trend-axis-label{fill:var(--muted);font:11px "Segoe UI",sans-serif}.trend-axis-title{fill:var(--muted);font:11px "Segoe UI",sans-serif}
 .trend-curve{fill:none;stroke-width:2;stroke-linejoin:round;stroke-linecap:round;vector-effect:non-scaling-stroke}
 .trend-series-line{transition:opacity .12s}.trend-series-line.dimmed{opacity:.13}
