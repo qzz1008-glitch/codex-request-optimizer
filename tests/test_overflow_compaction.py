@@ -30,6 +30,13 @@ def message(seed, size=550, role="assistant"):
                          "text": hashlib.shake_256(str(seed).encode()).hexdigest(size // 2)}]}
 
 
+def delegation_notice(number=1):
+    return {"type": "function_call_output", "id": f"fco_00000000-0000-0000-0000-{number:012d}",
+            "output": "<codex_delegation>\n  <source_thread_id>00000000-0000-0000-0000-000000000099</source_thread_id>\n"
+                      f"  <input>Notice {number}: preserve <context>原文 & unknown fields</context>.</input>\n</codex_delegation>",
+            "future_metadata": {"preserved": number}}
+
+
 def make_body(items, **extra):
     value = {"model": "test", "stream": True, "input": items, "store": False, **extra}
     return json.dumps(value, ensure_ascii=True, indent=1).encode()
@@ -195,6 +202,57 @@ class OverflowTests(unittest.TestCase):
             calls = [i.get("call_id") for i in request["input"] if i.get("type") in {"function_call", "custom_tool_call"}]
             outputs = [i.get("call_id") for i in request["input"] if i.get("type") in {"function_call_output", "custom_tool_call_output"}]
             self.assertEqual(sorted(calls), sorted(outputs))
+
+    def test_delegations_are_standalone_and_do_not_split_pending_tool_groups(self):
+        notice = delegation_notice()
+        items = [message("before", 30),
+                 {"type": "function_call", "call_id": "a", "name": "one", "arguments": "{}"},
+                 notice, {"type": "function_call_output", "call_id": "a", "output": "done"},
+                 delegation_notice(2), message("latest", 30)]
+        self.assertEqual(safe_cuts(items), [1, 4, 5])
+        # A notification ID never closes a real tool call, even if IDs coincide.
+        items[1]["call_id"] = notice["id"]
+        del items[3]
+        self.assertEqual(safe_cuts(items), [1])
+
+    def test_delegations_survive_compaction_restart_reuse_and_regrowth_verbatim(self):
+        notices = [delegation_notice(n) for n in range(1, 6)]
+        items = self.items[:7] + notices + self.items[7:]
+        unchanged = deepcopy(items)
+        body = make_body(items)
+        wire, _, meta = self.run_prepare(body, budget=6000)
+        self.assertGreater(meta["overflow_compaction_calls"], 0)
+        self.assertLessEqual(len(wire), self.budget)
+        self.assertEqual(items, unchanged)
+        source = json.loads(wire)["input"]
+        self.assertEqual([i for i in source if i.get("id", "").startswith("fco_")], notices)
+        self.assertEqual(source[-1], items[-1])
+        restarted = OverflowCompactor(self.root)
+        wire, _, meta = self.run_prepare(body, compactor=restarted, budget=6000)
+        self.assertTrue(meta["overflow_cache_hit"])
+        self.assertEqual(meta["overflow_compaction_calls"], 0)
+        self.assertEqual([i for i in json.loads(wire)["input"] if i.get("id", "").startswith("fco_")], notices)
+        larger = make_body(items + [message(i) for i in range(100, 116)])
+        wire, _, meta = self.run_prepare(larger, compactor=restarted, budget=6000)
+        self.assertTrue(meta["overflow_cache_hit"])
+        self.assertGreater(meta["overflow_compaction_calls"], 0)
+        self.assertEqual([i for i in json.loads(wire)["input"] if i.get("id", "").startswith("fco_")], notices)
+        self.assertLessEqual(len(wire), self.budget)
+
+    def test_under_budget_delegation_request_is_not_rewritten(self):
+        body = make_body([delegation_notice(), message("latest", 30)])
+        wire, _, meta = self.run_prepare(body)
+        self.assertIs(wire, body)
+        self.assertEqual(meta["overflow_compaction_calls"], 0)
+
+    def test_orphan_tool_results_cannot_use_notification_text_to_bypass_pairing(self):
+        notice = delegation_notice()
+        for item in ({**notice, "call_id": "missing"}, {**notice, "call_id": None},
+                     {**notice, "output": "ordinary result"},
+                     {**notice, "output": notice["output"].replace("</codex_delegation>", "")}):
+            with self.subTest(item=item), self.assertRaises(OverflowFailure) as error:
+                safe_cuts([message("before", 30), item, message("latest", 30)])
+            self.assertEqual(error.exception.code, "overflow_tool_pairing")
 
     def test_delayed_notifications_stay_with_their_original_call(self):
         items = [message("before", 30),
@@ -538,6 +596,29 @@ class OverflowRelayTests(unittest.TestCase):
         self.assertEqual(self.config.read_bytes(), self.original_config)
         with closing(sqlite3.connect(self.server.overflow.path)) as db:
             self.assertEqual(db.execute("SELECT count(*) FROM mappings").fetchone()[0], 0)
+
+    def test_http_overflow_and_cache_reuse_preserve_standalone_delegations(self):
+        self.server.settings["budget_bytes"] = 6000
+        notices = [delegation_notice(n) for n in range(1, 6)]
+        items = [message(i) for i in range(7)] + notices + [message(i) for i in range(7, 14)]
+        for current in (items, items + [message("new", 30)]):
+            status, body = self.post(current, session="delegation-test")
+            self.assertEqual((status, body), (200, complete()))
+        requests = self.up.requests
+        self.assertTrue(any(compact for _, compact, _ in requests))
+        final = [body for _, compact, body in requests if not compact]
+        self.assertEqual(len(final), 2)
+        self.assertTrue(all(size <= 6000 for size, _, _ in requests))
+        for body in final:
+            self.assertEqual([i for i in body["input"] if i.get("id", "").startswith("fco_")], notices)
+        self.assertEqual(self.config.read_bytes(), self.original_config)
+
+    def test_http_true_orphan_still_returns_pairing_error_without_upstream_calls(self):
+        orphan = {**delegation_notice(), "call_id": "missing-real-call"}
+        status, body = self.post([message(i) for i in range(14)] + [orphan, message("latest", 30)])
+        self.assertEqual(status, 413)
+        self.assertEqual(json.loads(body)["error"]["code"], "overflow_tool_pairing")
+        self.assertEqual(self.up.requests, [])
 
     def test_failed_compaction_never_sends_original_turn(self):
         self.up.fail = True

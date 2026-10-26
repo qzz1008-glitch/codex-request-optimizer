@@ -19,8 +19,20 @@ IMAGE_ANALYST_PREFIXES = (
 )
 AUXILIARY_KINDS = {"image_analysis", "next_message_suggestion", "title_generation", "session_index", "subagent"}
 SESSION_ID = re.compile(r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}")
+DELEGATION_NOTICE = re.compile(
+    r"<codex_delegation>\s*<source_thread_id>" + SESSION_ID.pattern +
+    r"</source_thread_id>\s*<input>.*</input>\s*</codex_delegation>", re.DOTALL)
 IMAGE_PATH_ATTRIBUTE = re.compile(r'''<image\b[^>]*\bpath=["']([^"'\r\n]+)["'][^>]*>''')
 IMAGE_EXTENSION = re.compile(r"\.(?:png|jpe?g|webp|gif|bmp|tiff?|heic|heif|avif)$", re.I)
+
+
+def is_delegation_notice(item):
+    """A standalone native notification has an item ID, not a tool call ID."""
+    if not isinstance(item, dict) or item.get("type") != "function_call_output" or "call_id" in item:
+        return False
+    identifier, output = item.get("id"), item.get("output")
+    return (isinstance(identifier, str) and identifier.startswith("fco_") and len(identifier) > 4
+            and isinstance(output, str) and DELEGATION_NOTICE.fullmatch(output.strip()) is not None)
 
 
 def last_user_text(body):

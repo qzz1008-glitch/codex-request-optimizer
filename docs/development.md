@@ -40,6 +40,8 @@
 
 `GET /api/retry-diagnostics` 支持 `session_id`、`packet_id`、`before` 和 1–100 的 `limit`，列表省略时间线；`GET /api/retry-diagnostics/<id>` 返回完整记录，`download=1` 下载 JSON。右栏展示请求当时设置及最终结果，实际重试计数继续驱动列表和趋势标记。针对性验证：`python -m unittest tests.test_capacity_retry tests.test_retry_diagnostics tests.test_runtime_settings -q`，包含原字节透传、重试耗尽、空 reasoning 后错误、取消/关闭、清理及重启后查询、诊断失败不影响转发，以及前端状态和标记。
 
+超限切分通过 `request_context.is_delegation_notice` 识别原生独立通知：`function_call_output`、没有 `call_id` 字段、具有 `fco_` 条目 ID，且输出完整匹配带有效源会话 ID 和 input 的 `codex_delegation` 结构。通知的条目 ID 不作为调用 ID；分析器的工具配对计数、`safe_cuts` 和重组原文保留使用同一判定。通知不会关闭未完成的工具组，压缩和缓存复用后保持完整对象及相对顺序。带 `call_id` 的结果、普通孤立结果或不完整通知仍执行原配对校验，不泛化为跳过孤立结果。验证覆盖混合并行调用、通知原文保留、多轮压缩、重启复用，以及本机模拟上游的 HTTP 超限处理。
+
 ## 从源码运行和构建
 
 需要 Windows x64、Python 3.12+。建议在虚拟环境中运行：
