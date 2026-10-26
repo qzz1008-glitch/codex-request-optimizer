@@ -2,9 +2,9 @@
 
 [简体中文](https://github.com/qzz1008-glitch/codex-request-optimizer/blob/main/README.md) · **English**
 
-A tool for **Windows x64 (64-bit)** that analyzes and optimizes Codex requests. Browse requests, token usage, and upload sizes by session, with lossless transport compression, request size protection, image handling, and automatic retries when a model is at capacity.
+A tool for Windows x64 (64-bit) that analyzes and optimizes Codex requests. Browse requests, token usage, and upload sizes by session, with lossless transport compression, request size protection, image handling, and automatic retries when a model is at capacity.
 
-**[⬇️ Download for Windows x64](https://github.com/qzz1008-glitch/codex-request-optimizer/releases)** · **[📖 User guide (Chinese)](https://github.com/qzz1008-glitch/codex-request-optimizer/blob/main/docs/usage.md)**
+**[⬇️ Download](https://github.com/qzz1008-glitch/codex-request-optimizer/releases)** · **[📖 User guide (Chinese)](https://github.com/qzz1008-glitch/codex-request-optimizer/blob/main/docs/usage.md)**
 
 ## ✨ Features
 
