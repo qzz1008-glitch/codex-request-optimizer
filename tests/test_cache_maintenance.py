@@ -242,7 +242,7 @@ class CleanupRelayTests(unittest.TestCase):
             upstream.waiting, upstream.release = threading.Event(), threading.Event()
             server = InspectorServer(("127.0.0.1", 0), root / "data", config,
                                      "http://127.0.0.1:" + str(upstream.server_port))
-            server.settings.update(packet_size_protection_enabled=True, request_compression="off", budget_bytes=4000)
+            server.settings.update(packet_size_protection_enabled=True, auto_detect_providers=False, budget_bytes=4000)
             server.overflow.max_entries = 0
             results = []
             def post():

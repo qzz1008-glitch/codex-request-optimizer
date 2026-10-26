@@ -198,7 +198,8 @@ class AutomaticRelayTests(unittest.TestCase):
     def setUp(self):
         self.assertEqual(self.api('/api/settings', {'packet_size_protection_enabled': False,
                                                    'auto_zstd_level_enabled': False, 'zstd_level': 9,
-                                                   'request_compression': 'zstd', 'budget_bytes': 300000})[0], 200)
+                                                   'budget_bytes': 300000})[0], 200)
+        self.server.settings["auto_detect_providers"] = True
         self.server.compression_history = CompressionHistory()
 
     def enable(self):

@@ -98,7 +98,7 @@ class ZstdLevelTests(unittest.TestCase):
                 (data / "settings.json").write_text(json.dumps(saved), encoding="utf8")
                 with InspectorServer(("127.0.0.1", 0), data, config, "http://127.0.0.1:9/v1") as server:
                     self.assertEqual(server.status()["zstd_level"], expected)
-                    self.assertEqual(server.settings["request_compression"], saved.get("request_compression", "zstd"))
+                    self.assertNotIn("request_compression", server.settings)
                     self.assertEqual(json.loads(server.settings_path.read_text(encoding="utf8"))["zstd_level"], expected)
 
 
@@ -661,8 +661,7 @@ class RelayTests(unittest.TestCase):
         cls.up.requests=[];cls.up.first=threading.Event();cls.up.release=threading.Event()
         cls.config=root/"config.toml";cls.config.write_text('model="test"',encoding="utf8")
         cls.server=InspectorServer(("127.0.0.1",0),root/"data",cls.config,"http://127.0.0.1:"+str(cls.up.server_port)+"/v1")
-        cls.default_compression=cls.server.settings["request_compression"]
-        cls.server.settings["request_compression"]="off"
+        cls.server.settings["auto_detect_providers"]=False
         cls.server.settings["packet_size_protection_enabled"]=False
         for s in [cls.up,cls.server]:threading.Thread(target=s.serve_forever,daemon=True).start()
 
@@ -709,10 +708,9 @@ class RelayTests(unittest.TestCase):
         self.assertNotIn(b"body-secret-do-not-store",encode(v))
 
     def test_hot_compression_covers_generation_and_compaction_without_rewriting(self):
-        self.assertEqual(self.default_compression,"zstd")
-        previous=self.server.settings["request_compression"]
+        previous=self.server.settings["auto_detect_providers"]
         try:
-            status,result=self.api("/api/settings",{"request_compression":"zstd"})
+            status,result=self.api("/api/link",{"action":"activate"})
             self.assertEqual(status,200)
             for compact in [False,True]:
                 raw=encode({"input":[{"role":"user","content":"retained content "*400}]+([{"type":"compaction_trigger"}] if compact else [])})
@@ -723,18 +721,28 @@ class RelayTests(unittest.TestCase):
                 meta,_=self.latest()
                 self.assertEqual(meta["relay_wire_bytes"],len(forwarded["body"]))
                 self.assertEqual(meta["is_compaction"],compact)
-            self.assertEqual(self.api("/api/settings",{"request_compression":"off"})[0],200)
+            self.assertEqual(self.api("/api/link",{"action":"restore"})[0],200)
             self.relay(raw)
             self.assertEqual(self.up.requests[-1]["body"],raw)
             self.assertEqual(self.api("/api/settings",{"request_compression":"invalid"})[0],400)
-            self.assertEqual(self.server.settings["request_compression"],"off")
+            self.assertEqual(self.server.status()["connection_state"],"disconnected")
         finally:
-            self.api("/api/settings",{"request_compression":previous})
+            self.api("/api/link",{"action":"activate" if previous else "restore"})
+
+    def test_obsolete_compression_modes_cannot_create_a_third_backend_state(self):
+        before = self.config.read_bytes()
+        for mode in ("off", "zstd", "invalid"):
+            self.assertEqual(self.api("/api/settings", {"request_compression": mode})[0], 400)
+            self.assertNotIn("request_compression", self.server.settings)
+        self.assertEqual(self.config.read_bytes(), before)
+        self.assertIn(self.server.status()["connection_state"], {"connected", "disconnected"})
 
     def test_zstd_level_settings_validate_persist_and_apply_to_existing_zstd(self):
-        previous = {key: self.server.settings[key] for key in ("zstd_level", "request_compression")}
+        previous = {"zstd_level": self.server.settings["zstd_level"]}
+        previous_connection = self.server.settings["auto_detect_providers"]
+        self.api("/api/link", {"action": "activate"})
         try:
-            status, result = self.api("/api/settings", {"request_compression": "zstd", "zstd_level": 16})
+            status, result = self.api("/api/settings", {"zstd_level": 16})
             self.assertEqual(status, 200)
             self.assertEqual(result["zstd_level"], 16)
             self.assertEqual(json.loads(self.server.settings_path.read_text(encoding="utf8"))["zstd_level"], 16)
@@ -752,12 +760,15 @@ class RelayTests(unittest.TestCase):
             self.assertLessEqual(len(forwarded["body"]), len(incoming))
         finally:
             self.api("/api/settings", previous)
+            self.api("/api/link", {"action": "activate" if previous_connection else "restore"})
 
     def test_applied_zstd_level_is_recorded_per_request_without_guessing_passthrough(self):
-        previous = {key: self.server.settings[key] for key in ("zstd_level", "request_compression")}
+        previous = {"zstd_level": self.server.settings["zstd_level"]}
+        previous_connection = self.server.settings["auto_detect_providers"]
+        self.api("/api/link", {"action": "activate"})
         raw = encode({"input": "retained request content " * 1500})
         try:
-            self.assertEqual(self.api("/api/settings", {"request_compression": "zstd", "zstd_level": 7})[0], 200)
+            self.assertEqual(self.api("/api/settings", {"zstd_level": 7})[0], 200)
             self.assertEqual(self.relay(raw)[0], 200)
             first, _ = self.latest()
             self.assertEqual(first["relay_zstd_level"], 7)
@@ -777,13 +788,14 @@ class RelayTests(unittest.TestCase):
                     self.assertIsNone(self.latest()[0]["relay_zstd_level"])
                     self.assertEqual(self.up.requests[-1]["body"], body)
 
-            self.assertEqual(self.api("/api/settings", {"request_compression": "off"})[0], 200)
+            self.assertEqual(self.api("/api/link", {"action": "restore"})[0], 200)
             incoming = zstandard.ZstdCompressor(level=7).compress(raw)
             self.assertEqual(self.relay(incoming, headers={"Content-Encoding": "zstd"})[0], 200)
             self.assertIsNone(self.latest()[0]["relay_zstd_level"])
             self.assertEqual(self.up.requests[-1]["body"], incoming)
         finally:
             self.api("/api/settings", previous)
+            self.api("/api/link", {"action": "activate" if previous_connection else "restore"})
 
     def test_installation_api_cannot_modify_login_tasks_from_disposable_instances(self):
         status,result=self.api("/api/installation")

@@ -91,7 +91,7 @@ def main():
     config.write_text('model="gpt-6.1-sol"\nopenai_base_url=' + json.dumps(origin) + "\n", encoding="utf8")
     (folder / "auth.json").write_text(json.dumps({"auth_mode": "apikey", "OPENAI_API_KEY": "local-fixture-only"}), encoding="utf8")
     data.mkdir()
-    (data / "settings.json").write_text(json.dumps({"request_compression": "off",
+    (data / "settings.json").write_text(json.dumps({"auto_detect_providers": False,
         "packet_size_protection_enabled": False, "capacity_retry_enabled": False}), encoding="utf8")
     process = subprocess.Popen([str(args.release_dir.resolve() / "CodexPacketInspector.exe"),
         "--background", "--port", "0", "--data-dir", str(data), "--config", str(config), "--upstream", origin],

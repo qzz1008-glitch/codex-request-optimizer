@@ -154,7 +154,10 @@ def main():
     try:
         verify_fresh_install(release, directory)
         wait_for(lambda: api("/api/status"))
-        api("/api/settings", {"request_compression": "off"})
+        if api("/api/status").get("connection_policy"):
+            api("/api/link", {"action": "restore"})
+        else:
+            api("/api/settings", {"request_compression": "off"})
         original_config = config.read_bytes()
         settings = json.loads((data / "settings.json").read_text(encoding="utf8"))
         path = "/relay/" + settings["relay_token"] + "/responses?fixture=upgrade"
