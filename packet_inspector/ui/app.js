@@ -1738,15 +1738,48 @@ function packetDiffRows(data,current=null) {
   }
   return rows;
 }
-async function loadDiff() {
-  const id=state.selected,data=await api("/api/packets/"+id+"/diff");if(state.selected!==id)return;
-  if(data?.state==="details_unavailable") {
-    reconcileContent($("diff-content"),el("p","muted",t("请求详情已回收，无法比较变化。")));return;
+function summaryPacketDiff(previous,current) {
+  const difference=key=>Number.isSafeInteger(previous[key])&&Number.isSafeInteger(current[key])?current[key]-previous[key]:null;
+  const before=compressedBytes(previous),after=compressedBytes(current),fieldsAvailable=Array.isArray(previous.top_fields)&&Array.isArray(current.top_fields);
+  const left=new Map((fieldsAvailable?previous.top_fields:[]).map(row=>[row.name,row.bytes])),right=new Map((fieldsAvailable?current.top_fields:[]).map(row=>[row.name,row.bytes]));
+  return {previous_id:previous.id,state:"summary_only",fields_available:fieldsAvailable,
+    decoded_delta:difference("decoded_bytes"),wire_delta:difference("wire_bytes"),upload_delta:difference("outbound_wire_bytes"),
+    compressed_delta:before!==null&&after!==null?after-before:null,
+    fields:fieldsAvailable?[...new Set([...left.keys(),...right.keys()])].sort().filter(name=>left.get(name)!==right.get(name)).map(name=>({name,before:left.get(name)??0,after:right.get(name)??0})):[]};
+}
+async function readSummaryPacketDiff(data,current,active) {
+  if(!current?.thread_id||!current.source||!Number.isFinite(current.created))return data;
+  let previousId=data.previous_id;
+  if(!previousId) {
+    const query=new URLSearchParams({limit:"50",thread:current.thread_id,before:String(current.created),sort:"created",direction:"desc",include_get:"1"});
+    for(let page=0;page<8;page++) {
+      const rows=await api("/api/packets?"+query);if(!active())return null;
+      if(!Array.isArray(rows))return data;
+      const previous=rows.find(row=>row.thread_id===current.thread_id&&row.source===current.source&&row.created<current.created);
+      if(previous){previousId=previous.id;break;}
+      if(rows.length<50)return null;
+      const next=rows.at(-1)?.id;if(!next||query.get("after")===next)return data;query.set("after",next);
+    }
   }
-  const delta=data?await compressedDelta(data,state.detail):null;if(state.selected!==id)return;
+  if(!previousId)return data;
+  let previous;
+  try {previous=await api("/api/packets/"+previousId);}catch(error){if(error.status===404)return data;throw error;}
+  if(!active())return null;
+  if(previous?.thread_id!==current.thread_id||previous.source!==current.source||!(previous.created<current.created))return data;
+  return summaryPacketDiff(previous,current);
+}
+async function loadDiff() {
+  const id=state.selected,current=state.detail,active=()=>state.selected===id&&state.detail===current;
+  let data=await api("/api/packets/"+id+"/diff");if(!active())return;
+  if(data?.state==="details_unavailable")data=await readSummaryPacketDiff(data,current,active);if(!active())return;
+  if(data?.state==="details_unavailable") {
+    reconcileContent($("diff-content"),el("p","muted",t("暂时无法取得可比较的统计信息。")));return;
+  }
+  const delta=data?await compressedDelta(data,current):null;if(!active())return;
   const root=document.createDocumentFragment();
   if(!data){reconcileContent($("diff-content"),el("p","muted",t("没有可比较的上条请求。")));return;}
   const p=panel(t("相对上条请求"));fact(p,t("处理后包变化"),signed(delta));fact(p,t("原始包变化"),signed(data.decoded_delta));root.append(p);
+  if(data.state==="summary_only")root.append(el("small","muted",t("输入条目详情已回收，以下显示统计变化。")));
   const changes=panel(t("变化明细")),rows=packetDiffRows(data,state.detail);
   const labels={added:t("新增"),removed:t("移除"),changed:t("内容改变")};
   if(rows.length) {
@@ -1769,7 +1802,7 @@ async function loadDiff() {
     });
     changes.append(grid);
   }
-  else changes.append(el("p","muted",t("没有发生变化。")));
+  else changes.append(el("p","muted",t(data.state==="summary_only"?(data.fields_available===false?"缺少可比较的字段统计。":"保留的字段大小未变化。"):"没有发生变化。")));
   root.append(changes);reconcileContent($("diff-content"),root);
 }
 function localImagePath(value) {

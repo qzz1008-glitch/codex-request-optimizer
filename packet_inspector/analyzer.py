@@ -372,8 +372,9 @@ def compressed_packet_size(meta):
 
 
 def compare_packets(previous, current):
-    old = previous.get("input_items", [])
-    new = current.get("input_items", [])
+    summary_only = bool(previous.get("details_evicted") or current.get("details_evicted"))
+    old = [] if summary_only else previous.get("input_items", [])
+    new = [] if summary_only else current.get("input_items", [])
     def unmatched(left, right):
         counts = Counter(i["fingerprint"] for i in right)
         result = []
@@ -384,16 +385,25 @@ def compare_packets(previous, current):
             else:
                 result.append({k: v for k, v in item.items() if k != "fingerprint"})
         return result
-    left = {r["name"]: r["bytes"] for r in previous.get("top_fields", [])}
-    right = {r["name"]: r["bytes"] for r in current.get("top_fields", [])}
-    old_upload = previous.get("outbound_wire_bytes")
-    new_upload = current.get("outbound_wire_bytes")
+    def difference(key, default=None):
+        before, after = previous.get(key, default), current.get(key, default)
+        return after - before if type(before) is int and type(after) is int else None
+    previous_fields, current_fields = previous.get("top_fields"), current.get("top_fields")
+    fields_available = isinstance(previous_fields, list) and isinstance(current_fields, list)
+    left = {r["name"]: r["bytes"] for r in previous_fields} if isinstance(previous_fields, list) else {}
+    right = {r["name"]: r["bytes"] for r in current_fields} if isinstance(current_fields, list) else {}
     old_compressed = compressed_packet_size(previous)
     new_compressed = compressed_packet_size(current)
-    return {"upload_delta": new_upload - old_upload if old_upload is not None and new_upload is not None else None,
+    result = {"upload_delta": difference("outbound_wire_bytes"),
             "compressed_delta": new_compressed - old_compressed if old_compressed is not None and new_compressed is not None else None,
-            "wire_delta": current.get("wire_bytes", 0) - previous.get("wire_bytes", 0),
-            "decoded_delta": current.get("decoded_bytes", 0) - previous.get("decoded_bytes", 0),
-            "added": unmatched(new, old), "removed": unmatched(old, new),
+            "wire_delta": difference("wire_bytes", None if summary_only else 0),
+            "decoded_delta": difference("decoded_bytes", None if summary_only else 0),
             "fields": [{"name": k, "before": left.get(k, 0), "after": right.get(k, 0)}
                        for k in sorted(left.keys() | right.keys()) if left.get(k) != right.get(k)]}
+    if summary_only:
+        result.update(state="summary_only", fields_available=fields_available)
+        if not fields_available:
+            result["fields"] = []
+    else:
+        result.update(added=unmatched(new, old), removed=unmatched(old, new))
+    return result

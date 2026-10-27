@@ -197,15 +197,24 @@ class TieredRetentionTests(unittest.TestCase):
             self.assertEqual(total, reopened.stats()["stored"])
             self.assertEqual(len(db.execute("PRAGMA table_info(packets)").fetchall()), 7)
 
-    def test_diff_does_not_invent_changes_after_previous_details_are_removed(self):
+    def test_basic_records_compare_statistics_without_inventing_item_changes(self):
         store = Store(self.root, max_count=5, max_detail_count=1)
         first, _ = self.add(store, 1)
-        second, _ = self.add(store, 2)
-        self.assertEqual(store.compare(first)["state"], "details_unavailable")
+        second, _ = self.add(store, 22)
+        self.assertIsNone(store.compare(first))
+        stored = store.stats()["stored"]
         diff = store.compare(second)
-        self.assertEqual(diff["state"], "details_unavailable")
+        self.assertEqual(diff["state"], "summary_only")
         self.assertEqual(diff["previous_id"], first)
+        self.assertEqual(diff["decoded_delta"], 1)
+        before = next(field["bytes"] for field in store.get(first)[0]["top_fields"] if field["name"] == "input")
+        self.assertEqual(diff["fields"], [{"name": "input", "before": before, "after": before + 1}])
+        self.assertEqual(store.stats()["stored"], stored)
         self.assertNotIn("added", diff)
+        self.assertNotIn("removed", diff)
+        store.configure_limits(1_000_000, 5, 0)
+        reopened = Store(self.root, max_count=5, max_detail_count=0)
+        self.assertEqual(reopened.compare(second), diff)
 
 
 if __name__ == "__main__":

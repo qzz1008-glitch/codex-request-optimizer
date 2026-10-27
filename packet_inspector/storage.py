@@ -358,8 +358,6 @@ class Store:
 
     def compare(self, packet_id):
         current, _ = self.get(packet_id)
-        if current.get("details_evicted"):
-            return {"state": "details_unavailable"}
         if not current.get("thread_id"):
             return None  # Avoid inventing a same-chat comparison for unidentified requests.
         with self.connect() as c:
@@ -368,6 +366,4 @@ class Store:
         if row is None:
             return None
         previous = json.loads(row["meta"])
-        if previous.get("details_evicted"):
-            return {"previous_id": previous["id"], "state": "details_unavailable"}
         return {"previous_id": previous["id"], **compare_packets(previous, current)}
