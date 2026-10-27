@@ -38,16 +38,35 @@ let linkSaving = "", linkRevision = 0;
 let settingsBaseline = null, settingsLanguage = null;
 let settingsSaveProgress = {total:0,steps:[]};
 const settingsRestartChanges = new Map();
-// 200 local viewing copies, three passes per level. Size is relative to the
-// uncompressed JSON mean (956,534.845 B); time share uses the historical full
-// request median (18,945 ms). Upload savings are outside this CPU estimate.
+// 120 retained JSON requests: 60 below 1,500,000 B and 60 at or above it.
+// zstd 1.5.7; 61 exact originals and 59 text-sanitized copies, no media
+// substitutes. Three randomized passes per level. Columns: level, small /
+// large size reduction vs uncompressed JSON (%), estimated task overhead (%).
+// Overhead = compression median / historical successful request median
+// (27,047 ms); upload savings are outside this CPU estimate.
 const zstdLevelEstimates = [
-  [1,49.47,1.78,.009],[2,51.61,2.09,.011],[3,52.77,2.63,.014],
-  [4,52.90,3.38,.018],[5,53.62,5.29,.028],[6,53.94,6.50,.034],
-  [7,54.06,7.69,.041],[8,54.16,8.98,.047],[9,54.17,10.38,.055],
-  [10,54.23,11.72,.062],[11,54.26,14.41,.076],[12,54.26,14.04,.074],
-  [13,54.32,27.51,.145],[14,54.35,30.87,.163],[15,54.35,32.06,.169],
-  [16,54.81,68.89,.364],[17,54.83,76.49,.404]
+  [1,48.3494,46.0992,0.01045],
+  [2,50.6355,48.0554,0.01287],
+  [3,51.8433,49.2755,0.01642],
+  [4,52.0046,49.4677,0.02094],
+  [5,52.5504,50.0394,0.03227],
+  [6,52.8725,50.3377,0.03778],
+  [7,52.9730,50.4553,0.04505],
+  [8,53.1289,50.5485,0.05132],
+  [9,53.1362,50.5589,0.06212],
+  [10,53.1779,50.6168,0.08774],
+  [11,53.1976,50.6434,0.10647],
+  [12,53.1976,50.6434,0.10474],
+  [13,53.2810,50.7022,0.21539],
+  [14,53.2976,50.7270,0.23014],
+  [15,53.3038,50.7386,0.23428],
+  [16,53.7208,51.1575,0.51764],
+  [17,53.6927,50.9378,0.57153],
+  [18,53.3808,50.4464,0.82761],
+  [19,53.4301,50.5424,1.14948],
+  [20,53.4301,50.5424,1.14216],
+  [21,53.4394,50.5626,1.18692],
+  [22,53.4337,50.5681,1.23714]
 ];
 let compressionTarget = null, compressionSaving = false, compressionRevision = 0;
 let connectionRestartNotified = false;
@@ -939,13 +958,13 @@ function fillZstdLevel() {
 }
 function renderZstdLevelRows() {
   const selected=Number($("zstd-level").value);
-  $("zstd-level-options").replaceChildren(...zstdLevelEstimates.map(([level,size,,time])=>{
+  $("zstd-level-options").replaceChildren(...zstdLevelEstimates.map(([level,smallSize,largeSize,time])=>{
     const current=level===selected,row=el("tr",current?"selected":"");row.dataset.level=String(level);
     const cell=el("td"),button=el("button","zstd-level-option");button.type="button";
     button.setAttribute("aria-pressed",String(current));button.tabIndex=current?0:-1;
     const mark=el("span","zstd-level-check",current?"✓":"");mark.setAttribute("aria-hidden","true");
     button.append(mark,el("span","",t("{level}级").replace("{level}",level)));
-    cell.append(button);row.append(cell,el("td","num","-"+size.toFixed(2)+"%"),el("td","num","+"+time.toFixed(3)+"%"));
+    cell.append(button);row.append(cell,el("td","num","-"+smallSize.toFixed(2)+"%"),el("td","num","-"+largeSize.toFixed(2)+"%"),el("td","num","+"+time.toFixed(3)+"%"));
     return row;
   }));
 }
@@ -964,7 +983,7 @@ function closeZstdLevelPicker(restoreFocus=true) {
 function selectZstdLevel(value) {
   const input=$("zstd-level"),level=Number(value);
   fillZstdLevel();
-  if(input.disabled||!Number.isInteger(level)||level<1||level>17)return;
+  if(input.disabled||!Number.isInteger(level)||level<1||level>22)return;
   input.value=String(level);input.dispatchEvent(new Event("change",{bubbles:true}));
   closeZstdLevelPicker();
 }
@@ -1483,7 +1502,7 @@ function renderCompression(m) {
   const encoding=hasTransport?m.transport_content_encoding:summaryTriggered?null:m.relay_content_encoding||m.outbound_content_encoding;
   fact(sizes,t("压缩方式"),encoding==="identity"?t("不压缩"):encoding||"—");
   const level=hasTransport?m.transport_zstd_level:summaryTriggered?null:m.relay_zstd_level;
-  fact(sizes,t("zstd 压缩等级"),Number.isInteger(level)&&level>=1&&level<=17?level:"—");
+  fact(sizes,t("zstd 压缩等级"),Number.isInteger(level)&&level>=1&&level<=22?level:"—");
   if(original>0 && compressed!==null)fact(sizes,t("减小比例"),(100*(1-compressed/original)).toFixed(1)+"%");
   root.append(sizes);
   const steps=panel(t("请求保护"));steps.id="packet-protection-panel";steps.classList.add("packet-protection-panel");

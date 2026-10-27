@@ -4,7 +4,7 @@ from typing import NamedTuple
 
 DEFAULT_ZSTD_LEVEL = 3
 MIN_ZSTD_LEVEL = 1
-MAX_ZSTD_LEVEL = 17
+MAX_ZSTD_LEVEL = 22
 AUTO_ZSTD_HIGH_LEVEL = 16
 
 
@@ -16,7 +16,7 @@ class PreparedRequest(NamedTuple):
 
 def validate_zstd_level(value):
     if type(value) is not int or not MIN_ZSTD_LEVEL <= value <= MAX_ZSTD_LEVEL:
-        raise ValueError("zstd level must be an integer from 1 to 17")
+        raise ValueError(f"zstd level must be an integer from {MIN_ZSTD_LEVEL} to {MAX_ZSTD_LEVEL}")
     return value
 
 
