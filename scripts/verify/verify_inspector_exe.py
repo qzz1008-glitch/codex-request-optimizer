@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import http.client
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -16,7 +17,7 @@ from urllib.request import Request, urlopen
 
 from tests.test_packet_inspector import Upstream, zstandard
 from tests.test_image_isolation import request_body
-from packet_inspector.image_config import find_codex_cli
+from packet_inspector.image_config import VISION_PROVIDER, find_codex_cli
 from scripts.build_inspector import PUBLIC_FILES
 
 ROOT=Path(__file__).resolve().parents[2]
@@ -118,6 +119,7 @@ def main():
         if find_codex_cli():
             original_config=tomllib.loads(config.read_text(encoding="utf8"))
             assert "isolated_vision" not in original_config.get("mcp_servers",{})
+            assert VISION_PROVIDER not in original_config.get("model_providers",{})
             model_requests=len(upstream.requests)
             installed=api("/api/settings",{"image_isolation_enabled":True})
             assert installed["image_tool"]["managed_tool_installed"]
@@ -137,6 +139,7 @@ def main():
             replies=[json.loads(line) for line in tool_check.stdout.splitlines() if line.strip()]
             assert [tool["name"] for tool in replies[-1]["result"]["tools"]]==["analyze_image"]
             api("/api/link",{"action":"restore"})
+            disconnected_config=tomllib.loads(config.read_text(encoding="utf8"))
             connection=http.client.HTTPConnection("127.0.0.1",runtime["port"],timeout=5)
             connection.request("POST","/relay/"+settings["relay_token"]+"/responses",json.dumps(request_body()).encode(),{"Content-Type":"application/json"})
             response=connection.getresponse();assert response.status==200;response.read();connection.close()
@@ -145,7 +148,12 @@ def main():
             assert image_part["type"]=="input_text" and image_path.is_absolute()
             assert image_path.parent==custom_image_folder.resolve() and image_path.is_file()
             api("/api/settings",{"image_isolation_enabled":False})
-            expected_native=json.loads(json.dumps(original_config))
+            # Image uninstall must preserve the explicit disconnection above.
+            expected_native=json.loads(json.dumps(disconnected_config))
+            expected_native["mcp_servers"].pop("isolated_vision")
+            if not expected_native["mcp_servers"]:expected_native.pop("mcp_servers")
+            expected_native["model_providers"].pop(VISION_PROVIDER)
+            if not expected_native["model_providers"]:expected_native.pop("model_providers")
             expected_native.setdefault("tools",{})["view_image"]=True
             if expected_native.get("features",{}).get("view_image") is False:
                 expected_native["features"].pop("view_image")
