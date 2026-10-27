@@ -65,7 +65,7 @@ class TransportTests(unittest.TestCase):
 class ZstdLevelTests(unittest.TestCase):
     def test_all_selectable_levels_preserve_uncompressed_bytes(self):
         raw = encode({"input": [{"role": "user", "content": "retained content " * 1500}]})
-        for level in range(1, 18):
+        for level in range(1, 23):
             with self.subTest(level=level):
                 wire, coding = prepare_request(raw, {}, "POST", "/responses", "zstd", level)
                 self.assertEqual(coding, "zstd")
@@ -89,7 +89,7 @@ class ZstdLevelTests(unittest.TestCase):
 
     def test_settings_reload_preserves_valid_level_and_defaults_legacy_config(self):
         for saved, expected in (({}, 3), ({"zstd_level": 17, "request_compression": "off"}, 17),
-                                ({"zstd_level": 22}, 3), ({"zstd_level": True}, 3)):
+                                ({"zstd_level": 22}, 22), ({"zstd_level": 23}, 3), ({"zstd_level": True}, 3)):
             with self.subTest(saved=saved), tempfile.TemporaryDirectory() as folder:
                 root = Path(folder)
                 config = root / "config.toml"
@@ -809,19 +809,19 @@ class RelayTests(unittest.TestCase):
         previous_connection = self.server.settings["auto_detect_providers"]
         self.api("/api/link", {"action": "activate"})
         try:
-            status, result = self.api("/api/settings", {"zstd_level": 16})
+            status, result = self.api("/api/settings", {"zstd_level": 22})
             self.assertEqual(status, 200)
-            self.assertEqual(result["zstd_level"], 16)
-            self.assertEqual(json.loads(self.server.settings_path.read_text(encoding="utf8"))["zstd_level"], 16)
-            for value in (0, 18, -1, 1.5, True, "16", None):
+            self.assertEqual(result["zstd_level"], 22)
+            self.assertEqual(json.loads(self.server.settings_path.read_text(encoding="utf8"))["zstd_level"], 22)
+            for value in (0, 23, -1, 1.5, True, "22", None):
                 with self.subTest(invalid=value):
                     self.assertEqual(self.api("/api/settings", {"zstd_level": value})[0], 400)
-                    self.assertEqual(self.server.settings["zstd_level"], 16)
+                    self.assertEqual(self.server.settings["zstd_level"], 22)
             raw = encode({"input": [{"role": "user", "content": "unchanged request semantics " * 1500}]})
             incoming = zstandard.ZstdCompressor(level=1).compress(raw)
             with patch("zstandard.ZstdCompressor", wraps=zstandard.ZstdCompressor) as compressor:
                 self.assertEqual(self.relay(incoming, headers={"Content-Encoding": "zstd"})[0], 200)
-                compressor.assert_any_call(level=16)
+                compressor.assert_any_call(level=22)
             forwarded = self.up.requests[-1]
             self.assertEqual(zstandard.ZstdDecompressor().decompress(forwarded["body"]), raw)
             self.assertLessEqual(len(forwarded["body"]), len(incoming))

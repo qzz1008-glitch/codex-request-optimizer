@@ -304,17 +304,20 @@ code.session-id{font-family:Consolas,"Cascadia Mono",monospace;font-size:11px;wo
 #settings-dialog .auto-zstd-row:is(:hover,:focus-within),
 #settings-dialog .settings-content:has(#compression-settings.is-automatic:hover) .auto-zstd-row{border-radius:8px;background:var(--soft);box-shadow:0 0 0 1px #b9c9ed}
 #settings-dialog .zstd-level-trigger{width:var(--settings-number-width);max-width:100%;justify-self:start;font-variant-numeric:tabular-nums;display:flex;align-items:center;justify-content:flex-end;gap:12px;text-align:right}
-#zstd-level-dialog{width:min(520px,calc(100vw - 32px));max-height:min(640px,calc(100vh - 40px));padding:20px;overflow:hidden}
+#zstd-level-dialog{width:min(640px,calc(100vw - 32px));max-height:min(640px,calc(100vh - 40px));padding:20px;overflow:hidden}
 #zstd-level-dialog[open]{display:flex;flex-direction:column}
 #zstd-level-dialog .dialog-heading{flex:none;align-items:center;gap:16px;margin-bottom:6px}
 #zstd-level-title{font-size:18px;line-height:1.4;margin:0}
 #zstd-level-close{border:0;padding:4px 7px}
 #zstd-level-note{flex:none;margin:0 0 14px}
 .zstd-level-scroll{min-height:0;max-height:500px;overflow:auto;scrollbar-gutter:stable;border:1px solid var(--line);border-radius:8px}
-.zstd-level-table{table-layout:fixed;font-size:13px}
+.zstd-level-table{table-layout:fixed;min-width:520px;font-size:13px}
+.zstd-level-table .zstd-level-col{width:18%}
+.zstd-level-table .zstd-time-col{width:28%}
+.zstd-level-table thead{position:sticky;top:0;z-index:1;background:var(--panel)}
 .zstd-level-table th,.zstd-level-table td{padding:6px 12px;vertical-align:middle}
-.zstd-level-table th{position:sticky;top:0;z-index:1;background:var(--panel);font-size:12px;line-height:1.4;padding-top:10px;padding-bottom:10px;white-space:normal}
-.zstd-level-table th:first-child{width:42%}
+.zstd-level-table th{background:var(--panel);font-size:12px;line-height:1.4;padding-top:8px;padding-bottom:8px;white-space:normal}
+.zstd-level-table .zstd-size-heading{text-align:center}
 .zstd-level-table tbody tr{cursor:pointer}
 .zstd-level-table tbody tr:hover td,.zstd-level-table tbody tr:focus-within td{background:#f5f7fc}
 .zstd-level-table tbody tr.selected td{background:var(--soft);color:var(--accent)}

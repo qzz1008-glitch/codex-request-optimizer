@@ -65,6 +65,8 @@ assert.equal(facts(1)['超限保护'],'已触发');
 context.renderCompression({...interrupted,transport_content_encoding:'zstd',transport_zstd_level:17});
 assert.equal(facts(0)['压缩方式'],'zstd');
 assert.equal(facts(0)['zstd 压缩等级'],17);
+context.renderCompression({...interrupted,transport_content_encoding:'zstd',transport_zstd_level:22});
+assert.equal(facts(0)['zstd 压缩等级'],22);
 context.renderCompression({...interrupted,state:'streaming'});
 assert.equal(facts(1)['预测保护'],'等待响应');
 context.renderCompression({...interrupted,state:'complete',usage_override_applied:true});
