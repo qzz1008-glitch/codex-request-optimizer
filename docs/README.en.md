@@ -10,7 +10,7 @@ A tool for Windows x64 (64-bit) that analyzes and optimizes Codex requests. Brow
 
 ### 🔎 Session and request analysis
 
-- Response summaries: Request information shows up to 500 characters of visible reply text, tool names, the response ID, and the final state. Summaries are retained with requests, without a separate record limit.
+- Request and response shows recorded final states, response IDs, tool names, and up to 500 characters of visible reply text. Empty replies have no placeholder. Response information is retained with requests, without a separate record limit.
 
 Browse request records by session to see what each request sent, how much space it used, and how it was handled.
 

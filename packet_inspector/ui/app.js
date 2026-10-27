@@ -1831,17 +1831,15 @@ function renderImageInfo(paths) {
   }
   return images;
 }
-function renderResponseSummary(value) {
-  const p=panel(t("响应概要"));p.id="response-summary";
-  const statuses={completed:"完成",failed:"失败",incomplete:"未完成",cancelled:"已取消",interrupted:"已中断",unknown:"未确认"};
-  fact(p,t("结束状态"),t(statuses[value.status]||"未确认"));
+function appendResponseFields(p,value) {
+  const statuses={completed:"完成",failed:"失败",incomplete:"未完成",cancelled:"已取消",interrupted:"已中断"};
+  if(Object.hasOwn(statuses,value.status))fact(p,t("结束状态"),t(statuses[value.status]));
   if(typeof value.response_id==="string"&&value.response_id)fact(p,t("响应 ID"),value.response_id).classList.add("request-context");
   if(Array.isArray(value.tools)&&value.tools.length)fact(p,t("工具调用"),value.tools.filter(name=>typeof name==="string").join(" · ")+(value.tools_truncated?" …":""));
   if(typeof value.text==="string"&&value.text) {
     const excerpt=el("p","response-excerpt",value.text+(value.text_truncated?"…":""));p.append(excerpt);
-  }else p.append(el("p","muted help",t("无可见文字回复")));
+  }
   if(value.observation_limited)p.append(el("small","muted",t("概要采集不完整")));
-  return p;
 }
 function renderHeaders(m) {
   const root=document.createDocumentFragment(),p=panel(t("请求与响应"));
@@ -1857,8 +1855,8 @@ function renderHeaders(m) {
   if(Number.isFinite(m.wire_bytes)&&m.wire_bytes>=0&&upload!==null&&m.wire_bytes!==upload) {
     fact(p,t("采集入口正文"),bytes(m.wire_bytes)+" · "+(m.content_encoding||"identity"));
   }
+  if(m.response_summary&&typeof m.response_summary==="object")appendResponseFields(p,m.response_summary);
   root.append(p);
-  if(m.response_summary&&typeof m.response_summary==="object")root.append(renderResponseSummary(m.response_summary));
   if(specialKind) {
     const context=panel(t("会话信息"));context.id="request-session-info";
     fact(context,"session_id",m.thread_id||"—").classList.add("request-context");
