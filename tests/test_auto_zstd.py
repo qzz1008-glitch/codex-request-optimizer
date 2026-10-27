@@ -47,6 +47,12 @@ class CompressionPolicyTests(unittest.TestCase):
     def begin(self, raw=2000, budget=1000, key=None):
         return self.policy.begin(key or self.key, self.policy.reserve(), raw, budget)
 
+    def record(self, key, **fields):
+        meta = {'method': 'POST', 'path': '/responses', 'thread_id': key[1],
+                'relay_compression_scope': key[0], 'decoded_bytes': 2000,
+                'outbound_wire_bytes': 850, **fields}
+        return self.store.add(meta, {'input': 'retained request details'})
+
     def test_high_phase_does_not_drop_when_high_compression_reduces_wire_size(self):
         fast = self.begin()
         self.assertEqual(fast.phase, 1)
@@ -100,16 +106,107 @@ class CompressionPolicyTests(unittest.TestCase):
         self.assertIsNone(self.policy.finish(self.key, stale, 950, 1000))
         self.assertEqual(self.begin().phase, 1)
 
-    def test_only_inactive_unlocked_rows_expire(self):
+    def test_all_phases_survive_elapsed_time_and_restart(self):
         with patch('packet_inspector.compression_policy.time.time', return_value=0):
-            fast = self.begin()
-            self.policy.finish(self.key, fast, 950, 1000)
-            self.begin(raw=500, key=('upstream', 'unlocked'))
-        with patch('packet_inspector.compression_policy.time.time', return_value=86401):
+            for name, raw in (('original', 500), ('fast', 2000), ('high', 1500000)):
+                self.begin(raw=raw, key=('upstream', name))
+        self.policy = CompressionPolicy(Store(Path(self.temp.name)))
+        with patch('packet_inspector.compression_policy.time.time', return_value=10**12):
             self.begin(key=('upstream', 'new'))
-        with self.store.connect() as c:
-            rows = c.execute('SELECT thread,phase FROM auto_zstd_sessions ORDER BY thread').fetchall()
-        self.assertEqual([tuple(row) for row in rows], [('new', 1), ('session', 17)])
+            # Initial selection would choose 17 for this large original body.
+            # Known original/fast sessions must still select 1 after any gap.
+            for name, expected in (('original', 1), ('fast', 1), ('high', 17)):
+                with self.subTest(name=name):
+                    decision = self.begin(raw=1500000, key=('upstream', name))
+                    self.assertEqual(decision.phase, expected)
+                    self.assertIsNotNone(decision.previous_phase)
+
+    def test_full_and_summary_only_records_restore_the_same_next_phase(self):
+        for details in (True, False):
+            with self.subTest(details=details):
+                key = ('upstream', 'retained-' + str(details))
+                self.store.configure_limits(512 * 1024**2, 2000, 1)
+                packet = self.record(key, relay_auto_zstd_next_phase=17,
+                                     overflow_compaction_calls=1, overflow_original_wire_bytes=950,
+                                     outbound_wire_bytes=100, relay_zstd_level=None,
+                                     relay_content_encoding='identity')
+                if not details:
+                    # A newer unrelated request removes the old body, keeping
+                    # its summary and all decision metadata under the real quota.
+                    self.record(('upstream', 'unrelated'))
+                meta, body = self.store.get(packet, content=True)
+                self.assertEqual(body is not None, details)
+                self.assertEqual(meta.get('details_evicted', False), not details)
+                self.policy = CompressionPolicy(Store(Path(self.temp.name)))
+                # Auxiliary selection reads the same metadata without creating
+                # a main-session phase; the next main request then persists it.
+                self.assertEqual(self.policy.level(key, 2000, 1000), 17)
+                decision = self.begin(key=key)
+                self.assertEqual((decision.previous_phase, decision.phase), (17, 17))
+
+    def test_legacy_summary_sizes_and_high_grade_recover_without_details_or_age_limit(self):
+        self.store.configure_limits(512 * 1024**2, 2000, 0)
+        cases = [
+            ({'relay_zstd_level': 17, 'outbound_wire_bytes': 850}, 17),
+            ({'relay_zstd_level': 1, 'outbound_wire_bytes': 900}, 17),
+            ({'transport_content_encoding': 'zstd', 'transport_zstd_level': 17,
+              'overflow_compaction_calls': 1, 'overflow_original_wire_bytes': 850,
+              'outbound_wire_bytes': 100, 'relay_zstd_level': None}, 17),
+            ({'overflow_compaction_calls': 1, 'overflow_original_wire_bytes': 950,
+              'outbound_wire_bytes': 100, 'relay_zstd_level': None}, 17),
+            ({'usage_override_request_bytes': 950, 'outbound_wire_bytes': 100}, 17),
+            ({'outbound_wire_bytes': 850}, 1),
+        ]
+        for index, (fields, expected) in enumerate(cases):
+            with self.subTest(fields=fields):
+                key = ('upstream', 'legacy-' + str(index))
+                with patch('packet_inspector.storage.time.time', return_value=1000):
+                    packet = self.record(key, **fields)
+                self.assertIsNone(self.store.get(packet, content=True)[1])
+                with patch('packet_inspector.compression_policy.time.time', return_value=10**12):
+                    decision = self.begin(raw=1500000, key=key)
+                self.assertEqual(decision.phase, expected)
+                self.assertIsNotNone(decision.previous_phase)
+
+    def test_recovery_uses_latest_main_record_in_the_same_upstream(self):
+        key = ('upstream', 'filtered-history')
+        self.record(key, relay_auto_zstd_next_phase=17)
+        excluded = [
+            {'relay_compression_scope': 'other-upstream'},
+            {'source': 'imported'}, {'method': 'GET'},
+            {'is_compaction': True}, {'path': '/responses/compact'},
+            {'request_kind': 'prewarm'}, {'request_kind': 'tool_search'},
+            {'request_purpose': 'image_analysis'},
+            {'request_kind': 'memory'}, {'path': '/alpha/search'},
+            {'request_purpose': 'title_generation'},
+            {'request_purpose': 'next_message_suggestion'},
+            {'request_purpose': 'session_index'},
+        ]
+        for fields in excluded:
+            self.record(key, relay_auto_zstd_next_phase=0, **fields)
+        # An unfinished newest capture has no usable size/phase yet.
+        self.record(key, outbound_wire_bytes=None)
+        self.assertEqual(self.begin(key=key).phase, 17)
+        self.policy.clear()
+        self.record(key, decoded_bytes=500, outbound_wire_bytes=500)
+        decision = self.begin(raw=1500000, key=key)
+        self.assertEqual((decision.previous_phase, decision.phase), (0, 1))
+
+    def test_current_small_original_releases_a_recovered_high_phase(self):
+        key = ('upstream', 'compacted-history')
+        self.record(key, relay_auto_zstd_next_phase=17)
+        decision = self.begin(raw=899, key=key)
+        self.assertEqual((decision.previous_phase, decision.phase), (17, 0))
+        self.assertEqual(self.begin(key=key).phase, 1)
+
+    def test_recovery_excludes_records_from_a_later_request_ticket(self):
+        key = ('upstream', 'ordered-history')
+        self.record(key, relay_auto_zstd_next_phase=17)
+        old_ticket = self.policy.reserve()
+        new_ticket = self.policy.reserve()
+        self.record(key, relay_auto_zstd_ticket=new_ticket, relay_auto_zstd_next_phase=0)
+        decision = self.policy.begin(key, old_ticket, 2000, 1000)
+        self.assertEqual((decision.previous_phase, decision.phase), (17, 17))
 
     def test_large_wire_size_promotes_only_the_next_request(self):
         selected = self.begin()
@@ -316,13 +413,14 @@ class AutomaticRelayTests(unittest.TestCase):
         self.assertEqual(self.latest()[0]['relay_auto_zstd_next_phase'], 17)
         self.assertEqual(self.server.settings['zstd_level'], 9)
 
-    def test_captured_manual_measurements_do_not_seed_automatic_phase(self):
+    def test_captured_small_manual_request_recovers_original_phase(self):
         raw = encode({'input': base64.b64encode(random.Random(8).randbytes(280000)).decode()})
         headers = {'session_id': 'prior-record-session'}
         self.assertEqual(self.relay(encode({'input': 'old manual request'}), headers=headers)[0], 200)
         self.enable()
         self.assertEqual(self.relay(raw, headers=headers)[0], 200)
         self.assertEqual(self.latest()[0]['relay_auto_zstd_phase'], 1)
+        self.assertEqual(self.latest()[0]['relay_auto_zstd_previous_phase'], 0)
         self.assertEqual(self.latest()[0]['relay_auto_zstd_next_phase'], 17)
         auxiliary = encode({'input': 'tiny', 'client_metadata': {'request_kind': 'prewarm'}})
         self.assertEqual(self.relay(auxiliary, headers=headers)[0], 200)
@@ -351,7 +449,7 @@ class AutomaticRelayTests(unittest.TestCase):
         self.assertEqual(meta['relay_auto_zstd_initial_threshold_bytes'], 1500000)
         self.assertEqual(meta['relay_auto_zstd_budget_bytes'], 300000)
 
-    def test_reenabling_auto_starts_a_new_phase_instead_of_restoring_capture_measurements(self):
+    def test_reenabling_auto_uses_the_newer_small_manual_record(self):
         self.enable()
         headers = {'session_id': 'reenabled-session'}
         raw = encode({'input': base64.b64encode(random.Random(12).randbytes(280000)).decode()})
@@ -362,6 +460,7 @@ class AutomaticRelayTests(unittest.TestCase):
         self.enable()
         self.assertEqual(self.relay(raw, headers=headers)[0], 200)
         self.assertEqual(self.latest()[0]['relay_auto_zstd_phase'], 1)
+        self.assertEqual(self.latest()[0]['relay_auto_zstd_previous_phase'], 0)
         self.assertEqual(self.latest()[0]['relay_auto_zstd_next_phase'], 17)
 
     def test_auxiliary_and_native_compaction_dispatches_cannot_release_high_phase(self):

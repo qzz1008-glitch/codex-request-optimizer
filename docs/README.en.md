@@ -29,6 +29,8 @@ Choose from **compression levels 1–17** and compare compressed sizes and estim
 
 With request size protection enabled, use **automatic compression by packet size**. Smaller requests keep their original body. Without a saved phase, the original body's 1,500 kB threshold selects level 1 below it or level 17 at or above it. When a level-1 packet reaches the promotion threshold, the next request uses level 17 and stays there until the main request's uncompressed body is small again. Both levels apply predictive and overflow protection based on the actual compressed packet size. Turning automatic mode off restores the manual level. See the user guide for the exact thresholds.
 
+Selection first uses the saved phase. If it is missing, metadata from the previous request for the same upstream and session can restore it, whether full details or only the summary remain. Neither request bodies nor cache expiry are required. Compressed size, encoding, and level in request details all describe the body before summary substitution; missing encoding or level in older records is shown as “—”.
+
 ### 🧠 Context settings
 
 Adjust the context window and automatic compaction threshold used by the Codex client, or restore the model defaults.
@@ -42,6 +44,8 @@ For request body limits such as **1M (1,000,000 bytes)**, set a custom size limi
 - **Predictive protection**: when a request approaches the configured threshold, prompt Codex to run native context compaction earlier, helping prevent later requests from exceeding the limit.
 - **Over-limit protection**: when a request is already too large, turn completed history into a handover summary, retain necessary instructions and recent content, and check the resulting request size again. Later requests can reuse the corresponding result.
 
+Predictive protection needs valid token usage in a completed response to finish the rewrite. It shows “Waiting for response” while pending and “Incomplete” if the response ends without completing it. When actual usage already meets the protection value, it shows “Already at threshold.” A successful overflow summary does not mean that response token usage has been rewritten.
+
 ### 🔁 Automatic retries when a model is at capacity
 
 Once enabled in Settings, explicit model capacity errors trigger automatic retries with the same model and request content. Set 1–9 retries, with a default of 3. Wait at least 50 seconds between attempts, or longer when required by the server. Retry waits and upstream attempts share a 570-second budget, including earlier request processing, leaving headroom below the local relay entry's 600-second wait limit. If time runs short, return the capacity error already received; the actual retry count can therefore be lower than configured. Requests that have started producing output are not replayed, and successful responses continue streaming normally.
@@ -50,7 +54,7 @@ Once enabled in Settings, explicit model capacity errors trigger automatic retri
 
 Retry detection and diagnostics share structural event classification: response metadata and its extensions keep waiting for the result; output items, reasoning, or tool calls end replay eligibility. Events with unknown semantics pass through unchanged with the reason recorded. Successful responses preserve their original bytes. Only explicit capacity errors are retried; HTTP 403, 413, ordinary 5xx responses, and connection failures do not introduce retries.
 
-Like the other protection mechanisms, “Automatic retries” in request details only shows “Triggered / Not triggered,” based on retries actually started. Background diagnostic logs are retained separately from request bodies: retries and abnormal outcomes for up to 30 days; ordinary successful requests for 24 hours, limited to 2,000 records. Automatic cleanup also applies a 20,000-record and 32 MiB content budget. Logs contain only timestamps, settings, and structural events, without conversation text, tool content, or authentication data.
+“Automatic retries” in request details only shows “Triggered / Not triggered,” based on retries actually started. Background diagnostic logs are retained separately from request bodies: retries and abnormal outcomes for up to 30 days; ordinary successful requests for 24 hours, limited to 2,000 records. Automatic cleanup also applies a 20,000-record and 32 MiB content budget. Logs contain only timestamps, settings, and structural events, without conversation text, tool content, or authentication data.
 
 ### 🖼️ Image request optimization
 

@@ -828,7 +828,7 @@ async function loadPackets(append=false,background=false) {
     renderList();
     loaded=true;
     if (!state.selected && state.packets.length) await selectPacket(state.packets[0].id,false,requestId);
-    else if (state.selected) { const p=state.packets.find(p=>p.id===state.selected); if(p) {const ver=[p.state,p.status,p.duration_ms,p.outbound_wire_bytes,p.outbound_content_encoding,p.relay_content_encoding,p.relay_zstd_level,p.capacity_retry_count,p.capacity_retry_diagnostic?.updated,p.details_evicted].join(":");if(ver!==state.detailVersion) await selectPacket(state.selected,true);} else await selectPacket(state.selected,true); }
+    else if (state.selected) { const p=state.packets.find(p=>p.id===state.selected); if(p) {const ver=[p.state,p.status,p.duration_ms,p.outbound_wire_bytes,p.outbound_content_encoding,p.relay_content_encoding,p.relay_zstd_level,p.transport_content_encoding,p.transport_zstd_level,p.usage_override_request_bytes,p.usage_override_applied,p.capacity_retry_count,p.capacity_retry_diagnostic?.updated,p.details_evicted].join(":");if(ver!==state.detailVersion) await selectPacket(state.selected,true);} else await selectPacket(state.selected,true); }
   } catch(e) {if(e.name!=="AbortError")throw e;}
   finally {
     if(state.listController===controller) {
@@ -1437,7 +1437,7 @@ async function selectPacket(id,refresh=false,expectedListRequest=null) {
     $("packet-detail").hidden=true;$("empty-state").hidden=false;renderList();return;
   }
   if(requestId!==state.detailRequest || (refresh && state.selected!==id) || (expectedListRequest!==null && expectedListRequest!==state.listRequest)) return;
-  const changed=state.selected!==id, previousDetail=state.detail, detailsChanged=!!m.details_evicted!==!!previousDetail?.details_evicted; state.selected=id; state.detail=m; state.detailVersion=[m.state,m.status,m.duration_ms,m.outbound_wire_bytes,m.outbound_content_encoding,m.relay_content_encoding,m.relay_zstd_level,m.capacity_retry_count,m.capacity_retry_diagnostic?.updated,m.details_evicted].join(":");
+  const changed=state.selected!==id, previousDetail=state.detail, detailsChanged=!!m.details_evicted!==!!previousDetail?.details_evicted; state.selected=id; state.detail=m; state.detailVersion=[m.state,m.status,m.duration_ms,m.outbound_wire_bytes,m.outbound_content_encoding,m.relay_content_encoding,m.relay_zstd_level,m.transport_content_encoding,m.transport_zstd_level,m.usage_override_request_bytes,m.usage_override_applied,m.capacity_retry_count,m.capacity_retry_diagnostic?.updated,m.details_evicted].join(":");
   $("empty-state").hidden=true; $("packet-detail").hidden=false; renderList();
   if(changed || tokenVersion(m)!==tokenVersion(previousDetail||{})) {cancelTokenRead();tokenWindow=cachedTokenWindow(m);}
   else if(tokenWindow?.state==="unavailable") tokenWindow=null;
@@ -1465,16 +1465,24 @@ function renderCompression(m) {
   const sizes=panel(t("传输压缩")), original=originalBytes(m), compressed=compressedBytes(m);
   fact(sizes,t("原始包"),bytes(original));
   fact(sizes,t("压缩包"),bytes(compressed));
-  const encoding=m.relay_content_encoding||m.outbound_content_encoding;
+  const summaryTriggered=m.overflow_compaction_calls>0||m.overflow_cache_hit===true;
+  const hasTransport=typeof m.transport_content_encoding==="string";
+  // Older summary records only retain the final body's encoding and grade.
+  // Those values cannot describe the pre-summary packet shown beside them.
+  const encoding=hasTransport?m.transport_content_encoding:summaryTriggered?null:m.relay_content_encoding||m.outbound_content_encoding;
   fact(sizes,t("压缩方式"),encoding==="identity"?t("不压缩"):encoding||"—");
-  const level=m.relay_zstd_level;
+  const level=hasTransport?m.transport_zstd_level:summaryTriggered?null:m.relay_zstd_level;
   fact(sizes,t("zstd 压缩等级"),Number.isInteger(level)&&level>=1&&level<=17?level:"—");
   if(original>0 && compressed!==null)fact(sizes,t("减小比例"),(100*(1-compressed/original)).toFixed(1)+"%");
   root.append(sizes);
   const steps=panel(t("请求保护"));steps.id="packet-protection-panel";steps.classList.add("packet-protection-panel");
   const triggerStatus=triggered=>triggered?t("已触发"):m.source==="live"?t("未触发"):t("暂无记录");
-  fact(steps,t("预测保护"),triggerStatus(m.usage_override_applied===true)).dataset.protection="size";
-  const summaryTriggered=m.overflow_compaction_calls>0||m.overflow_cache_hit===true;
+  const predictiveArmed=Number.isSafeInteger(m.usage_override_request_bytes)&&m.usage_override_request_bytes>0;
+  const predictiveSatisfied=m.usage_override_applied===false&&m.reported_usage!=null;
+  const waiting=["captured","streaming"].includes(m.state);
+  const predictiveStatus=m.usage_override_applied===true?t("已触发"):predictiveSatisfied?t("已满足"):predictiveArmed?t(waiting?"等待响应":"未完成"):triggerStatus(false);
+  const predictive=fact(steps,t("预测保护"),predictiveStatus);predictive.dataset.protection="size";
+  if(predictiveArmed&&m.usage_override_applied!==true&&!predictiveSatisfied)predictive.title=t("已达到保护条件；需要完整响应中的有效 Token 用量才能完成改写。");
   const summaryFailed=typeof m.relay_error==="string"&&m.relay_error.startsWith("overflow_");
   fact(steps,t("超限保护"),summaryFailed?t("处理失败"):triggerStatus(summaryTriggered)).dataset.protection="size";
   fact(steps,t("自动重试"),triggerStatus(capacityRetryCount(m)>0)).dataset.protection="retry";
