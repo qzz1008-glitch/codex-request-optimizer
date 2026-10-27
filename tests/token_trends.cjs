@@ -208,9 +208,9 @@ function eventRows(){return [
   assert.equal(chartNodes(size,'trend-axis-title')[0].textContent,'请求大小');
   assert.equal(chartNodes(token,'trend-axis-title')[0].textContent,'输入 Token');
  });
- await test('one bottom time axis aligns ticks with both equal-height metric panels',()=>{
+ await test('one adaptive bottom time axis aligns ticks with both equal-height metric panels',()=>{
   const {result}=rendered(dualRows()),labels=chartNodes({svg:result.timeAxis},'trend-axis-label');
-  assert.ok(labels.length>=1&&labels.length<=9);assert.ok(labels.every(label=>/^\d{2}:00$/.test(label.textContent)));assert.equal(result.timeAxis.attrs.viewBox,'0 0 640 32');
+  assert.ok(labels.length>=3&&labels.length<=9);assert.ok(labels.every(label=>/^\d{2}:[0-5]0$/.test(label.textContent)));assert.equal(result.timeAxis.attrs.viewBox,'0 0 640 32');
   const [size,token]=result.charts;
   assert.equal(size.bounds.height-size.bounds.top-size.bounds.bottom,token.bounds.height-token.bounds.top-token.bounds.bottom);
   for(const chart of result.charts){
@@ -221,6 +221,10 @@ function eventRows(){return [
     assert.equal(grids[i].attrs.x1,labels[i].attrs.x);assert.equal(grids[i].dataset.time,labels[i].dataset.time);
    }
   }
+  const fine=View.timeTicks(now-3600,now,800),narrow=View.timeTicks(now-3600,now,300),distant=View.timeTicks(now-12*3600,now,800);
+  assert.ok(fine.length>=6&&fine.length<=9);assert.ok(fine.slice(1).every((stamp,index)=>stamp-fine[index]===600));
+  assert.ok(fine.some(stamp=>new Date(stamp*1000).getMinutes()!==0));
+  for(const ticks of [narrow,distant]){assert.ok(ticks.length>=2&&ticks.length<=9);assert.ok(ticks.slice(1).every((stamp,index)=>stamp-ticks[index]>600));}
  });
  await test('clock-aligned ticks and vertical grids move with panning and remain aligned after zooming',()=>clocked(()=>{
   const {result}=rendered(dualRows());result.setRange(3);result.seek(.5);result.render();
@@ -232,7 +236,7 @@ function eventRows(){return [
   for(const chart of result.charts){
    const grids=chartNodes(chart,'trend-time-grid');assert.equal(grids.length,labels().length);
    for(let i=0;i<grids.length;i++){
-    const stamp=Number(grids[i].dataset.time);assert.equal(new Date(stamp*1000).getSeconds(),0);assert.equal(new Date(stamp*1000).getMinutes(),0);
+    const stamp=Number(grids[i].dataset.time);assert.equal(new Date(stamp*1000).getSeconds(),0);assert.equal(new Date(stamp*1000).getMinutes()%10,0);
     assert.equal(grids[i].attrs.x1,labels()[i].attrs.x);assert.equal(Number(grids[i].attrs.x1),chart.bounds.x(stamp));
    }
   }

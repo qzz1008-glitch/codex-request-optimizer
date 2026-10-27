@@ -2161,7 +2161,7 @@ class TokenTrendView {
   static color(id) {let hash=2166136261;for(const char of id)hash=Math.imul(hash^char.charCodeAt(0),16777619);return "hsl("+((hash>>>0)%360)+" 62% 42%)";}
   static timeTicks(start,end,width) {
     const target=(end-start)/Math.max(2,Math.min(8,Math.floor(width/100)));
-    const step=[3600,7200,10800,21600,43200].find(value=>value>=target)||43200;
+    const step=[600,1200,1800,3600,7200,10800,21600,43200].find(value=>value>=target)||43200;
     const day=new Date(start*1000);day.setHours(0,0,0,0);const origin=day.getTime()/1000,ticks=[];
     for(let stamp=origin+Math.ceil((start-origin)/step)*step;stamp<=end;stamp+=step)ticks.push(stamp);
     return ticks;
