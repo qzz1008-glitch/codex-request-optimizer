@@ -2066,7 +2066,7 @@ class TokenTrendView {
       button.onpointerenter=()=>highlight("hoverEvent",key);button.onpointerleave=()=>highlight("hoverEvent",null);
       button.onfocus=()=>highlight("focusEvent",key);button.onblur=()=>highlight("focusEvent",null);
     }
-    this.range=$("trend-range-slider");this.rangeValue=$("trend-range-value");
+    this.range=$("trend-range-slider");
     this.statusRange();this.updateRange();
     this.range.oninput=()=>this.seek(Number(this.range.value));
     this.tooltipHost.addEventListener("wheel",event=>this.navigateWheel(event),{passive:false});
@@ -2125,6 +2125,13 @@ class TokenTrendView {
     return {step,max:Math.max(step,Math.ceil(maximum/step)*step)};
   }
   static color(id) {let hash=2166136261;for(const char of id)hash=Math.imul(hash^char.charCodeAt(0),16777619);return "hsl("+((hash>>>0)%360)+" 62% 42%)";}
+  static timeTicks(start,end,width) {
+    const target=(end-start)/Math.max(2,Math.min(8,Math.floor(width/100)));
+    const step=[3600,7200,10800,21600,43200].find(value=>value>=target)||43200;
+    const day=new Date(start*1000);day.setHours(0,0,0,0);const origin=day.getTime()/1000,ticks=[];
+    for(let stamp=origin+Math.ceil((start-origin)/step)*step;stamp<=end;stamp+=step)ticks.push(stamp);
+    return ticks;
+  }
   rangeLimit() {return !this.boundsReady||!Number.isFinite(this.oldestCreated)?1:Math.min(12,Math.max(1,(Date.now()/1000-this.oldestCreated+1)/3600));}
   timeline(now=Date.now()/1000) {return {start:Math.min(now-3600,this.boundsReady&&Number.isFinite(this.oldestCreated)?this.oldestCreated-1:now-3600),end:now};}
   viewport(now=Date.now()/1000) {
@@ -2186,10 +2193,10 @@ class TokenTrendView {
     if(Number.isFinite(this.windowEnd))this.windowEnd=view.end;
     this.range.disabled=!this.boundsReady;this.range.setAttribute("aria-busy",String(!this.boundsReady));
     this.range.max="1";this.range.value=String(travel>0?Math.max(0,Math.min(1,(view.start-bounds.start)/travel)):1);
-    const width=this.range.clientWidth||140;
+    const width=this.range.clientWidth||180;
     this.range.style.setProperty("--trend-thumb-width",Math.min(width,Math.max(12,width*duration/(bounds.end-bounds.start)))+"px");
     const label=t("{hours} 小时").replace("{hours}",nf.format(Math.round(this.hours*100)/100));
-    this.rangeValue.textContent=label;this.range.setAttribute("aria-valuetext",this.time(view.start)+" – "+this.time(view.end)+" · "+label);
+    this.range.setAttribute("aria-valuetext",this.time(view.start)+" – "+this.time(view.end)+" · "+label);
   }
   navigate(end) {
     const bounds=this.timeline(),duration=this.hours*3600;
@@ -2361,16 +2368,17 @@ class TokenTrendView {
     const budget=this.services.status()?.budget_bytes,limit=chart.key==="size"&&Number.isSafeInteger(budget)&&budget>0?budget:null;
     const maximum=Math.max(limit??0,...known.map(point=>point[chart.field])),scale=chart.key==="size"?TokenTrendView.sizeScale(maximum):TokenTrendView.scale(maximum);
     const x=value=>left+(value-start)/(end-start)*plotWidth,y=value=>top+plotHeight-value/scale.max*plotHeight;
-    chart.bounds={width,height,left,right,top,bottom,start,end,x};
+    const ticks=TokenTrendView.timeTicks(start,end,plotWidth);
+    chart.bounds={width,height,left,right,top,bottom,start,end,x,ticks};
     const root=document.createDocumentFragment();chart.svg.setAttribute("viewBox",`0 0 ${width} ${height}`);
     root.append(this.svgNode("text",{x:36,y:top+plotHeight/2,transform:`rotate(-90 36 ${top+plotHeight/2})`,"text-anchor":"middle","dominant-baseline":"central",class:"trend-axis-title"},t(chart.key==="size"?"请求大小":"输入 Token")));
     for(let value=0;value<=scale.max+scale.step*.01;value+=scale.step) {
       const py=y(value),label=chart.key==="size"?TokenTrendView.sizeLabel(value):value>=1000000?nf.format(value/1000000)+"M":value>=1000?nf.format(value/1000)+"k":nf.format(value);
       root.append(this.svgNode("line",{x1:left,y1:py,x2:width-right,y2:py,class:"trend-grid"}),this.svgNode("text",{x:left-12,y:py+4,"text-anchor":"end",class:"trend-axis-label"},label));
     }
-    for(let i=0;i<=5;i++) {
-      const px=left+plotWidth*i/5;
-      root.append(this.svgNode("line",{x1:px,y1:top,x2:px,y2:height-bottom,class:"trend-grid"}));
+    for(const stamp of ticks) {
+      const px=x(stamp);
+      root.append(this.svgNode("line",{x1:px,y1:top,x2:px,y2:height-bottom,class:"trend-grid trend-time-grid","data-time":stamp}));
     }
     chart.points=[];
     for(const group of model.visible) {
@@ -2401,12 +2409,13 @@ class TokenTrendView {
   renderTimeAxis() {
     const bounds=this.charts[0].bounds,root=document.createDocumentFragment();
     if(bounds) {
-      const {width,left,right,start,end,x}=bounds;
+      const {width,left,right,x,ticks}=bounds;
       this.timeAxis.setAttribute("viewBox",`0 0 ${width} 32`);
       root.append(this.svgNode("line",{x1:left,y1:1,x2:width-right,y2:1,class:"trend-time-tick"}));
-      for(let i=0;i<=5;i++) {
-        const stamp=start+(end-start)*i/5,px=x(stamp);
-        root.append(this.svgNode("line",{x1:px,y1:1,x2:px,y2:5,class:"trend-time-tick"}),this.svgNode("text",{x:px,y:22,"text-anchor":i===0?"start":i===5?"end":"middle",class:"trend-axis-label"},this.time(stamp,end-start<300)));
+      for(const stamp of ticks) {
+        const px=x(stamp);
+        const label=new Date(stamp*1000).toLocaleTimeString(uiI18n.language==="en"?"en-GB":"zh-CN",{hour:"2-digit",minute:"2-digit",hourCycle:"h23"});
+        root.append(this.svgNode("line",{x1:px,y1:1,x2:px,y2:5,class:"trend-time-tick","data-time":stamp}),this.svgNode("text",{x:px,y:22,"text-anchor":px>width-right-40?"end":px<left+40?"start":"middle",class:"trend-axis-label","data-time":stamp},label));
       }
     }
     this.timeAxis.replaceChildren(root);
