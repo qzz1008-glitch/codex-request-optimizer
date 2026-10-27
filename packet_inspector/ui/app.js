@@ -897,7 +897,6 @@ function fillSettings() {
   $("capacity-retry").disabled=settingsSaving||!s.capacity_retry_supported;
   $("capacity-retry-count").disabled=settingsSaving||s.capacity_retry_mode!=="native"||!Number.isInteger(s.capacity_retry_max_retries);
   $("capacity-retry-delay").disabled=settingsSaving||s.capacity_retry_mode!=="native"||!Number.isInteger(s.capacity_retry_delay_seconds);
-  $("native-retry-hint").hidden=s.capacity_retry_mode!=="native";
   fillImageAnalysisMode();
   $("startup-hint").textContent=t(s.start_on_login_supported?(s.startup_state_known===false?"无法读取开机启动状态，请重新保存设置。":"登录 Windows 后在后台启动，可从托盘打开窗口。"):"开机启动仅支持已安装的 Windows 版本。");
   $("runtime-settings-message").hidden=!!s.capacity_retry_supported;
@@ -1293,13 +1292,14 @@ function trackSettingsRestart(field,before,after) {
 }
 function finishSettingsSave() {
   const labels={image_analysis_mode:"图片解析",
-    context_tokens:"有效上下文",compact_tokens:"自动压缩阈值"};
+    context_tokens:"有效上下文",compact_tokens:"自动压缩阈值",capacity_retry:"容量不足重试"};
   const items=[...settingsRestartChanges.keys()].map(field=>t(labels[field]));
   if(state.status.entry_port?.pending)items.unshift(t("入口端口"));
   if(!items.length){closeSettings();return;}
   $("settings-restart-items").replaceChildren(...items.map(label=>el("li","",label)));
   setSettingsMessage(t("设置已保存。"));
   $("settings-restart-dialog").showModal();
+  if(settingsRestartChanges.has("capacity_retry"))connectionRestartNotified=true;
 }
 async function saveSettings() {
   if(!settingsEditing||settingsSaving||linkSaving||!settingsBaseline||$("settings-restart-dialog").open)return;
@@ -1345,6 +1345,10 @@ async function saveSettings() {
         for(const [field] of entries)settingsBaseline[field]=draft[field];
         if(entries.some(([field])=>field==="image_analysis_mode"))
           trackSettingsRestart("image_analysis_mode",imageAnalysisMode(s),imageAnalysisMode(result));
+        if(result.capacity_retry_mode==="native"&&result.profile?.active&&
+           entries.some(([field])=>["capacity_retry_enabled","capacity_retry_max_retries"].includes(field)))
+          trackSettingsRestart("capacity_retry",s.capacity_retry_enabled?s.capacity_retry_max_retries:null,
+            result.capacity_retry_enabled?result.capacity_retry_max_retries:null);
         saved++;
       });
     }
