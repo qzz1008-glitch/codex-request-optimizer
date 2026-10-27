@@ -48,13 +48,13 @@ Predictive protection needs valid token usage in a completed response to finish 
 
 ### 🔁 Automatic retries when a model is at capacity
 
-Once enabled in Settings, explicit model capacity errors trigger automatic retries with the same model and request content. Set 1–9 retries, with a default of 3. Wait at least 50 seconds between attempts, or longer when required by the server. Retry waits and upstream attempts share a 570-second budget, including earlier request processing, leaving headroom below the local relay entry's 600-second wait limit. If time runs short, return the capacity error already received; the actual retry count can therefore be lower than configured. Requests that have started producing output are not replayed, and successful responses continue streaming normally.
+When enabled, the relay adds native `Retry-After` advice to explicit model capacity errors, allowing Codex to wait and continue the current step automatically. The relay does not wait, replay requests, or buffer complete responses. Text and tool calls continue streaming, and capacity errors after output has started can receive retry advice too.
 
-> Selected model is at capacity. Please try a different model.
+Set 1–99 retries (default 10) and a wait of 1–99 seconds (default 30); longer upstream delays are honored. The count is written to the connected provider's standard `stream_max_retries`, with `request_max_retries` set to 0 to avoid an additional HTTP request retry budget. This native stream retry budget also applies to other retryable stream errors. Disabling the feature or disconnecting restores both original fields while preserving concurrent user edits.
 
-Retry detection and diagnostics share structural event classification: response metadata and its extensions keep waiting for the result; output items, reasoning, or tool calls end replay eligibility. Events with unknown semantics pass through unchanged with the reason recorded. Successful responses preserve their original bytes. Only explicit capacity errors are retried; HTTP 403, 413, ordinary 5xx responses, and connection failures do not introduce retries.
+Count changes require Codex to reload its configuration and do not update a step already running. Restarting ChatGPT/Codex ensures the new configuration is loaded. The toggle applies to new requests; wait time changes apply immediately to subsequent capacity errors on enabled requests. The count is a maximum; cancellation and non-retryable errors can still end a task.
 
-“Automatic retries” in request details only shows “Triggered / Not triggered,” based on retries actually started. Background diagnostic logs are retained separately from request bodies: retries and abnormal outcomes for up to 30 days; ordinary successful requests for 24 hours, limited to 2,000 records. Automatic cleanup also applies a 20,000-record and ≈33.55 MB content budget. Logs contain only timestamps, settings, and structural events, without conversation text, tool content, or authentication data.
+“Native retry advice” in request details means wait information was sent to Codex, not that a native retry was observed. Actual retry records from older versions remain available. Background diagnostics are retained separately from request bodies: abnormal records for up to 30 days; ordinary successful requests for 24 hours, limited to 2,000 records. Automatic cleanup also applies a 20,000-record and ≈33.55 MB content budget. Logs contain only timestamps, settings, and structural events, without conversation text, tool content, or authentication data.
 
 ### 🖼️ Image request optimization
 
@@ -144,7 +144,7 @@ The stable endpoint receives requests. The background service analyzes them, app
 | **Predictive protection** | Assess risk from the encoded request size and raise the input token count in a successful response to prompt native Codex compaction. Actual upstream usage is saved separately for statistics. |
 | **Over-limit protection** | Identify a suitable history prefix, generate a handover summary through a Responses request, rebuild the request, and check the upload size. |
 | **Result reuse** | Cache history-prefix fingerprints and processing results by session. Reuse matching results and reassess when history or relevant settings change. |
-| **Capacity retries** | Detect explicit capacity errors in HTTP or streaming responses and retry with the same model and request according to the settings. |
+| **Capacity retries** | Add wait advice to HTTP or streaming capacity errors so Codex retries natively according to your settings. |
 
 ### Image handling and separate analysis
 

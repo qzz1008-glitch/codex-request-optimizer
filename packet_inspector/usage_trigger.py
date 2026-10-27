@@ -61,6 +61,7 @@ class UsageStream:
     def __init__(self, response, record, *, rewrite=True):
         self.response, self.record = response, record
         self.rewrite_usage = rewrite
+        self.rewrite_response = rewrite
         self.mode = response.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
         if self.mode.startswith("application/") and self.mode.endswith("+json"):
             self.mode = "application/json"
@@ -160,7 +161,7 @@ class UsageStream:
         if not self.enabled:
             yield from raw_chunks(self.response)
             return
-        if not self.rewrite_usage:
+        if not self.rewrite_response:
             yield from self._observe()
             return
         pending = bytearray()

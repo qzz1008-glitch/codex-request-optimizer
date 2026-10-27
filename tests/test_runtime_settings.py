@@ -7,7 +7,7 @@ import sqlite3
 from unittest.mock import patch
 
 from tests import test_packet_inspector as fixtures
-from tests.test_capacity_retry import CREATED, FAILED, SUCCESS, Response, frame
+from tests.response_fixtures import CREATED, FAILED, SUCCESS, Response, frame
 from packet_inspector.startup import configure_startup, startup_supported
 from packet_inspector.server import InspectorServer
 from packet_inspector.analyzer import encode, inspect_request
@@ -27,11 +27,8 @@ class RuntimeSettingsTests(unittest.TestCase):
     latest = fixtures.RelayTests.latest
 
     def setUp(self):
-        retry_delay = patch("packet_inspector.capacity_retry.retry_delay", return_value=0)
-        retry_delay.start()
-        self.addCleanup(retry_delay.stop)
         self.server.save_settings({**self.server.settings, "start_on_login": False, "capacity_retry_enabled": False,
-                                   "capacity_retry_max_retries": 3})
+                                   "capacity_retry_max_retries": 3, "capacity_retry_delay_seconds": 50})
         self.server.startup_state_known = True
 
     def test_exact_storage_byte_limits_survive_unrelated_settings_updates(self):
@@ -190,7 +187,7 @@ class RuntimeSettingsTests(unittest.TestCase):
                     self.assertFalse(self.server.settings[key])
 
     def test_retry_limit_is_persisted(self):
-        for limit in [1, 5, 9]:
+        for limit in [1, 5, 9, 99]:
             with self.subTest(limit=limit):
                 status, result = self.api("/api/settings", {"capacity_retry_max_retries": limit})
                 self.assertEqual(status, 200)
@@ -198,9 +195,32 @@ class RuntimeSettingsTests(unittest.TestCase):
                 saved = json.loads(self.server.settings_path.read_text(encoding="utf8"))
                 self.assertEqual(saved["capacity_retry_max_retries"], limit)
 
+    def test_native_retry_advice_uses_live_wait_setting_and_never_replays(self):
+        self.api("/api/settings", {"capacity_retry_enabled": True, "capacity_retry_delay_seconds": 7})
+        prefix = CREATED + frame("response.output_text.delta", delta="already delivered")
+        for delay in (7, 2):
+            self.api("/api/settings", {"capacity_retry_delay_seconds": delay})
+            with patch.object(self.server.local_opener, "open", return_value=Response(prefix + FAILED)) as opened:
+                status, data = self.relay(b"{}")
+            self.assertEqual(status, 200)
+            self.assertTrue(data.startswith(prefix))
+            self.assertIn(f'"Retry-After":"{delay}"'.encode(), data[len(prefix):])
+            self.assertEqual(opened.call_count, 1)
+            meta, _ = self.latest()
+            self.assertTrue(meta["native_retry_advised"])
+            self.assertEqual(meta["capacity_retry_count"], 0)
+            self.assertEqual(meta["capacity_retry_diagnostic"]["attempt_count"], 1)
+
+    def test_invalid_wait_setting_does_not_partially_save(self):
+        before = dict(self.server.settings)
+        for delay in (0, -1, 100, True, 1.5, "3", None):
+            status, _ = self.api("/api/settings", {"capacity_retry_enabled": True, "capacity_retry_delay_seconds": delay})
+            self.assertEqual(status, 400)
+            self.assertEqual(self.server.settings, before)
+
     def test_invalid_retry_limit_rejects_entire_settings_change(self):
         before = self.server.settings_path.read_bytes()
-        for limit in [0, -1, 10, 99, 100, True, False, "3", 2.5, None]:
+        for limit in [0, -1, 100, 101, True, False, "3", 2.5, None]:
             with self.subTest(limit=limit):
                 status, _ = self.api("/api/settings", {"capacity_retry_enabled": True,
                                                       "capacity_retry_max_retries": limit})
@@ -210,7 +230,7 @@ class RuntimeSettingsTests(unittest.TestCase):
                 self.assertEqual(self.server.settings_path.read_bytes(), before)
 
     def test_loading_previous_retry_limits_preserves_other_settings(self):
-        for limit, expected in [(3, 3), (9, 9), (12, 9), (99, 9)]:
+        for limit, expected in [(3, 3), (9, 9), (12, 12), (99, 99), (100, 99)]:
             with self.subTest(limit=limit), tempfile.TemporaryDirectory() as temp:
                 root = Path(temp)
                 config = root / "config.toml"
@@ -244,8 +264,8 @@ class RuntimeSettingsTests(unittest.TestCase):
     def test_failed_startup_change_rolls_back_combined_settings(self):
         before = self.server.settings_path.read_bytes()
         with patch("packet_inspector.server.configure_startup", side_effect=ValueError("Task registration failed")):
-            status, _ = self.api("/api/settings", {"start_on_login": True, "capacity_retry_enabled": True})
-        self.assertEqual(status, 400)
+            status, result = self.api("/api/settings", {"start_on_login": True, "capacity_retry_enabled": True})
+        self.assertEqual(status, 400, result)
         self.assertEqual(self.server.settings_path.read_bytes(), before)
         self.assertFalse(self.server.settings["start_on_login"])
         self.assertFalse(self.server.settings["capacity_retry_enabled"])
@@ -262,35 +282,6 @@ class RuntimeSettingsTests(unittest.TestCase):
         self.assertEqual(self.api("/api/settings", {"start_on_login": True})[0], 400)
         self.assertFalse(self.server.settings["start_on_login"])
 
-    def test_enabled_retry_replays_same_request_and_records_retry(self):
-        self.api("/api/settings", {"capacity_retry_enabled": True})
-        first = Response(CREATED + frame("response.metadata", metadata={"future_field": True}) + FAILED,
-                         extra={"Retry-After": "0"})
-        second = Response(SUCCESS)
-        raw = b'{"model":"original","stream":true,"input":[]}'
-        with patch.object(self.server.local_opener, "open", side_effect=[first, second]) as opened:
-            status, data = self.relay(raw)
-        self.assertEqual((status, data), (200, SUCCESS))
-        self.assertEqual(opened.call_count, 2)
-        requests = [call.args[0] for call in opened.call_args_list]
-        self.assertIs(requests[0], requests[1])
-        self.assertEqual(requests[0].data, raw)
-        self.assertEqual(requests[0].get_header("Accept-encoding"), "identity")
-        metadata, _ = self.latest()
-        self.assertEqual(metadata["capacity_retry_count"], 1)
-        self.assertEqual(metadata["state"], "complete")
-        diagnostic = metadata["capacity_retry_diagnostic"]
-        self.assertEqual((diagnostic["outcome"], diagnostic["state"], diagnostic["attempt_count"]), ("success", "finished", 2))
-        self.assertTrue(diagnostic["journal_saved"])
-        self.assertTrue(diagnostic["enabled"])
-        self.assertEqual(self.api("/api/packets/" + metadata["id"])[1]["capacity_retry_diagnostic"]["outcome"], "success")
-        events = self.api("/api/retry-diagnostics/" + diagnostic["id"])[1]["events"]
-        starts = [index for index, event in enumerate(events) if event["event"] == "attempt_started"]
-        headers = next(index for index, event in enumerate(events) if event["event"] == "downstream_headers_sent")
-        forwarded = next(index for index, event in enumerate(events) if event["event"] == "downstream_first_bytes_sent")
-        self.assertLess(starts[1], headers)
-        self.assertLess(headers, forwarded)
-        self.assertEqual(sum(event["event"] == "downstream_headers_sent" for event in events), 1)
 
     def test_disabled_retry_passes_failure_unchanged(self):
         with patch.object(self.server.local_opener, "open", return_value=Response(CREATED + FAILED)) as opened:
@@ -300,35 +291,7 @@ class RuntimeSettingsTests(unittest.TestCase):
         self.assertEqual((diagnostic["outcome"], diagnostic["stop_reason"], diagnostic["retry_count"]), ("capacity_error", "disabled", 0))
         self.assertFalse(diagnostic["enabled"])
 
-    def test_relay_uses_configured_retry_limit(self):
-        for limit in [1, 5]:
-            with self.subTest(limit=limit):
-                self.assertEqual(self.api("/api/settings", {"capacity_retry_enabled": True,
-                                                           "capacity_retry_max_retries": limit})[0], 200)
-                responses = [Response(FAILED, extra={"Retry-After": "0"}) for _ in range(limit + 1)]
-                with patch.object(self.server.local_opener, "open", side_effect=responses) as opened:
-                    status, data = self.relay(b"{}")
-                self.assertEqual((status, data, opened.call_count), (200, FAILED, limit + 1))
-                metadata, _ = self.latest()
-                self.assertEqual(metadata["capacity_retry_count"], limit)
-                diagnostic = metadata["capacity_retry_diagnostic"]
-                self.assertEqual((diagnostic["outcome"], diagnostic["stop_reason"]), ("capacity_error", "retry_limit"))
-                record = self.api("/api/retry-diagnostics/" + diagnostic["id"])[1]
-                self.assertEqual(sum(e["event"] == "attempt_started" for e in record["events"]), limit + 1)
 
-    def test_capacity_after_empty_output_is_observed_without_replay(self):
-        self.api("/api/settings", {"capacity_retry_enabled": True})
-        body = CREATED + frame("response.output_item.added", item={"type": "reasoning", "summary": []}) + FAILED
-        with patch.object(self.server.local_opener, "open", return_value=Response(body)) as opened:
-            self.assertEqual(self.relay(b"{}"), (200, body))
-        self.assertEqual(opened.call_count, 1)
-        diagnostic = self.latest()[0]["capacity_retry_diagnostic"]
-        self.assertEqual((diagnostic["outcome"], diagnostic["stop_reason"], diagnostic["retry_count"]),
-                         ("capacity_error", "stream_committed", 0))
-        self.assertEqual(diagnostic["first_output_event"], "response.output_item.added")
-        events = self.api("/api/retry-diagnostics/" + diagnostic["id"])[1]["events"]
-        probe = next(e for e in events if e["event"] == "probe_finished")
-        self.assertEqual((probe["item_type"], probe["summary_items"], probe["content_items"]), ("reasoning", 0, 0))
 
     def test_retry_journal_query_download_and_packet_eviction(self):
         with patch.object(self.server.local_opener, "open", return_value=Response(FAILED)):

@@ -130,6 +130,7 @@ class InstallationSettingsTests(unittest.TestCase):
                    "image_isolation_enabled": True, "capacity_retry_enabled": True,
                    "start_on_login": True, "budget_bytes": 822000, "ui_language": "en"}
         active.save_settings({**active.settings, **choices})
+        active.sync_providers()  # Apply native retry configuration before capturing an active installation.
         before = self.config.read_bytes()
         candidate = self.server(worker_id="c" * 32, public_port=active.public_port)
         candidate.worker_control({"action": "activate", "public_port": active.public_port})

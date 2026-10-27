@@ -44,7 +44,7 @@ def standardize(document, data, base, original_upstream, native_upstream, *, pri
     # Only an ID already defined in this file can collide with its new default.
     existing = providers.get(PROVIDER, {})
     if existing and selected != PROVIDER:
-        ignored = {"name", "base_url", "supports_websockets"}
+        ignored = {"name", "base_url", "supports_websockets", "stream_max_retries", "request_max_retries"}
         def identity(value):
             return {k: v for k, v in {"wire_api": "responses", **value}.items() if k not in ignored}
         if (identity(existing) != identity(source)

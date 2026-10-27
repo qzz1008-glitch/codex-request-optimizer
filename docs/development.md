@@ -50,19 +50,15 @@
 
 ## 容量重试诊断
 
-`capacity_retry.open_response` 仅重试尚未转发输出的明确容量错误，次数范围 1–9、默认 3，旧配置超过 9 次时限制为 9，其他设置保留。间隔至少 50 秒，遵循更长的 `Retry-After`。`server` 从读取请求正文前计算 570 秒绝对截止时间，扣除采集、图片处理、压缩及超限保护耗时，为固定入口等待响应头的 600 秒 socket 超时留出 30 秒；开始新一次重试还须为网络阶段预留至少 10 秒。原始请求沿用 600 秒网络等待，不因重试设置截断普通生成；只有拿到明确容量错误后才进入受截止时间约束的后续尝试。
+`native_retry.NativeRetryStream` 仅修改明确容量错误的重试等待信息，连接和重发全部由 Codex 原生承担。每个中转 HTTP 请求只调用一次 `opener.open`；没有中转重试循环、等待线程、570 秒预算或“首个输出后禁止重试”的探测状态机。成功响应和未知事件保持原字节，文字与工具调用按 SSE 帧实时转发；只缓冲单个有界事件，不等待整轮结束，也不保存失败轮次响应缓存。
 
-重试的连接、响应头等待及前缀读取由可中止等待的工作线程执行，调用线程按绝对截止时间、客户端断开和开关状态结束等待。上一条真实容量响应保留到新尝试完成；时间耗尽或途中关闭设置时返回该响应，不合成模型事件或新的超时错误。中止时关闭已取得响应的 socket，迟到的响应在工作线程内关闭，迟到诊断不再回传；所有诊断写入仍在请求线程执行。成功提交响应前恢复上游 socket 的正常 600 秒超时，避免把剩余重试预算带入后续生成。该预算约束额外重试，不为原始上游请求或外部网络故障承诺绝对总时限。
+流内 `response.failed` 的 `response.error.headers` 添加 `Retry-After`；单独 `error` 容量事件适配为原生可识别的 `response.failed`，保留原错误内容。HTTP 429/500/502/503/504 仅在有界 JSON 正文明确报告容量错误时添加外层和嵌套等待信息。401/403/413、普通错误、未知格式和不可解码响应不改写；请求协商 `Accept-Encoding: identity`，编码异常时原样透传。等待取软件设置与有效上游建议的较大值。
 
-通过尽力而为的事件回调记录 `retry_policy`、`attempt_started`、`response_headers`、`control_event`、`probe_finished`、`retry_scheduled`、`response_selected`、取消和异常。日志保存本次预算、间隔、剩余时间和网络超时；`attempt_started` 表示发起一次上游调用，不证明上游已收到正文，`retry_count` 仅在第二次及后续调用实际开始时递增，等待计划另存 `scheduled_retries`。
+设置为 `capacity_retry_enabled`、`capacity_retry_max_retries`（1–99，默认 10）及 `capacity_retry_delay_seconds`（1–99，默认 30）。功能在新请求开始时决定是否介入，已开启请求在每次错误发生时读取当前开关及等待时间；次数通过 `ProviderManager` 写入接入 provider 的标准 `stream_max_retries`，并设置 `request_max_retries=0`，避免 HTTP 重试再叠加。原生按当前生成步骤捕获次数，因此修改次数需重新加载 Codex 配置，正在运行的步骤不热更新；重启 ChatGPT/Codex 可确保加载。该预算也适用于其他可重试流错误。关闭功能或取消接入会可逆恢复原字段，保留并发用户修改及配置备份。
 
-`stream_event_class` 供检测和日志观察器共用，只检查协议结构，不搜索正文或递归解释不透明元数据。响应元数据族（含 `codex.response.metadata`、元数据子事件及新增字段）和握手事件继续检测；`item`、`part`、`delta`、`output_index`、非空输出数组及输出/工具事件族优先视为输出，空 reasoning 条目同样提交响应流。终态与容量识别分离，`capacity_error` 的错误代码、消息和 HTTP 状态范围不扩大；403、413、普通 5xx 和连接异常不新增重试。无法判定的事件以 `unknown_event` 原样透传，不把未知语义当成安全重放的依据；成功响应和最终保留的错误均按原始字节返回。前缀缓冲继续限制为 1.048576 MB，额外重试沿用 570 秒预算。
+`ResponseObservation` 只读识别终态、容量错误及首个输出。`RetryJournal` 继续使用独立的 `retry-diagnostics.sqlite`，保留旧日志，新日志标记 `version=2` / `mode=native`。每条中转记录只有一次上游尝试，`native_retry_advised` 表示已交给原生的重试建议，不冒充实际观察到的原生重试次数。右栏和趋势可标记重试提示；历史 `capacity_retry_count` 保留原含义。日志仅保存白名单结构元信息，不保存对话、工具内容、密文或认证信息。每条最多 512 个事件；异常最多 30 天，普通成功最多 24 小时 / 2,000 条，总计最多 20,000 条及 ≈33.55 MB，空闲时回收空间。读写失败不得影响转发。
 
-`ResponseObservation` 在最终响应转发路径上只读识别结构化结束和错误事件，检测退出后仍能记录容量错误；不匹配普通输出中的错误文案，不改变响应字节。元数据不再产生 `first_output`；首个无法分类的事件单独记录为 `unclassified_event`，继续观察后续结束事件。`downstream_headers_sent` 和 `downstream_first_bytes_sent` 标明实际开始向 Codex 转发的位置，可与检测、重试时间对照。日志只保存事件类型、分类、条目类型、数量、错误代码和上游请求 ID 等白名单元信息，不保存内容。响应缺失结束事件、格式不明、编码无法观察或进程中断均不补造成功。
-
-`RetryJournal` 使用独立的 `retry-diagnostics.sqlite`，每次事件更新原子保存，完整时间线不进入抓包摘要；摘要只保留结果、次数及日志 ID。每条日志最多 512 个事件，超出时保留开始和最新事件并累计省略数。异常及重试记录保留最多 30 天，普通成功记录最多 24 小时 / 2,000 条；按总计 20,000 条、≈33.55 MB 内容预算优先删除已结束的普通记录。6 小时无更新的活动记录标记 `unfinished`，空闲时复用 `SQLiteReclaimer` 回收空间。读写失败只计入 `/api/status` 的 `capacity_retry_diagnostics_errors` 和 `capacity_retry_diagnostics_last_error`，不得影响转发或重试决策。诊断能力仅覆盖进入常规上游转发阶段的 `POST /responses` 和 `/responses/compact`；后者仅观察，不新增自动重试。部署新版后开始记录，不追溯补写旧请求。
-
-`GET /api/retry-diagnostics` 支持 `session_id`、`packet_id`、`before` 和 1–100 的 `limit`，列表省略时间线；`GET /api/retry-diagnostics/<id>` 返回完整记录，`download=1` 下载 JSON。右栏自动重试仅显示是否触发，不提供诊断详情或下载入口；右栏、列表和趋势标记统一以实际重试计数判断。针对性验证：`python -m unittest tests.test_capacity_retry tests.test_capacity_retry_events tests.test_retry_diagnostics tests.test_runtime_settings -q`，包含原字节透传、元数据扩展、未知事件、容量错误重试范围、重试耗尽、空 reasoning 后错误、取消/关闭、清理及重启后查询、诊断失败不影响转发，以及前端状态和标记。
+`GET /api/retry-diagnostics` 与按 ID 查询 / JSON 下载保持兼容。针对性验证：`python -m unittest tests.test_native_retry tests.test_retry_diagnostics tests.test_runtime_settings tests.test_providers -q`。原版内核隔离验证：`python -m scripts.verify.verify_native_retry --codex <installed-codex.exe>`，只启动本地合成上游、临时中转及临时 `CODEX_HOME`，验证输出后容量错误、单独错误事件、HTTP 503、等待时间、原生次数上限，以及中转自身不重试；不访问真实模型或改动现有服务。
 
 超限切分通过 `request_context.is_delegation_notice` 识别原生独立通知：`function_call_output`、没有 `call_id` 字段、具有 `fco_` 条目 ID，且输出完整匹配带有效源会话 ID 和 input 的 `codex_delegation` 结构。通知的条目 ID 不作为调用 ID；分析器的工具配对计数、`safe_cuts` 和重组原文保留使用同一判定。通知不会关闭未完成的工具组，压缩和缓存复用后保持完整对象及相对顺序。带 `call_id` 的结果、普通孤立结果或不完整通知仍执行原配对校验，不泛化为跳过孤立结果。验证覆盖混合并行调用、通知原文保留、多轮压缩、重启复用，以及本机模拟上游的 HTTP 超限处理。
 
