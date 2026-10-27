@@ -2,28 +2,28 @@
 
 适用于 Windows x64（64 位）。
 
-本次更新自动压缩选档、原生容量重试、记录保留和图片工具兼容性。
+本次更新压缩等级与效果估算、历史趋势浏览、响应概要及保护状态展示。
 
-- **自动压缩选档**：按上游和会话持久保存原包、快速压缩和高压缩阶段；高压缩保持至主请求回到小包范围。缺少档位时可从保留的请求元数据恢复，重启、暂停采集或清理正文不会丢失已有阶段。请求详情统一显示摘要替换前的压缩包大小、方式和等级。
-- **原生容量重试**：容量错误的等待信息交给 Codex 原生处理，中转不再等待或重发请求。重试次数和等待时间均可设为 1–99，默认 15 次、30 秒；上游要求更久时遵循上游。请求详情中的“原生重试提示”表示已发送等待信息，不代表确认发生了实际重试。
-- **记录优先保留**：默认 500 MB、2,000 条记录。容量不足时先回收旧请求详情，尽量保留基本信息、真实用量和趋势数据；基本信息自身超额时才删除旧记录。保存限额后立即回收，回收不会中断转发。左栏显示占用、请求数和详情数，大小单位统一为十进制 KB/MB。
-- **趋势与保护状态**：趋势默认最近 1 小时，并显示设置中的请求大小上限参考线；完善压缩方式、等级和预测保护状态，减少不同处理阶段混用造成的误解。
-- **图片工具兼容性**：图片工具配置与接入管理分离，保留用户连接配置；Codex 升级导致旧 CLI 路径失效时自动重新发现可用 CLI 并刷新工具注册。
-- **文档**：同步中英文 README、使用指南和开发文档，说明当前配置、保留策略及使用方式。
+- **压缩等级与估算**：手动 zstd 等级扩展为 1–22，按原始请求小于 1.5 MB、达到 1.5 MB 两组展示压缩大小和本机耗时估算，并用颜色区分各组的相对效果。自动高压缩档调整为 16 级，保留已有会话的选档状态。
+- **历史趋势浏览**：拖动时间滑动条或滚轮浏览保留的历史，Ctrl＋滚轮以光标为中心缩放，展示范围为 1–12 小时，刻度最细为 10 分钟。浏览历史时保持当前位置，回到最右端后继续跟随最新请求；聚焦机制图例可高亮对应节点。
+- **趋势加载**：按当前时间范围读取轻量概要数据并增量刷新，先确认可浏览范围，再加载对应记录，减少不必要的正文读取。
+- **响应与记录详情**：随请求保留用量、完成状态和耗时等响应概要；详情回收后仍可查看保留的统计对比。基本记录隐藏没有正文的标签页，“请求与响应”精简为模型、结果和总耗时，异常时显示已记录的原因。
+- **保护状态与术语**：统一“重试保护”及请求大小相关名称，完善列表中的保护色条和趋势标记，精简左栏底部计数。已发送原生重试等待信息与实际重试记录继续按各自含义展示。
+- **上游读取稳定性**：普通转发和超限摘要的读取空闲超时统一为 300 秒，与 Codex 原生默认值一致；持续收到数据时不限制整轮生成总时长。
 
-发布文件仅包含 **CodexPacketInspector.exe**、**README.md**、**LICENSE** 和 **THIRD_PARTY_NOTICES.txt**。双击主程序即可安装或升级，也可在设置中检查更新。升级保留已有记录、设置及开发版／正式版模式；旧默认记录额度 536.870912 MB 一次性调整为 500 MB，自定义额度保留，旧详情条数限制停用。原生重试次数变更后需重新加载 Codex 配置；重启 ChatGPT/Codex 后可确保生效。
+发布文件仅包含 **CodexPacketInspector.exe**、**README.md**、**LICENSE** 和 **THIRD_PARTY_NOTICES.txt**。双击主程序即可安装或升级，也可在设置中检查更新。升级保留已有记录、设置及开发版／正式版模式；正常升级时，新请求交给新版服务，处理中请求由原服务继续完成。
 
 ## English
 
 For Windows x64 (64-bit).
 
-This release updates automatic compression selection, native capacity retries, record retention, and image-tool compatibility.
+This release updates compression levels and estimates, historical trend navigation, response summaries, and protection indicators.
 
-- **Automatic compression selection**: persist original-body, fast-compression, and high-compression phases per upstream and session. High compression stays active until the main request returns to the small-body range. Missing phases can be recovered from retained request metadata; restarts, paused capture, or body cleanup do not discard existing phases. Request details consistently show the compressed size, encoding, and level before summary replacement.
-- **Native capacity retries**: pass capacity-error wait information to native Codex handling instead of waiting or replaying requests in the relay. Retry count and wait time each support 1–99, defaulting to 15 retries and 30 seconds; longer upstream waits take precedence. “Native retry hint” in request details means wait information was sent, not that an actual retry was confirmed.
-- **Prioritize request records**: default to 500 MB and 2,000 records. Reclaim older request details first to retain basic information, actual usage, and trend data; remove old records only when basic information itself exceeds the budget. Apply lower limits immediately without interrupting forwarding. The sidebar shows storage usage, request count, and detail count; sizes consistently use decimal KB/MB.
-- **Trends and protection status**: default trends to the last hour and show the configured request-size limit as a reference line. Clarify encoding, compression levels, and predictive-protection states to avoid mixing different processing stages.
-- **Image-tool compatibility**: separate image-tool configuration from connection management while preserving user connection settings. Rediscover an available CLI and refresh tool registration when a Codex update invalidates the old CLI path.
-- **Documentation**: synchronize the Chinese and English READMEs, user guide, and development guide with current settings, retention policies, and usage.
+- **Compression levels and estimates**: expand manual zstd levels to 1–22. Show compressed-size and local processing-time estimates separately for original requests below 1.5 MB and those at or above 1.5 MB, with colors indicating relative results within each group. Set automatic high compression to level 16 while preserving existing per-session phase state.
+- **Historical trend navigation**: browse retained history with the time slider or mouse wheel. Use Ctrl + wheel to zoom around the cursor, with a 1–12-hour viewing range and ticks down to 10-minute intervals. Keep the current position while browsing history, resume following new requests at the right edge, and focus a mechanism legend item to highlight matching nodes.
+- **Trend loading**: load lightweight summaries for the current time range and refresh incrementally. Resolve the available history range before loading its records to avoid unnecessary request-body reads.
+- **Response and record details**: retain response summaries such as usage, completion status, and timing with each request. Keep statistical comparisons available after detailed content is reclaimed. Hide the body tab for basic records, and simplify request/response information to model, result, and total time, with the recorded reason shown for errors.
+- **Protection indicators and terminology**: standardize retry-protection and request-size labels, refine protection bars in the request list and trend markers, and simplify sidebar footer counts. Sent native retry wait information and historical actual retries retain their distinct meanings.
+- **Upstream read stability**: use a 300-second read-idle timeout for both regular forwarding and overflow summaries, matching the native Codex default. Continuously arriving data does not impose a deadline on the entire generation.
 
-Release assets contain only **CodexPacketInspector.exe**, **README.md**, **LICENSE**, and **THIRD_PARTY_NOTICES.txt**. Run the EXE to install or upgrade, or check for updates in Settings. Upgrades preserve records, settings, and the installed development or release mode. Migrate the old default record budget of 536.870912 MB to 500 MB once, preserve custom budgets, and retire the separate detail-count limit. Reload Codex configuration after changing the native retry count; restarting ChatGPT/Codex ensures it takes effect.
+Release assets contain only **CodexPacketInspector.exe**, **README.md**, **LICENSE**, and **THIRD_PARTY_NOTICES.txt**. Run the EXE to install or upgrade, or check for updates in Settings. Upgrades preserve records, settings, and the installed development or release mode. During a normal upgrade, the new service handles new requests while the previous service finishes requests already in progress.
