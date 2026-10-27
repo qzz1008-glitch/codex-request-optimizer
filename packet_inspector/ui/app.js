@@ -958,15 +958,14 @@ function fillZstdLevel() {
 }
 function renderZstdLevelRows() {
   const selected=Number($("zstd-level").value);
-  const ranges=[1,2,3].map(column=>{
-    const values=zstdLevelEstimates.map(row=>row[column]);
-    return {min:Math.min(...values),max:Math.max(...values)};
-  });
+  const rankedValues=[1,2,3].map(column=>
+    [...new Set(zstdLevelEstimates.map(row=>Number(row[column].toFixed(column===3?3:2))))].sort((a,b)=>a-b));
   const estimateCell=(column,value,text)=>{
-    const {min,max}=ranges[column],ratio=max===min?0.5:(value-min)/(max-min);
-    // Larger size savings and lower time overhead are better, within each column.
+    const values=rankedValues[column],rank=values.indexOf(Number(value.toFixed(column===2?3:2)));
+    // Spread displayed ranks across the palette; equal displayed values share a color.
+    const ratio=values.length===1?0.5:rank/(values.length-1);
     const quality=column===2?1-ratio:ratio;
-    const cell=el("td",`num zstd-quality-${Math.round(quality*10)}`,text);
+    const cell=el("td",`num zstd-quality zstd-quality-${Math.round(quality*21)}`,text);
     return cell;
   };
   $("zstd-level-options").replaceChildren(...zstdLevelEstimates.map(([level,smallSize,largeSize,time])=>{
