@@ -14,7 +14,7 @@ import zlib
 
 from .analyzer import CLASSIFICATION_VERSION, classify_request, encode, compare_packets
 from .maintenance import SQLiteReclaimer
-from .request_context import packet_metadata
+from .request_context import packet_metadata, trend_packet_metadata
 
 SUMMARY_COLUMNS = "id,created,thread,status,method,kind,status_key,state,capture_owner,wire_bytes,stored_bytes,meta"
 COMPRESSED_SIZE_SQL = "coalesce(json_extract(meta,'$.overflow_original_wire_bytes'),json_extract(meta,'$.usage_override_request_bytes'),json_extract(meta,'$.outbound_wire_bytes'),-1)"
@@ -253,7 +253,7 @@ class Store:
 
     def list(self, limit=200, thread="", query="", before=None, include_get=False,
              sort="created", direction="desc", after=None, kind="", status="",
-             thread_unknown=False):
+             thread_unknown=False, since=None, trend=False):
         sort_fields = {
             "created": "created",
             "wire_bytes": "wire_bytes",
@@ -294,6 +294,9 @@ class Store:
         if before is not None:
             where.append("created<?")
             args.append(before)
+        if since is not None:
+            where.append("created>=?")
+            args.append(since)
         with self.connect() as c:
             if after:
                 anchor = c.execute(f"SELECT {field} AS sort_value,created,id FROM packet_summaries WHERE id=?", (after,)).fetchone()
@@ -305,7 +308,8 @@ class Store:
             sql = "SELECT meta FROM packet_summaries" + (" WHERE " + " AND ".join(where) if where else "")
             ordering = f"created {order},id {order}" if sort == "created" else f"{field} {order},created {order},id {order}"
             rows = c.execute(sql + f" ORDER BY {ordering} LIMIT ?", [*args, limit]).fetchall()
-        return [packet_metadata(json.loads(r["meta"])) for r in rows]
+        project = trend_packet_metadata if trend else packet_metadata
+        return [project(json.loads(r["meta"])) for r in rows]
 
     def filter_options(self):
         kinds, statuses, threads = set(), set(), {}
