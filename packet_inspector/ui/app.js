@@ -561,7 +561,16 @@ function panel(title) { const n = el("section","panel"); n.dataset.renderKey="pa
 function table(headings, rows) { const wrap = el("div","table-scroll"), t = el("table"), head=el("thead"), tr=el("tr"); for (const h of headings) tr.append(el("th","",h)); head.append(tr); t.append(head); const body=el("tbody"); for (const cells of rows) { const row=el("tr"); for (const cell of cells) {const td=el("td"); if (cell instanceof Node) td.append(cell); else td.textContent = cell; row.append(td);} body.append(row); } t.append(body); wrap.append(t); return wrap; }
 function link(text, fn) { const n=el("button","link-button",text); n.onclick=()=>Promise.resolve().then(fn).catch(fail); return n; }
 function fact(n,label,value) { const r=el("div","fact-row"); r.dataset.renderKey="fact:"+label;r.append(el("span","",label),el("span","",value)); n.append(r); return r; }
-function showTab(tab) { state.tab=tab; for (const b of document.querySelectorAll("[data-tab]")) b.classList.toggle("active",b.dataset.tab===tab); for (const t of ["headers","overview","tree","diff"]) $("tab-"+t).hidden=t!==tab; }
+function showTab(tab) {
+  const basic=!!state.detail?.details_evicted;
+  if(basic&&tab==="tree")tab="headers";
+  state.tab=tab;
+  for(const b of document.querySelectorAll("[data-tab]")) {
+    b.hidden=basic&&b.dataset.tab==="tree";
+    b.classList.toggle("active",b.dataset.tab===tab);
+  }
+  for(const t of ["headers","overview","tree","diff"])$("tab-"+t).hidden=t!==tab;
+}
 function packetStatus(p) {
   if(p.state==="relay_error" || p.status>=400)return "failed";
   if(["client_disconnected","interrupted"].includes(p.state))return "interrupted";
@@ -1478,6 +1487,7 @@ async function selectPacket(id,refresh=false,expectedListRequest=null) {
   }
   if(requestId!==state.detailRequest || (refresh && state.selected!==id) || (expectedListRequest!==null && expectedListRequest!==state.listRequest)) return;
   const changed=state.selected!==id, previousDetail=state.detail, detailsChanged=!!m.details_evicted!==!!previousDetail?.details_evicted; state.selected=id; state.detail=m; state.detailVersion=[m.state,m.status,m.duration_ms,m.outbound_wire_bytes,m.outbound_content_encoding,m.relay_content_encoding,m.relay_zstd_level,m.transport_content_encoding,m.transport_zstd_level,m.usage_override_request_bytes,m.usage_override_applied,m.capacity_retry_count,m.native_retry_advised,m.native_retry_delay_ms,m.capacity_retry_diagnostic?.updated,m.details_evicted].join(":");
+  showTab(state.tab);
   $("empty-state").hidden=true; $("packet-detail").hidden=false; renderList();
   if(changed || tokenVersion(m)!==tokenVersion(previousDetail||{})) {cancelTokenRead();tokenWindow=cachedTokenWindow(m);}
   else if(tokenWindow?.state==="unavailable") tokenWindow=null;
