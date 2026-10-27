@@ -21,13 +21,15 @@ class ToolMigrationTests(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
+        self.cli = self.root / "codex.exe"
+        self.cli.write_text("synthetic executable placeholder", encoding="ascii")
         self.config = self.root / "config.toml"
         self.config.write_text('model="test"\n[features]\nview_image=false\njs_repl=false\n', encoding="utf8")
         self.manager = ImageToolConfig(ConfigLink(self.config, self.root / "link.json"), self.root,
             lambda: "http://127.0.0.1:43210/relay/test")
 
     def enable(self):
-        with patch("packet_inspector.image_config.find_codex_cli", return_value="fake-codex"), patch.object(
+        with patch("packet_inspector.image_config.find_codex_cli", return_value=str(self.cli)), patch.object(
                 self.manager, "_validate"), self.manager.change("optimized"):
             pass
 
@@ -93,6 +95,7 @@ class ToolMigrationTests(unittest.TestCase):
 
     def test_refresh_without_a_replacement_cli_preserves_installed_tool_and_config(self):
         self.enable()
+        self.cli.unlink()
         before, state = self.config.read_bytes(), self.manager.path.read_bytes()
         with patch("packet_inspector.image_config.find_codex_cli", return_value=None), self.assertRaisesRegex(ValueError, "未找到 Codex CLI"):
             with self.manager.change("optimized"):
