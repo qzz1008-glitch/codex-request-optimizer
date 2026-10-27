@@ -64,7 +64,7 @@ Choose from **Native / Disabled / Optimized** image analysis modes. Native is th
 - **Disabled**: disable the native image tool and the separate image tool managed by this application.
 - **Optimized**: save images locally and use their paths in the main request. A separate image analysis session returns text results, reducing the context occupied by images in the main session.
 
-You can choose a custom image directory. Reload the Codex client after changing the image tool entry points.
+Image settings manage tool installation and image replacement. The main page's Connect/Disconnect control manages all providers regardless of image mode. Separate image analysis sessions use the current connection without requiring a dedicated provider. You can choose a custom image directory. Reload the Codex client after changing the image tool entry points.
 
 ---
 

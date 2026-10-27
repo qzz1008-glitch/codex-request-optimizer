@@ -15,7 +15,16 @@ from .analyzer import JsonBytes, decode_body, encode
 from .clipboard_images import ClipboardImageCache, rewrite_clipboard_text
 from .overflow import encode_changed_info
 from .locking import file_lock
-from .request_context import request_image_paths
+from .request_context import request_image_paths, temporary_request_kind
+
+
+def is_analysis_request(raw, headers):
+    """Recognize our independent tool's explicit prompt, without provider identity."""
+    try:
+        encoding = headers.get("Content-Encoding", headers.get("content-encoding", "identity"))
+        return temporary_request_kind(json.loads(decode_body(raw, encoding))) == "image_analysis"
+    except Exception:
+        return False  # Forwarding/preparation owns malformed-body handling.
 
 MAX_IMAGE_BYTES = 50 * 1024 * 1024
 MAX_ATTACHMENTS_BYTES = 256 * 1024 * 1024
