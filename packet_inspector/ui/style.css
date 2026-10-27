@@ -132,7 +132,7 @@ code.session-id{font-family:Consolas,"Cascadia Mono",monospace;font-size:11px;wo
 .trend-range-control{display:flex;align-items:center;flex:none;height:28px;padding:0 8px;border:1px solid var(--line);border-radius:999px;background:#f8fafc}
 .trend-range-control:hover{border-color:#cad4e2;background:#f4f7fb}
 .trend-range-control:focus-within{border-color:#a6b9d7;box-shadow:0 0 0 2px #315fd712}
-#trend-range-slider{appearance:none;width:180px;height:20px;margin:0;padding:0;border:0;background:transparent;cursor:ew-resize}
+#trend-range-slider{appearance:none;width:180px;height:20px;margin:0;padding:0;border:0;background:transparent;cursor:default}
 #trend-range-slider:focus{outline:none}
 #trend-range-slider::-webkit-slider-runnable-track{height:4px;background:#dce3ed;border-radius:999px}
 #trend-range-slider::-webkit-slider-thumb{appearance:none;width:var(--trend-thumb-width,180px);height:10px;margin-top:-3px;border:1px solid #fff;border-radius:999px;background:#8095b3;box-shadow:0 1px 3px #31456826}
