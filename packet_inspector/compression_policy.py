@@ -4,9 +4,12 @@ import time
 from typing import NamedTuple
 
 from .request_context import temporary_kind_from_metadata
+from .transport import AUTO_ZSTD_HIGH_LEVEL
 
 INITIAL_HIGH_BYTES = 1_500_000
 ORIGINAL, FAST, HIGH = 0, 1, 17
+# Phase IDs are durable state, not encoder levels. Retain the existing HIGH ID
+# so upgraded and draining workers can share the database without migration.
 
 
 def select_phase(previous, original_bytes, budget_bytes):
@@ -24,7 +27,7 @@ def select_phase(previous, original_bytes, budget_bytes):
 
 
 def phase_level(phase):
-    return HIGH if phase == HIGH else FAST
+    return AUTO_ZSTD_HIGH_LEVEL if phase == HIGH else FAST
 
 
 def is_main_request(meta):
@@ -87,7 +90,7 @@ class CompressionPolicy:
             summary = meta.get("overflow_compaction_calls", 0) > 0 or meta.get("overflow_cache_hit") is True
             level = (meta.get("transport_zstd_level") if "transport_content_encoding" in meta
                      else None if summary else meta.get("relay_zstd_level"))
-            if level == HIGH or size * 100 >= budget_bytes * 90:
+            if level in {AUTO_ZSTD_HIGH_LEVEL, 17} or size * 100 >= budget_bytes * 90:
                 return HIGH
             original = meta.get("decoded_bytes")
             return ORIGINAL if type(original) is int and original * 100 < budget_bytes * 90 else FAST

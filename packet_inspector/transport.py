@@ -5,6 +5,7 @@ from typing import NamedTuple
 DEFAULT_ZSTD_LEVEL = 3
 MIN_ZSTD_LEVEL = 1
 MAX_ZSTD_LEVEL = 17
+AUTO_ZSTD_HIGH_LEVEL = 16
 
 
 class PreparedRequest(NamedTuple):
@@ -25,7 +26,8 @@ def select_zstd_level(encoding, zstd_level=DEFAULT_ZSTD_LEVEL, *,
         return validate_zstd_level(zstd_level)
     if type(budget_bytes) is not int or budget_bytes <= 0:
         raise ValueError("automatic compression requires a positive byte budget")
-    level = MAX_ZSTD_LEVEL if validate_zstd_level(zstd_level) == MAX_ZSTD_LEVEL else MIN_ZSTD_LEVEL
+    # Accept the previous high-level selection from older callers as well.
+    level = AUTO_ZSTD_HIGH_LEVEL if validate_zstd_level(zstd_level) >= AUTO_ZSTD_HIGH_LEVEL else MIN_ZSTD_LEVEL
     if encoding.strip().lower() == "zstd":
         if level == MIN_ZSTD_LEVEL:
             return None

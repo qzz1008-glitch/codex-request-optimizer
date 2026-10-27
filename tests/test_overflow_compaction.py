@@ -583,7 +583,7 @@ class OverflowRelayTests(unittest.TestCase):
             self.assertIsNone(meta["relay_zstd_level"])
             self.assertEqual(meta["relay_content_encoding"], "identity")
             self.assertEqual(meta["transport_content_encoding"], "zstd")
-            self.assertIn(meta["transport_zstd_level"], (1, 17))
+            self.assertIn(meta["transport_zstd_level"], (1, 16))
             self.assertLess(meta["relay_wire_bytes"], 3600)
         self.assertTrue(any(compact for _, compact, _ in self.up.requests))
         self.assertTrue(all(size <= 4000 for size, _, _ in self.up.requests))
