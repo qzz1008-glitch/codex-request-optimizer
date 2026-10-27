@@ -10,7 +10,7 @@ import threading
 import time
 import uuid
 
-from .capacity_retry import (EVENT_BOUNDARY, MAX_PROBE_BYTES, TERMINAL_EVENTS as TERMINALS,
+from .response_events import (EVENT_BOUNDARY, MAX_OBSERVATION_BYTES, TERMINAL_EVENTS as TERMINALS,
                              capacity_error, event_shape, notify, stream_event_class)
 from .maintenance import SQLiteReclaimer
 
@@ -162,13 +162,15 @@ class RetryTrace:
     def __init__(self, journal, *, packet_id, session_id, endpoint, enabled, eligible, max_retries, on_summary):
         self.journal, self.on_summary = journal, on_summary
         now = journal.clock()
-        self.document = {"version": 1, "id": packet_id or uuid.uuid4().hex, "packet_id": packet_id,
+        self.document = {"version": 2, "mode": "native", "id": packet_id or uuid.uuid4().hex, "packet_id": packet_id,
                          "session_id": session_id if isinstance(session_id, str) and re.fullmatch(r"[A-Za-z0-9_-]{1,160}", session_id) else "",
                          "endpoint": endpoint if endpoint in {"responses", "compact"} else "other", "created": now, "updated": now,
                          "enabled": bool(enabled), "eligible": bool(eligible), "max_retries": max_retries,
                          "attempt_count": 0, "retry_count": 0, "scheduled_retries": 0,
                          "capacity_error_seen": False, "final_capacity_error": False,
-                         "state": "active", "outcome": "pending", "stop_reason": "", "events_dropped": 0, "events": []}
+                          "state": "active", "outcome": "pending",
+                          "stop_reason": "endpoint_not_eligible" if not eligible else "disabled" if not enabled else "",
+                          "events_dropped": 0, "events": []}
         self.saved = False
         self.record("request_started")
         journal.prune()
@@ -176,7 +178,8 @@ class RetryTrace:
     def summary(self):
         keys = ("version", "id", "updated", "enabled", "eligible", "max_retries", "attempt_count", "retry_count",
                 "scheduled_retries", "capacity_error_seen", "final_capacity_error", "state", "outcome",
-                "stop_reason", "probe_reason", "http_status", "first_output_event", "terminal_event", "observation_reason")
+                 "stop_reason", "probe_reason", "http_status", "first_output_event", "terminal_event", "observation_reason",
+                 "native_retry_advised", "native_retry_delay_ms")
         return {**{key: self.document[key] for key in keys if key in self.document}, "journal_saved": self.saved}
 
     def record(self, event, **fields):
@@ -197,10 +200,10 @@ class RetryTrace:
             for key in ("terminal_event", "probe_reason", "http_status", "first_output_event", "observation_reason"):
                 d.pop(key, None)
             d["final_capacity_error"] = False
-        elif event == "retry_policy":
-            d["time_budget_ms"] = fields["budget_ms"]
-            d["retry_interval_ms"] = fields["interval_ms"]
-            d["initial_remaining_ms"] = fields["remaining_ms"]
+        elif event == "native_retry_advised":
+            d["native_retry_advised"] = True
+            d["native_retry_delay_ms"] = fields["delay_ms"]
+            d["stop_reason"] = "native_retry_delegated"
         elif event == "response_headers":
             d["http_status"] = fields["status"]
         elif event == "probe_finished":
@@ -337,7 +340,7 @@ class ResponseObservation:
             while (boundary := EVENT_BOUNDARY.search(self.buffer)) is not None:
                 frame = bytes(self.buffer[:boundary.start()])
                 del self.buffer[:boundary.end()]
-                if len(frame) > MAX_PROBE_BYTES:
+                if len(frame) > MAX_OBSERVATION_BYTES:
                     self.warn("frame_limit")
                 elif not self.dropping:
                     data = b"\n".join(line[5:].lstrip(b" ") for line in frame.splitlines() if line.startswith(b"data:"))
@@ -350,7 +353,7 @@ class ResponseObservation:
                         except (ValueError, UnicodeError):
                             self.warn("malformed_event")
                 self.dropping = False
-        if len(self.buffer) > MAX_PROBE_BYTES:
+        if len(self.buffer) > MAX_OBSERVATION_BYTES:
             if self.mode == "sse":
                 self.warn("frame_limit")
                 self.dropping = True

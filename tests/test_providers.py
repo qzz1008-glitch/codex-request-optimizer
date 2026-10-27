@@ -29,6 +29,31 @@ class ProviderConfigTests(unittest.TestCase):
     def sync(self):
         return self.manager.sync(self.routes, lambda routes: setattr(self, "routes", routes))
 
+    def test_native_retry_limits_update_idempotently_and_restore_user_values(self):
+        self.config.write_text('model_provider="a"\n[model_providers.a]\nbase_url="https://a.invalid/v1"\n'
+                               'stream_max_retries=7\nrequest_max_retries=2\n')
+        def sync(limit):
+            return self.manager.sync(self.routes, lambda routes: setattr(self, "routes", routes), retry_limit=limit)
+        sync(3)
+        provider = tomllib.loads(self.config.read_text())["model_providers"]["a"]
+        self.assertEqual((provider["stream_max_retries"], provider["request_max_retries"]), (3, 0))
+        self.assertFalse(sync(3)["changed"])
+        sync(99)
+        self.assertEqual(tomllib.loads(self.config.read_text())["model_providers"]["a"]["stream_max_retries"], 99)
+        sync(None)
+        provider = tomllib.loads(self.config.read_text())["model_providers"]["a"]
+        self.assertEqual((provider["stream_max_retries"], provider["request_max_retries"]), (7, 2))
+
+    def test_disconnecting_restores_missing_retry_fields_and_keeps_concurrent_user_edits(self):
+        self.config.write_text('model_provider="a"\n[model_providers.a]\nbase_url="https://a.invalid/v1"\n')
+        self.manager.sync(self.routes, lambda routes: setattr(self, "routes", routes), retry_limit=9)
+        text = self.config.read_text().replace('stream_max_retries = 9', 'stream_max_retries = 11')
+        self.config.write_text(text)
+        self.link.restore()
+        provider = tomllib.loads(self.config.read_text())["model_providers"]["a"]
+        self.assertEqual(provider["stream_max_retries"], 11)
+        self.assertNotIn("request_max_retries", provider)
+
     def test_preserves_provider_identity_credentials_comments_and_profile_overrides(self):
         original = ('# config comment\nmodel_provider="a"\nmodel="m"\n'
                     '[model_providers.a]\nbase_url="https://a.invalid/v1" # endpoint comment\n'

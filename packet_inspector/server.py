@@ -10,8 +10,6 @@ import os
 from pathlib import Path
 import re
 import secrets
-import select
-import socket
 import sqlite3
 import ssl
 import sys
@@ -39,9 +37,11 @@ from .compression_policy import CompressionPolicy, INITIAL_HIGH_BYTES, is_main_r
 from .request_context import request_session_context, temporary_request_kind
 from .installation import manage_installation
 from .startup import configure_startup, startup_supported
-from .capacity_retry import MAX_RETRIES, MAX_RETRY_SECONDS, RETRY_LIMIT, notify, open_response
+from .native_retry import (DEFAULT_RETRIES, MAX_RETRIES, DEFAULT_DELAY_SECONDS, MAX_DELAY_SECONDS,
+                           NativeRetryStream, prepare_http_error)
+from .response_events import notify
 from .retry_diagnostics import RetryJournal, ResponseObservation
-from .usage_trigger import (UsageStream, raw_chunks, request_size as usage_trigger_size,
+from .usage_trigger import (raw_chunks, request_size as usage_trigger_size,
                             trigger_threshold, DEFAULT_BUDGET_BYTES, MIN_BUDGET_BYTES)
 from .overflow import CheckpointStream, OverflowCompactor, OverflowFailure
 from .image_config import IMAGE_MODES, ImageToolConfig, WORKER_HEADER, image_mode
@@ -127,7 +127,8 @@ class InspectorServer(ThreadingHTTPServer):
                          "packet_size_protection_enabled": False,
                          "ui_language": "zh",
                          "start_on_login": False, "capacity_retry_enabled": False,
-                         "capacity_retry_max_retries": MAX_RETRIES,
+                         "capacity_retry_max_retries": DEFAULT_RETRIES,
+                         "capacity_retry_delay_seconds": DEFAULT_DELAY_SECONDS,
                          "image_isolation_enabled": False, "image_analysis_mode": "native", "image_save_dir": "",
                          "auto_detect_providers": True, "provider_routes": {},
                          **protection_settings(saved)}
@@ -141,8 +142,12 @@ class InspectorServer(ThreadingHTTPServer):
             self.settings["zstd_level"] = DEFAULT_ZSTD_LEVEL
         limit = self.settings["capacity_retry_max_retries"]
         self.settings["capacity_retry_max_retries"] = (
-            min(limit, RETRY_LIMIT) if isinstance(limit, int) and not isinstance(limit, bool) and limit >= 1
-            else MAX_RETRIES)
+            min(limit, MAX_RETRIES) if isinstance(limit, int) and not isinstance(limit, bool) and limit >= 1
+            else DEFAULT_RETRIES)
+        delay = self.settings["capacity_retry_delay_seconds"]
+        self.settings["capacity_retry_delay_seconds"] = (
+            min(delay, MAX_DELAY_SECONDS) if isinstance(delay, int) and not isinstance(delay, bool) and delay >= 1
+            else DEFAULT_DELAY_SECONDS)
         if upstream:
             self.settings["upstream"] = validate_upstream(upstream)
         elif not self.settings.get("upstream"):
@@ -297,7 +302,9 @@ class InspectorServer(ThreadingHTTPServer):
                 with self.guard:
                     self.save_settings({**self.settings, "provider_routes": routes})
             try:
-                result = manager.sync(self.settings["provider_routes"], publish)
+                result = manager.sync(self.settings["provider_routes"], publish,
+                                      retry_limit=self.settings["capacity_retry_max_retries"]
+                                      if self.settings["capacity_retry_enabled"] else None)
             except Exception as exc:
                 self.provider_sync_error = type(exc).__name__
                 self.provider_fingerprint = self._provider_fingerprint()
@@ -399,6 +406,8 @@ class InspectorServer(ThreadingHTTPServer):
                 "startup_state_known": self.startup_state_known,
                 "capacity_retry_enabled": self.settings["capacity_retry_enabled"],
                 "capacity_retry_max_retries": self.settings["capacity_retry_max_retries"],
+                "capacity_retry_delay_seconds": self.settings["capacity_retry_delay_seconds"],
+                "capacity_retry_mode": "native",
                 "capacity_retry_supported": True,
                 "capacity_retry_diagnostics_supported": True,
                 "capacity_retry_diagnostics_errors": self.retry_journal.errors,
@@ -679,7 +688,8 @@ class Handler(BaseHTTPRequestHandler):
                 for key, low, high in (("budget_bytes", MIN_BUDGET_BYTES, MAX_BODY), ("max_storage_mb", 16, 8192),
                                        ("max_storage_bytes", MIN_STORAGE_BYTES, MAX_STORAGE_BYTES),
                                        ("max_packets", 10, 20000), ("max_detail_packets", 0, 20000),
-                                       ("capacity_retry_max_retries", 1, RETRY_LIMIT)):
+                                       ("capacity_retry_max_retries", 1, MAX_RETRIES),
+                                       ("capacity_retry_delay_seconds", 1, MAX_DELAY_SECONDS)):
                     if key in data:
                         value = data[key]
                         if isinstance(value, bool) or not isinstance(value, int) or not low <= value <= high:
@@ -701,7 +711,12 @@ class Handler(BaseHTTPRequestHandler):
                           if {"image_isolation_enabled", "image_analysis_mode"} & data.keys() else nullcontext())
                 with change:
                     self.server.save_settings(candidate)
+                    retry_config_applied = False
                     try:
+                        retry_keys = ("capacity_retry_enabled", "capacity_retry_max_retries")
+                        if any(candidate[key] != previous[key] for key in retry_keys) and self.server.connection_profile()["active"]:
+                            self.server.sync_providers()
+                            retry_config_applied = True
                         if "start_on_login" in data and (
                                 candidate["start_on_login"] != previous["start_on_login"] or not self.server.startup_state_known):
                             with self.server.installation_guard:
@@ -710,6 +725,11 @@ class Handler(BaseHTTPRequestHandler):
                             self.server.startup_state_known = True
                     except Exception:
                         self.server.save_settings(previous)
+                        if retry_config_applied:
+                            try:
+                                self.server.sync_providers()
+                            except Exception:
+                                pass  # sync_providers retains the configuration error in status.
                         raise
                 self.server.image_isolation = image_isolation
                 self.server.store.configure_limits(candidate["max_storage_bytes"],
@@ -850,7 +870,6 @@ class Handler(BaseHTTPRequestHandler):
         return parser.finish()
 
     def _relay_request(self, prefix, scope):
-        retry_deadline = time.monotonic() + MAX_RETRY_SECONDS
         if self.command not in {"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"}:
             self._json(405, {"error": "method_not_supported"})
             return
@@ -1030,9 +1049,14 @@ class Handler(BaseHTTPRequestHandler):
                relay_zstd_level=applied_zstd_level, relay_auto_zstd_level=auto_zstd_level,
                relay_compression_scope=compression_scope)
         local_upstream = urlsplit(upstream).hostname in {"localhost", "127.0.0.1", "::1"}
+        update(native_retry_mode="native")
         retry_settings = self.server.settings
         capacity_retry = (retry_settings["capacity_retry_enabled"] and self.command == "POST"
                           and urlsplit(suffix).path.rstrip("/").endswith("/responses"))
+        def current_retry_policy():
+            settings = self.server.settings
+            return settings["capacity_retry_enabled"], settings["capacity_retry_delay_seconds"]
+        native_policy = current_retry_policy if capacity_retry else None
         response_path = urlsplit(suffix).path.rstrip("/")
         diagnostic = None
         if self.command == "POST" and (response_path.endswith("/responses") or response_path.endswith("/responses/compact")):
@@ -1065,15 +1089,12 @@ class Handler(BaseHTTPRequestHandler):
                     update(outbound_wire_bytes=len(outbound_body),
                            outbound_content_encoding=outbound_encoding)
                 opener = self.server.local_opener if local_upstream else self.server.opener
-                response = open_response(
-                    opener, request, enabled=capacity_retry, max_retries=retry_settings["capacity_retry_max_retries"],
-                    on_retry=lambda attempt, delay: update(capacity_retry_delay_ms=round(delay * 1000),
-                                                          capacity_retry_reason="server_overloaded"),
-                    cancelled=self._client_disconnected,
-                    still_enabled=lambda: self.server.settings["capacity_retry_enabled"],
-                    on_event=diagnostic.record if diagnostic else None, deadline=retry_deadline)
+                notify(diagnostic.record if diagnostic else None, "attempt_started", attempt=1)
+                response = opener.open(request, timeout=600)
             except HTTPError as exc:
                 response = exc
+            notify(diagnostic.record if diagnostic else None, "response_headers", status=response.status)
+            response = prepare_http_error(response, native_policy, update, diagnostic.record if diagnostic else None)
             with response:
                 status = response.status
                 if diagnostic:
@@ -1082,8 +1103,10 @@ class Handler(BaseHTTPRequestHandler):
                     except Exception as exc:
                         self.server.retry_journal._error(exc)
                 observe_usage = self.command == "POST" and urlsplit(suffix).path.rstrip("/").endswith("/responses")
-                usage_stream = UsageStream(response, update, rewrite=trigger_size is not None) if observe_usage else None
-                rewrite_response = usage_stream is not None and usage_stream.enabled and usage_stream.rewrite_usage
+                usage_stream = NativeRetryStream(response, update, rewrite_usage=trigger_size is not None,
+                                                policy=native_policy, on_event=diagnostic.record if diagnostic else None) if observe_usage else None
+                rewrite_response = bool(getattr(response, "changed", False) or (
+                    usage_stream is not None and usage_stream.enabled and usage_stream.rewrite_response))
                 relay_phase = "downstream_headers"
                 update(status=status, state="streaming", response_type=response.headers.get("Content-Type", ""),
                        headers_ms=round((time.monotonic() - started) * 1000, 1))
@@ -1137,13 +1160,6 @@ class Handler(BaseHTTPRequestHandler):
             update(state=relay_state, response_bytes=received,
                    duration_ms=round((time.monotonic() - started) * 1000, 1), **fields)
             self.close_connection = True
-
-    def _client_disconnected(self):
-        try:
-            ready, _, _ = select.select([self.connection], [], [], 0)
-            return bool(ready) and not self.connection.recv(1, socket.MSG_PEEK)
-        except (OSError, ValueError):
-            return True
 
     do_GET = _handle
     do_POST = _handle

@@ -14,6 +14,8 @@ function packet(fields={}, count=0) {
     enabled:true, eligible:true, max_retries:3, retry_count:count, scheduled_retries:count,
     state:'finished', outcome:'success', stop_reason:'stream_committed', ...fields}};
 }
+assert.equal(context.packetProtection({native_retry_advised:true,capacity_retry_count:0}).retry,true);
+assert.deepEqual(Array.from(context.events({native_retry_advised:true})),['retry']);
 let p = packet({outcome:'capacity_error',capacity_error_seen:true,stop_reason:'retry_limit'},3);
 assert.equal(context.packetProtection(p).retry, true);
 assert.deepEqual(Array.from(context.events(p)), ['retry']);

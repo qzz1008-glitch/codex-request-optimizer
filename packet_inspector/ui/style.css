@@ -328,6 +328,8 @@ code.session-id{font-family:Consolas,"Cascadia Mono",monospace;font-size:11px;wo
 #settings-dialog #request-protection-settings .runtime-setting-row{margin-top:12px}
 #settings-dialog .runtime-inline-hint{min-width:0;margin:0}
 #settings-dialog .capacity-retry-limit{display:grid;grid-template-columns:var(--settings-inline-label-width) 68px minmax(0,1fr);align-items:center;gap:8px;min-width:0;color:var(--muted);font-size:13px;line-height:20px}
+#settings-dialog .capacity-retry-options{display:flex;flex-wrap:wrap;gap:12px 20px}
+#settings-dialog .capacity-retry-options .capacity-retry-limit{grid-template-columns:auto 68px auto}
 #settings-dialog .capacity-retry-limit label{white-space:nowrap}
 #settings-dialog .capacity-retry-limit input{width:68px}
 #settings-dialog .capacity-retry-limit>span{font-size:12px}

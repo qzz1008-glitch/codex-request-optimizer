@@ -72,7 +72,7 @@ class ProviderManager:
         self.endpoint = endpoint.rstrip("/")
         self.default_upstream = default_upstream
 
-    def sync(self, saved_routes, publish):
+    def sync(self, saved_routes, publish, *, retry_limit=None):
         """Publish routes/recovery first, then atomically update each TOML file.
 
         Failed batches roll back their own writes. Concurrent edits are kept,
@@ -143,6 +143,21 @@ class ProviderManager:
                     ws_keys = keys[:-1] + ["supports_websockets"]
                     self._record(records, data, ws_keys, False)
                     _put(document, ws_keys, False)
+            for provider_id, provider in data.get("model_providers", {}).items():
+                if not isinstance(provider, dict) or provider.get("wire_api", "responses") != "responses":
+                    continue
+                for key, value in (("stream_max_retries", retry_limit), ("request_max_retries", 0)):
+                    retry_keys = ["model_providers", provider_id, key]
+                    if retry_limit is not None:
+                        self._record(records, data, retry_keys, value)
+                        _put(document, retry_keys, value)
+                    else:
+                        record = next((r for r in records if r["keys"] == retry_keys), None)
+                        if record is not None:
+                            present, current = _get(data, retry_keys)
+                            if present and current == record["applied"]:
+                                _put(document, retry_keys, record["before"], record["present"])
+                            records.remove(record)
             updated = tomlkit.dumps(document)
             tomllib.loads(updated)
             if updated != text:

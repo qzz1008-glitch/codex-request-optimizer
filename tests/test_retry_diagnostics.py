@@ -9,10 +9,11 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from packet_inspector.capacity_retry import MAX_PROBE_BYTES, open_response
+from packet_inspector.response_events import MAX_OBSERVATION_BYTES, notify
+from packet_inspector.native_retry import NativeRetryStream
 from packet_inspector.retry_diagnostics import ResponseObservation, RetryJournal
 from packet_inspector.storage import Store
-from tests.test_capacity_retry import CREATED, FAILED, Opener, Response, frame
+from tests.response_fixtures import CREATED, FAILED, Opener, Response, frame
 
 COMPLETED = frame("response.completed", response={"status": "completed", "output": []})
 SUCCESS = frame("response.output_text.delta", delta="private assistant output") + COMPLETED
@@ -28,11 +29,12 @@ class RetryDiagnosticsTests(unittest.TestCase):
     def trace(self, **options):
         return self.journal.begin(session_id="test-thread", enabled=True, **options)
 
-    def run_response(self, *responses, enabled=True, max_retries=3, wait=lambda *_: None, **options):
+    def run_response(self, *responses, enabled=True, max_retries=3):
         trace = self.journal.begin(session_id="test-thread", enabled=enabled, max_retries=max_retries)
         opener = Opener(*responses)
-        response = open_response(opener, None, enabled=enabled, max_retries=max_retries,
-                                 wait=wait, on_event=trace.record, **options)
+        notify(trace.record, "attempt_started", attempt=1)
+        response = opener.open(None, timeout=600)
+        notify(trace.record, "response_headers", status=response.status)
         observation = ResponseObservation(trace, response.headers)
         output = bytearray()
         while chunk := response.read1(79):
@@ -43,47 +45,23 @@ class RetryDiagnosticsTests(unittest.TestCase):
         trace.finish("complete", sent_headers=True, response_bytes=len(output))
         return bytes(output), opener, self.journal.get(trace.document["id"])
 
-    def test_success_after_retry_is_distinct_from_exhausted_capacity(self):
-        body, opener, record = self.run_response(Response(CREATED + FAILED), Response(SUCCESS))
-        self.assertEqual(body, SUCCESS)
-        self.assertEqual((record["attempt_count"], record["retry_count"], record["scheduled_retries"]), (2, 1, 1))
-        self.assertEqual(record["outcome"], "success")
-        self.assertTrue(record["capacity_error_seen"])
-        self.assertFalse(record["final_capacity_error"])
-        self.assertEqual(record["terminal_event"], "response.completed")
-        self.assertEqual((record["time_budget_ms"], record["retry_interval_ms"]), (570000, 50000))
-        body, opener, failed = self.run_response(*(Response(FAILED) for _ in range(4)))
-        self.assertEqual(body, FAILED)
-        self.assertEqual((failed["retry_count"], failed["attempt_count"]), (3, 4))
-        self.assertEqual((failed["outcome"], failed["stop_reason"]), ("capacity_error", "retry_limit"))
-        self.assertTrue(failed["final_capacity_error"])
-        self.assertEqual([event["attempt"] for event in failed["events"] if event["event"] == "attempt_started"], [1, 2, 3, 4])
 
     def test_snapshot_of_disabled_setting_is_kept_with_detected_error(self):
         body, opener, record = self.run_response(Response(CREATED + FAILED), enabled=False)
         self.assertEqual(body, CREATED + FAILED)
         self.assertFalse(record["enabled"])
         self.assertEqual((record["retry_count"], record["attempt_count"]), (0, 1))
-        self.assertEqual((record["outcome"], record["stop_reason"]), ("capacity_error", "disabled"))
+        self.assertEqual(record["outcome"], "capacity_error")
 
     def test_error_after_empty_reasoning_is_observed_without_replaying(self):
         payload = CREATED + frame("response.output_item.added", item={"type": "reasoning", "summary": []}) + FAILED
         body, opener, record = self.run_response(Response(payload, chunk=7))
         self.assertEqual((body, len(opener.requests)), (payload, 1))
-        self.assertEqual(record["probe_reason"], "stream_committed")
+        self.assertNotIn("probe_reason", record)
         self.assertEqual(record["first_output_event"], "response.output_item.added")
         self.assertEqual(record["outcome"], "capacity_error")
         self.assertEqual(record["retry_count"], 0)
 
-    def test_metadata_is_not_reported_as_output_before_a_capacity_retry(self):
-        metadata = frame("response.metadata", metadata={"private": "do not retain"})
-        body, opener, record = self.run_response(Response(CREATED + metadata + FAILED), Response(metadata + SUCCESS))
-        self.assertEqual((body, len(opener.requests), record["retry_count"]), (metadata + SUCCESS, 2, 1))
-        self.assertEqual(record["first_output_event"], "response.output_text.delta")
-        self.assertEqual(record["outcome"], "success")
-        self.assertTrue(any(e["event"] == "control_event" and e["event_type"] == "response.metadata"
-                            and e["event_class"] == "control" for e in record["events"]))
-        self.assertNotIn("do not retain", json.dumps(record))
 
     def test_metadata_and_capacity_failure_without_retry_does_not_invent_output(self):
         payload = frame("codex.response.metadata.updated", metadata={"new": True}) + FAILED
@@ -96,7 +74,7 @@ class RetryDiagnosticsTests(unittest.TestCase):
         payload = frame("response.future_revision", new_field=True) + FAILED
         body, opener, record = self.run_response(Response(payload))
         self.assertEqual((body, len(opener.requests), record["retry_count"]), (payload, 1, 0))
-        self.assertEqual(record["stop_reason"], "unknown_event")
+        self.assertTrue(any(e["event"]=="unclassified_event" for e in record["events"]))
         self.assertNotIn("first_output_event", record)
         self.assertTrue(any(e["event"] == "unclassified_event" and e["event_class"] == "unknown"
                             for e in record["events"]))
@@ -109,44 +87,9 @@ class RetryDiagnosticsTests(unittest.TestCase):
         self.assertEqual((body, len(opener.requests)), (payload, 1))
         self.assertEqual(record["outcome"], "capacity_error")
 
-    def test_scheduled_retry_disabled_during_wait_is_not_counted_as_sent(self):
-        flag = [True]
-        def wait(*_):
-            flag[0] = False
-        _, opener, record = self.run_response(Response(FAILED), still_enabled=lambda: flag[0], wait=wait)
-        self.assertEqual(len(opener.requests), 1)
-        self.assertEqual((record["scheduled_retries"], record["retry_count"]), (1, 0))
-        self.assertEqual(record["stop_reason"], "disabled_during_wait")
 
-    def test_cancelled_wait_keeps_scheduled_and_actual_counts_separate(self):
-        trace = self.trace()
-        opener = Opener(Response(FAILED))
-        def wait(*_):
-            raise BrokenPipeError("private details")
-        with self.assertRaises(BrokenPipeError):
-            open_response(opener, None, enabled=True, wait=wait, on_event=trace.record)
-        trace.finish("client_disconnected", error_type="BrokenPipeError")
-        record = self.journal.get(trace.document["id"])
-        self.assertEqual((record["attempt_count"], record["scheduled_retries"], record["retry_count"]), (1, 1, 0))
-        self.assertEqual((record["outcome"], record["stop_reason"]), ("cancelled", "client_disconnected"))
-        self.assertNotIn("private details", json.dumps(record))
 
-    def test_retry_after_time_budget_is_logged_without_retry(self):
-        for value in ("600", "1e300"):
-            with self.subTest(value=value):
-                body, opener, record = self.run_response(Response(FAILED, extra={"Retry-After": value}))
-                self.assertEqual((body, len(opener.requests)), (FAILED, 1))
-                self.assertEqual((record["outcome"], record["stop_reason"]), ("capacity_error", "time_budget"))
 
-    def test_exception_opening_retry_is_a_transport_error_after_one_retry(self):
-        trace = self.trace()
-        opener = Opener(Response(FAILED), OSError("do not save exception content"))
-        with self.assertRaises(OSError):
-            open_response(opener, None, enabled=True, wait=lambda *_: None, on_event=trace.record)
-        trace.finish("relay_error", error_type="OSError")
-        record = self.journal.get(trace.document["id"])
-        self.assertEqual((record["outcome"], record["retry_count"], record["attempt_count"]), ("transport_error", 1, 2))
-        self.assertNotIn("do not save exception content", json.dumps(record))
 
     def test_upstream_reset_is_not_misreported_as_client_cancellation(self):
         for phase, outcome in (("upstream_open", "transport_error"), ("upstream_read", "transport_error"),
@@ -180,7 +123,7 @@ class RetryDiagnosticsTests(unittest.TestCase):
         body = json.dumps({"error": {"code": "invalid_prompt", "message": "private prompt details"}}).encode()
         _, _, record = self.run_response(Response(body, 400, "application/json"))
         self.assertEqual(record["outcome"], "upstream_error")
-        self.assertEqual(record["stop_reason"], "unsupported_status")
+        self.assertEqual(record["stop_reason"], "")
         self.assertEqual(next(e["error_code"] for e in record["events"] if e["event"] == "terminal"), "invalid_prompt")
         self.assertNotIn("private prompt details", json.dumps(record))
 
@@ -214,10 +157,10 @@ class RetryDiagnosticsTests(unittest.TestCase):
         trace = self.trace()
         response = Response(b"")
         observation = ResponseObservation(trace, response.headers)
-        prefix = b'data: {"type":"response.output_text.delta","delta":"' + b'x' * (MAX_PROBE_BYTES + 100)
+        prefix = b'data: {"type":"response.output_text.delta","delta":"' + b'x' * (MAX_OBSERVATION_BYTES + 100)
         for start in range(0, len(prefix), 65536):
             observation.feed(prefix[start:start + 65536])
-        self.assertLessEqual(len(observation.buffer), MAX_PROBE_BYTES)
+        self.assertLessEqual(len(observation.buffer), MAX_OBSERVATION_BYTES)
         observation.feed(b'"}\n\n' + FAILED)
         observation.finish()
         self.assertTrue(trace.document["final_capacity_error"])
@@ -261,11 +204,11 @@ class RetryDiagnosticsTests(unittest.TestCase):
         for private in ("private-secret", "private prompt", "private message", "private output"):
             self.assertNotIn(private, record)
 
-    def test_diagnostic_write_failure_does_not_change_response_or_retry(self):
+    def test_diagnostic_write_failure_does_not_change_response(self):
         with patch.object(self.journal, "_connect", side_effect=sqlite3.OperationalError("locked")):
             body, opener, _ = self.run_response_without_readback()
-        self.assertEqual(body, SUCCESS)
-        self.assertEqual(len(opener.requests), 2)
+        self.assertEqual(body, FAILED)
+        self.assertEqual(len(opener.requests), 1)
         self.assertGreater(self.journal.errors, 0)
 
     def test_midstream_observation_failure_cannot_escape_into_forwarding(self):
@@ -286,7 +229,7 @@ class RetryDiagnosticsTests(unittest.TestCase):
     def run_response_without_readback(self):
         trace = self.trace()
         opener = Opener(Response(FAILED), Response(SUCCESS))
-        response = open_response(opener, None, enabled=True, wait=lambda *_: None, on_event=trace.record)
+        response = opener.open(None, timeout=600)
         body = response.read()
         response.close()
         trace.finish("complete")
