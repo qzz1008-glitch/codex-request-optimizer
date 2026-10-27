@@ -965,8 +965,8 @@ function renderZstdLevelRows() {
   const estimateCell=(column,value,text)=>{
     const {min,max}=ranges[column],ratio=max===min?0.5:(value-min)/(max-min);
     // Larger size savings and lower time overhead are better, within each column.
-    const quality=column===2?1-ratio:ratio,cell=el("td","num",text);
-    cell.setAttribute("style",`background-color:hsl(${(50+quality*70).toFixed(1)},65%,88%)`);
+    const quality=column===2?1-ratio:ratio;
+    const cell=el("td",`num zstd-quality-${Math.round(quality*10)}`,text);
     return cell;
   };
   $("zstd-level-options").replaceChildren(...zstdLevelEstimates.map(([level,smallSize,largeSize,time])=>{
