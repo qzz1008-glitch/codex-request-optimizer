@@ -122,7 +122,6 @@ const uiI18n = (() => {
     "已向 Codex 发送重试提示":"Retry advice sent to Codex",
     "等待时间":"Wait time",
     "秒":"s",
-    "由 Codex 原生重试。次数修改需重新加载 Codex 配置，当前任务不会实时更新；等待时间立即作用于后续容量错误，上游要求更久时遵循上游。":"Codex performs retries. Retry count changes require reloading Codex configuration and do not update the current task. Wait time changes apply to subsequent capacity errors; longer upstream delays are honored.",
     "已重试 {count} 次 · 结果未记录":"Retried {count} times · outcome not recorded",
     "暂无重试日志":"No retry log",
     "容量不足":"Model at capacity",
