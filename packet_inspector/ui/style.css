@@ -131,7 +131,12 @@ code.session-id{font-family:Consolas,"Cascadia Mono",monospace;font-size:11px;wo
 .trend-toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:8px 20px;flex:none}
 #trend-range{margin-left:auto}
 .trend-range-control{display:flex;align-items:center;gap:10px;flex:none}
-#trend-range-slider{width:140px;height:20px;margin:0;padding:0;border:0;background:transparent;accent-color:var(--accent);cursor:ew-resize}
+#trend-range-slider{appearance:none;width:140px;height:20px;margin:0;padding:0;border:0;background:transparent;cursor:ew-resize}
+#trend-range-slider::-webkit-slider-runnable-track{height:8px;background:#e3e9f2;border-radius:4px}
+#trend-range-slider::-webkit-slider-thumb{appearance:none;width:var(--trend-thumb-width,140px);height:14px;margin-top:-3px;border:1px solid #2852c2;border-radius:5px;background:var(--accent)}
+#trend-range-slider::-moz-range-track{height:8px;background:#e3e9f2;border-radius:4px}
+#trend-range-slider::-moz-range-thumb{box-sizing:border-box;width:var(--trend-thumb-width,140px);height:14px;border:1px solid #2852c2;border-radius:5px;background:var(--accent)}
+#trend-range-slider:disabled{opacity:.45;cursor:default}
 #trend-range-value{min-width:64px;text-align:right;white-space:nowrap;font-size:11px;font-variant-numeric:tabular-nums;color:var(--muted)}
 #trend-search{flex:1;width:0;height:30px;padding:4px 10px;font-size:12px}
 .trend-event-legend{display:flex;flex-wrap:wrap;gap:6px 14px;align-items:center;font-size:12px;white-space:nowrap}
