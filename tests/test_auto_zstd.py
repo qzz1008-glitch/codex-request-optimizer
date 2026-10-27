@@ -12,37 +12,111 @@ import zstandard
 from packet_inspector.analyzer import encode
 from packet_inspector.overflow import encode_changed_info
 from packet_inspector.server import InspectorServer
-from packet_inspector.transport import CompressionHistory, prepare_request_info
+from packet_inspector.transport import prepare_request_info
+from packet_inspector.compression_policy import CompressionPolicy, select_phase
+from packet_inspector.storage import Store
 from tests import test_packet_inspector as fixtures
 
 
-class CompressionHistoryTests(unittest.TestCase):
-    def test_session_pressure_scales_with_budget_and_keeps_a_stable_band(self):
-        history = CompressionHistory()
-        self.assertIsNone(history.level('session', 1000))
-        history.remember('session', 899, 1)
-        self.assertEqual(history.level('session', 1000), 1)
-        history.remember('session', 900, 1)
-        self.assertEqual(history.level('session', 1000), 17)
-        history.remember('session', 850, 17)
-        self.assertEqual(history.level('session', 1000), 17)
-        self.assertEqual(history.level('session', 2000), 1)
-        history.remember('session', 800, 17)
-        self.assertEqual(history.level('session', 1000), 1)
-        self.assertIsNone(history.level('other', 1000))
+class PhaseSelectionTests(unittest.TestCase):
+    def test_unknown_session_uses_fixed_initial_threshold_after_small_body_check(self):
+        for raw, expected in ((899999, 0), (900000, 1), (1499999, 1), (1500000, 17), (2000000, 17)):
+            with self.subTest(raw=raw):
+                self.assertEqual(select_phase(None, raw, 1000000), expected)
+        # The first-selection split is fixed in bytes, not scaled with the cap.
+        self.assertEqual(select_phase(None, 1000000, 500000), 1)
+        self.assertEqual(select_phase(None, 1500000, 2000000), 0)
 
-    def test_history_expires_is_bounded_and_late_seed_cannot_replace_new_data(self):
-        history = CompressionHistory(max_entries=2, ttl=60)
-        with patch('packet_inspector.transport.time.monotonic', return_value=0):
-            history.remember('a', 950, 17)
-            history.remember('b', 850, 17)
-            history.remember('b', 100, 1, only_if_missing=True)
-            self.assertEqual(history.level('b', 1000), 17)
-            history.remember('c', 100, 1)
-            self.assertIsNone(history.level('a', 1000))
-        with patch('packet_inspector.transport.time.monotonic', return_value=60):
-            self.assertIsNone(history.level('b', 1000))
-            self.assertIsNone(history.level('c', 1000))
+    def test_initial_threshold_does_not_override_a_known_phase(self):
+        for previous in (0, 1):
+            self.assertEqual(select_phase(previous, 2000000, 1000000), 1)
+        self.assertEqual(select_phase(17, 2000000, 1000000), 17)
+        self.assertEqual(select_phase(17, 900000, 1000000), 17)
+        self.assertEqual(select_phase(17, 899999, 1000000), 0)
+
+
+class CompressionPolicyTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.store = Store(Path(self.temp.name))
+        self.policy = CompressionPolicy(self.store)
+        self.key = ('upstream', 'session')
+        self.policy.begin(self.key, self.policy.reserve(), 500, 1000)
+
+    def begin(self, raw=2000, budget=1000, key=None):
+        return self.policy.begin(key or self.key, self.policy.reserve(), raw, budget)
+
+    def test_high_phase_does_not_drop_when_high_compression_reduces_wire_size(self):
+        fast = self.begin()
+        self.assertEqual(fast.phase, 1)
+        self.assertEqual(self.policy.finish(self.key, fast, 900, 1000), 17)
+        for wire in (850, 800, 700, 100):
+            high = self.begin()
+            self.assertEqual(high.phase, 17)
+            self.assertEqual(self.policy.finish(self.key, high, wire, 1000), 17)
+        # A larger budget alone does not release a still-large raw context.
+        self.assertEqual(self.begin(raw=10000, budget=2000).phase, 17)
+        self.assertEqual(self.begin(raw=899).phase, 0)
+        self.assertEqual(self.begin(raw=900).phase, 1)
+        for key in (('upstream', 'child'), ('other-upstream', 'session')):
+            self.assertEqual(self.begin(key=key).phase, 1)
+            self.assertEqual(self.begin(raw=500, key=key).phase, 0)
+            self.assertEqual(self.begin(key=key).phase, 1)
+
+    def test_restart_and_packet_cleanup_keep_the_recorded_phase_not_actual_grade(self):
+        high = self.begin()
+        self.policy.finish(self.key, high, 950, 1000)
+        packet = self.store.add({'thread_id': 'session', 'relay_zstd_level': 1}, None)
+        with self.store.connect() as c:
+            c.execute('DELETE FROM packets WHERE id=?', (packet,))
+        self.policy = CompressionPolicy(Store(Path(self.temp.name)))
+        with patch('packet_inspector.compression_policy.time.time', return_value=10**12):
+            self.assertEqual(self.begin().phase, 17)
+
+    def test_late_old_requests_cannot_relock_or_release_a_newer_phase(self):
+        old = self.begin()
+        self.policy.finish(self.key, old, 950, 1000)
+        old_high = self.begin()
+        delayed = self.policy.reserve()  # Inspected after the new compacted request.
+        other_worker = CompressionPolicy(Store(Path(self.temp.name)))
+        newer = other_worker.begin(self.key, other_worker.reserve(), 500, 1000)
+        self.assertEqual(newer.phase, 0)
+        self.assertIsNone(self.policy.finish(self.key, old_high, 950, 1000))
+        stale = self.policy.begin(self.key, delayed, 2000, 1000)
+        self.assertIsNone(self.policy.finish(self.key, stale, 950, 1000))
+        self.assertEqual(self.begin().phase, 1)
+        newer_high = self.begin()
+        self.policy.finish(self.key, newer_high, 950, 1000)
+        self.assertIsNone(self.policy.finish(self.key, newer, 100, 1000))
+        self.assertEqual(self.begin().phase, 17)
+
+    def test_clear_invalidates_reserved_and_started_requests(self):
+        old = self.begin()
+        delayed = self.policy.reserve()
+        self.policy.clear()
+        self.assertIsNone(self.policy.finish(self.key, old, 950, 1000))
+        stale = self.policy.begin(self.key, delayed, 2000, 1000)
+        self.assertIsNone(self.policy.finish(self.key, stale, 950, 1000))
+        self.assertEqual(self.begin().phase, 1)
+
+    def test_only_inactive_unlocked_rows_expire(self):
+        with patch('packet_inspector.compression_policy.time.time', return_value=0):
+            fast = self.begin()
+            self.policy.finish(self.key, fast, 950, 1000)
+            self.begin(raw=500, key=('upstream', 'unlocked'))
+        with patch('packet_inspector.compression_policy.time.time', return_value=86401):
+            self.begin(key=('upstream', 'new'))
+        with self.store.connect() as c:
+            rows = c.execute('SELECT thread,phase FROM auto_zstd_sessions ORDER BY thread').fetchall()
+        self.assertEqual([tuple(row) for row in rows], [('new', 1), ('session', 17)])
+
+    def test_large_wire_size_promotes_only_the_next_request(self):
+        selected = self.begin()
+        self.assertEqual(selected.level, 1)
+        self.assertEqual(self.policy.finish(self.key, selected, 1001, 1000), 17)
+        self.assertEqual(selected.level, 1)
+        self.assertEqual(self.begin().level, 17)
 
 
 class AutomaticTransportTests(unittest.TestCase):
@@ -110,23 +184,22 @@ class AutomaticTransportTests(unittest.TestCase):
             self.assertEqual(result.zstd_level, 9)
             self.assertEqual(zstandard.ZstdDecompressor().decompress(result.body), raw)
 
-    def test_fast_mode_keeps_native_zstd_and_oversized_native_packet_goes_straight_to_17(self):
+    def test_native_zstd_obeys_the_selected_level_even_when_already_oversized(self):
         raw = encode({'input': base64.b64encode(random.Random(3).randbytes(90000)).decode()})
         incoming = zstandard.ZstdCompressor(level=1).compress(raw)
-        for budget, selected, expected in ((len(incoming) + 100, 1, None),
-                                            (len(incoming) - 1, 1, 17),
-                                            (len(incoming) + 100, 17, 17)):
-            with self.subTest(budget=budget, selected=selected), patch('zstandard.ZstdCompressor', wraps=zstandard.ZstdCompressor) as compressor:
-                result = prepare_request_info(incoming, {'Content-Encoding': 'zstd'}, 'POST', '/responses', 'zstd', selected,
-                                              auto_zstd_level=True, budget_bytes=budget)
-                if expected is None:
-                    compressor.assert_not_called()
-                    self.assertIs(result.body, incoming)
-                else:
-                    compressor.assert_called_once_with(level=17)
-                    self.assertLessEqual(len(result.body), len(incoming))
-                self.assertEqual(zstandard.ZstdDecompressor().decompress(result.body), raw)
-                self.assertEqual(result.zstd_level, 17 if len(result.body) < len(incoming) else None)
+        for budget in (50000, 100000):
+            for level in (1, 17):
+                with self.subTest(budget=budget, level=level), patch(
+                        'zstandard.ZstdCompressor', wraps=zstandard.ZstdCompressor) as compressor:
+                    result = prepare_request_info(incoming, {'Content-Encoding': 'zstd'}, 'POST', '/responses', 'zstd', level,
+                                                  auto_zstd_level=True, budget_bytes=budget)
+                    if level == 1:
+                        compressor.assert_not_called()
+                        self.assertIs(result.body, incoming)
+                    else:
+                        compressor.assert_called_once_with(level=17)
+                        self.assertLessEqual(len(result.body), len(incoming))
+                    self.assertEqual(zstandard.ZstdDecompressor().decompress(result.body), raw)
 
     def test_off_gzip_and_unverified_endpoints_remain_untouched(self):
         raw = encode({'input': 'retained ' * 1000})
@@ -200,7 +273,7 @@ class AutomaticRelayTests(unittest.TestCase):
                                                    'auto_zstd_level_enabled': False, 'zstd_level': 9,
                                                    'budget_bytes': 300000})[0], 200)
         self.server.settings["auto_detect_providers"] = True
-        self.server.compression_history = CompressionHistory()
+        self.server.compression_policy.clear()
 
     def enable(self):
         status, result = self.api('/api/settings', {'packet_size_protection_enabled': True,
@@ -223,41 +296,40 @@ class AutomaticRelayTests(unittest.TestCase):
         self.assertEqual(self.relay(raw)[0], 200)
         self.assertEqual(self.latest()[0]['relay_zstd_level'], 9)
 
-    def test_previous_real_upload_changes_next_request_once_and_other_sessions_stay_fast(self):
+    def test_fast_packet_schedules_high_next_and_small_main_body_releases_the_lock(self):
         self.enable()
         random_text = base64.b64encode(random.Random(7).randbytes(280000)).decode()
         big = encode({'input': random_text})
         small = encode({'input': 'small retained request ' * 20})
         headers = {'session_id': 'adaptive-session'}
-        for raw, expected in ((big, 1), (big, 17), (small, None), (small, None), (big, 1)):
+        for raw, expected in ((big, [1]), (big, [17]), (small, []), (small, []), (big, [1]), (big, [17])):
             with self.subTest(expected=expected, size=len(raw)), patch('zstandard.ZstdCompressor', wraps=zstandard.ZstdCompressor) as compressor:
                 self.assertEqual(self.relay(raw, headers=headers)[0], 200)
-                if expected is None:
-                    compressor.assert_not_called()
-                else:
-                    compressor.assert_called_once_with(level=expected)
+                self.assertEqual([call.kwargs['level'] for call in compressor.call_args_list], expected)
                 meta, _ = self.latest()
-                self.assertEqual(meta['relay_zstd_level'], expected)
+                self.assertEqual(meta['relay_zstd_level'], expected[-1] if expected else None)
                 uploaded = self.up.requests[-1]['body']
                 self.assertEqual(zstandard.ZstdDecompressor().decompress(uploaded) if expected else uploaded, raw)
                 self.assertLessEqual(len(self.up.requests[-1]['body']), 300000)
         self.assertEqual(self.relay(big, headers={'session_id': 'separate-session'})[0], 200)
-        self.assertEqual(self.latest()[0]['relay_zstd_level'], 1)
+        self.assertEqual(self.latest()[0]['relay_auto_zstd_phase'], 1)
+        self.assertEqual(self.latest()[0]['relay_auto_zstd_next_phase'], 17)
         self.assertEqual(self.server.settings['zstd_level'], 9)
 
-    def test_existing_measurement_is_used_and_auxiliary_requests_do_not_reset_pressure(self):
+    def test_captured_manual_measurements_do_not_seed_automatic_phase(self):
         raw = encode({'input': base64.b64encode(random.Random(8).randbytes(280000)).decode()})
         headers = {'session_id': 'prior-record-session'}
-        self.assertEqual(self.relay(raw, headers=headers)[0], 200)
+        self.assertEqual(self.relay(encode({'input': 'old manual request'}), headers=headers)[0], 200)
         self.enable()
         self.assertEqual(self.relay(raw, headers=headers)[0], 200)
-        self.assertEqual(self.latest()[0]['relay_zstd_level'], 17)
+        self.assertEqual(self.latest()[0]['relay_auto_zstd_phase'], 1)
+        self.assertEqual(self.latest()[0]['relay_auto_zstd_next_phase'], 17)
         auxiliary = encode({'input': 'tiny', 'client_metadata': {'request_kind': 'prewarm'}})
         self.assertEqual(self.relay(auxiliary, headers=headers)[0], 200)
         self.assertEqual(self.relay(raw, headers=headers)[0], 200)
         self.assertEqual(self.latest()[0]['relay_zstd_level'], 17)
 
-    def test_one_compression_does_not_bypass_the_final_upload_limit(self):
+    def test_fast_phase_does_not_bypass_the_final_upload_limit(self):
         self.enable()
         self.assertEqual(self.api('/api/settings', {'budget_bytes': 50001})[0], 200)
         raw = encode({'input': base64.b64encode(random.Random(4).randbytes(180000)).decode()})
@@ -267,17 +339,19 @@ class AutomaticRelayTests(unittest.TestCase):
         self.assertEqual(len(self.up.requests), before)
         self.assertEqual(self.latest()[0]['relay_error'], 'overflow_unsupported_input')
 
-    def test_prior_measurement_from_another_upstream_is_not_used(self):
-        raw = encode({'input': base64.b64encode(random.Random(11).randbytes(280000)).decode()})
-        headers = {'session_id': 'changed-upstream-session'}
-        self.assertEqual(self.relay(raw, headers=headers)[0], 200)
-        previous, _ = self.latest()
-        self.server.store.update(previous['id'], relay_compression_scope='different-upstream')
+    def test_unseen_large_session_starts_at_highest_level_without_a_previous_packet(self):
         self.enable()
-        self.assertEqual(self.relay(raw, headers=headers)[0], 200)
-        self.assertEqual(self.latest()[0]['relay_zstd_level'], 1)
+        raw = encode({'input': 'retained history ' * 100000})
+        with patch('zstandard.ZstdCompressor', wraps=zstandard.ZstdCompressor) as compressor:
+            self.assertEqual(self.relay(raw, headers={'session_id': 'unseen-large-session'})[0], 200)
+            compressor.assert_called_once_with(level=17)
+        meta, _ = self.latest()
+        self.assertEqual(meta['relay_auto_zstd_phase'], 17)
+        self.assertIsNone(meta['relay_auto_zstd_previous_phase'])
+        self.assertEqual(meta['relay_auto_zstd_initial_threshold_bytes'], 1500000)
+        self.assertEqual(meta['relay_auto_zstd_budget_bytes'], 300000)
 
-    def test_reenabling_auto_uses_the_latest_manual_request_instead_of_old_pressure(self):
+    def test_reenabling_auto_starts_a_new_phase_instead_of_restoring_capture_measurements(self):
         self.enable()
         headers = {'session_id': 'reenabled-session'}
         raw = encode({'input': base64.b64encode(random.Random(12).randbytes(280000)).decode()})
@@ -287,7 +361,54 @@ class AutomaticRelayTests(unittest.TestCase):
         self.assertEqual(self.relay(small, headers=headers)[0], 200)
         self.enable()
         self.assertEqual(self.relay(raw, headers=headers)[0], 200)
-        self.assertEqual(self.latest()[0]['relay_zstd_level'], 1)
+        self.assertEqual(self.latest()[0]['relay_auto_zstd_phase'], 1)
+        self.assertEqual(self.latest()[0]['relay_auto_zstd_next_phase'], 17)
+
+    def test_auxiliary_and_native_compaction_dispatches_cannot_release_high_phase(self):
+        from packet_inspector.request_context import NEXT_MESSAGE_PREFIX, TITLE_REQUEST_PREFIX, IMAGE_ANALYST_PREFIXES
+        self.enable()
+        raw = encode({'input': base64.b64encode(random.Random(22).randbytes(280000)).decode()})
+        headers = {'session_id': 'auxiliary-phase-session'}
+        self.assertEqual(self.relay(raw, headers=headers)[0], 200)
+        auxiliary = [
+            ({'input': 'tiny', 'client_metadata': {'request_kind': kind}}, '/responses')
+            for kind in ('prewarm', 'memory', 'compaction')
+        ] + [
+            ({'input': [{'role': 'user', 'content': prefix}]}, '/responses')
+            for prefix in (NEXT_MESSAGE_PREFIX, TITLE_REQUEST_PREFIX, IMAGE_ANALYST_PREFIXES[0])
+        ] + [
+            ({'input': json.loads(raw)['input'], 'client_metadata': {'request_kind': 'compaction'}}, '/responses'),
+            ({'input': 'tiny', 'client_metadata': {'thread_source': 'session_index'}}, '/responses'),
+            ({'input': 'tiny'}, '/alpha/search'),
+            ({'input': 'tiny'}, '/responses/compact'),
+            ({'input': 'tiny', 'client_metadata': {'request_kind': 'compaction'}}, '/reject/responses'),
+        ]
+        for value, path in auxiliary:
+            with self.subTest(path=path, kind=value.get('client_metadata')):
+                self.assertEqual(self.relay(encode(value), path=path, headers=headers)[0], 403 if 'reject' in path else 200)
+                auxiliary_meta = self.latest()[0]
+                self.assertNotIn('relay_auto_zstd_phase', auxiliary_meta)
+                if len(encode(value)) > 300000:
+                    self.assertEqual(auxiliary_meta['relay_zstd_level'], 17)
+                with patch('zstandard.ZstdCompressor', wraps=zstandard.ZstdCompressor) as compressor:
+                    self.assertEqual(self.relay(raw, headers=headers)[0], 200)
+                    compressor.assert_called_once_with(level=17)
+
+    def test_capture_disabled_and_policy_restart_do_not_lose_or_contaminate_phase(self):
+        self.enable()
+        raw = encode({'input': base64.b64encode(random.Random(23).randbytes(280000)).decode()})
+        headers = {'session_id': 'uncaptured-session'}
+        self.assertEqual(self.relay(raw, headers=headers)[0], 200)
+        try:
+            self.assertEqual(self.api('/api/settings', {'capture_enabled': False})[0], 200)
+            self.server.compression_policy = CompressionPolicy(self.server.store)
+            auxiliary = encode({'input': 'tiny', 'client_metadata': {'thread_source': 'session_index'}})
+            self.assertEqual(self.relay(auxiliary, headers=headers)[0], 200)
+            with patch('zstandard.ZstdCompressor', wraps=zstandard.ZstdCompressor) as compressor:
+                self.assertEqual(self.relay(raw, headers=headers)[0], 200)
+                compressor.assert_called_once_with(level=17)
+        finally:
+            self.assertEqual(self.api('/api/settings', {'capture_enabled': True})[0], 200)
 
 
 if __name__ == '__main__':

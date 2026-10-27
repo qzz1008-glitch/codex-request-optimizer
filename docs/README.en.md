@@ -27,7 +27,7 @@ Reduce upload size while preserving the original content and meaning.
 
 Choose from **compression levels 1–17** and compare compressed sizes and estimated local processing times. Requests already using zstd can also be recompressed; the new body is used only when it is smaller.
 
-With request size protection enabled, use **automatic compression by packet size**. Smaller requests keep their original body; other requests automatically choose between fast level 1 and high-compression level 17 based on the session's upload sizes. Turning automatic mode off restores the manual level. See the user guide for the exact thresholds.
+With request size protection enabled, use **automatic compression by packet size**. Smaller requests keep their original body. Without a saved phase, the original body's 1,500 kB threshold selects level 1 below it or level 17 at or above it. When a level-1 packet reaches the promotion threshold, the next request uses level 17 and stays there until the main request's uncompressed body is small again. Both levels apply predictive and overflow protection based on the actual compressed packet size. Turning automatic mode off restores the manual level. See the user guide for the exact thresholds.
 
 ### 🧠 Context settings
 
