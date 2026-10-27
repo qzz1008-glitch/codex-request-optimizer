@@ -900,8 +900,8 @@ function fillSettings() {
   $("native-retry-hint").hidden=s.capacity_retry_mode!=="native";
   fillImageAnalysisMode();
   $("startup-hint").textContent=t(s.start_on_login_supported?(s.startup_state_known===false?"无法读取开机启动状态，请重新保存设置。":"登录 Windows 后在后台启动，可从托盘打开窗口。"):"开机启动仅支持已安装的 Windows 版本。");
-  $("runtime-settings-message").hidden=!!s.capacity_retry_supported&&s.capacity_retry_mode==="native";
-  $("runtime-settings-message").textContent=s.capacity_retry_supported?t("更新软件后可使用 Codex 原生重试设置。"):t("当前中转暂不支持此功能。");
+  $("runtime-settings-message").hidden=!!s.capacity_retry_supported;
+  $("runtime-settings-message").textContent=s.capacity_retry_supported?"":t("当前中转暂不支持此功能。");
   renderConnectionActions();
   renderCompressionMode();renderLanguageSelection();fillZstdLevel();fillImageDirectory();fillPacketProtection();syncContextDefaults();
   updateSettingsSaveState(false);

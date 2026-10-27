@@ -120,7 +120,6 @@ const uiI18n = (() => {
     "自动重试":"Automatic retries",
     "原生重试提示":"Native retry advice",
     "已向 Codex 发送重试提示":"Retry advice sent to Codex",
-    "更新软件后可使用 Codex 原生重试设置。":"Update the software to configure native Codex retries.",
     "等待时间":"Wait time",
     "秒":"s",
     "由 Codex 原生重试。次数修改需重新加载 Codex 配置，当前任务不会实时更新；等待时间立即作用于后续容量错误，上游要求更久时遵循上游。":"Codex performs retries. Retry count changes require reloading Codex configuration and do not update the current task. Wait time changes apply to subsequent capacity errors; longer upstream delays are honored.",
