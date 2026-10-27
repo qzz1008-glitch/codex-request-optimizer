@@ -45,6 +45,13 @@ context.$('settings-dialog').open=true;
 context.renderZstdLevelRows();
 const rows=context.$('zstd-level-options').children;
 assert.equal(rows.length,22);
+// The page CSP permits external stylesheets and blocks inline style attributes.
+const stylesheet=fs.readFileSync('packet_inspector/ui/style.css','utf8');
+const qualityClasses=new Set([...stylesheet.matchAll(/\.zstd-quality-\d+/g)].map(match=>match[0].slice(1)));
+for(const row of rows)for(const cell of row.children.slice(1)) {
+  assert(!Object.hasOwn(cell.attributes,'style'));
+  assert(cell.className.split(/\s+/).some(name=>qualityClasses.has(name)));
+}
 const last=rows.at(-1),data=estimates.at(-1);
 assert.equal(last.dataset.level,'22');
 assert.equal(last.children.length,4);

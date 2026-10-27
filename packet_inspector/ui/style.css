@@ -324,6 +324,17 @@ code.session-id{font-family:Consolas,"Cascadia Mono",monospace;font-size:11px;wo
 .zstd-level-table tbody tr{cursor:pointer}
 .zstd-level-table tbody tr:hover td,.zstd-level-table tbody tr:focus-within td{background:#f5f7fc}
 .zstd-level-table tbody tr.selected td{background:var(--soft);color:var(--accent)}
+.zstd-level-table tbody tr td.zstd-quality-0{background-color:hsl(50,65%,88%)}
+.zstd-level-table tbody tr td.zstd-quality-1{background-color:hsl(57,65%,88%)}
+.zstd-level-table tbody tr td.zstd-quality-2{background-color:hsl(64,65%,88%)}
+.zstd-level-table tbody tr td.zstd-quality-3{background-color:hsl(71,65%,88%)}
+.zstd-level-table tbody tr td.zstd-quality-4{background-color:hsl(78,65%,88%)}
+.zstd-level-table tbody tr td.zstd-quality-5{background-color:hsl(85,65%,88%)}
+.zstd-level-table tbody tr td.zstd-quality-6{background-color:hsl(92,65%,88%)}
+.zstd-level-table tbody tr td.zstd-quality-7{background-color:hsl(99,65%,88%)}
+.zstd-level-table tbody tr td.zstd-quality-8{background-color:hsl(106,65%,88%)}
+.zstd-level-table tbody tr td.zstd-quality-9{background-color:hsl(113,65%,88%)}
+.zstd-level-table tbody tr td.zstd-quality-10{background-color:hsl(120,65%,88%)}
 .zstd-level-option{display:flex;align-items:center;gap:6px;flex-wrap:wrap;min-height:24px;border:0;border-radius:4px;padding:0;background:transparent;color:inherit;font-size:13px}
 .zstd-level-option:hover{background:transparent}
 .zstd-level-check{display:inline-block;width:14px;flex:none;text-align:center}
