@@ -152,8 +152,8 @@ class NativeRetryConfigurationTests(unittest.TestCase):
     def provider(self):
         return tomllib.loads(self.config.read_text())["model_providers"]["probe"]
 
-    def test_new_install_defaults_are_ten_retries_and_thirty_seconds(self):
-        self.assertEqual(self.server.settings["capacity_retry_max_retries"], 10)
+    def test_new_install_defaults_are_fifteen_retries_and_thirty_seconds(self):
+        self.assertEqual(self.server.settings["capacity_retry_max_retries"], 15)
         self.assertEqual(self.server.settings["capacity_retry_delay_seconds"], 30)
         self.assertFalse(self.server.settings["capacity_retry_enabled"])
 

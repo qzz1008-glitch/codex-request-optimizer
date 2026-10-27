@@ -54,7 +54,7 @@
 
 流内 `response.failed` 的 `response.error.headers` 添加 `Retry-After`；单独 `error` 容量事件适配为原生可识别的 `response.failed`，保留原错误内容。HTTP 429/500/502/503/504 仅在有界 JSON 正文明确报告容量错误时添加外层和嵌套等待信息。401/403/413、普通错误、未知格式和不可解码响应不改写；请求协商 `Accept-Encoding: identity`，编码异常时原样透传。等待取软件设置与有效上游建议的较大值。
 
-设置为 `capacity_retry_enabled`、`capacity_retry_max_retries`（1–99，默认 10）及 `capacity_retry_delay_seconds`（1–99，默认 30）。功能在新请求开始时决定是否介入，已开启请求在每次错误发生时读取当前开关及等待时间；次数通过 `ProviderManager` 写入接入 provider 的标准 `stream_max_retries`，并设置 `request_max_retries=0`，避免 HTTP 重试再叠加。原生按当前生成步骤捕获次数，因此修改次数需重新加载 Codex 配置，正在运行的步骤不热更新；重启 ChatGPT/Codex 可确保加载。该预算也适用于其他可重试流错误。关闭功能或取消接入会可逆恢复原字段，保留并发用户修改及配置备份。
+设置为 `capacity_retry_enabled`、`capacity_retry_max_retries`（1–99，默认 15）及 `capacity_retry_delay_seconds`（1–99，默认 30）。功能在新请求开始时决定是否介入，已开启请求在每次错误发生时读取当前开关及等待时间；次数通过 `ProviderManager` 写入接入 provider 的标准 `stream_max_retries`，并设置 `request_max_retries=0`，避免 HTTP 重试再叠加。原生按当前生成步骤捕获次数，因此修改次数需重新加载 Codex 配置，正在运行的步骤不热更新；重启 ChatGPT/Codex 可确保加载。该预算也适用于其他可重试流错误。关闭功能或取消接入会可逆恢复原字段，保留并发用户修改及配置备份。
 
 `ResponseObservation` 只读识别终态、容量错误及首个输出。`RetryJournal` 继续使用独立的 `retry-diagnostics.sqlite`，保留旧日志，新日志标记 `version=2` / `mode=native`。每条中转记录只有一次上游尝试，`native_retry_advised` 表示已交给原生的重试建议，不冒充实际观察到的原生重试次数。右栏和趋势可标记重试提示；历史 `capacity_retry_count` 保留原含义。日志仅保存白名单结构元信息，不保存对话、工具内容、密文或认证信息。每条最多 512 个事件；异常最多 30 天，普通成功最多 24 小时 / 2,000 条，总计最多 20,000 条及 ≈33.55 MB，空闲时回收空间。读写失败不得影响转发。
 

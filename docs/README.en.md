@@ -50,7 +50,7 @@ Predictive protection needs valid token usage in a completed response to finish 
 
 When enabled, the relay adds native `Retry-After` advice to explicit model capacity errors, allowing Codex to wait and continue the current step automatically. The relay does not wait, replay requests, or buffer complete responses. Text and tool calls continue streaming, and capacity errors after output has started can receive retry advice too.
 
-Set 1–99 retries (default 10) and a wait of 1–99 seconds (default 30); longer upstream delays are honored. The count is written to the connected provider's standard `stream_max_retries`, with `request_max_retries` set to 0 to avoid an additional HTTP request retry budget. This native stream retry budget also applies to other retryable stream errors. Disabling the feature or disconnecting restores both original fields while preserving concurrent user edits.
+Set 1–99 retries (default 15) and a wait of 1–99 seconds (default 30); longer upstream delays are honored. The count is written to the connected provider's standard `stream_max_retries`, with `request_max_retries` set to 0 to avoid an additional HTTP request retry budget. This native stream retry budget also applies to other retryable stream errors. Disabling the feature or disconnecting restores both original fields while preserving concurrent user edits.
 
 Count changes require Codex to reload its configuration and do not update a step already running. Restarting ChatGPT/Codex ensures the new configuration is loaded. The toggle applies to new requests; wait time changes apply immediately to subsequent capacity errors on enabled requests. The count is a maximum; cancellation and non-retryable errors can still end a task.
 
