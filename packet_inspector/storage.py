@@ -15,6 +15,7 @@ import zlib
 from .analyzer import CLASSIFICATION_VERSION, classify_request, encode, compare_packets
 from .maintenance import SQLiteReclaimer
 from .request_context import packet_metadata, trend_packet_metadata
+from .response_usage import compact_packet_usage
 
 SUMMARY_COLUMNS = "id,created,thread,status,method,kind,status_key,state,capture_owner,wire_bytes,stored_bytes,meta"
 COMPRESSED_SIZE_SQL = "coalesce(json_extract(meta,'$.overflow_original_wire_bytes'),json_extract(meta,'$.usage_override_request_bytes'),json_extract(meta,'$.outbound_wire_bytes'),-1)"
@@ -61,6 +62,7 @@ class Store:
             c.execute("CREATE INDEX IF NOT EXISTS packets_thread ON packets(thread, created DESC)")
             c.execute(f"CREATE INDEX IF NOT EXISTS packets_retained_details ON packets(created,id) WHERE {RETAINED_DETAILS}")
             self._init_summaries(c)
+            self._compact_usage(c, limit=64)
             # Other relay workers may still be streaming during an upgrade.
             self._recover_owner(c, self.capture_owner)
             # The retired observer has no writer left to finish its records.
@@ -138,7 +140,7 @@ class Store:
                 "time": datetime.fromtimestamp(created, timezone.utc).isoformat(),
                 "state": "captured", "source": meta.get("source", "live"),
                 "capture_owner": self.capture_owner}
-        meta = packet_metadata(meta)
+        meta = compact_packet_usage(packet_metadata(meta))
         if self.max_detail_count == 0:
             meta = self._basic_metadata(meta)
             content = None
@@ -152,8 +154,22 @@ class Store:
 
     @staticmethod
     def _basic_metadata(meta):
-        return {**{key: value for key, value in meta.items() if key not in DETAIL_META_FIELDS},
+        return {**{key: value for key, value in compact_packet_usage(meta).items() if key not in DETAIL_META_FIELDS},
                 "details_evicted": True}
+
+    @staticmethod
+    def _compact_usage(c, limit):
+        # Compatible with draining older writers; do not touch request bodies.
+        return c.execute("""UPDATE packets SET meta=json_remove(meta,
+            '$.upstream_usage.attribution','$.reported_usage.attribution') WHERE id IN (
+            SELECT id FROM packets WHERE instr(meta,'\"attribution\"')>0 AND (
+            json_type(meta,'$.upstream_usage.attribution') IS NOT NULL OR
+            json_type(meta,'$.reported_usage.attribution') IS NOT NULL)
+            ORDER BY created,id LIMIT ?)""", (limit,)).rowcount
+
+    def compact_usage_records(self, limit=16):
+        with self.lock, self.connect() as c:
+            return self._compact_usage(c, limit)
 
     def _discard_details(self, c, row):
         meta = json.dumps(self._basic_metadata(json.loads(row["meta"])), ensure_ascii=False)
@@ -217,6 +233,7 @@ class Store:
                     fields = {key: value for key, value in fields.items()
                               if key not in DETAIL_META_FIELDS | {"details_evicted"}}
                 meta.update(fields)
+                meta = compact_packet_usage(meta)
                 c.execute("UPDATE packets SET status=?,meta=? WHERE id=?",
                           (meta.get("status"), json.dumps(meta, ensure_ascii=False), packet_id))
                 self._prune(c)

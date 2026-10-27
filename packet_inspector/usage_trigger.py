@@ -1,14 +1,13 @@
 """An explicit relay option to prompt native compaction through response usage."""
 from __future__ import annotations
 
-from copy import deepcopy
 from itertools import chain
 import json
 import re
 from urllib.parse import urlsplit
 
 from .analyzer import classify_request, decode_body
-from .response_usage import token_values
+from .response_usage import compact_usage, token_values
 
 DEFAULT_BUDGET_BYTES = 1_000_000
 TOKEN_HEADROOM_BYTES = 50_000
@@ -80,7 +79,7 @@ class UsageStream:
         usage = response.get("usage")
         if token_values(usage) is None:
             return False
-        original = deepcopy(usage)
+        original = compact_usage(usage)
         if not self.rewrite_usage:
             self.record(upstream_usage=original)
             return False
@@ -89,7 +88,7 @@ class UsageStream:
             usage["input_tokens"] = REPORTED_INPUT_TOKENS
             usage["total_tokens"] = REPORTED_INPUT_TOKENS + usage["output_tokens"]
         # Commit before the client can observe the rewritten completion.
-        self.record(upstream_usage=original, reported_usage=deepcopy(usage),
+        self.record(upstream_usage=original, reported_usage=compact_usage(usage),
                     usage_override_applied=changed)
         return changed
 
