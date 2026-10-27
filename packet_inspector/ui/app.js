@@ -2042,15 +2042,21 @@ class TokenTrendView {
     this.services=services;this.active=false;this.loading=false;this.hydrating=false;
     this.packets=new Map();this.native=new Map();this.hours=1;this.previewPackets=null;this.oldestCreated=null;this.boundsReady=false;this.paintRefresh=null;
     this.revision=null;this.lastFull=0;this.query="";this.error=false;this.limited=false;
-    this.series=[];this.hover=null;this.hoverChart=null;this.hoverSeries=null;this.frame=null;this.legendVersion="";
+    this.series=[];this.hover=null;this.hoverChart=null;this.hoverSeries=null;this.hoverEvent=null;this.focusEvent=null;this.frame=null;this.legendVersion="";
     this.charts=[{key:"size",field:"size",prefix:"trend-size"},{key:"token",field:"input",prefix:"trend"}].map(chart=>({
-      ...chart,svg:$(chart.prefix+"-chart"),plot:$(chart.prefix+"-plot"),tooltip:$(chart.prefix+"-tooltip"),empty:$(chart.prefix+"-empty"),points:[],bounds:null,focusLayer:null
+      ...chart,svg:$(chart.prefix+"-chart"),plot:$(chart.prefix+"-plot"),tooltip:$(chart.prefix+"-tooltip"),empty:$(chart.prefix+"-empty"),points:[],eventNodes:[],eventKey:null,bounds:null,focusLayer:null
     }));
     this.tooltipHost=$("trend-charts");
     this.timeAxis=$("trend-time-axis");this.guide=$("trend-focus");this.timeTooltip=$("trend-time-tooltip");
     for(const icon of document.querySelectorAll("[data-trend-marker]")) {
       const key=icon.dataset.trendMarker,shape=TokenTrendView.markerShape(key);if(!shape)continue;
       const {tag,...attrs}=shape;icon.replaceChildren(this.svgNode(tag,{...attrs,class:"trend-event trend-event-"+key}));
+    }
+    this.eventLegend=["predictive","overflow","retry","compact"].map(key=>({key,button:$("trend-event-"+key)}));
+    for(const {key,button} of this.eventLegend) {
+      const highlight=(field,value)=>{this[field]=value;this.hover=null;this.hoverChart=null;this.hoverSeries=null;this.emphasis=null;this.renderFocus();};
+      button.onpointerenter=()=>highlight("hoverEvent",key);button.onpointerleave=()=>highlight("hoverEvent",null);
+      button.onfocus=()=>highlight("focusEvent",key);button.onblur=()=>highlight("focusEvent",null);
     }
     this.range=$("trend-range-slider");this.rangeValue=$("trend-range-value");
     this.statusRange();this.updateRange();
@@ -2144,7 +2150,7 @@ class TokenTrendView {
   setRange(hours) {if(!this.boundsReady||!Number.isFinite(hours))return;this.hours=hours;this.updateRange();this.scheduleRender();}
   cancelPending() {this.controller?.abort();this.nativeController?.abort();this.controller=null;this.nativeController=null;this.paintRefresh=null;this.previewPackets=null;this.loading=false;this.hydrating=false;}
   setActive(active) {
-    this.active=active;this.hover=null;this.hoverChart=null;this.hoverSeries=null;this.emphasis=null;
+    this.active=active;this.hover=null;this.hoverChart=null;this.hoverSeries=null;this.hoverEvent=null;this.focusEvent=null;this.emphasis=null;
     if(!active){this.cancelPending();this.guide.replaceChildren();this.timeTooltip.hidden=true;for(const chart of this.charts)chart.tooltip.hidden=true;}
     else {
       this.render();const ticket={};this.paintRefresh=ticket;
@@ -2254,19 +2260,22 @@ class TokenTrendView {
     }
     reconcileContent($("trend-series"),fragment);
   }
+  eventKey() {return this.hoverEvent||this.focusEvent||null;}
   marker(point,layer) {
     const events=point.events.filter(value=>["overflow","compact","predictive","retry"].includes(value));
     const key=["overflow","compact","predictive","retry"].find(value=>events.includes(value)),shape=TokenTrendView.markerShape(key);
     if(!shape)return;
     const {tag,...attrs}=shape,x=point.x,y=point.y;
-    layer.append(this.svgNode(tag,{...attrs,class:"trend-event trend-event-"+key,transform:`translate(${x} ${y})`,style:"--series-color:"+point.series.color}));
-    if(key!=="overflow"&&events.length>1)layer.append(this.svgNode("text",{x:x+6,y:y-6,class:"trend-event-count",style:"--series-color:"+point.series.color},"+"+(events.length-1)));
+    const selected=this.eventKey(),node=this.svgNode("g",{class:"trend-event-node"+(selected?(events.includes(selected)?" highlighted":" dimmed"):""),"data-events":events.join(" "),"data-packet":point.packet.id,style:"--series-color:"+point.series.color});
+    node.append(this.svgNode(tag,{...attrs,class:"trend-event trend-event-"+key,transform:`translate(${x} ${y})`}));
+    if(key!=="overflow"&&events.length>1)node.append(this.svgNode("text",{x:x+6,y:y-6,class:"trend-event-count"},"+"+(events.length-1)));
+    layer.append(node);return node;
   }
   render() {
     if(!this.active)return;
     this.updateRange();const model=this.model();this.series=model.series;this.renderLegend(model);
     if(!model.visible.some(group=>group.id===this.hoverSeries&&group.points.some(point=>point.input!==null||point.size!==null)))this.hoverSeries=null;
-    const emphasis=this.emphasis||this.hoverSeries||(this.hover?model.visible.find(group=>group.points.some(point=>point.packet.id===this.hover&&(point.input!==null||point.size!==null)))?.id:null);
+    const emphasis=this.eventKey()?null:this.emphasis||this.hoverSeries||(this.hover?model.visible.find(group=>group.points.some(point=>point.packet.id===this.hover&&(point.input!==null||point.size!==null)))?.id:null);
     const start=model.now-this.hours*3600,end=model.now;
     for(const chart of this.charts)this.renderChart(chart,model,start,end,emphasis);
     this.renderTimeAxis();
@@ -2274,7 +2283,8 @@ class TokenTrendView {
   }
   renderChart(chart,model,start,end,emphasis) {
     const width=chart.plot.clientWidth,height=chart.plot.clientHeight;
-    if(!width||!height){chart.points=[];chart.bounds=null;return;}
+    if(!width||!height){chart.points=[];chart.eventNodes=[];chart.bounds=null;return;}
+    chart.eventKey=this.eventKey();chart.svg.classList.toggle("trend-event-filtering",!!chart.eventKey);chart.eventNodes=[];
     const left=104,right=28,top=30,bottom=12,plotWidth=Math.max(1,width-left-right),plotHeight=Math.max(1,height-top-bottom);
     const known=model.visible.flatMap(group=>group.points).filter(point=>point[chart.field]!==null);
     const budget=this.services.status()?.budget_bytes,limit=chart.key==="size"&&Number.isSafeInteger(budget)&&budget>0?budget:null;
@@ -2299,11 +2309,11 @@ class TokenTrendView {
         const value=source[chart.field];if(value===null)continue;
         const point={...source,value,series:group,x:x(source.packet.created),y:y(value)};
         path+=(pen?"L":"M")+point.x.toFixed(2)+","+point.y.toFixed(2);pen=true;chart.points.push(point);
-        if(point.events.some(event=>["predictive","overflow","retry","compact"].includes(event)))this.marker(point,events);
-        else if(!lastDot||Math.hypot(point.x-lastDot.x,point.y-lastDot.y)>=4){layer.append(this.svgNode("circle",{cx:point.x,cy:point.y,r:2.1,fill:group.color}));lastDot=point;}
+        if(point.events.some(event=>["predictive","overflow","retry","compact"].includes(event)))chart.eventNodes.push(this.marker(point,events));
+        else if(!lastDot||Math.hypot(point.x-lastDot.x,point.y-lastDot.y)>=4){layer.append(this.svgNode("circle",{cx:point.x,cy:point.y,r:2.1,fill:group.color,class:"trend-sample"}));lastDot=point;}
         lastPoint=point;
       }
-      if(lastPoint&&lastDot!==lastPoint&&!lastPoint.events.length)layer.append(this.svgNode("circle",{cx:lastPoint.x,cy:lastPoint.y,r:2.1,fill:group.color}));
+      if(lastPoint&&lastDot!==lastPoint&&!lastPoint.events.length)layer.append(this.svgNode("circle",{cx:lastPoint.x,cy:lastPoint.y,r:2.1,fill:group.color,class:"trend-sample"}));
       layer.prepend(this.svgNode("path",{d:path,class:"trend-curve",stroke:group.color}));layer.append(events);root.append(layer);
     }
     if(limit!==null) {
@@ -2353,7 +2363,8 @@ class TokenTrendView {
   }
   renderFocus() {
     if(!this.active)return;
-    const anchor=this.charts.map(chart=>chart.points.find(value=>value.packet.id===this.hover)).find(Boolean),emphasis=this.emphasis||this.hoverSeries||anchor?.series.id;
+    const event=this.eventKey(),anchor=event?null:this.charts.map(chart=>chart.points.find(value=>value.packet.id===this.hover)).find(Boolean),emphasis=event?null:this.emphasis||this.hoverSeries||anchor?.series.id;
+    for(const {key,button} of this.eventLegend)button.classList.toggle("highlighted",key===event);
     for(const item of $("trend-series").children) {
       const active=!!emphasis&&item.dataset.renderKey==="trend-series:"+emphasis;
       item.classList.toggle("active",active);item.setAttribute("aria-current",String(active));
@@ -2376,6 +2387,14 @@ class TokenTrendView {
     for(const chart of this.charts) {
       chart.tooltip.hidden=true;
       if(!chart.bounds||!chart.focusLayer)continue;
+      chart.svg.classList.toggle("trend-event-filtering",!!event);
+      if(chart.eventKey!==event) {
+        for(const node of chart.eventNodes) {
+          const matched=!!event&&node.dataset.events.split(" ").includes(event);
+          node.classList.toggle("highlighted",matched);node.classList.toggle("dimmed",!!event&&!matched);
+        }
+        chart.eventKey=event;
+      }
       for(const line of chart.svg.querySelectorAll("[data-series]"))line.classList.toggle("dimmed",!!emphasis&&line.dataset.series!==emphasis);
       chart.focusLayer.replaceChildren();if(!anchor)continue;
       const point=chart.points.find(value=>value.packet.id===this.hover);
