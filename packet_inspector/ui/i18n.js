@@ -345,7 +345,7 @@ const uiI18n = (() => {
     "{level}级":"Level {level}",
     "选择压缩等级":"Choose compression level",
     "关闭等级选择":"Close level selection",
-    "按原始未压缩包分组估算，大小变化相对原始包。":"Estimates grouped by original uncompressed size; changes are relative to that original size.",
+    "按原始未压缩包分组估算，大小变化相对原始包。各列独立比较，绿色较优、黄色较差。":"Estimates grouped by original uncompressed size; changes are relative to that original size. Each column is compared separately: green is better, yellow is worse.",
     "原始包＜1.5 MB":"Original <1.5 MB",
     "原始包≥1.5 MB":"Original ≥1.5 MB",
     "等级":"Level",
