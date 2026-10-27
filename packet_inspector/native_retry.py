@@ -11,7 +11,7 @@ import math
 from .response_events import capacity_error, notify, MAX_OBSERVATION_BYTES
 from .usage_trigger import UsageStream
 
-DEFAULT_RETRIES = 10
+DEFAULT_RETRIES = 15
 MAX_RETRIES = 99
 DEFAULT_DELAY_SECONDS = 30
 MAX_DELAY_SECONDS = 99

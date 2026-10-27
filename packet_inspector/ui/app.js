@@ -887,7 +887,7 @@ function fillSettings() {
     $("detail-limit").value=s.max_detail_packets??s.max_packets;
     $("start-on-login").checked=!!s.start_on_login;
     $("capacity-retry").checked=!!s.capacity_retry_enabled;
-    $("capacity-retry-count").value=s.capacity_retry_max_retries??10;
+    $("capacity-retry-count").value=s.capacity_retry_max_retries??15;
     $("capacity-retry-delay").value=s.capacity_retry_delay_seconds??30;
   }
   for(const id of ["storage-limit","packet-limit"])$(id).disabled=settingsSaving;
