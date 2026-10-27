@@ -783,9 +783,10 @@ function renderList() {
     const flags=packetProtection(p),protection=[];
     if(flags.predictive)protection.push(t("预测保护"));
     if(flags.overflow)protection.push(t("超限保护"));
+    if(flags.retry)protection.push(t(p.native_retry_advised===true?"重试提示":"自动重试"));
     if(p.overflow_compaction_calls>0)protection.push(t("生成摘要 ")+nf.format(p.overflow_compaction_calls)+t(" 次"));
     if(p.overflow_cache_hit===true)protection.push(t("复用摘要"));
-    const row=el("tr",["request-"+packetStatus(p),state.selected===p.id?"selected":"",flags.retry?"capacity-retried":""].filter(Boolean).join(" ")), date=new Date(p.created*1000);
+    const row=el("tr",["request-"+packetStatus(p),state.selected===p.id?"selected":""].filter(Boolean).join(" ")), date=new Date(p.created*1000);
     const time=el("button","packet-open");
     time.append(el("span","packet-date",dateFormat.format(date)),el("span","packet-clock",clockFormat.format(date)));
     time.title=timestampFormat.format(date);
@@ -798,13 +799,13 @@ function renderList() {
     after.title=upload===null?t("处理后包大小未记录"):t("处理后包：")+bytes(upload);
     row.dataset.packetId=p.id;row.dataset.session=p.thread_id||"";row.title=(states[p.state]||p.state)+(p.status?" · HTTP "+p.status:"")+"\n"+(p.thread_id?"session_id: "+p.thread_id:t("会话未识别"));
     if(flags.retry)row.title+="\n"+(p.native_retry_advised===true?t("已向 Codex 发送重试提示"):t("自动重试：{count} 次").replace("{count}",nf.format(capacityRetryCount(p))));
-    if(protection.length)after.title+=t("\n已触发请求大小保护：")+protection.join(" · ");
+    if(protection.length)after.title+=t("\n已触发请求保护：")+protection.join(" · ");
     for (const [index,value] of [time,type,before].entries()) {
       const td=el("td",index===1?"packet-kind":"");
       if(value instanceof Node)td.append(value);else td.textContent=value;
       row.append(td);
     }
-    const compressed=el("td",["packet-compressed",flags.predictive?"predictive-protected":"",flags.overflow?"overflow-protected":""].filter(Boolean).join(" "));
+    const compressed=el("td",["packet-compressed",flags.predictive?"predictive-protected":"",flags.overflow?"overflow-protected":"",flags.retry?"retry-protected":""].filter(Boolean).join(" "));
     compressed.title=after.title;compressed.append(after);row.append(compressed);
     const tokens=el("td","packet-tokens");listTokenCells.set(p.id,tokens);renderListTokens(p);row.append(tokens);
     bindSelectableRow(row,current=>selectPacket(current.dataset.packetId));fragment.append(row);
@@ -1535,7 +1536,7 @@ function renderCompression(m) {
   if(predictiveArmed&&m.usage_override_applied!==true&&!predictiveSatisfied)predictive.title=t("已达到保护条件；需要完整响应中的有效 Token 用量才能完成改写。");
   const summaryFailed=typeof m.relay_error==="string"&&m.relay_error.startsWith("overflow_");
   fact(steps,t("超限保护"),summaryFailed?t("处理失败"):triggerStatus(summaryTriggered)).dataset.protection="size";
-  fact(steps,t(m.native_retry_mode==="native"||m.native_retry_advised===true?"原生重试提示":"自动重试"),triggerStatus(m.native_retry_advised===true||capacityRetryCount(m)>0)).dataset.protection="retry";
+  fact(steps,t(m.native_retry_mode==="native"||m.native_retry_advised===true?"重试提示":"自动重试"),triggerStatus(m.native_retry_advised===true||capacityRetryCount(m)>0)).dataset.protection="retry";
   root.append(steps);reconcileContent($("compression-content"),root);renderProtectionPanelState();
 }
 function bars(title, rows, total,bodyAvailable=true) {

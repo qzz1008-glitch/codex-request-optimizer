@@ -48,8 +48,11 @@
 .packet-table tbody tr.selected{outline:1px solid var(--accent);outline-offset:-1px}
 .packet-table .packet-compressed.predictive-protected{background:#7063b81a;box-shadow:inset -3px 0 #7063b8}
 .packet-table .packet-compressed.overflow-protected{background:#c58a321a;box-shadow:inset -3px 0 #c58a32}
-.packet-table tbody tr.capacity-retried:not(.request-failed):not(.request-interrupted){--row-bg:#edf8fa;--row-hover:#dff1f4}
-.packet-table tbody tr.capacity-retried{box-shadow:inset 3px 0 #167f8e}
+.packet-table .packet-compressed.retry-protected{background:#167f8e1a;box-shadow:inset -3px 0 #167f8e}
+.packet-table .packet-compressed.predictive-protected.overflow-protected{box-shadow:inset -3px 0 #c58a32,inset -6px 0 #7063b8}
+.packet-table .packet-compressed.predictive-protected.retry-protected{box-shadow:inset -3px 0 #167f8e,inset -6px 0 #7063b8}
+.packet-table .packet-compressed.overflow-protected.retry-protected{box-shadow:inset -3px 0 #167f8e,inset -6px 0 #c58a32}
+.packet-table .packet-compressed.predictive-protected.overflow-protected.retry-protected{box-shadow:inset -3px 0 #167f8e,inset -6px 0 #c58a32,inset -9px 0 #7063b8}
 .packet-table .packet-open{display:inline-flex;flex-direction:row;flex-wrap:nowrap;align-items:center;justify-content:center;gap:6px;border:0;border-radius:3px;padding:0;background:none;font:inherit;line-height:20px;color:inherit;text-align:center;font-variant-numeric:tabular-nums;white-space:nowrap}
 .packet-date{color:var(--muted);font-size:11px}
 .packet-clock{color:#35445b;font-weight:500}
