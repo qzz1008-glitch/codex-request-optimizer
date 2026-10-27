@@ -41,6 +41,7 @@ from .startup import configure_startup, startup_supported
 from .native_retry import (DEFAULT_RETRIES, MAX_RETRIES, DEFAULT_DELAY_SECONDS, MAX_DELAY_SECONDS,
                            NativeRetryStream, prepare_http_error)
 from .response_events import notify
+from .http_io import UPSTREAM_READ_TIMEOUT_SECONDS
 from .retry_diagnostics import RetryJournal, ResponseObservation
 from .usage_trigger import (raw_chunks, request_size as usage_trigger_size,
                             trigger_threshold, DEFAULT_BUDGET_BYTES, MIN_BUDGET_BYTES)
@@ -857,7 +858,8 @@ class Handler(BaseHTTPRequestHandler):
         local = urlsplit(upstream).hostname in {"localhost", "127.0.0.1", "::1"}
         opener = self.server.local_opener if local else self.server.opener
         try:
-            response = opener.open(Request(upstream + suffix, data=body, headers=compact_headers, method="POST"), timeout=120)
+            response = opener.open(Request(upstream + suffix, data=body, headers=compact_headers, method="POST"),
+                                   timeout=UPSTREAM_READ_TIMEOUT_SECONDS)
         except HTTPError as exc:
             detail = ""
             try:
@@ -1111,7 +1113,7 @@ class Handler(BaseHTTPRequestHandler):
                            outbound_content_encoding=outbound_encoding)
                 opener = self.server.local_opener if local_upstream else self.server.opener
                 notify(diagnostic.record if diagnostic else None, "attempt_started", attempt=1)
-                response = opener.open(request, timeout=600)
+                response = opener.open(request, timeout=UPSTREAM_READ_TIMEOUT_SECONDS)
             except HTTPError as exc:
                 response = exc
             notify(diagnostic.record if diagnostic else None, "response_headers", status=response.status)

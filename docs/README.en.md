@@ -56,6 +56,8 @@ Set 1–99 retries (default 15) and a wait of 1–99 seconds (default 30); longe
 
 Count changes require Codex to reload its configuration and do not update a step already running. Restarting ChatGPT/Codex ensures the new configuration is loaded. The toggle applies to new requests; wait time changes apply immediately to subsequent capacity errors on enabled requests. The count is a maximum; cancellation and non-retryable errors can still end a task.
 
+Normal forwarding and overflow summaries use the same 300-second upstream read idle timeout, matching Codex's native default. Incoming response data allows a generation to continue without a total duration limit. Codex handles timeouts under its native rules; the relay does not retry requests itself.
+
 “Native retry advice” in request details means wait information was sent to Codex, not that a native retry was observed. Actual retry records from older versions remain available. Background diagnostics are retained separately from request bodies: abnormal records for up to 30 days; ordinary successful requests for 24 hours, limited to 2,000 records. Automatic cleanup also applies a 20,000-record and ≈33.55 MB content budget. Logs contain only timestamps, settings, and structural events, without conversation text, tool content, or authentication data.
 
 ### 🖼️ Image request optimization
