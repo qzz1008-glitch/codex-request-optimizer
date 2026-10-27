@@ -10,7 +10,7 @@ A tool for Windows x64 (64-bit) that analyzes and optimizes Codex requests. Brow
 
 ### 🔎 Session and request analysis
 
-- Request and response shows only recorded technical information such as final states, response IDs, and tool names. Reply text, progress messages, and empty-reply placeholders are omitted. Response information is retained with requests, without a separate record limit.
+- Request and response shows only the model, combined result, and total time by default, with a recorded error reason when available. Response information is retained with requests, without a separate record limit.
 
 Browse request records by session to see what each request sent, how much space it used, and how it was handled.
 
