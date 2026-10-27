@@ -670,7 +670,7 @@ class Handler(BaseHTTPRequestHandler):
                             raise ValueError("invalid boolean setting: " + key)
                         protection_values.append(data[key])
                 if len(set(protection_values)) > 1:
-                    raise ValueError("包大小保护开关值冲突")
+                    raise ValueError("请求大小保护开关值冲突")
                 if protection_values:
                     candidate["packet_size_protection_enabled"] = protection_values[0]
                 if "auto_zstd_level_enabled" in data:
