@@ -58,6 +58,11 @@ function dualRows(){return [
  packet(102,{created:now-200,usage_override_applied:true,usage_override_request_bytes:250000,outbound_wire_bytes:200000}),
  packet(103,{created:now-100,upstream_usage:{input_tokens:300},overflow_cache_hit:true,overflow_original_wire_bytes:400000,outbound_wire_bytes:300000}),
  packet(104,{created:now-50,is_compaction:true,outbound_wire_bytes:150000})];}
+function eventRows(){return [
+ packet(701,{usage_override_applied:true}),packet(702,{overflow_cache_hit:true,native_retry_advised:true}),
+ packet(703,{thread_id:'session-b',native_retry_advised:true}),packet(704,{thread_id:'session-b',is_compaction:true}),
+ packet(705),packet(706,{thread_id:'session-b',usage_override_applied:true,native_retry_advised:true})
+].map((row,index)=>({...row,upstream_usage:{input_tokens:100+index*100},outbound_wire_bytes:100000+index*100000}));}
 (async()=>{
  await test('size axis steps use decimal bytes and match the configured limit units',()=>{
   const scale=View.sizeScale(1000000);
@@ -286,6 +291,64 @@ function dualRows(){return [
   for(const chart of result.charts){assert.equal(chart.points.length,0);assert.equal(chart.empty.hidden,false);}
   ids.get('trend-search').oninput({currentTarget:{value:''}});assert.equal(result.query,'');
   for(const chart of result.charts)assert.equal(new Set(chart.points.map(point=>point.series.id)).size,2);
+ });
+ await test('all mechanism markers retain their session color and existing priority shapes',()=>{
+  const {result}=rendered(eventRows());
+  for(const chart of result.charts) {
+   const curves=chart.svg.querySelectorAll('[data-series]');assert.equal(chart.eventNodes.length,chart.key==='size'?5:4);
+   for(const node of chart.eventNodes) {
+    const point=chart.points.find(point=>point.packet.id===node.dataset.packet),curve=curves.find(curve=>curve.dataset.series===point.series.id);
+    assert.equal(node.attrs.style,'--series-color:'+chartNodes({svg:curve},'trend-curve')[0].attrs.stroke);
+    assert.equal(chartNodes({svg:node},'trend-event').length,1);assert.equal(node.attrs.class,'trend-event-node');
+   }
+   const overlap=chart.eventNodes.find(node=>node.dataset.packet===id(702));
+   assert.equal(chartNodes({svg:overlap},'trend-event-overflow').length,1);assert.equal(chartNodes({svg:overlap},'trend-event-count').length,0);
+   assert.equal(overlap.dataset.events,'overflow retry');
+  }
+ });
+ await test('hovering each mechanism legend highlights matching nodes in both charts without redrawing',()=>{
+  const {result,ids}=rendered(eventRows()),expected={predictive:[701,706],overflow:[702],retry:[702,703,706],compact:[704]};
+  result.services.api=()=>assert.fail('legend hover fetched data');result.render=()=>assert.fail('legend hover rebuilt charts');
+  result.hover=id(705);result.hoverChart='token';result.renderFocus();
+  for(const [key,numbers] of Object.entries(expected)) {
+   const button=ids.get('trend-event-'+key);button.onpointerenter();assert.equal(result.hover,null);assert.equal(result.hoverChart,null);assert.ok(button.attrs.class.includes('highlighted'));
+   for(const chart of result.charts) {
+    const present=numbers.filter(number=>chart.points.some(point=>point.packet.id===id(number)));
+    assert.ok(chart.svg.attrs.class.includes('trend-event-filtering'));
+    assert.deepEqual(Array.from(chart.eventNodes.filter(node=>node.attrs.class.includes('highlighted')),node=>node.dataset.packet).sort(),present.map(id).sort());
+    assert.equal(chart.eventNodes.filter(node=>node.attrs.class.includes('dimmed')).length,chart.eventNodes.length-present.length);
+    assert.equal(chart.svg.querySelectorAll('[data-series]').filter(node=>node.attrs.class.includes('dimmed')).length,0);
+    assert.equal(chart.tooltip.hidden,true);
+   }
+   assert.equal(result.timeTooltip.hidden,true);button.onpointerleave();
+   for(const chart of result.charts){assert.ok(!chart.svg.attrs.class.includes('trend-event-filtering'));assert.ok(chart.eventNodes.every(node=>node.attrs.class==='trend-event-node'));}
+  }
+ });
+ await test('keyboard focus highlights mechanisms and switching views resets highlight state',()=>{
+  const {result,ids}=rendered(eventRows()),predictive=ids.get('trend-event-predictive'),retry=ids.get('trend-event-retry');
+  predictive.onfocus();assert.equal(result.eventKey(),'predictive');retry.onpointerenter();assert.equal(result.eventKey(),'retry');
+  retry.onpointerleave();assert.equal(result.eventKey(),'predictive');predictive.onblur();assert.equal(result.eventKey(),null);
+  retry.onfocus();result.setActive(false);assert.equal(result.eventKey(),null);result.setActive(true);
+  for(const chart of result.charts){assert.ok(!chart.svg.attrs.class.includes('trend-event-filtering'));assert.ok(chart.eventNodes.every(node=>node.attrs.class==='trend-event-node'));}
+  assert.equal(result.eventLegend.filter(({button})=>button.attrs.class.includes('highlighted')).length,0);
+ });
+ await test('mechanism highlights survive live SVG publication and missing usage without bright flashes',()=>{
+  const {result,ids}=rendered([...eventRows(),packet(707,{usage_override_applied:true,outbound_wire_bytes:700000})]);
+  ids.get('trend-event-predictive').onpointerenter();let published=0;
+  for(const chart of result.charts){const replace=chart.svg.replaceChildren.bind(chart.svg);chart.svg.replaceChildren=fragment=>{
+   assert.ok(chart.svg.attrs.class.includes('trend-event-filtering'));
+   for(const node of chartNodes({svg:fragment},'trend-event-node')){
+    assert.equal(node.attrs.class.includes('highlighted'),node.dataset.events.split(' ').includes('predictive'));
+    assert.equal(node.attrs.class.includes('dimmed'),!node.dataset.events.split(' ').includes('predictive'));
+   }
+   published++;replace(fragment);
+  };}
+  for(let index=0;index<3;index++){
+   const next=packet(708+index,{thread_id:'session-b',usage_override_applied:true,upstream_usage:{input_tokens:900+index},outbound_wire_bytes:800000+index});
+   result.packets.set(next.id,next);result.render();
+  }
+  assert.equal(published,6);assert.ok(result.charts[0].eventNodes.some(node=>node.dataset.packet===id(707)));assert.ok(!result.charts[1].eventNodes.some(node=>node.dataset.packet===id(707)));
+  ids.get('trend-event-predictive').onpointerleave();for(const chart of result.charts)assert.equal(chartNodes(chart,'dimmed').length,0);
  });
  await test('one metric can render before the other and accepts later real zero usage',()=>{
   const row=packet(101,{outbound_wire_bytes:0}),{result}=rendered([row]),[size,token]=result.charts;

@@ -135,8 +135,10 @@ code.session-id{font-family:Consolas,"Cascadia Mono",monospace;font-size:11px;wo
 #trend-range-value{min-width:64px;text-align:right;white-space:nowrap;font-size:11px;font-variant-numeric:tabular-nums;color:var(--muted)}
 #trend-search{flex:1;width:0;height:30px;padding:4px 10px;font-size:12px}
 .trend-event-legend{display:flex;flex-wrap:wrap;gap:6px 14px;align-items:center;font-size:12px;white-space:nowrap}
-.trend-event-legend>span{display:inline-flex;align-items:center;gap:4px;color:var(--muted)}
-.trend-event-legend>span>span{font-size:11px}
+.trend-event-legend>button{display:inline-flex;align-items:center;gap:4px;padding:2px 4px;margin:-2px -4px;border:0;border-radius:4px;background:transparent;box-shadow:none;color:var(--muted);font:inherit}
+.trend-event-legend>button>span{font-size:11px}
+.trend-event-legend>button:hover,.trend-event-legend>button.highlighted{background:var(--soft);color:var(--ink)}
+.trend-event-legend>button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .trend-legend-marker{display:block;width:20px;height:20px;flex:none;overflow:visible}
 .trend-series{display:flex;flex-direction:column;gap:6px;flex:1;min-height:0;min-width:0;padding:2px;overflow-x:hidden;overflow-y:auto;scrollbar-gutter:stable;scrollbar-width:thin;scrollbar-color:#bac4d2 transparent}
 .trend-series-item{display:flex;align-items:center;gap:10px;flex:none;width:100%;min-width:0;min-height:38px;padding:8px 10px;border:1px solid var(--line);border-radius:7px;font-size:12px;line-height:18px;text-align:left;background:var(--panel)}
@@ -156,7 +158,8 @@ code.session-id{font-family:Consolas,"Cascadia Mono",monospace;font-size:11px;wo
 .trend-budget-label{fill:#9a6a24;font:11px "Segoe UI",sans-serif;paint-order:stroke;stroke:#fff;stroke-width:4px;stroke-linejoin:round}
 .trend-series-line{transition:opacity .12s}.trend-series-line.dimmed{opacity:.13}
 .trend-event{fill:none;stroke:var(--series-color,currentColor);stroke-width:1.5;vector-effect:non-scaling-stroke}
-
+.trend-event-filtering .trend-curve,.trend-event-filtering .trend-sample,.trend-event-node.dimmed{opacity:.13}
+.trend-event-node.highlighted .trend-event{stroke-width:2.8}
 .trend-event-count{fill:var(--series-color,currentColor);font:9px "Segoe UI",sans-serif;paint-order:stroke;stroke:white;stroke-width:3px}
 .trend-focus-line{stroke:#9baabd;stroke-dasharray:4 4;stroke-width:1;pointer-events:none}.trend-focus-dot{fill:none;stroke:var(--series-color,currentColor);stroke-width:1.5;pointer-events:none}
 .trend-empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:13px;pointer-events:none;padding:30px;text-align:center;background:#ffffffd9}
