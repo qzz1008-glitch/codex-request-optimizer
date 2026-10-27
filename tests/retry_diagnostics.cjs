@@ -40,7 +40,7 @@ Object.assign(context, {
 vm.runInContext(source.slice(source.indexOf('function renderCompression(m)'),source.indexOf('function bars(')),context);
 context.renderCompression(packet({outcome:'capacity_error',capacity_error_seen:true,stop_reason:'retry_limit'},3));
 let rows=rendered.children[1].children;
-assert.deepEqual(Array.from(rows,row=>row.label),['预测保护','超限保护','自动重试']);
+assert.deepEqual(Array.from(rows,row=>row.label),['预测保护','超限保护','重试保护']);
 assert.equal(rows[2].value,'已触发');
 context.renderCompression(packet({journal_available:false}));
 assert.equal(rendered.children[1].children[2].value,'未触发');
@@ -87,6 +87,6 @@ context.renderCompression({...interrupted,usage_override_applied:false,reported_
 assert.equal(facts(1)['Predictive protection'],'Already at threshold');
 context.renderCompression(packet({outcome:'capacity_error',capacity_error_seen:true,stop_reason:'retry_limit'},3));
 rows=rendered.children[1].children;
-assert.deepEqual(Array.from(rows,row=>row.label),['Predictive protection','Over-limit protection','Automatic retries']);
+assert.deepEqual(Array.from(rows,row=>row.label),['Predictive protection','Over-limit protection','Retry protection']);
 assert.equal(rows[2].value,'Triggered');
 console.log('Retry trigger status, actual retry markers and English labels passed.');
