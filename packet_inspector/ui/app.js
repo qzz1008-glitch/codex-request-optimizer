@@ -2051,7 +2051,7 @@ function isTrendGeneration(packet) {
 class TokenTrendView {
   constructor(services) {
     this.services=services;this.active=false;this.loading=false;this.hydrating=false;
-    this.packets=new Map();this.native=new Map();this.hours=1;this.previewPackets=null;this.oldestCreated=null;this.boundsReady=false;this.paintRefresh=null;
+    this.packets=new Map();this.native=new Map();this.hours=1;this.windowEnd=null;this.loadedBounds=null;this.requestBounds=null;this.windowTimer=null;this.previewPackets=null;this.oldestCreated=null;this.boundsReady=false;this.paintRefresh=null;
     this.revision=null;this.lastFull=0;this.query="";this.error=false;this.limited=false;
     this.series=[];this.hover=null;this.hoverChart=null;this.hoverSeries=null;this.hoverEvent=null;this.focusEvent=null;this.frame=null;this.legendVersion="";
     this.charts=[{key:"size",field:"size",prefix:"trend-size"},{key:"token",field:"input",prefix:"trend"}].map(chart=>({
@@ -2071,13 +2071,9 @@ class TokenTrendView {
     }
     this.range=$("trend-range-slider");this.rangeValue=$("trend-range-value");
     this.statusRange();this.updateRange();
-    this.range.oninput=()=>this.setRange(Number(this.range.value));
-    this.tooltipHost.addEventListener("wheel",event=>{
-      if(!this.active||!this.boundsReady||event.ctrlKey||event.metaKey||!Number.isFinite(event.deltaY)||!event.deltaY)return;
-      event.preventDefault();
-      const delta=event.deltaY*(event.deltaMode===1?16:event.deltaMode===2?400:1);
-      this.setRange(this.hours*Math.exp(Math.max(-240,Math.min(240,delta))/450));
-    },{passive:false});
+    this.range.oninput=()=>this.seek(Number(this.range.value));
+    this.tooltipHost.addEventListener("wheel",event=>this.navigateWheel(event),{passive:false});
+    $("trend-range").addEventListener("wheel",event=>this.navigateWheel(event,true),{passive:false});
     $("trend-search").oninput=event=>{this.query=event.currentTarget.value.trim().toLowerCase();this.hover=null;this.hoverChart=null;this.hoverSeries=null;this.emphasis=null;this.render();};
     this.resize=new ResizeObserver(()=>this.scheduleRender());
     for(const chart of this.charts) {
@@ -2132,6 +2128,41 @@ class TokenTrendView {
   }
   static color(id) {let hash=2166136261;for(const char of id)hash=Math.imul(hash^char.charCodeAt(0),16777619);return "hsl("+((hash>>>0)%360)+" 62% 42%)";}
   rangeLimit() {return !this.boundsReady||!Number.isFinite(this.oldestCreated)?1:Math.min(12,Math.max(1,(Date.now()/1000-this.oldestCreated+1)/3600));}
+  timeline(now=Date.now()/1000) {return {start:Math.min(now-3600,this.boundsReady&&Number.isFinite(this.oldestCreated)?this.oldestCreated-1:now-3600),end:now};}
+  viewport(now=Date.now()/1000) {
+    const bounds=this.timeline(now),duration=Math.min(bounds.end-bounds.start,Math.max(1,Math.min(12,this.hours||1))*3600);
+    const end=Math.max(bounds.start+duration,Math.min(bounds.end,Number.isFinite(this.windowEnd)?this.windowEnd:bounds.end));
+    return {start:end-duration,end};
+  }
+  covers(bounds,view=this.viewport()) {return !!bounds&&view.start>=bounds.since-.01&&(bounds.before===null||view.end<bounds.before+.01);}
+  queryWindow(now=Date.now()/1000) {
+    const view=this.viewport(now),end=Math.min(now,view.end+Math.max(0,(12*3600-(view.end-view.start))/2));
+    return {since:end-12*3600,before:end>=now?null:end+.001};
+  }
+  navigateWheel(event,onRange=false) {
+    if(!this.active||event.metaKey)return;
+    const raw=Math.abs(event.deltaX||0)>Math.abs(event.deltaY||0)?event.deltaX:event.deltaY;
+    if(!Number.isFinite(raw)||!raw)return;
+    if(!this.boundsReady){if(event.ctrlKey)event.preventDefault();return;}
+    event.preventDefault();const delta=raw*(event.deltaMode===1?16:event.deltaMode===2?400:1);
+    if(event.ctrlKey) {
+      let fraction=.5;
+      if(Number.isFinite(event.clientX)) {
+        if(onRange) {
+          const rect=this.range.getBoundingClientRect(),width=rect.width,view=this.viewport(),bounds=this.timeline();
+          const thumb=Math.min(width,Math.max(12,width*(view.end-view.start)/(bounds.end-bounds.start)));
+          fraction=(event.clientX-rect.left-(width-thumb)*Number(this.range.value))/Math.max(1,thumb);
+        }else {
+          const chart=this.charts[0],rect=chart.svg.getBoundingClientRect(),bounds=chart.bounds;
+          if(bounds&&rect.width)fraction=((event.clientX-rect.left)*bounds.width/rect.width-bounds.left)/(bounds.width-bounds.left-bounds.right);
+        }
+      }
+      this.setRange(this.hours*Math.exp(Math.max(-240,Math.min(240,delta))/450),Math.max(0,Math.min(1,fraction)));
+    }else {
+      const bounds=this.charts[0].bounds,width=bounds?bounds.width-bounds.left-bounds.right:500;
+      this.pan(Math.max(-1,Math.min(1,delta/Math.max(1,width)))*this.hours*3600);
+    }
+  }
   statusRange() {
     const storage=this.services.status()?.storage;
     if(!storage||!Object.hasOwn(storage,"oldest_created"))return false;
@@ -2153,13 +2184,40 @@ class TokenTrendView {
   }
   updateRange() {
     const maximum=this.rangeLimit();this.hours=Math.max(1,Math.min(maximum,Number.isFinite(this.hours)?this.hours:1));
+    const view=this.viewport(),bounds=this.timeline(),duration=view.end-view.start,travel=bounds.end-bounds.start-duration;
+    if(Number.isFinite(this.windowEnd))this.windowEnd=view.end;
     this.range.disabled=!this.boundsReady;this.range.setAttribute("aria-busy",String(!this.boundsReady));
-    this.range.max=String(maximum);this.range.value=String(this.hours);
+    this.range.max="1";this.range.value=String(travel>0?Math.max(0,Math.min(1,(view.start-bounds.start)/travel)):1);
+    const width=this.range.clientWidth||140;
+    this.range.style.setProperty("--trend-thumb-width",Math.min(width,Math.max(12,width*duration/(bounds.end-bounds.start)))+"px");
     const label=t("{hours} 小时").replace("{hours}",nf.format(Math.round(this.hours*100)/100));
-    this.rangeValue.textContent=label;this.range.setAttribute("aria-valuetext",label);
+    this.rangeValue.textContent=label;this.range.setAttribute("aria-valuetext",this.time(view.start)+" – "+this.time(view.end)+" · "+label);
   }
-  setRange(hours) {if(!this.boundsReady||!Number.isFinite(hours))return;this.hours=hours;this.updateRange();this.scheduleRender();}
-  cancelPending() {this.controller?.abort();this.nativeController?.abort();this.controller=null;this.nativeController=null;this.paintRefresh=null;this.previewPackets=null;this.loading=false;this.hydrating=false;}
+  navigate(end) {
+    const bounds=this.timeline(),duration=this.hours*3600;
+    end=Math.max(bounds.start+duration,Math.min(bounds.end,end));this.windowEnd=end>=bounds.end-.001?null:end;
+    this.hover=null;this.hoverChart=null;this.hoverSeries=null;this.updateRange();this.scheduleRender();this.ensureWindow();
+  }
+  setRange(hours,fraction=.5) {
+    if(!this.boundsReady||!Number.isFinite(hours))return;
+    const view=this.viewport(),next=Math.max(1,Math.min(this.rangeLimit(),hours));if(Math.abs(next-this.hours)<1e-9)return;
+    fraction=Number.isFinite(fraction)?Math.max(0,Math.min(1,fraction)):.5;
+    const anchor=view.start+(view.end-view.start)*fraction;this.hours=next;this.navigate(anchor+(1-fraction)*next*3600);
+  }
+  pan(seconds) {if(this.boundsReady&&Number.isFinite(seconds)&&seconds)this.navigate(this.viewport().end+seconds);}
+  seek(position) {
+    if(!this.boundsReady||!Number.isFinite(position))return;
+    const bounds=this.timeline(),duration=this.hours*3600;
+    this.navigate(bounds.start+duration+Math.max(0,Math.min(1,position))*(bounds.end-bounds.start-duration));
+  }
+  ensureWindow() {
+    if(!this.active||this.loading&&!this.requestBounds)return;
+    if(this.loading&&!this.covers(this.requestBounds))this.cancelPending();
+    clearTimeout(this.windowTimer);this.windowTimer=null;
+    if(this.covers(this.loadedBounds)||this.covers(this.requestBounds))return;
+    this.windowTimer=setTimeout(()=>{this.windowTimer=null;this.refresh(true);},120);
+  }
+  cancelPending() {this.controller?.abort();this.nativeController?.abort();clearTimeout(this.windowTimer);this.windowTimer=null;this.controller=null;this.nativeController=null;this.requestBounds=null;this.paintRefresh=null;this.previewPackets=null;this.loading=false;this.hydrating=false;}
   setActive(active) {
     this.active=active;this.hover=null;this.hoverChart=null;this.hoverSeries=null;this.hoverEvent=null;this.focusEvent=null;this.emphasis=null;
     if(!active){this.cancelPending();this.guide.replaceChildren();this.timeTooltip.hidden=true;for(const chart of this.charts)chart.tooltip.hidden=true;}
@@ -2172,19 +2230,23 @@ class TokenTrendView {
   async refresh(force=false) {
     if(!this.active||document.hidden||this.loading||this.paintRefresh)return;
     const revision=this.services.status()?.storage?.revision,now=Date.now();
-    const full=force||!this.lastFull||now-this.lastFull>=30000;
+    let full=force||!this.lastFull||now-this.lastFull>=30000||!this.covers(this.loadedBounds);
     if(!full&&revision===this.revision){this.render();this.hydrate();return;}
     const controller=new AbortController();this.controller=controller;this.loading=true;this.error=false;
-    const timeout=setTimeout(()=>controller.abort(),60000),incoming=new Map(),since=now/1000-12*3600;
+    clearTimeout(this.windowTimer);this.windowTimer=null;
+    const timeout=setTimeout(()=>controller.abort(),60000),incoming=new Map();
     const limit=this.services.status()?.trend_packets_supported?300:50,maximum=20000;let published=0;
     try {
       if(!await this.loadRange(controller,full))return;
+      if(!this.covers(this.loadedBounds))full=true;
+      const queryBounds=full?this.queryWindow(now/1000):this.loadedBounds,{since,before}=queryBounds;this.requestBounds=queryBounds;
       let after=null,limited=false;
       for(let page=0;page<Math.ceil(maximum/limit);page++) {
         const query=new URLSearchParams({limit:String(limit),sort:"created",direction:"desc",view:"trend",since:String(since)});if(after)query.set("after",after);
+        if(before!==null)query.set("before",String(before));
         const values=await this.services.api("/api/packets?"+query,undefined,controller.signal);
         controller.signal.throwIfAborted();if(!Array.isArray(values))throw Error("invalid trend data");
-        for(const packet of values)if(packet?.id&&Number.isFinite(packet.created)&&packet.created>=since)incoming.set(packet.id,TokenTrendView.packet(packet));
+        for(const packet of values)if(packet?.id&&Number.isFinite(packet.created)&&packet.created>=since&&(before===null||packet.created<before))incoming.set(packet.id,TokenTrendView.packet(packet));
         if(!published||Date.now()-published>=100) {
           if(!this.active||this.controller!==controller)return;
           this.previewPackets=new Map([...this.packets,...incoming]);this.scheduleRender();published=Date.now();
@@ -2203,14 +2265,14 @@ class TokenTrendView {
         }));this.activeCursor=offset+jobs.length;
       }
       controller.signal.throwIfAborted();if(!this.active||this.controller!==controller)return;
-      if(full){this.packets=incoming;this.lastFull=now;this.limited=limited;}else for(const [id,packet] of incoming)this.packets.set(id,packet);
-      for(const [id,packet] of this.packets)if(packet.created<since)this.packets.delete(id);
+      if(full){this.packets=incoming;this.loadedBounds=queryBounds;this.lastFull=now;this.limited=limited;}else for(const [id,packet] of incoming)this.packets.set(id,packet);
+      for(const [id,packet] of this.packets)if(packet.created<since||(before!==null&&packet.created>=before))this.packets.delete(id);
       if(this.packets.size>maximum){const keep=[...this.packets.values()].sort((a,b)=>b.created-a.created||b.id.localeCompare(a.id)).slice(0,maximum);this.packets=new Map(keep.map(packet=>[packet.id,packet]));this.limited=true;}
       for(const id of this.native.keys())if(!this.packets.has(id))this.native.delete(id);
       this.revision=revision;this.error=false;
     } catch(error) {if(this.active&&this.controller===controller)this.error=true;}
     finally {
-      clearTimeout(timeout);if(this.controller===controller){this.loading=false;this.controller=null;this.previewPackets=null;if(this.active){this.render();this.hydrate();}}
+      clearTimeout(timeout);if(this.controller===controller){this.loading=false;this.controller=null;this.requestBounds=null;this.previewPackets=null;if(this.active){this.render();this.hydrate();}}
     }
   }
   tokenData(packet) {
@@ -2240,9 +2302,9 @@ class TokenTrendView {
   model() {
     const names=new Map(this.services.sessions().map(row=>[row.thread_id,row.title||row.task_name||row.thread_id]));
     const groups=new Map();let unknown=0;
-    const now=Date.now()/1000,since=now-this.hours*3600;
+    const view=this.viewport(),now=view.end,since=view.start;
     for(const packet of (this.previewPackets||this.packets).values()) {
-      if(packet.created<since||(!packet.is_compaction&&!this.services.isGeneration(packet)))continue;
+      if(packet.created<since||packet.created>now||(!packet.is_compaction&&!this.services.isGeneration(packet)))continue;
       if(typeof packet.thread_id!=="string"||!packet.thread_id){unknown++;continue;}
       if(!groups.has(packet.thread_id))groups.set(packet.thread_id,{id:packet.thread_id,title:names.get(packet.thread_id)||packet.thread_id,color:TokenTrendView.color(packet.thread_id),points:[],latest:0});
       const group=groups.get(packet.thread_id);group.latest=Math.max(group.latest,packet.created);
@@ -2335,7 +2397,8 @@ class TokenTrendView {
     }
     chart.focusLayer=this.svgNode("g",{"pointer-events":"none"});root.append(chart.focusLayer);chart.svg.replaceChildren(root);
     chart.empty.hidden=known.length>0;
-    chart.empty.textContent=t(this.loading&&!this.packets.size?"正在加载趋势…":this.error&&!this.packets.size?"暂时无法加载趋势，请稍后重试":!model.matched.length?(this.query?"没有匹配的会话":"此时间范围内没有请求"):chart.key==="size"?"暂无可确认的包大小":"暂无可确认的 Token 用量");
+    const missingWindow=!this.packets.size||!this.covers(this.loadedBounds);
+    chart.empty.textContent=t((this.loading||this.windowTimer!==null)&&missingWindow?"正在加载趋势…":this.error&&missingWindow?"暂时无法加载趋势，请稍后重试":!model.matched.length?(this.query?"没有匹配的会话":"此时间范围内没有请求"):chart.key==="size"?"暂无可确认的包大小":"暂无可确认的 Token 用量");
   }
   renderTimeAxis() {
     const bounds=this.charts[0].bounds,root=document.createDocumentFragment();

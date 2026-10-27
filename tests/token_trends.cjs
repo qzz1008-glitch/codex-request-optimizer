@@ -13,7 +13,7 @@ let checks=0;
 function test(name,fn){return Promise.resolve().then(fn).then(()=>{checks++;}).catch(error=>{error.message=name+': '+error.message;throw error;});}
 function view(services={}) {
  const result=Object.create(View.prototype);
- Object.assign(result,{active:true,loading:false,hydrating:false,packets:new Map(),native:new Map(),hours:1,oldestCreated:now-12*3600,boundsReady:true,revision:null,lastFull:0,query:'',error:false,limited:false,
+ Object.assign(result,{active:true,loading:false,hydrating:false,packets:new Map(),native:new Map(),hours:1,windowEnd:null,loadedBounds:{since:now-12*3600,before:null},requestBounds:null,windowTimer:null,oldestCreated:now-12*3600,boundsReady:true,revision:null,lastFull:0,query:'',error:false,limited:false,
   services:{api:async()=>[],status:()=>({storage:{revision:1,oldest_created:now-12*3600},trend_packets_supported:true}),sessions:()=>[],peek:()=>null,isGeneration:context.isGeneration,...services},
   render(){},hydrate(){},scheduleRender(){}});
  return result;
@@ -36,6 +36,7 @@ function rendered(rows,services={}){
  const ids=new Map(),html=fs.readFileSync('packet_inspector/ui/index.html','utf8'),frames=[],events=new Map();
  for(const match of html.matchAll(/<(\w+)\b[^>]*\bid="([^"]+)"[^>]*>/g))ids.set(match[2],new Node(match[1]));
  ids.get('trend-charts').clientHeight=512;ids.get('trend-focus').clientHeight=512;
+ ids.get('trend-range-slider').clientWidth=140;
  ids.get('trend-time-axis').clientHeight=32;ids.get('trend-time-axis').top=480;
  for(const id of ['trend-size-tooltip','trend-tooltip']){ids.get(id).offsetWidth=150;ids.get(id).offsetHeight=30;}
  ids.get('trend-time-tooltip').offsetWidth=128;ids.get('trend-time-tooltip').offsetHeight=24;
@@ -47,12 +48,16 @@ function rendered(rows,services={}){
  context.localStorage={getItem:()=>null,setItem(){}};
  context.ResizeObserver=class{constructor(callback){this.callback=callback;this.observed=[];}observe(node){this.observed.push(node);}};
  context.requestAnimationFrame=callback=>{frames.push(callback);return frames.length;};
- const result=new View(view(services).services);result.active=true;result.packets=new Map(rows.map(row=>[row.id,row]));
+ const result=new View(view(services).services);result.active=true;result.loadedBounds={since:now-12*3600,before:null};result.packets=new Map(rows.map(row=>[row.id,row]));
  result.render();return {result,ids,frames,events};
 }
 function chartNodes(chart,cls){return chart.svg.all(node=>(node.attrs.class||'').split(' ').includes(cls));}
 function focusLines(result){return chartNodes({svg:result.guide},'trend-focus-line');}
 function nodeText(node){return node.textContent+node.children.map(nodeText).join(' ');}
+async function clocked(fn){
+ const previous=context.Date;let current=now*1000;context.Date=class extends Date{static now(){return current;}};
+ try{return await fn(delta=>{current+=delta;});}finally{context.Date=previous;}
+}
 function dualRows(){return [
  packet(101,{created:now-300,upstream_usage:{input_tokens:100},outbound_wire_bytes:100000}),
  packet(102,{created:now-200,usage_override_applied:true,usage_override_request_bytes:250000,outbound_wire_bytes:200000}),
@@ -362,9 +367,9 @@ function eventRows(){return [
  await test('range controls and resize redraw both charts using the same domain',()=>{
   const {result,ids,frames}=rendered([...dualRows(),packet(106,{created:now-7200,upstream_usage:{input_tokens:900},outbound_wire_bytes:900000})]);
   result.refresh=()=>assert.fail('zoom must not fetch history');
-  const slider=ids.get('trend-range-slider');slider.value='3';slider.oninput();assert.equal(result.hours,3);assert.equal(ids.get('trend-range-value').textContent,'3 小时');frames.shift()();
+  const slider=ids.get('trend-range-slider');result.setRange(3);assert.equal(result.hours,3);assert.equal(ids.get('trend-range-value').textContent,'3 小时');frames.shift()();
   for(const chart of result.charts)assert.ok(chart.points.some(point=>point.packet.id===id(106)));
-  slider.value='1';slider.oninput();frames.shift()();
+  slider.value='1';slider.oninput();assert.equal(result.hours,3);result.setRange(1);result.seek(1);frames.shift()();
   for(const chart of result.charts){assert.equal(chart.bounds.end-chart.bounds.start,3600);assert.ok(chart.points.every(point=>point.packet.id!==id(106)));chart.plot.clientWidth=800;chart.plot.clientHeight=260;}
   result.resize.callback();frames.shift()();
   for(const chart of result.charts)assert.equal(chart.svg.attrs.viewBox,'0 0 800 260');
@@ -457,16 +462,94 @@ function eventRows(){return [
   token=result.charts[1];[a,b]=token.points;token.svg.onpointermove({clientX:(a.x+b.x)/2,clientY:(a.y+b.y)/2});
   assert.equal(result.hoverSeries,null);assert.equal(result.hover,null);
  });
- await test('wheel and slider share local bounds without canceling an in-flight request',()=>{
+ await test('plain wheel pans and Ctrl wheel zooms locally without canceling covered history',()=>{
   const {result,ids,frames}=rendered(dualRows()),slider=ids.get('trend-range-slider');
   result.controller=new AbortController();result.loading=true;result.refresh=()=>assert.fail('local zoom performed network work');
   let prevented=0;const wheel=ids.get('trend-charts').events.get('wheel');assert.equal(wheel.options.passive,false);
-  wheel.callback({deltaY:120,deltaMode:0,preventDefault(){prevented++;}});
-  assert.ok(result.hours>1);assert.equal(Number(slider.value),result.hours);assert.equal(result.controller.signal.aborted,false);assert.equal(prevented,1);frames.shift()();
+  wheel.callback({deltaY:-120,deltaMode:0,preventDefault(){prevented++;}});
+  assert.equal(result.hours,1);assert.ok(Number(slider.value)<1);assert.equal(result.controller.signal.aborted,false);assert.equal(prevented,1);frames.shift()();
+  const thumb=parseFloat(slider.style['--trend-thumb-width']);wheel.callback({deltaY:120,ctrlKey:true,preventDefault(){prevented++;}});
+  assert.ok(result.hours>1);assert.ok(parseFloat(slider.style['--trend-thumb-width'])>thumb);assert.equal(prevented,2);frames.shift()();
   result.setRange(100);assert.equal(result.hours,12);result.setRange(-10);assert.equal(result.hours,1);
-  result.oldestCreated=Date.now()/1000-7200;result.setRange(100);assert.ok(result.hours>=2&&result.hours<2.01);assert.equal(Number(slider.max),result.hours);
-  const before=result.hours;wheel.callback({deltaY:120,ctrlKey:true,preventDefault(){assert.fail('browser zoom was intercepted');}});assert.equal(result.hours,before);
+  result.oldestCreated=Date.now()/1000-7200;result.setRange(100);assert.ok(result.hours>=2&&result.hours<2.01);assert.equal(Number(slider.max),1);
+  const before=result.hours;wheel.callback({deltaY:120,metaKey:true,preventDefault(){assert.fail('system zoom was intercepted');}});assert.equal(result.hours,before);
  });
+ await test('zooming in and out preserves the cursor time in either metric panel',()=>clocked(()=>{
+  const {result,ids,frames}=rendered(dualRows());result.seek(.5);while(frames.length)frames.shift()();
+  const wheel=ids.get('trend-charts').events.get('wheel');
+  for(const chart of result.charts)for(const deltaY of [120,-120,200,-200]){
+   const fraction=.23,rect=chart.svg.getBoundingClientRect(),bounds=chart.bounds,anchor=bounds.start+(bounds.end-bounds.start)*fraction;
+   const clientX=rect.left+(bounds.left+(bounds.width-bounds.left-bounds.right)*fraction)*rect.width/bounds.width;
+   wheel.callback({deltaY,ctrlKey:true,clientX,target:chart.svg,preventDefault(){}});while(frames.length)frames.shift()();
+   assert.ok(Math.abs(chart.bounds.start+(chart.bounds.end-chart.bounds.start)*fraction-anchor)<.00001);
+  }
+  result.cancelPending();
+ }));
+ await test('the scrollbar thumb tracks duration while dragging only changes time position',()=>clocked(()=>{
+  const {result,ids,frames}=rendered(dualRows()),slider=ids.get('trend-range-slider');
+  result.setRange(4);const thumb=parseFloat(slider.style['--trend-thumb-width']),span=result.timeline().end-result.timeline().start;
+  assert.ok(Math.abs(thumb-slider.clientWidth*4*3600/span)<.00001);
+  for(const position of [0,.35,1]){
+   slider.value=String(position);slider.oninput();while(frames.length)frames.shift()();
+   assert.equal(result.hours,4);assert.ok(Math.abs(Number(slider.value)-position)<.00001);assert.equal(parseFloat(slider.style['--trend-thumb-width']),thumb);
+   for(const chart of result.charts)assert.equal(chart.bounds.end-chart.bounds.start,4*3600);
+  }
+  result.oldestCreated=now-7200;result.setRange(12);assert.ok(result.hours>2&&result.hours<2.01);assert.equal(parseFloat(slider.style['--trend-thumb-width']),slider.clientWidth);
+  result.pan(-1000000);assert.equal(result.viewport().end,now);result.cancelPending();
+ }));
+ await test('Ctrl wheel over the scrollbar resizes around the hovered thumb position',()=>clocked(()=>{
+  const {result,ids}=rendered(dualRows()),slider=ids.get('trend-range-slider');result.setRange(4);result.seek(.5);
+  const view=result.viewport(),fraction=.7,thumb=parseFloat(slider.style['--trend-thumb-width']),anchor=view.start+(view.end-view.start)*fraction;
+  const clientX=slider.getBoundingClientRect().left+(slider.clientWidth-thumb)*Number(slider.value)+thumb*fraction;
+  const wheel=ids.get('trend-range').events.get('wheel');assert.equal(wheel.options.passive,false);
+  wheel.callback({deltaY:120,ctrlKey:true,clientX,preventDefault(){}});const next=result.viewport();
+  assert.ok(result.hours>4);assert.ok(parseFloat(slider.style['--trend-thumb-width'])>thumb);assert.ok(Math.abs(next.start+(next.end-next.start)*fraction-anchor)<.00001);
+  const hours=result.hours;wheel.callback({deltaY:-80,preventDefault(){}});assert.equal(result.hours,hours);assert.ok(result.viewport().end<next.end);result.cancelPending();
+ }));
+ await test('horizontal wheel deltas and line/page units pan without changing duration',()=>clocked(()=>{
+  const {result,ids}=rendered(dualRows());result.seek(.5);const wheel=ids.get('trend-charts').events.get('wheel');
+  const initial=result.viewport().end;wheel.callback({deltaX:-100,deltaY:0,preventDefault(){}});assert.ok(result.viewport().end<initial);assert.equal(result.hours,1);
+  const before=result.viewport().end;wheel.callback({deltaY:1,deltaMode:1,preventDefault(){}});assert.ok(result.viewport().end>before);
+  result.pan(-1000000);assert.equal(result.viewport().start,result.timeline().start);result.pan(1000000);assert.equal(result.windowEnd,null);
+  wheel.callback({deltaY:-1,deltaMode:2,preventDefault(){}});assert.ok(result.viewport().end<now);assert.equal(result.hours,1);result.cancelPending();
+ }));
+ await test('older viewports query bounded history before their end instead of walking all recent records',()=>clocked(async()=>{
+  const queries=[],old=packet(1301,{created:now-18.5*3600,upstream_usage:{input_tokens:100},outbound_wire_bytes:1000}),recent=packet(1302,{created:now-60,upstream_usage:{input_tokens:200},outbound_wire_bytes:2000});
+  const {result}=rendered([recent],{status:()=>({storage:{revision:1,oldest_created:now-48*3600}}),api:async path=>{queries.push(new URL(path,'http://fixture').searchParams);return[recent,old];}});
+  result.pan(-18*3600);await result.refresh(true);assert.equal(queries.length,1);assert.equal(queries[0].get('limit'),'50');
+  assert.ok(Number(queries[0].get('before'))<now-12*3600);assert.ok(Math.abs(Number(queries[0].get('before'))-Number(queries[0].get('since'))-12*3600)<.01);
+  for(const chart of result.charts)assert.deepEqual(Array.from(chart.points,point=>point.packet.id),[old.id]);
+  result.seek(1);await result.refresh(true);assert.equal(queries.length,2);assert.equal(queries[1].get('before'),null);
+  for(const chart of result.charts)assert.deepEqual(Array.from(chart.points,point=>point.packet.id),[recent.id]);result.cancelPending();
+ }));
+ await test('returning to cached recent data cancels an obsolete history read and ignores its late result',()=>clocked(async()=>{
+  let release,entered,reads=0;const started=new Promise(resolve=>entered=resolve),recent=packet(1310,{created:now-60,upstream_usage:{input_tokens:100},outbound_wire_bytes:1000});
+  const {result}=rendered([recent],{status:()=>({storage:{revision:1,oldest_created:now-48*3600}}),api:()=>{reads++;entered();return new Promise(resolve=>release=resolve);}});
+  result.pan(-18*3600);const pending=result.refresh(true);await started;const controller=result.controller;
+  result.seek(1);assert.equal(controller.signal.aborted,true);assert.equal(result.windowTimer,null);
+  release([packet(1311,{created:now-18.5*3600})]);await pending;assert.equal(reads,1);assert.ok(result.packets.has(recent.id));assert.equal(result.error,false);
+  result.render();for(const chart of result.charts)assert.deepEqual(Array.from(chart.points,point=>point.packet.id),[recent.id]);result.cancelPending();
+ }));
+ await test('a failed historical read keeps its cache and reports failure instead of claiming no requests',()=>clocked(async()=>{
+  const recent=packet(1320,{created:now-60,upstream_usage:{input_tokens:100},outbound_wire_bytes:1000});
+  const {result}=rendered([recent],{status:()=>({storage:{revision:1,oldest_created:now-48*3600}}),api:async()=>{throw Error('offline');}});
+  result.pan(-18*3600);result.render();for(const chart of result.charts)assert.equal(chart.empty.textContent,'正在加载趋势…');
+  await result.refresh(true);assert.equal(result.error,true);assert.ok(result.packets.has(recent.id));
+  for(const chart of result.charts){assert.equal(chart.empty.hidden,false);assert.equal(chart.empty.textContent,'暂时无法加载趋势，请稍后重试');}
+  const old=packet(1321,{created:now-18.5*3600,upstream_usage:{input_tokens:200},outbound_wire_bytes:2000});
+  result.services.api=async()=>[old];await result.refresh(true);assert.equal(result.error,false);for(const chart of result.charts)assert.equal(chart.empty.hidden,true);result.cancelPending();
+ }));
+ await test('rapid historical navigation debounces reads and leaving trends cancels pending work',()=>clocked(async()=>{
+  let reads=0;const {result}=rendered([],{status:()=>({storage:{revision:1,oldest_created:now-48*3600}})});result.refresh=async()=>{reads++;};
+  result.pan(-18*3600);result.pan(-3600);result.pan(-3600);assert.equal(reads,0);await new Promise(resolve=>setTimeout(resolve,150));assert.equal(reads,1);
+  result.pan(-3600);result.setActive(false);await new Promise(resolve=>setTimeout(resolve,150));assert.equal(reads,1);assert.equal(result.windowTimer,null);
+ }));
+ await test('history remains fixed during live refresh and the right edge resumes following new requests',()=>clocked(advance=>{
+  const {result,ids}=rendered(dualRows());result.seek(.5);const end=result.viewport().end;
+  advance(5*60000);result.render();assert.equal(result.viewport().end,end);assert.ok(Number(ids.get('trend-range-slider').value)<1);
+  result.seek(1);assert.equal(result.windowEnd,null);advance(5*60000);result.render();assert.equal(result.viewport().end,now+600);
+  result.seek(0);result.oldestCreated=now-3*3600;result.render();assert.equal(result.viewport().start,result.oldestCreated-1);result.cancelPending();
+ }));
  await test('first paint precedes history loading and pending activation can be canceled',async()=>{
   let reads=0;const {result,frames}=rendered([],{api:async()=>{reads++;return[];}});
   result.setActive(false);result.setActive(true);assert.equal(reads,0);await result.refresh();assert.equal(reads,0);
@@ -498,10 +581,10 @@ function eventRows(){return [
  await test('status metadata fixes the range before history arrives and a short page cannot shrink it',async()=>{
   let release,entered,reads=0;const started=new Promise(resolve=>entered=resolve),oldest=now-5.6*3600;
   const {result,ids}=rendered([],{status:()=>({storage:{revision:1,oldest_created:oldest},trend_packets_supported:true}),api:()=>{reads++;entered();return new Promise(resolve=>release=resolve);}});
-  const slider=ids.get('trend-range-slider');assert.equal(slider.disabled,false);assert.ok(Number(slider.max)>=5.6&&Number(slider.max)<5.61);assert.equal(reads,0);
+  const slider=ids.get('trend-range-slider');assert.equal(slider.disabled,false);assert.ok(result.rangeLimit()>=5.6&&result.rangeLimit()<5.61);assert.equal(reads,0);
   const loading=result.refresh();await started;result.setRange(12);const selected=result.hours;
   release([packet(1201,{created:now-60})]);await loading;
-  assert.ok(result.hours>=selected&&result.hours<selected+.001);assert.ok(Number(slider.max)>5.6);assert.equal(reads,1);
+  assert.ok(result.hours>=selected&&result.hours<selected+.001);assert.ok(result.rangeLimit()>5.6);assert.equal(reads,1);
  });
  await test('legacy range lookup finishes before paged history and unknown bounds cannot zoom to twelve hours',async()=>{
   let rangeRelease,pageRelease,enteredRange,enteredPage;const rangeStarted=new Promise(resolve=>enteredRange=resolve),pageStarted=new Promise(resolve=>enteredPage=resolve),queries=[];
@@ -513,9 +596,10 @@ function eventRows(){return [
   const slider=ids.get('trend-range-slider');assert.equal(result.boundsReady,false);
   assert.equal(slider.disabled,true);assert.equal(Number(slider.max),1);result.setRange(12);assert.equal(result.hours,1);
   ids.get('trend-charts').events.get('wheel').callback({deltaY:120,preventDefault(){assert.fail('unknown bounds intercepted zoom');}});assert.equal(result.hours,1);
+  let prevented=false;ids.get('trend-charts').events.get('wheel').callback({deltaY:120,ctrlKey:true,preventDefault(){prevented=true;}});assert.equal(prevented,true);assert.equal(result.hours,1);
   const loading=result.refresh();await rangeStarted;assert.equal(queries.length,1);assert.equal(slider.disabled,true);
   rangeRelease([packet(1202,{created:now-5.6*3600})]);await pageStarted;
-  assert.equal(slider.disabled,false);assert.ok(Number(slider.max)>5.6&&Number(slider.max)<5.61);result.setRange(12);
+  assert.equal(slider.disabled,false);assert.ok(result.rangeLimit()>5.6&&result.rangeLimit()<5.61);result.setRange(12);
   pageRelease([packet(1203,{created:now-30})]);await loading;assert.ok(result.hours>5.6&&result.hours<5.61);assert.equal(queries.length,2);
  });
  await test('canceled range discovery cannot overwrite newer metadata',async()=>{
