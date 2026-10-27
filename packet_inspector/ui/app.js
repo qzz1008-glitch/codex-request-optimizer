@@ -1831,28 +1831,21 @@ function renderImageInfo(paths) {
   }
   return images;
 }
-function appendResponseFields(p,value) {
-  const statuses={completed:"完成",failed:"失败",incomplete:"未完成",cancelled:"已取消",interrupted:"已中断"};
-  if(Object.hasOwn(statuses,value.status))fact(p,t("结束状态"),t(statuses[value.status]));
-  if(typeof value.response_id==="string"&&value.response_id)fact(p,t("响应 ID"),value.response_id).classList.add("request-context");
-  if(Array.isArray(value.tools)&&value.tools.length)fact(p,t("工具调用"),value.tools.filter(name=>typeof name==="string").join(" · ")+(value.tools_truncated?" …":""));
-  if(value.observation_limited)p.append(el("small","muted",t("概要采集不完整")));
-}
 function renderHeaders(m) {
   const root=document.createDocumentFragment(),p=panel(t("请求与响应"));
   if(m.source!=="live")fact(p,t("数据来源"),t("历史重建（大小为估算）"));
   fact(p,t("模型"),m.model||t("未标记"));
+  const endings={completed:"完成",failed:"失败",incomplete:"未完成",cancelled:"已取消",interrupted:"已中断"};
+  const ended=m.response_summary?.status,code=Number.isInteger(m.status)&&m.status>=100&&m.status<=599?m.status:null;
+  const relayFailed=["relay_error","client_disconnected","interrupted"].includes(m.state);
+  const result=relayFailed?states[m.state]:code>=400?t("失败"):Object.hasOwn(endings,ended)?t(endings[ended]):m.state==="complete"?t("已结束"):states[m.state]||t("尚未收到");
+  fact(p,t("结果"),result+(code!==null?" · HTTP "+code:""));
+  fact(p,t("总耗时"),Number.isFinite(m.duration_ms)&&m.duration_ms>=0?nf.format(Math.round(m.duration_ms/100)/10)+" "+t("秒"):"—");
+  if(typeof m.relay_error==="string"&&m.relay_error)fact(p,t("错误原因"),m.relay_error);
   const session=sessionSummaries.find(row=>row.thread_id===m.thread_id);
   const auxiliary=auxiliarySessionKind(session),purpose=purposeFromMetadata(m);
   const specialKind=[purpose,m.request_kind,auxiliary].find(kind=>kind&&kind!=="subagent"&&Object.hasOwn(auxiliaryLabels,kind));
-  fact(p,t("响应状态"),String(m.status||t("尚未收到")));
-  fact(p,t("响应头耗时"),Number.isFinite(m.headers_ms)&&m.headers_ms>=0?m.headers_ms+" ms":"—");
   if(m.details_evicted)fact(p,t("请求详情"),t("已回收"));
-  const upload=uploadBytes(m);
-  if(Number.isFinite(m.wire_bytes)&&m.wire_bytes>=0&&upload!==null&&m.wire_bytes!==upload) {
-    fact(p,t("采集入口正文"),bytes(m.wire_bytes)+" · "+(m.content_encoding||"identity"));
-  }
-  if(m.response_summary&&typeof m.response_summary==="object")appendResponseFields(p,m.response_summary);
   root.append(p);
   if(specialKind) {
     const context=panel(t("会话信息"));context.id="request-session-info";
