@@ -116,6 +116,8 @@ python -m scripts.verify.verify_self_upgrade_exe --release-dir release/local-bui
 
 采用 GitHub Flow，规则固定在仓库根目录 `AGENTS.md`。`main` 是唯一长期集成和交付分支；每个独立任务使用 `feat/<任务>`、`fix/<任务>` 或 `chore/<任务>` 短期分支。同一任务的连续修改沿用该分支，不为每次小修改创建新分支；任务完成并集成后删除分支，不长期维护 `develop`、`release/*` 或独立发布源码。
 
+发布版本从 `0.7.0` 开始，后续使用 `0.7.1`、`0.7.2`，默认只递增补丁号；其他升级幅度由用户明确指定。测试、构建或发布失败时沿用本次未发布的版本号，修复后重试，不另起版本号。成功发布后才分配下一个补丁版本。
+
 主工作树是 `git worktree list` 的第一项，始终保留在 `main`。开发会话使用各自的任务工作树，不在主目录切开发分支，也不修改其他会话正在使用的目录。Codex 中优先创建托管工作树；普通 Git 用户也可使用 `git worktree add`。
 
 开发会话完成实现和必要验证后，自动提交并完整合入 `main`，无需再次确认。以下命令在独立任务工作树中执行：
@@ -169,7 +171,7 @@ python -m scripts.build_inspector --mode release
 
 本仓库使用 `.githooks/pre-push` 检查 `main` 和 `v*` 发布标签：只允许发布已整合的当前主目录提交，拒绝非快进覆盖远端 `main` 和替换已发布标签，禁止把旧工作树提交作为新版本发布。
 
-仅当用户明确要求保留失败发布的版本号时，可重试尚未创建 GitHub Release 的标签。推送时用临时 Git 配置 `codex.retryUnpublishedRelease=<标签>:<旧标签对象 SHA>` 指定本次授权，并对该标签使用精确的 `--force-with-lease`；`main` 仍只允许快进。钩子必须联网确认 Release 不存在、该标签的既有 CI 全部已失败或取消，并确认旧源码是当前 `main` 的祖先；任何状态缺失、成功构建或仍在执行的任务均阻止替换。旧标签对象保留在本地 `refs/archive/unpublished-release-tags/`，不得跳过钩子或用删除再创建绕过检查。
+尚未创建 GitHub Release 的版本失败后，按固定版本规则沿用原版本号，无需再次询问。推送时用临时 Git 配置 `codex.retryUnpublishedRelease=<标签>:<旧标签对象 SHA>` 明确本次失败标签重试，并对该标签使用精确的 `--force-with-lease`；`main` 仍只允许快进。钩子必须联网确认 Release 不存在、该标签的既有 CI 全部已失败或取消，并确认旧源码是当前 `main` 的祖先；任何状态缺失、成功构建或仍在执行的任务均阻止替换。旧标签对象保留在本地 `refs/archive/unpublished-release-tags/`，不得跳过钩子或用删除再创建绕过检查。已发布版本保持不变，后续改动使用下一个补丁版本。
 
 首次在新克隆中配置共享钩子路径（绝对路径对所有关联工作树生效）：
 
