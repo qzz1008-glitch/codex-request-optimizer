@@ -13,8 +13,8 @@ let checks=0;
 function test(name,fn){return Promise.resolve().then(fn).then(()=>{checks++;}).catch(error=>{error.message=name+': '+error.message;throw error;});}
 function view(services={}) {
  const result=Object.create(View.prototype);
- Object.assign(result,{active:true,loading:false,hydrating:false,packets:new Map(),native:new Map(),hours:1,revision:null,lastFull:0,query:'',error:false,limited:false,
-  services:{api:async()=>[],status:()=>({storage:{revision:1},trend_packets_supported:true}),sessions:()=>[],peek:()=>null,isGeneration:context.isGeneration,...services},
+ Object.assign(result,{active:true,loading:false,hydrating:false,packets:new Map(),native:new Map(),hours:1,oldestCreated:now-12*3600,boundsReady:true,revision:null,lastFull:0,query:'',error:false,limited:false,
+  services:{api:async()=>[],status:()=>({storage:{revision:1,oldest_created:now-12*3600},trend_packets_supported:true}),sessions:()=>[],peek:()=>null,isGeneration:context.isGeneration,...services},
   render(){},hydrate(){},scheduleRender(){}});
  return result;
 }
@@ -68,7 +68,7 @@ function dualRows(){return [
  });
  await test('configured size limits remain visible above the data and at the axis maximum',()=>{
   for(const budget of [1000000,1048576])for(const rows of [[packet(701,{outbound_wire_bytes:100000,upstream_usage:{input_tokens:100}})],[]]){
-   const {result}=rendered(rows,{status:()=>({storage:{revision:1},budget_bytes:budget})}),[size,token]=result.charts;
+   const {result}=rendered(rows,{status:()=>({storage:{revision:1,oldest_created:now-12*3600},budget_bytes:budget})}),[size,token]=result.charts;
    const [line]=chartNodes(size,'trend-budget-line'),[label]=chartNodes(size,'trend-budget-label');
    assert.equal(chartNodes(size,'trend-budget-line').length,1);assert.equal(chartNodes(token,'trend-budget-line').length,0);
    assert.equal(Number(line.attrs.x1),size.bounds.left);assert.equal(Number(line.attrs.x2),size.bounds.width-size.bounds.right);
@@ -80,7 +80,7 @@ function dualRows(){return [
  await test('saved size limit changes redraw without packet changes or additional reads',async()=>{
   let budget=2000000,reads=0;
   const {result}=rendered([packet(702,{outbound_wire_bytes:1800000,upstream_usage:{input_tokens:100}})],{
-   status:()=>({storage:{revision:1},budget_bytes:budget}),api:async()=>{reads++;return[];}});
+   status:()=>({storage:{revision:1,oldest_created:now-12*3600},budget_bytes:budget}),api:async()=>{reads++;return[];}});
   const before=chartNodes(result.charts[0],'trend-budget-line')[0].attrs.y1,tokenPoints=Array.from(result.charts[1].points,point=>point.y);
   result.lastFull=Date.now();result.revision=1;budget=1000000;await result.refresh();
   assert.notEqual(chartNodes(result.charts[0],'trend-budget-line')[0].attrs.y1,before);
@@ -137,7 +137,7 @@ function dualRows(){return [
  });
  await test('full snapshot pages without duplicates, and deltas stop on overlap',async()=>{
   const rows=Array.from({length:303},(_,i)=>packet(i+1)),queries=[];let revision=1;
-  const result=view({status:()=>({storage:{revision}}),api:async path=>{
+  const result=view({status:()=>({storage:{revision,oldest_created:now-12*3600}}),api:async path=>{
    const query=new URL(path,'http://fixture').searchParams;queries.push(query);
    const after=query.get('after'),start=after?rows.findIndex(row=>row.id===after)+1:0;return rows.slice(start,start+300);
   }});
@@ -147,7 +147,7 @@ function dualRows(){return [
  });
  await test('stale in-flight requests are refreshed outside the newest page',async()=>{
   let revision=1,detail=0;
-  const result=view({status:()=>({storage:{revision}}),api:async path=>{
+  const result=view({status:()=>({storage:{revision,oldest_created:now-12*3600}}),api:async path=>{
    if(path.includes('/api/packets/')){detail++;return packet(1,{state:'complete',upstream_usage:{input_tokens:80}});}
    return [packet(2)];
   }});
@@ -156,7 +156,7 @@ function dualRows(){return [
  });
  await test('failed snapshots retain the last good chart and can recover',async()=>{
   let failed=false,revision=1;
-  const result=view({status:()=>({storage:{revision}}),api:async()=>{if(failed==='timeout'){result.controller.abort();throw Error('timeout');}if(failed)throw Error('offline');return [packet(revision)];}});
+  const result=view({status:()=>({storage:{revision,oldest_created:now-12*3600}}),api:async()=>{if(failed==='timeout'){result.controller.abort();throw Error('timeout');}if(failed)throw Error('offline');return [packet(revision)];}});
   await result.refresh();failed=true;revision++;await result.refresh();assert.equal(result.error,true);assert.ok(result.packets.has(id(1)));
   failed='timeout';await result.refresh();assert.equal(result.error,true);assert.ok(result.packets.has(id(1)));
   failed=false;await result.refresh();assert.equal(result.error,false);assert.ok(result.packets.has(id(2)));
@@ -421,16 +421,52 @@ function dualRows(){return [
  await test('old backends use small pages and discard response payloads while retaining real usage',async()=>{
   const queries=[],rows=Array.from({length:53},(_,i)=>packet(i+1,{upstream_usage:{input_tokens:i,payload:'x'.repeat(10000)},reported_usage:{input_tokens:500000},capacity_retry_diagnostic:{events:['private']}}));
   const result=view({status:()=>({storage:{revision:1}}),api:async path=>{
-   const q=new URL(path,'http://fixture').searchParams;queries.push(q);const start=q.has('after')?rows.findIndex(p=>p.id===q.get('after'))+1:0;return rows.slice(start,start+Number(q.get('limit')));
+   const q=new URL(path,'http://fixture').searchParams;queries.push(q);if(q.get('direction')==='asc')return[rows.at(-1)];const start=q.has('after')?rows.findIndex(p=>p.id===q.get('after'))+1:0;return rows.slice(start,start+Number(q.get('limit')));
   }});
-  await result.refresh();assert.equal(result.packets.size,53);assert.equal(queries.length,2);
-  for(const q of queries){assert.equal(q.get('limit'),'50');assert.equal(q.get('view'),'trend');assert.ok(Number(q.get('since'))<=now-43199);}
+  await result.refresh();assert.equal(result.packets.size,53);assert.equal(queries.length,3);assert.equal(queries[0].get('direction'),'asc');assert.equal(queries[0].get('limit'),'1');
+  for(const q of queries.slice(1)){assert.equal(q.get('limit'),'50');assert.equal(q.get('view'),'trend');assert.ok(Number(q.get('since'))<=now-43199);}
   for(const row of result.packets.values()){assert.deepEqual(Object.keys(row.upstream_usage),['input_tokens']);assert.equal(row.reported_usage,undefined);assert.equal(row.capacity_retry_diagnostic,undefined);}
  });
  await test('dense curves retain every hover point and event marker with bounded ordinary dots',()=>{
   const rows=Array.from({length:12000},(_,i)=>packet(i+1,{created:now-i/4,upstream_usage:{input_tokens:1000+i},outbound_wire_bytes:200000+i,...(i%1000===0?{usage_override_applied:true}: {})}));
   const {result}=rendered(rows);
   for(const chart of result.charts){assert.equal(chart.points.length,12000);assert.equal(chartNodes(chart,'trend-event-predictive').length,12);assert.ok(chart.svg.all(n=>n.tag==='circle').length<500);assert.equal(chartNodes(chart,'trend-curve').length,1);}
+ });
+ await test('status metadata fixes the range before history arrives and a short page cannot shrink it',async()=>{
+  let release,entered,reads=0;const started=new Promise(resolve=>entered=resolve),oldest=now-5.6*3600;
+  const {result,ids}=rendered([],{status:()=>({storage:{revision:1,oldest_created:oldest},trend_packets_supported:true}),api:()=>{reads++;entered();return new Promise(resolve=>release=resolve);}});
+  const slider=ids.get('trend-range-slider');assert.equal(slider.disabled,false);assert.ok(Number(slider.max)>=5.6&&Number(slider.max)<5.61);assert.equal(reads,0);
+  const loading=result.refresh();await started;result.setRange(12);const selected=result.hours;
+  release([packet(1201,{created:now-60})]);await loading;
+  assert.ok(result.hours>=selected&&result.hours<selected+.001);assert.ok(Number(slider.max)>5.6);assert.equal(reads,1);
+ });
+ await test('legacy range lookup finishes before paged history and unknown bounds cannot zoom to twelve hours',async()=>{
+  let rangeRelease,pageRelease,enteredRange,enteredPage;const rangeStarted=new Promise(resolve=>enteredRange=resolve),pageStarted=new Promise(resolve=>enteredPage=resolve),queries=[];
+  const {result,ids}=rendered([],{status:()=>({storage:{revision:1}}),api:path=>{
+   const q=new URL(path,'http://fixture').searchParams;queries.push(q);
+   if(q.get('direction')==='asc'){enteredRange();return new Promise(resolve=>rangeRelease=resolve);}
+   enteredPage();return new Promise(resolve=>pageRelease=resolve);
+  }});
+  const slider=ids.get('trend-range-slider');assert.equal(result.boundsReady,false);
+  assert.equal(slider.disabled,true);assert.equal(Number(slider.max),1);result.setRange(12);assert.equal(result.hours,1);
+  ids.get('trend-charts').events.get('wheel').callback({deltaY:120,preventDefault(){assert.fail('unknown bounds intercepted zoom');}});assert.equal(result.hours,1);
+  const loading=result.refresh();await rangeStarted;assert.equal(queries.length,1);assert.equal(slider.disabled,true);
+  rangeRelease([packet(1202,{created:now-5.6*3600})]);await pageStarted;
+  assert.equal(slider.disabled,false);assert.ok(Number(slider.max)>5.6&&Number(slider.max)<5.61);result.setRange(12);
+  pageRelease([packet(1203,{created:now-30})]);await loading;assert.ok(result.hours>5.6&&result.hours<5.61);assert.equal(queries.length,2);
+ });
+ await test('canceled range discovery cannot overwrite newer metadata',async()=>{
+  let release;const result=view({status:()=>({storage:{revision:1}}),api:()=>new Promise(resolve=>release=resolve)});result.boundsReady=false;
+  const old=result.refresh();result.cancelPending();const expected=now-3*3600;
+  result.services.status=()=>({storage:{revision:2,oldest_created:expected}});result.services.api=async()=>[packet(1204)];
+  await result.refresh();release([packet(1205,{created:now-10*3600})]);await old;
+  assert.equal(result.oldestCreated,expected);assert.equal(result.boundsReady,true);assert.equal(result.error,false);
+ });
+ await test('empty and failed range discovery stay bounded and can recover without a guessed maximum',async()=>{
+  const {result,ids}=rendered([],{status:()=>({storage:{revision:1}}),api:async()=>{throw Error('offline');}});
+  await result.refresh();assert.equal(result.error,true);assert.equal(ids.get('trend-range-slider').disabled,true);assert.equal(result.rangeLimit(),1);
+  result.services.api=async()=>[];await result.refresh();assert.equal(result.error,false);assert.equal(result.boundsReady,true);assert.equal(result.rangeLimit(),1);assert.equal(ids.get('trend-range-slider').disabled,false);
+  result.services.status=()=>({storage:{revision:2,oldest_created:now-24*3600}});await result.refresh();assert.equal(result.rangeLimit(),12);
  });
  console.log(JSON.stringify({passed:checks}));
 })().catch(error=>{console.error(error);process.exitCode=1;});

@@ -341,6 +341,7 @@ class Store:
     def stats(self):
         with self.connect() as c:
             row = c.execute("SELECT count(*) AS count,coalesce(sum(stored_bytes),0) AS stored,coalesce(sum(CASE WHEN capture_owner='existing_exit' AND state IN ('captured','streaming') THEN 1 ELSE 0 END),0) AS observed_active,(SELECT revision FROM packet_index_state WHERE singleton=1) AS revision FROM packet_summaries").fetchone()
+            oldest_created = c.execute("SELECT min(created) FROM packet_summaries WHERE method!='GET'").fetchone()[0]
             detail_count = c.execute(f"SELECT count(*) FROM packets WHERE {RETAINED_DETAILS}").fetchone()[0]
             threads = c.execute("SELECT thread,count(*) AS count FROM packet_summaries GROUP BY thread ORDER BY max(created) DESC LIMIT 120").fetchall()
         disk_bytes = 0
@@ -350,7 +351,7 @@ class Store:
                     disk_bytes += path.stat().st_size
             except FileNotFoundError:
                 pass  # A concurrent SQLite close can checkpoint and unlink WAL files.
-        return {**dict(row), "disk_bytes": disk_bytes, "max_bytes": self.max_bytes, "max_count": self.max_count,
+        return {**dict(row), "oldest_created": oldest_created, "disk_bytes": disk_bytes, "max_bytes": self.max_bytes, "max_count": self.max_count,
                 "detail_count": detail_count,
                 "max_detail_count": max(0, min(self.max_count, self.max_count if self.max_detail_count is None else self.max_detail_count)),
                 "threads": [dict(r) for r in threads]}
