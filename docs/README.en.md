@@ -16,7 +16,7 @@ Browse request records by session to see what each request sent, how much space 
 - Group image analysis, automatic titles, and similar auxiliary requests under their parent session. Regular subtasks keep separate rows with parent-child links; unidentified requests appear under “Other.”
 - Show image information only for separate image-analysis sessions; regular sessions do not show it when carrying historical images or image paths.
 - Check actual input/output token counts for requests; unavailable data is clearly marked.
-- Switch between Records and Trends at the top. Find sessions on the left; packet sizes appear above input tokens on the right. Both charts share one timeline, use colors for sessions and marker shapes for protection and retry events, connect known points across missing values, and prioritize over-limit protection markers. Packet sizes use the request list's Compressed column.
+- Switch between Records and Trends at the top. The default range is the last **1 hour**, with 6-hour, 24-hour, and all-retained-record options. Find sessions on the left; packet sizes appear above input tokens on the right. Both charts share one timeline, use colors for sessions and marker shapes for protection and retry events, connect known points across missing values, and prioritize over-limit protection markers. Packet sizes use the request list's Compressed column.
 - See how messages, tool outputs, reasoning content, and other parts contribute to request size.
 - Explore structured request JSON, compare sizes before and after processing, and download a sanitized copy.
 - Select and copy text, preserving valid selections during live updates and sorting.
@@ -44,13 +44,13 @@ For request body limits such as **1M (1,000,000 bytes)**, set a custom size limi
 
 ### 🔁 Automatic retries when a model is at capacity
 
-When an explicit model capacity error occurs, retry automatically according to your settings, keeping the same model and request content. Set 1–9 retries, with a default of 3. Wait at least 50 seconds between attempts, or longer when required by the server. Retry waits and upstream attempts share a 570-second budget, including earlier request processing, leaving headroom below the local relay entry's 600-second wait limit. If time runs short, return the capacity error already received; the actual retry count can therefore be lower than configured. Requests that have started producing output are not replayed, and successful responses continue streaming normally.
+Once enabled in Settings, explicit model capacity errors trigger automatic retries with the same model and request content. Set 1–9 retries, with a default of 3. Wait at least 50 seconds between attempts, or longer when required by the server. Retry waits and upstream attempts share a 570-second budget, including earlier request processing, leaving headroom below the local relay entry's 600-second wait limit. If time runs short, return the capacity error already received; the actual retry count can therefore be lower than configured. Requests that have started producing output are not replayed, and successful responses continue streaming normally.
 
 > Selected model is at capacity. Please try a different model.
 
 Retry detection and diagnostics share structural event classification: response metadata and its extensions keep waiting for the result; output items, reasoning, or tool calls end replay eligibility. Events with unknown semantics pass through unchanged with the reason recorded. Successful responses preserve their original bytes. Only explicit capacity errors are retried; HTTP 403, 413, ordinary 5xx responses, and connection failures do not introduce retries.
 
-Like the other protection mechanisms, “Automatic retries” in request details only shows whether it was triggered, based on retries actually started. Background diagnostic logs are retained separately from request bodies: retries and abnormal outcomes for up to 30 days; ordinary successful requests for 24 hours, limited to 2,000 records. Automatic cleanup also applies a 20,000-record and 32 MiB content budget. Logs contain only timestamps, settings, and structural events, without conversation text, tool content, or authentication data.
+Like the other protection mechanisms, “Automatic retries” in request details only shows “Triggered / Not triggered,” based on retries actually started. Background diagnostic logs are retained separately from request bodies: retries and abnormal outcomes for up to 30 days; ordinary successful requests for 24 hours, limited to 2,000 records. Automatic cleanup also applies a 20,000-record and 32 MiB content budget. Logs contain only timestamps, settings, and structural events, without conversation text, tool content, or authentication data.
 
 ### 🖼️ Image request optimization
 
@@ -81,7 +81,7 @@ Use the desktop window or open the interface in a browser. The default browser a
 
 **[http://127.0.0.1:47844/](http://127.0.0.1:47844/)**
 
-The top bar has only Disconnected and Connected states. Connecting disables native Codex request compression and lets this app manage zstd using the selected level or automatic policy. Disconnecting restores the original upstream and enables native compression. Restart ChatGPT App when configuration changes require it.
+The Disconnected / Connected toggle in the top bar controls the connection state. Connecting disables native Codex request compression and lets this app manage zstd using the selected level or automatic policy. Disconnecting restores the original upstream and enables native compression. Restart ChatGPT App when configuration changes require it.
 
 Connections using Codex account authentication share the `OpenAI` name, and new sessions default to the stable `codex_packet_inspector` identifier. Old identifiers remain as compatibility entries without changing chat history. API key and other authentication configurations are preserved; their native compression support depends on Codex itself.
 
@@ -108,6 +108,8 @@ The default data directory is:
 ```
 
 Request records, settings, configuration backups, and image attachments are stored locally. See the **[user guide (Chinese)](https://github.com/qzz1008-glitch/codex-request-optimizer/blob/main/docs/usage.md)** for detailed instructions.
+
+Request records default to limits of **512 MiB / 2,000 records**, adjustable in Record settings. The left sidebar footer shows stored-record usage / the storage limit and the current request count. Usage measures record content rather than the entire data directory's disk footprint.
 
 ---
 
@@ -152,7 +154,9 @@ Token usage is captured directly from successful upstream responses, independent
 
 Request records and processing results are stored in **SQLite**. Sensitive authentication headers are forwarded without saving their values in captured records. Browsing and JSON downloads use sanitized copies.
 
-When request records reach the storage size or count limit, the oldest records by request creation time are removed regardless of request state. Removing a captured record does not interrupt its ongoing relay request, and completion does not recreate that record. On startup, unfinished records left by the retired capture component are marked as interrupted.
+The storage quota counts the bytes in compressed, sanitized request copies and request metadata. SQLite indexes, journals, and reusable space make the database files' disk footprint differ from this value. Summary caches, diagnostic logs, and image attachments have separate retention rules.
+
+When request records exceed the storage size or count limit, the oldest records by request creation time are removed regardless of request state. Removing a captured record does not interrupt its ongoing relay request, and completion does not recreate that record. On startup, unfinished records left by the retired capture component are marked as interrupted.
 
 ### Desktop and background service
 
