@@ -156,7 +156,9 @@ Request records and processing results are stored in **SQLite**. Sensitive authe
 
 The storage quota counts the bytes in compressed, sanitized request copies and request metadata. SQLite indexes, journals, and reusable space make the database files' disk footprint differ from this value. Summary caches, diagnostic logs, and image attachments have separate retention rules.
 
-When request records exceed the storage size or count limit, the oldest records by request creation time are removed regardless of request state. Removing a captured record does not interrupt its ongoing relay request, and completion does not recreate that record. On startup, unfinished records left by the retired capture component are marked as interrupted.
+Record settings independently control the basic-information limit **N**, detail limit **M**, and combined storage quota **Z**. At most the latest N requests are retained, and only the latest M are eligible to keep details. M cannot exceed N and may be zero. Basic information retains session relationships, time, status, packet sizes, actual Token usage, protection markers, and size breakdowns for the information panel, list, and charts. Bodies, HTTP headers, and input-item summaries containing body snippets are removed with details.
+
+When Z is exceeded, older details are removed first by request creation time while basic information remains. The oldest requests are removed only if basic information alone still exceeds the quota. Request state does not exempt a record from cleanup. Removal does not interrupt ongoing relay requests, and later responses do not recreate removed details or records. Lower limits apply immediately; higher limits only affect subsequent retention and cannot restore removed content. Upgrades preserve existing N and Z; a missing M defaults to N. On startup, unfinished records left by the retired capture component are marked as interrupted.
 
 ### Desktop and background service
 

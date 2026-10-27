@@ -263,7 +263,8 @@ function renderStorageInfo() {
   const storage=state.status?.storage;if(!storage)return;
   reconcileContent($("storage-info"),
     el("span","",compact(storage.stored)+"/"+compact(storage.max_bytes)),
-    el("span","",t("{count} 请求").replace("{count}",nf.format(storage.count)))
+    el("span","",t("{count} 请求").replace("{count}",nf.format(storage.count))+
+      (Number.isInteger(storage.detail_count)?" · "+t("{count} 详情").replace("{count}",nf.format(storage.detail_count)):""))
   );
 }
 function signed(n) { return (n > 0 ? "+" : "") + bytes(n); }
@@ -491,7 +492,7 @@ async function selectSession(value) {
 }
 function message(text, error=false) { $("notice").textContent = text; $("notice").className = "notice"+(error?" error":""); $("notice").hidden = false; }
 function fail(err) { message(err.message || String(err), true); }
-async function api(path, data, signal) { const r = await fetch(path, {method:data === undefined ? "GET" : "POST",headers:data === undefined ? {} : {"Content-Type":"application/json"},body:data === undefined ? undefined : JSON.stringify(data),signal}); const value = await r.json(); if (!r.ok) throw Error(value.error || ("HTTP "+r.status)); return value; }
+async function api(path, data, signal) { const r = await fetch(path, {method:data === undefined ? "GET" : "POST",headers:data === undefined ? {} : {"Content-Type":"application/json"},body:data === undefined ? undefined : JSON.stringify(data),signal}); const value = await r.json(); if (!r.ok) throw Object.assign(Error(value.error || ("HTTP "+r.status)),{status:r.status}); return value; }
 function action(id, fn) { $(id).addEventListener("click", () => Promise.resolve().then(fn).catch(fail)); }
 function tokenVersion(packet) { return [packet.state,packet.status,packet.duration_ms,packet.method,packet.path,packet.is_compaction,packet.request_kind].join(":"); }
 function cancelTokenRead() {
@@ -827,7 +828,7 @@ async function loadPackets(append=false,background=false) {
     renderList();
     loaded=true;
     if (!state.selected && state.packets.length) await selectPacket(state.packets[0].id,false,requestId);
-    else if (state.selected) { const p=state.packets.find(p=>p.id===state.selected); if(p) {const ver=[p.state,p.status,p.duration_ms,p.outbound_wire_bytes,p.outbound_content_encoding,p.relay_content_encoding,p.relay_zstd_level,p.capacity_retry_count,p.capacity_retry_diagnostic?.updated].join(":");if(ver!==state.detailVersion) await selectPacket(state.selected,true);} }
+    else if (state.selected) { const p=state.packets.find(p=>p.id===state.selected); if(p) {const ver=[p.state,p.status,p.duration_ms,p.outbound_wire_bytes,p.outbound_content_encoding,p.relay_content_encoding,p.relay_zstd_level,p.capacity_retry_count,p.capacity_retry_diagnostic?.updated,p.details_evicted].join(":");if(ver!==state.detailVersion) await selectPacket(state.selected,true);} else await selectPacket(state.selected,true); }
   } catch(e) {if(e.name!=="AbortError")throw e;}
   finally {
     if(state.listController===controller) {
@@ -873,11 +874,14 @@ function fillSettings() {
   fillEntryPort();
   if(!settingsEditing) {
     $("storage-limit").value=s.max_storage_mb;$("packet-limit").value=s.max_packets;
+    $("detail-limit").value=s.max_detail_packets??s.max_packets;
     $("start-on-login").checked=!!s.start_on_login;
     $("capacity-retry").checked=!!s.capacity_retry_enabled;
     $("capacity-retry-count").value=s.capacity_retry_max_retries??3;
   }
   for(const id of ["storage-limit","packet-limit"])$(id).disabled=settingsSaving;
+  $("detail-limit").disabled=settingsSaving||!Number.isInteger(s.max_detail_packets);
+  updateDetailLimit();
   $("start-on-login").disabled=settingsSaving||!s.start_on_login_supported;
   $("capacity-retry").disabled=settingsSaving||!s.capacity_retry_supported;
   $("capacity-retry-count").disabled=settingsSaving||!Number.isInteger(s.capacity_retry_max_retries);
@@ -1204,6 +1208,10 @@ async function loadContextSettings() {
 }
 let updateStatus=null, updateBusy=false, updateAction="", updateFeedbackVisible=false;
 let updateRevision=0,updateStatusLoading=false;
+function updateDetailLimit() {
+  const count=Number($("packet-limit").value);
+  $("detail-limit").max=Number.isInteger(count)&&count>=0?String(count):"20000";
+}
 function readSettingsDraft() {
   const draft={
     entry_port:$("entry-port").value,
@@ -1218,6 +1226,7 @@ function readSettingsDraft() {
     image_save_dir:$("image-save-dir").value,
     max_storage_mb:$("storage-limit").value,
     max_packets:$("packet-limit").value,
+    max_detail_packets:$("detail-limit").value,
     language:settingsLanguage??uiI18n.language
   };
   for(const key of ["context","compact"])draft[key+"_tokens"]=$(key+"-default").checked?null:$(key+"-tokens").value;
@@ -1299,7 +1308,8 @@ async function saveSettings() {
       s.image_isolation_supported||["native","disabled","optimized"].includes(s.image_analysis_mode)],
     ["image_save_dir","image_save_dir",draft.image_save_dir===imageDefaultDirectory()?"":draft.image_save_dir,s.image_save_dir_supported],
     ["max_storage_mb","max_storage_mb",Number(draft.max_storage_mb),true],
-    ["max_packets","max_packets",Number(draft.max_packets),true]
+    ["max_packets","max_packets",Number(draft.max_packets),true],
+    ["max_detail_packets","max_detail_packets",Number(draft.max_detail_packets),Number.isInteger(s.max_detail_packets)]
   ].filter(([field,,,supported])=>supported&&changed.has(field));
   const contextChanged=contextSettings&&["context_tokens","compact_tokens"].some(key=>changed.has(key));
   const portChanged=s.entry_port_supported&&s.entry_port&&changed.has("entry_port");
@@ -1416,15 +1426,25 @@ async function openSettings() {
 }
 async function selectPacket(id,refresh=false,expectedListRequest=null) {
   const requestId=++state.detailRequest;
-  const m=await api("/api/packets/"+id); if(requestId!==state.detailRequest || (refresh && state.selected!==id) || (expectedListRequest!==null && expectedListRequest!==state.listRequest)) return;
-  const changed=state.selected!==id, previousDetail=state.detail; state.selected=id; state.detail=m; state.detailVersion=[m.state,m.status,m.duration_ms,m.outbound_wire_bytes,m.outbound_content_encoding,m.relay_content_encoding,m.relay_zstd_level,m.capacity_retry_count,m.capacity_retry_diagnostic?.updated].join(":");
+  let m;
+  try {m=await api("/api/packets/"+id);}
+  catch(error) {
+    if(requestId!==state.detailRequest)return;
+    if(error.status!==404||!refresh||state.selected!==id)throw error;
+    cancelTokenRead();tokenWindow=null;
+    state.selected=null;state.detail=null;state.detailVersion="";state.text=null;
+    requestBodyCache=null;requestBodyView=null;requestBodySequence++;clearJsonFocus();clearJsonDownload();
+    $("packet-detail").hidden=true;$("empty-state").hidden=false;renderList();return;
+  }
+  if(requestId!==state.detailRequest || (refresh && state.selected!==id) || (expectedListRequest!==null && expectedListRequest!==state.listRequest)) return;
+  const changed=state.selected!==id, previousDetail=state.detail, detailsChanged=!!m.details_evicted!==!!previousDetail?.details_evicted; state.selected=id; state.detail=m; state.detailVersion=[m.state,m.status,m.duration_ms,m.outbound_wire_bytes,m.outbound_content_encoding,m.relay_content_encoding,m.relay_zstd_level,m.capacity_retry_count,m.capacity_retry_diagnostic?.updated,m.details_evicted].join(":");
   $("empty-state").hidden=true; $("packet-detail").hidden=false; renderList();
   if(changed || tokenVersion(m)!==tokenVersion(previousDetail||{})) {cancelTokenRead();tokenWindow=cachedTokenWindow(m);}
   else if(tokenWindow?.state==="unavailable") tokenWindow=null;
   loadTokenWindow();
   renderOverview(m); renderCompression(m); renderHeaders(m);
   if(changed)$("diff-content").replaceChildren(el("p","muted",t("加载中…")));
-  if(changed) {state.path=""; state.text=null; $("body-results").hidden=true; await loadTree("");if(requestId===state.detailRequest)await loadDiff();}
+  if(changed||detailsChanged) {state.path=""; state.text=null; $("body-results").hidden=true; await loadTree("");if(requestId===state.detailRequest)await loadDiff();}
   else if(state.tab==="diff") await loadDiff();
 }
 function renderProtectionPanelState() {
@@ -1460,9 +1480,9 @@ function renderCompression(m) {
   fact(steps,t("自动重试"),triggerStatus(capacityRetryCount(m)>0)).dataset.protection="retry";
   root.append(steps);reconcileContent($("compression-content"),root);renderProtectionPanelState();
 }
-function bars(title, rows, total) {
+function bars(title, rows, total,bodyAvailable=true) {
   const p=panel(title);
-  for(const r of rows) { const row=el("div","bar-row"), label=el("div","bar-label");row.dataset.renderKey="bar:"+r.name; label.append(link(r.name,()=>goPath(r.path)),el("span","",bytes(r.bytes)+" · "+(r.bytes/(total||1)*100).toFixed(1)+"%")); const progress=el("progress");progress.max=total||1;progress.value=r.bytes;row.append(label,progress);p.append(row); }
+  for(const r of rows) { const row=el("div","bar-row"), label=el("div","bar-label");row.dataset.renderKey="bar:"+r.name; label.append(bodyAvailable?link(r.name,()=>goPath(r.path)):el("span","",r.name),el("span","",bytes(r.bytes)+" · "+(r.bytes/(total||1)*100).toFixed(1)+"%")); const progress=el("progress");progress.max=total||1;progress.value=r.bytes;row.append(label,progress);p.append(row); }
   return p;
 }
 function renderOverview(m) {
@@ -1470,9 +1490,9 @@ function renderOverview(m) {
   if(m.inspection!=="json") {reconcileContent($("overview"),el("p","muted",t("正文未展开：")+(m.inspection_error||t("正文为空"))+t("。转发仍按原始正文进行。")));return;}
   const cols=el("div","two-columns");
   const fields=[...(m.top_fields||[]).map(r=>({...r,path:"/"+r.name.replaceAll("~","~0").replaceAll("/","~1")})),{name:t("字段名、标点及空白"),bytes:m.json_envelope_bytes,path:""}].sort((a,b)=>b.bytes-a.bytes);
-  cols.append(bars(t("字段构成"),fields,m.decoded_bytes));
+  cols.append(bars(t("字段构成"),fields,m.decoded_bytes,!m.details_evicted));
   const groups=Object.entries(m.input_groups||{}).map(([name,size])=>({name:kind(name),bytes:size,path:"/input"})).sort((a,b)=>b.bytes-a.bytes);
-  cols.append(bars(t("input 构成"),groups,(m.top_fields.find(r=>r.name==="input")||{}).bytes));root.append(cols);reconcileContent($("overview"),root);
+  cols.append(bars(t("input 构成"),groups,(m.top_fields.find(r=>r.name==="input")||{}).bytes,!m.details_evicted));root.append(cols);reconcileContent($("overview"),root);
 }
 function jsonValueNode(value,key=null,comma=false,root=false,path="",nodes=new Map()) {
   const object=value!==null&&typeof value==="object", array=Array.isArray(value);
@@ -1538,6 +1558,7 @@ function clearJsonFocus() {
   requestBodyHighlight?.classList.remove("json-focused");requestBodyHighlight=null;
 }
 async function ensureJsonView(id,sequence) {
+  if(state.detail?.id===id&&state.detail.details_evicted)throw new Error(t("请求详情已回收，仅保留基本信息。"));
   if(requestBodyView?.id===id&&requestBodyView.language===uiI18n.language)return requestBodyView;
   const root=$("json-tree");root.textContent=t("加载中…");requestBodyView=null;clearJsonFocus();clearJsonDownload();
   if(requestBodyCache?.id!==id) {
@@ -1580,6 +1601,11 @@ async function loadTree(path) {
   const id=state.selected, sequence=++requestBodySequence;
   state.path=path;$("tree-query").value=path;$("body-results").hidden=true;
   $("request-body-view").hidden=false;clearJsonFocus();
+  $("tree-query").disabled=!!state.detail?.details_evicted;
+  if(state.detail?.details_evicted) {
+    requestBodyView=null;requestBodyCache=null;clearJsonDownload();
+    $("json-tree").textContent=t("请求详情已回收，仅保留基本信息。");return;
+  }
   try {
     const view=await ensureJsonView(id,sequence);
     if(!view||state.selected!==id||sequence!==requestBodySequence)return;
@@ -1666,6 +1692,9 @@ function packetDiffRows(data,current=null) {
 }
 async function loadDiff() {
   const id=state.selected,data=await api("/api/packets/"+id+"/diff");if(state.selected!==id)return;
+  if(data?.state==="details_unavailable") {
+    reconcileContent($("diff-content"),el("p","muted",t("请求详情已回收，无法比较变化。")));return;
+  }
   const delta=data?await compressedDelta(data,state.detail):null;if(state.selected!==id)return;
   const root=document.createDocumentFragment();
   if(!data){reconcileContent($("diff-content"),el("p","muted",t("没有可比较的上条请求。")));return;}
@@ -1763,6 +1792,7 @@ function renderHeaders(m) {
   const specialKind=[purpose,m.request_kind,auxiliary].find(kind=>kind&&kind!=="subagent"&&Object.hasOwn(auxiliaryLabels,kind));
   fact(p,t("响应状态"),String(m.status||t("尚未收到")));
   fact(p,t("响应头耗时"),Number.isFinite(m.headers_ms)&&m.headers_ms>=0?m.headers_ms+" ms":"—");
+  if(m.details_evicted)fact(p,t("请求详情"),t("已回收"));
   const upload=uploadBytes(m);
   if(Number.isFinite(m.wire_bytes)&&m.wire_bytes>=0&&upload!==null&&m.wire_bytes!==upload) {
     fact(p,t("采集入口正文"),bytes(m.wire_bytes)+" · "+(m.content_encoding||"identity"));
@@ -1849,7 +1879,7 @@ $("settings-dialog").addEventListener("close",()=>{
 $("capacity-retry-count").addEventListener("input",event=>{
   if(event.target.valueAsNumber>99)event.target.value="99";
 });
-$("settings-dialog").querySelector(".settings-content").addEventListener("input",()=>updateSettingsSaveState());
+$("settings-dialog").querySelector(".settings-content").addEventListener("input",()=>{updateDetailLimit();updateSettingsSaveState();});
 $("settings-dialog").querySelector(".settings-content").addEventListener("change",()=>updateSettingsSaveState());
 $("zstd-level").addEventListener("change",fillZstdLevel);
 action("zstd-level-open",openZstdLevelPicker);action("zstd-level-close",()=>closeZstdLevelPicker());

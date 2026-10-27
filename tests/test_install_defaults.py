@@ -29,6 +29,7 @@ class InstallationSettingsTests(unittest.TestCase):
         status = server.status()
         self.assertEqual(status["connection_state"], "disconnected")
         self.assertNotIn("request_compression", server.settings)
+        self.assertEqual(status["max_detail_packets"], status["max_packets"])
         for key in ("packet_size_protection_enabled", "image_isolation_enabled",
                     "capacity_retry_enabled", "start_on_login"):
             self.assertIs(status[key], False, key)
@@ -37,6 +38,17 @@ class InstallationSettingsTests(unittest.TestCase):
         self.assertFalse(status["profile"]["active"])
         self.assertEqual(server.auto_sync_providers(), {"enabled": False})
         self.assertEqual(self.config.read_bytes(), original)
+
+    def test_legacy_retention_defaults_details_to_the_saved_record_limit(self):
+        self.data.mkdir()
+        (self.data / "settings.json").write_text(json.dumps({"max_packets": 1234, "max_storage_mb": 97,
+                                                            "auto_detect_providers": False}), encoding="utf8")
+        server = self.server()
+        self.assertEqual(server.settings["max_packets"], 1234)
+        self.assertEqual(server.settings["max_storage_mb"], 97)
+        self.assertEqual(server.settings["max_detail_packets"], 1234)
+        saved = json.loads(server.settings_path.read_text(encoding="utf8"))
+        self.assertEqual(saved["max_detail_packets"], 1234)
 
     def test_restart_and_worker_activation_preserve_all_saved_choices(self):
         for enabled in (True, False):
@@ -47,7 +59,7 @@ class InstallationSettingsTests(unittest.TestCase):
                           "packet_size_protection_enabled": enabled, "image_isolation_enabled": enabled,
                           "capacity_retry_enabled": enabled, "capacity_retry_max_retries": 7,
                           "start_on_login": enabled, "auto_detect_providers": False,
-                          "budget_bytes": 777000, "max_storage_mb": 97, "max_packets": 1234,
+                          "budget_bytes": 777000, "max_storage_mb": 97, "max_packets": 1234, "max_detail_packets": 321,
                           "image_save_dir": str(self.root / "custom-images"), "ui_language": "en",
                           "custom_future_setting": {"keep": True}}
                 (self.data / "settings.json").write_text(json.dumps(values), encoding="utf8")

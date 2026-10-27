@@ -19,6 +19,8 @@ from .request_context import packet_metadata
 SUMMARY_COLUMNS = "id,created,thread,status,method,kind,status_key,state,capture_owner,wire_bytes,stored_bytes,meta"
 COMPRESSED_SIZE_SQL = "coalesce(json_extract(meta,'$.overflow_original_wire_bytes'),json_extract(meta,'$.usage_override_request_bytes'),json_extract(meta,'$.outbound_wire_bytes'),-1)"
 PENDING_CLASSIFICATION = f"coalesce(json_extract(meta,'$.classification_version'),0)<{CLASSIFICATION_VERSION}"
+RETAINED_DETAILS = "coalesce(json_extract(meta,'$.details_evicted'),0)=0"
+DETAIL_META_FIELDS = {"headers", "input_items"}
 
 
 def summary_values(row):
@@ -38,12 +40,13 @@ def summary_values(row):
 
 class Store:
     def __init__(self, directory: Path, max_bytes=512 * 1024 * 1024, max_count=2000,
-                 capture_owner="relay", timeout=10):
+                 capture_owner="relay", timeout=10, max_detail_count=None):
         directory.mkdir(parents=True, exist_ok=True)
         self.directory = directory
         self.path = directory / "packets.sqlite"
         self.max_bytes = max_bytes
         self.max_count = max_count
+        self.max_detail_count = max_detail_count
         self.capture_owner = capture_owner
         self.timeout = timeout
         self.lock = threading.RLock()
@@ -55,6 +58,7 @@ class Store:
                 status INTEGER, fingerprint TEXT, meta TEXT NOT NULL, content BLOB)""")
             c.execute("CREATE INDEX IF NOT EXISTS packets_created ON packets(created DESC)")
             c.execute("CREATE INDEX IF NOT EXISTS packets_thread ON packets(thread, created DESC)")
+            c.execute(f"CREATE INDEX IF NOT EXISTS packets_retained_details ON packets(created,id) WHERE {RETAINED_DETAILS}")
             self._init_summaries(c)
             # Other relay workers may still be streaming during an upgrade.
             self._recover_owner(c, self.capture_owner)
@@ -134,6 +138,9 @@ class Store:
                 "state": "captured", "source": meta.get("source", "live"),
                 "capture_owner": self.capture_owner}
         meta = packet_metadata(meta)
+        if self.max_detail_count == 0:
+            meta = self._basic_metadata(meta)
+            content = None
         blob = zlib.compress(encode(content), 3) if content is not None else None
         with self.lock, self.connect() as c:
             c.execute("INSERT INTO packets VALUES(?,?,?,?,?,?,?)",
@@ -142,15 +149,59 @@ class Store:
             self._prune(c)
         return packet_id
 
+    @staticmethod
+    def _basic_metadata(meta):
+        return {**{key: value for key, value in meta.items() if key not in DETAIL_META_FIELDS},
+                "details_evicted": True}
+
+    def _discard_details(self, c, row):
+        meta = json.dumps(self._basic_metadata(json.loads(row["meta"])), ensure_ascii=False)
+        c.execute("UPDATE packets SET meta=?,content=NULL WHERE id=?", (meta, row["id"]))
+        saved = row["stored_bytes"] - len(meta.encode("utf-8"))
+        if saved > 0:
+            self.reclaimer.request()
+        return saved
+
+    def configure_limits(self, max_bytes, max_count, max_detail_count=None):
+        with self.lock:
+            previous = self.max_bytes, self.max_count, self.max_detail_count
+            self.max_bytes, self.max_count, self.max_detail_count = max_bytes, max_count, max_detail_count
+            try:
+                with self.connect() as c:
+                    c.execute("BEGIN IMMEDIATE")
+                    self._prune(c)
+            except Exception:
+                self.max_bytes, self.max_count, self.max_detail_count = previous
+                raise
+
     def _prune(self, c):
         count, total = c.execute("SELECT count(*),coalesce(sum(stored_bytes),0) FROM packet_summaries").fetchone()
-        while count > self.max_count or total > self.max_bytes:
+        if count > self.max_count:
+            old = c.execute("SELECT id,stored_bytes FROM packet_summaries ORDER BY created DESC,id DESC LIMIT -1 OFFSET ?",
+                            (max(0, self.max_count),)).fetchall()
+            c.executemany("DELETE FROM packets WHERE id=?", [(row["id"],) for row in old])
+            self.reclaimer.request()
+            count -= len(old)
+            total -= sum(row["stored_bytes"] for row in old)
+        detail_limit = max(0, min(self.max_count, self.max_count if self.max_detail_count is None else self.max_detail_count))
+        boundary = (c.execute("SELECT created,id FROM packet_summaries ORDER BY created DESC,id DESC LIMIT 1 OFFSET ?",
+                              (detail_limit,)).fetchone() if count > detail_limit else None)
+        detail_rows = f"SELECT id,meta,coalesce(length(content),0)+length(cast(meta AS BLOB)) AS stored_bytes FROM packets WHERE {RETAINED_DETAILS}"
+        if boundary:
+            for row in c.execute(detail_rows + " AND (created,id)<=(?,?) ORDER BY created,id", tuple(boundary)):
+                total -= self._discard_details(c, row)
+        # Keep list, chart and size statistics before sacrificing a basic record.
+        while total > self.max_bytes:
+            row = c.execute(detail_rows + " ORDER BY created,id LIMIT 1").fetchone()
+            if row is None:
+                break
+            total -= self._discard_details(c, row)
+        while total > self.max_bytes:
             row = c.execute("SELECT id,stored_bytes AS size FROM packet_summaries ORDER BY created,id LIMIT 1").fetchone()
             if row is None:
                 break
             c.execute("DELETE FROM packets WHERE id=?", (row["id"],))
             self.reclaimer.request()
-            count -= 1
             total -= row["size"] or 0
 
     def update(self, packet_id, **fields):
@@ -161,6 +212,9 @@ class Store:
             row = c.execute("SELECT meta FROM packets WHERE id=?", (packet_id,)).fetchone()
             if row:
                 meta = json.loads(row["meta"])
+                if meta.get("details_evicted"):
+                    fields = {key: value for key, value in fields.items()
+                              if key not in DETAIL_META_FIELDS | {"details_evicted"}}
                 meta.update(fields)
                 c.execute("UPDATE packets SET status=?,meta=? WHERE id=?",
                           (meta.get("status"), json.dumps(meta, ensure_ascii=False), packet_id))
@@ -265,6 +319,7 @@ class Store:
     def stats(self):
         with self.connect() as c:
             row = c.execute("SELECT count(*) AS count,coalesce(sum(stored_bytes),0) AS stored,coalesce(sum(CASE WHEN capture_owner='existing_exit' AND state IN ('captured','streaming') THEN 1 ELSE 0 END),0) AS observed_active,(SELECT revision FROM packet_index_state WHERE singleton=1) AS revision FROM packet_summaries").fetchone()
+            detail_count = c.execute(f"SELECT count(*) FROM packets WHERE {RETAINED_DETAILS}").fetchone()[0]
             threads = c.execute("SELECT thread,count(*) AS count FROM packet_summaries GROUP BY thread ORDER BY max(created) DESC LIMIT 120").fetchall()
         disk_bytes = 0
         for path in self.directory.glob("packets.sqlite*"):
@@ -274,10 +329,14 @@ class Store:
             except FileNotFoundError:
                 pass  # A concurrent SQLite close can checkpoint and unlink WAL files.
         return {**dict(row), "disk_bytes": disk_bytes, "max_bytes": self.max_bytes, "max_count": self.max_count,
+                "detail_count": detail_count,
+                "max_detail_count": max(0, min(self.max_count, self.max_count if self.max_detail_count is None else self.max_detail_count)),
                 "threads": [dict(r) for r in threads]}
 
     def compare(self, packet_id):
         current, _ = self.get(packet_id)
+        if current.get("details_evicted"):
+            return {"state": "details_unavailable"}
         if not current.get("thread_id"):
             return None  # Avoid inventing a same-chat comparison for unidentified requests.
         with self.connect() as c:
@@ -286,4 +345,6 @@ class Store:
         if row is None:
             return None
         previous = json.loads(row["meta"])
+        if previous.get("details_evicted"):
+            return {"previous_id": previous["id"], "state": "details_unavailable"}
         return {"previous_id": previous["id"], **compare_packets(previous, current)}

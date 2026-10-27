@@ -34,9 +34,9 @@
 
 `TokenTrendView` 初始化时采用最近 1 小时，HTML 的初始选中状态与之保持一致；可切换为 6 小时、24 小时或全部保留记录。两张图共用数据加载和时间轴，包大小使用列表的“压缩包”口径，Token 使用真实用量及有界历史补读，最多加载最近 12,000 条保留请求。“全部记录”不表示无限历史，已被存储回收的请求不再进入曲线。
 
-`Store` 默认容量为 512 MiB、2,000 条，设置允许 16–8,192 MiB、10–20,000 条。`packet_summaries.stored_bytes` 由数据库触发器同步维护，等于 `length(content) + length(cast(meta AS BLOB))`，空正文按 0 计算。`content` 是以 zlib 压缩的脱敏副本，`meta` 按 UTF-8 字节计量；这与上传时使用的 zstd 压缩包大小不同。
+`Store` 默认容量为 512 MiB、2,000 条基本信息；设置允许 16–8,192 MiB、10–20,000 条。`max_detail_packets` 单独控制最新 M 条请求的详情，允许 0–N；旧配置缺省沿用 N。`packet_summaries.stored_bytes` 由数据库触发器同步维护，等于 `length(content) + length(cast(meta AS BLOB))`，空正文按 0 计算。`content` 是以 zlib 压缩的脱敏副本，`meta` 按 UTF-8 字节计量；这与上传时使用的 zstd 压缩包大小不同。容量不足时先将旧详情转换为基本信息，移除正文、HTTP 头及带正文片段的 `input_items`，保留 `top_fields`、`input_groups`、真实用量和其他列表、图表及请求信息字段；基本信息单独超额时才从旧到新删除记录。两阶段均不按请求状态豁免。
 
-`/api/status` 中 `storage.stored` 为上述记录大小之和，`max_bytes` 为设置额度，`count` 为保留请求数。左栏底部仅使用这三项显示“占用 / 上限”和请求数。`disk_bytes` 另外统计 `packets.sqlite*` 的实际文件大小，包含 SQLite 页、索引和日志开销，不用于存储额度判断，也不表示整个数据目录的大小。摘要库、重试诊断库和图片缓存独立管理。
+`/api/status` 中 `storage.stored` 为上述记录大小之和，`max_bytes` 为设置额度，`count` 为保留请求数，`detail_count` 为保留详情数。左栏底部显示“占用 / 上限”、请求数和详情数。`details_evicted` 标记用于清除前端正文缓存并提示详情已回收，缺少任一方详情时不生成误导性的条目差异。修改限额后立即执行回收；后续响应用量可继续更新基本信息，不能重新带回正文片段。`disk_bytes` 另外统计 `packets.sqlite*` 的实际文件大小，包含 SQLite 页、索引和日志开销，不用于存储额度判断，也不表示整个数据目录的大小。摘要库、重试诊断库和图片缓存独立管理。
 
 `Store._prune` 在启动、增加记录和成功更新现存记录时执行。超过任一上限，就按 `created,id` 从旧到新删除，直至同时满足容量和条数；不再优先保留 `captured` 或 `streaming`。单条记录超过额度时也会删除。修改存储设置仅更新上限，由后续上述检查执行回收；记录被删除后，迟到的 `update` 不会重新插入，也不影响仍在转发的响应。
 
