@@ -1836,9 +1836,6 @@ function appendResponseFields(p,value) {
   if(Object.hasOwn(statuses,value.status))fact(p,t("结束状态"),t(statuses[value.status]));
   if(typeof value.response_id==="string"&&value.response_id)fact(p,t("响应 ID"),value.response_id).classList.add("request-context");
   if(Array.isArray(value.tools)&&value.tools.length)fact(p,t("工具调用"),value.tools.filter(name=>typeof name==="string").join(" · ")+(value.tools_truncated?" …":""));
-  if(typeof value.text==="string"&&value.text) {
-    const excerpt=el("p","response-excerpt",value.text+(value.text_truncated?"…":""));p.append(excerpt);
-  }
   if(value.observation_limited)p.append(el("small","muted",t("概要采集不完整")));
 }
 function renderHeaders(m) {

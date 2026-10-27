@@ -127,7 +127,6 @@ code.session-id{font-family:Consolas,"Cascadia Mono",monospace;font-size:11px;wo
 .trend-sidebar{display:flex;flex-direction:column;gap:12px;min-height:0;min-width:0;padding:14px 12px 12px;border-right:1px solid var(--line);background:#fafbfd;overflow:hidden}
 .trend-sidebar-controls{display:flex;align-items:center;gap:8px;flex:none}
 .trend-main{display:flex;flex-direction:column;gap:12px;min-height:0;min-width:0;padding:20px 24px 12px;overflow:hidden}
-.response-excerpt{margin:12px 0 0;white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px;line-height:1.7}
 .trend-toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:8px 20px;flex:none}
 #trend-range{margin-left:auto}
 .trend-range-control{display:flex;align-items:center;gap:10px;flex:none}
