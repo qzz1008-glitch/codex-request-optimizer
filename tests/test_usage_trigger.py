@@ -275,7 +275,7 @@ class UsageRelayTests(unittest.TestCase):
         a, b = (base64.b64encode(rng.randbytes(300000)).decode() for _ in range(2))
         body = json.dumps({'input': a + b + a}).encode()
         fast_size = len(zstandard.ZstdCompressor(level=1).compress(body))
-        high_size = len(zstandard.ZstdCompressor(level=17).compress(body))
+        high_size = len(zstandard.ZstdCompressor(level=16).compress(body))
         budget = fast_size * 100 // 97
         self.assertGreaterEqual(fast_size, budget - 50000)
         self.assertLess(high_size, budget * .8)  # Reproduces the old downgrade.
@@ -298,7 +298,7 @@ class UsageRelayTests(unittest.TestCase):
                 meta = self.server.store.list(limit=1)[0]
                 self.assertEqual(meta['relay_auto_zstd_phase'], phase)
                 self.assertEqual(meta['relay_auto_zstd_next_phase'], 17 if phase else 0)
-                self.assertEqual(meta['relay_zstd_level'], phase or None)
+                self.assertEqual(meta['relay_zstd_level'], 16 if phase == 17 else phase or None)
                 if phase == 1:
                     self.assertTrue(meta['usage_override_applied'])
                     self.assertEqual(meta['upstream_usage'], USAGE)
