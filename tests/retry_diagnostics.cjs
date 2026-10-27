@@ -48,7 +48,39 @@ context.renderCompression({capacity_retry_count:2});
 assert.equal(rendered.children[1].children[2].value,'已触发');
 context.renderCompression({});
 assert.equal(rendered.children[1].children[2].value,'暂无记录');
+// A summary can turn a compressed packet into a small identity upload. The
+// encoding/level displayed next to the pre-summary size must describe that size.
+const interrupted={source:'live',state:'relay_error',status:200,
+  relay_content_encoding:'identity',relay_zstd_level:null,
+  overflow_compaction_calls:1,overflow_original_wire_bytes:1004951,
+  usage_override_request_bytes:1004951,usage_override_trigger_bytes:950000};
+function facts(section){return Object.fromEntries(rendered.children[section].children.map(row=>[row.label,row.value]));}
+context.renderCompression(interrupted);
+assert.equal(facts(0)['压缩方式'],'—');
+assert.equal(facts(0)['zstd 压缩等级'],'—');
+assert.equal(facts(1)['预测保护'],'未完成');
+assert.equal(facts(1)['超限保护'],'已触发');
+context.renderCompression({...interrupted,transport_content_encoding:'zstd',transport_zstd_level:17});
+assert.equal(facts(0)['压缩方式'],'zstd');
+assert.equal(facts(0)['zstd 压缩等级'],17);
+context.renderCompression({...interrupted,state:'streaming'});
+assert.equal(facts(1)['预测保护'],'等待响应');
+context.renderCompression({...interrupted,state:'complete',usage_override_applied:true});
+assert.equal(facts(1)['预测保护'],'已触发');
+context.renderCompression({...interrupted,state:'complete',usage_override_applied:false,reported_usage:{input_tokens:500000}});
+assert.equal(facts(1)['预测保护'],'已满足');
+context.renderCompression({source:'live',relay_content_encoding:'zstd',relay_zstd_level:1});
+assert.equal(facts(0)['压缩方式'],'zstd');
+assert.equal(facts(0)['zstd 压缩等级'],1);
+context.renderCompression({...interrupted,overflow_compaction_calls:0,overflow_cache_hit:true});
+assert.equal(facts(0)['压缩方式'],'—');
 english=true;
+context.renderCompression(interrupted);
+assert.equal(facts(1)['Predictive protection'],'Incomplete');
+context.renderCompression({...interrupted,state:'streaming'});
+assert.equal(facts(1)['Predictive protection'],'Waiting for response');
+context.renderCompression({...interrupted,usage_override_applied:false,reported_usage:{input_tokens:500000}});
+assert.equal(facts(1)['Predictive protection'],'Already at threshold');
 context.renderCompression(packet({outcome:'capacity_error',capacity_error_seen:true,stop_reason:'retry_limit'},3));
 rows=rendered.children[1].children;
 assert.deepEqual(Array.from(rows,row=>row.label),['Predictive protection','Over-limit protection','Automatic retries']);

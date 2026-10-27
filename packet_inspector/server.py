@@ -925,6 +925,8 @@ class Handler(BaseHTTPRequestHandler):
                         zstd_level = auto_decision.level
                         update(relay_auto_zstd_phase=auto_decision.phase,
                                relay_auto_zstd_previous_phase=auto_decision.previous_phase,
+                               relay_auto_zstd_ticket=auto_decision.ticket,
+                               relay_compression_scope=compression_scope,
                                relay_auto_zstd_initial_threshold_bytes=INITIAL_HIGH_BYTES,
                                relay_auto_zstd_budget_bytes=budget)
                     else:
@@ -952,6 +954,10 @@ class Handler(BaseHTTPRequestHandler):
                 encoded = prepare_request_info(body, headers, self.command, suffix, compression, zstd_level,
                                                 auto_zstd_level=auto_zstd_level, budget_bytes=budget)
                 outbound_body, outbound_encoding, applied_zstd_level = encoded
+            # The displayed compressed packet is measured before summary
+            # substitution. Preserve its encoding/level before overflow can
+            # rebuild a small identity body and replace the final relay fields.
+            update(transport_content_encoding=outbound_encoding, transport_zstd_level=applied_zstd_level)
             if auto_decision is not None:
                 next_phase = self.server.compression_policy.finish(auto_key, auto_decision, len(outbound_body), budget)
                 update(relay_auto_zstd_next_phase=next_phase)
