@@ -81,6 +81,8 @@ class ImageConfigurationTests(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
+        self.cli = self.root / "codex.exe"
+        self.cli.write_text("synthetic executable placeholder", encoding="ascii")
         self.config = self.root / "config.toml"
         self.config.write_text('model="test"\n[tools]\nweb_search=true\n'
             '[mcp_servers.isolated_vision]\ncommand="original-reader"\nargs=["existing.py"]\n'
@@ -89,7 +91,7 @@ class ImageConfigurationTests(unittest.TestCase):
             lambda: "http://127.0.0.1:43210/relay/test")
 
     def enable(self):
-        with patch("packet_inspector.image_config.shutil.which", return_value="fake-codex"), patch.object(
+        with patch("packet_inspector.image_config.find_codex_cli", return_value=str(self.cli)), patch.object(
                 self.manager, "_validate"), self.manager.change(True):
             pass
 
