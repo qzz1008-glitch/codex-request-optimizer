@@ -958,13 +958,24 @@ function fillZstdLevel() {
 }
 function renderZstdLevelRows() {
   const selected=Number($("zstd-level").value);
+  const ranges=[1,2,3].map(column=>{
+    const values=zstdLevelEstimates.map(row=>row[column]);
+    return {min:Math.min(...values),max:Math.max(...values)};
+  });
+  const estimateCell=(column,value,text)=>{
+    const {min,max}=ranges[column],ratio=max===min?0.5:(value-min)/(max-min);
+    // Larger size savings and lower time overhead are better, within each column.
+    const quality=column===2?1-ratio:ratio,cell=el("td","num",text);
+    cell.setAttribute("style",`background-color:hsl(${(50+quality*70).toFixed(1)},65%,88%)`);
+    return cell;
+  };
   $("zstd-level-options").replaceChildren(...zstdLevelEstimates.map(([level,smallSize,largeSize,time])=>{
     const current=level===selected,row=el("tr",current?"selected":"");row.dataset.level=String(level);
     const cell=el("td"),button=el("button","zstd-level-option");button.type="button";
     button.setAttribute("aria-pressed",String(current));button.tabIndex=current?0:-1;
     const mark=el("span","zstd-level-check",current?"✓":"");mark.setAttribute("aria-hidden","true");
     button.append(mark,el("span","",t("{level}级").replace("{level}",level)));
-    cell.append(button);row.append(cell,el("td","num","-"+smallSize.toFixed(2)+"%"),el("td","num","-"+largeSize.toFixed(2)+"%"),el("td","num","+"+time.toFixed(3)+"%"));
+    cell.append(button);row.append(cell,estimateCell(0,smallSize,"-"+smallSize.toFixed(2)+"%"),estimateCell(1,largeSize,"-"+largeSize.toFixed(2)+"%"),estimateCell(2,time,"+"+time.toFixed(3)+"%"));
     return row;
   }));
 }
