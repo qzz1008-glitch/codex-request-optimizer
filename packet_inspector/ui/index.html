@@ -195,7 +195,7 @@
   </dialog>
   <dialog id="zstd-level-dialog" aria-labelledby="zstd-level-title" aria-describedby="zstd-level-note">
     <div class="dialog-heading"><h2 id="zstd-level-title">选择压缩等级</h2><button id="zstd-level-close" type="button" aria-label="关闭等级选择">✕</button></div>
-    <p id="zstd-level-note" class="help muted">按原始未压缩包分组估算，大小变化相对原始包。</p>
+    <p id="zstd-level-note" class="help muted">按原始未压缩包分组估算，大小变化相对原始包。各列独立比较，绿色较优、黄色较差。</p>
     <div class="zstd-level-scroll"><table class="zstd-level-table"><colgroup><col class="zstd-level-col"><col><col><col class="zstd-time-col"></colgroup><thead><tr><th scope="col" rowspan="2">等级</th><th scope="colgroup" colspan="2" class="zstd-size-heading">请求大小变化</th><th scope="col" rowspan="2" class="num">任务耗时变化</th></tr><tr><th scope="col" class="num">原始包＜1.5 MB</th><th scope="col" class="num">原始包≥1.5 MB</th></tr></thead><tbody id="zstd-level-options"></tbody></table></div>
   </dialog>
   <dialog id="settings-restart-dialog" aria-labelledby="settings-restart-title" aria-describedby="settings-restart-description">
