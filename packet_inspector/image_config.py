@@ -183,15 +183,21 @@ class ImageToolConfig:
             return False
         if managed and current != managed:
             raise ValueError("独立图片工具注册已被修改，未覆盖用户配置。")
-        registration = self.installation.install(self.state["cli"])
-        if managed == registration and self.state.get("schema_version") == 5:
+        cli = self.state.get("cli")
+        if not cli or not Path(cli).is_file():
+            cli = find_codex_cli()
+        if not cli:
+            raise ValueError("未找到 Codex CLI，无法更新独立图片工具。请先安装或打开 Codex 桌面版后重试。")
+        registration = self.installation.install(cli)
+        if (managed == registration and self.state.get("schema_version") == 5
+                and self.state.get("cli") == str(cli)):
             return False
         document = tomlkit.parse(before)
         document["mcp_servers"][TOOL_SERVER] = registration
         updated = tomlkit.dumps(document)
         previous = deepcopy(self.state)
         state_raw = self.path.read_bytes() if self.path.exists() else None
-        candidate = {**previous, "schema_version": 5, "managed_mcp": registration, "existing_tool_preserved": False}
+        candidate = {**previous, "schema_version": 5, "cli": str(cli), "managed_mcp": registration, "existing_tool_preserved": False}
         candidate.pop("mcp_token", None)
         if adopted and not any(v["table"] == "mcp_servers" and v["name"] == TOOL_SERVER for v in candidate["originals"]):
             candidate["originals"] = [*candidate["originals"],

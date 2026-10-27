@@ -62,6 +62,45 @@ class ToolMigrationTests(unittest.TestCase):
         self.assertNotIn("isolated_vision", data.get("mcp_servers", {}))
         self.assertFalse(self.manager.installation.directory.exists())
 
+    def test_refresh_relocates_cli_after_desktop_update_without_changing_connection(self):
+        self.enable()
+        missing = self.root / "removed-cli" / "codex.exe"
+        available = self.root / "new-cli" / "codex.exe"
+        available.parent.mkdir()
+        available.write_text("synthetic executable placeholder", encoding="ascii")
+        state = deepcopy(self.manager.state)
+        state.update(schema_version=4, cli=str(missing))
+        state["managed_mcp"]["env"]["CODEX_CLI_PATH"] = str(missing)
+        self.manager._save(state)
+        document = tomlkit.parse(self.config.read_text(encoding="utf8"))
+        document["mcp_servers"]["isolated_vision"] = state["managed_mcp"]
+        document["model_provider"] = "user-provider"
+        document["model_providers"] = {"user-provider": {"base_url": "https://example.invalid/v1", "env_key": "TEST_KEY"}}
+        before = tomllib.loads(tomlkit.dumps(document))
+        self.config.write_text(tomlkit.dumps(document), encoding="utf8")
+        profile = self.manager.profile_path.read_bytes()
+        with patch("packet_inspector.image_config.find_codex_cli", return_value=str(available)), patch.object(
+                self.manager, "_validate"), self.manager.change("optimized") as changed:
+            self.assertTrue(changed)
+        after = tomllib.loads(self.config.read_text(encoding="utf8"))
+        self.assertEqual(self.manager.state["cli"], str(available))
+        self.assertEqual(after["mcp_servers"]["isolated_vision"]["env"]["CODEX_CLI_PATH"], str(available))
+        self.assertEqual(after["model_provider"], before["model_provider"])
+        self.assertEqual(after["model_providers"], before["model_providers"])
+        self.assertEqual(self.manager.profile_path.read_bytes(), profile)
+        with patch("packet_inspector.image_config.find_codex_cli", side_effect=AssertionError("valid CLI must be kept")), self.manager.change("optimized") as changed:
+            self.assertFalse(changed)
+
+    def test_refresh_without_a_replacement_cli_preserves_installed_tool_and_config(self):
+        self.enable()
+        before, state = self.config.read_bytes(), self.manager.path.read_bytes()
+        with patch("packet_inspector.image_config.find_codex_cli", return_value=None), self.assertRaisesRegex(ValueError, "未找到 Codex CLI"):
+            with self.manager.change("optimized"):
+                pass
+        self.assertEqual(self.config.read_bytes(), before)
+        self.assertEqual(self.manager.path.read_bytes(), state)
+        self.assertTrue(self.manager.installation.directory.exists())
+
     def test_http_migration_rolls_back_registration_state_and_files(self):
         self.old_http()
         before, state = self.config.read_bytes(), self.manager.path.read_bytes()
