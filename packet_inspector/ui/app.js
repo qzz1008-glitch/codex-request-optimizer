@@ -794,9 +794,9 @@ function renderList() {
     const type=requestKind(p);
     const original=originalBytes(p), upload=compressedBytes(p);
     const before=el("span","packet-size",compact(original));
-    before.title=original===null?t("原始包大小未记录"):t("原始包：")+bytes(original);
+    before.title=original===null?t("原始请求大小未记录"):t("原始包：")+bytes(original);
     const after=el("span","packet-size",compact(upload));
-    after.title=upload===null?t("处理后包大小未记录"):t("处理后包：")+bytes(upload);
+    after.title=upload===null?t("处理后请求大小未记录"):t("处理后包：")+bytes(upload);
     row.dataset.packetId=p.id;row.dataset.session=p.thread_id||"";row.title=(states[p.state]||p.state)+(p.status?" · HTTP "+p.status:"")+"\n"+(p.thread_id?"session_id: "+p.thread_id:t("会话未识别"));
     if(flags.retry)row.title+="\n"+(p.native_retry_advised===true?t("已向 Codex 发送重试提示"):t("自动重试：{count} 次").replace("{count}",nf.format(capacityRetryCount(p))));
     if(protection.length)after.title+=t("\n已触发请求保护：")+protection.join(" · ");
@@ -1514,8 +1514,8 @@ function renderProtectionPanelState() {
 function renderCompression(m) {
   const root=document.createDocumentFragment();
   const sizes=panel(t("请求大小")), original=originalBytes(m), compressed=compressedBytes(m);
-  fact(sizes,t("原始包"),bytes(original)).title=t("原始包大小（图片处理、传输压缩前）");
-  fact(sizes,t("处理后包"),bytes(compressed)).title=t("处理后包大小（图片处理、传输压缩后，超限摘要处理前）");
+  fact(sizes,t("原始包"),bytes(original)).title=t("原始请求大小（图片处理、传输压缩前）");
+  fact(sizes,t("处理后包"),bytes(compressed)).title=t("处理后请求大小（图片处理、传输压缩后，超限摘要处理前）");
   const summaryTriggered=m.overflow_compaction_calls>0||m.overflow_cache_hit===true;
   const hasTransport=typeof m.transport_content_encoding==="string";
   // Older summary records only retain the final body's encoding and grade.
@@ -2007,7 +2007,7 @@ function fillPacketProtection() {
   $("packet-size-protection").disabled=settingsSaving||!supported;
   $("budget").disabled=$("packet-size-protection").disabled||!$("packet-size-protection").checked;
   automatic.disabled=$("packet-size-protection").disabled||!$("packet-size-protection").checked||!autoSupported;
-  automatic.closest(".runtime-toggle").title=!autoSupported?t("当前中转暂不支持按包大小自动压缩。"):!$("packet-size-protection").checked?t("请先开启请求大小保护"):"";
+  automatic.closest(".runtime-toggle").title=!autoSupported?t("当前中转暂不支持按请求大小自动压缩。"):!$("packet-size-protection").checked?t("请先开启请求大小保护"):"";
   $("packet-size-message").hidden=supported;
   if(!supported)$("packet-size-message").textContent=t("当前中转暂不支持此功能。");
   fillZstdLevel();
@@ -2438,7 +2438,7 @@ class TokenTrendView {
     chart.focusLayer=this.svgNode("g",{"pointer-events":"none"});root.append(chart.focusLayer);chart.svg.replaceChildren(root);
     chart.empty.hidden=known.length>0;
     const missingWindow=!this.packets.size||!this.covers(this.loadedBounds);
-    chart.empty.textContent=t((this.loading||this.windowTimer!==null)&&missingWindow?"正在加载趋势…":this.error&&missingWindow?"暂时无法加载趋势，请稍后重试":!model.matched.length?(this.query?"没有匹配的会话":"此时间范围内没有请求"):chart.key==="size"?"暂无可确认的包大小":"暂无可确认的 Token 用量");
+    chart.empty.textContent=t((this.loading||this.windowTimer!==null)&&missingWindow?"正在加载趋势…":this.error&&missingWindow?"暂时无法加载趋势，请稍后重试":!model.matched.length?(this.query?"没有匹配的会话":"此时间范围内没有请求"):chart.key==="size"?"暂无可确认的请求大小":"暂无可确认的 Token 用量");
   }
   renderTimeAxis() {
     const bounds=this.charts[0].bounds,root=document.createDocumentFragment();
