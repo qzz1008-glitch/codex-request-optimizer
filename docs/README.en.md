@@ -113,9 +113,9 @@ The default data directory is:
 
 Request records, settings, configuration backups, and image attachments are stored locally. See the **[user guide (Chinese)](https://github.com/qzz1008-glitch/codex-request-optimizer/blob/main/docs/usage.md)** for detailed instructions.
 
-Sizes use decimal units: 1 KB = 1,000 bytes and 1 MB = 1,000,000 bytes. Upgrades preserve the original byte budget of existing storage limits.
+Sizes use decimal units: 1 KB = 1,000 bytes and 1 MB = 1,000,000 bytes. Upgrades preserve custom storage limits in bytes; migration of the old default is described below.
 
-Request records default to limits of **≈536.87 MB / 2,000 records**, adjustable in Record settings. The left sidebar footer shows stored-record usage / the storage limit and the current request count. Usage measures record content rather than the entire data directory's disk footprint.
+Request records default to limits of **500 MB / 2,000 records**, adjustable in Record settings. The left sidebar footer shows stored-record usage / the storage limit, the current request count, and the detail count. Usage measures record content rather than the entire data directory's disk footprint.
 
 ---
 
