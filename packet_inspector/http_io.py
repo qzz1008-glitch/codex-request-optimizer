@@ -1,5 +1,9 @@
-"""Bounded cleanup of rejected local control requests."""
+"""HTTP read limits and bounded cleanup of rejected local control requests."""
 from __future__ import annotations
+
+
+# Match Codex's default stream_idle_timeout_ms (300_000), not a turn deadline.
+UPSTREAM_READ_TIMEOUT_SECONDS = 300
 
 
 def discard_small_body(handler):
