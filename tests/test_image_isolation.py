@@ -17,9 +17,11 @@ from tests import test_packet_inspector as fixtures
 import zstandard
 
 from packet_inspector.analyzer import decode_body, encode
-from packet_inspector.config_link import ConfigLink
+from packet_inspector.config_link import ConfigLink, PROVIDER
 from packet_inspector.image_config import ImageToolConfig, VISION_PROVIDER, WORKER_HEADER, find_codex_cli
 from packet_inspector.image_isolation import ImageIsolation, ImageIsolationFailure
+from packet_inspector.providers import ProviderManager
+from packet_inspector.request_context import IMAGE_ANALYST_PREFIXES
 
 
 def native_config(original):
@@ -97,9 +99,9 @@ class ImageConfigurationTests(unittest.TestCase):
         configured = tomllib.loads(self.config.read_text(encoding="utf8"))
         self.assertIs(configured["tools"]["view_image"], False)
         self.assertEqual(configured["mcp_servers"], original["mcp_servers"])
-        self.assertEqual(tomllib.loads(self.manager.profile_path.read_text(encoding="utf8"))["model_provider"], VISION_PROVIDER)
+        self.assertNotIn("model_provider", tomllib.loads(self.manager.profile_path.read_text(encoding="utf8")))
         self.assertNotIn("isolated-vision", configured.get("profiles", {}))
-        self.assertTrue(self.manager.is_worker(configured["model_providers"][VISION_PROVIDER]["http_headers"][WORKER_HEADER]))
+        self.assertNotIn(VISION_PROVIDER, configured.get("model_providers", {}))
         self.assertTrue(Path(self.manager.status()["backup"]).is_file())
         self.assertFalse(self.manager.status()["managed_tool_installed"])
         with self.manager.change(False):
@@ -131,7 +133,7 @@ class ImageConfigurationTests(unittest.TestCase):
                 data = tomllib.loads(self.config.read_text(encoding="utf8"))
                 self.assertEqual(self.manager.status()["mode"], mode)
                 self.assertEqual(self.manager.status()["enabled"], mode == "optimized")
-                self.assertEqual(VISION_PROVIDER in data.get("model_providers", {}), mode == "optimized")
+                self.assertNotIn(VISION_PROVIDER, data.get("model_providers", {}))
                 if mode == "disabled":
                     self.assertIs(data["mcp_servers"]["isolated_vision"]["enabled"], False)
                 elif mode == "native":
@@ -217,7 +219,8 @@ class ImageConfigurationTests(unittest.TestCase):
         import tomlkit
         data = tomlkit.parse(self.config.read_text(encoding="utf8"))
         data["mcp_servers"]["isolated_vision"]["command"] = "updated-existing-reader"
-        data["model_providers"][VISION_PROVIDER]["base_url"] = "http://127.0.0.1:43210/relay/test/p/newroute"
+        data["model_providers"] = {"custom": {"name": "User provider", "base_url": "http://127.0.0.1:43210/relay/test/p/newroute"}}
+        data["model_provider"] = "custom"
         data["unrelated_option"] = "keep"
         self.config.write_text(tomlkit.dumps(data), encoding="utf8")
         with self.manager.change(False):
@@ -225,6 +228,8 @@ class ImageConfigurationTests(unittest.TestCase):
         restored = tomllib.loads(self.config.read_text(encoding="utf8"))
         self.assertEqual(restored["mcp_servers"]["isolated_vision"]["command"], "updated-existing-reader")
         self.assertEqual(restored["unrelated_option"], "keep")
+        self.assertEqual(restored["model_provider"], "custom")
+        self.assertEqual(restored["model_providers"], dict(data["model_providers"]))
 
     def test_conflicting_native_setting_is_not_overwritten(self):
         self.enable()
@@ -242,24 +247,95 @@ class ImageConfigurationTests(unittest.TestCase):
         original = tomllib.loads(self.config.read_text(encoding="utf8"))
         self.enable()
         configured = tomllib.loads(self.config.read_text(encoding="utf8"))
-        worker = configured["model_providers"][VISION_PROVIDER]
-        self.assertEqual(worker["env_key"], "TEST_PROVIDER_KEY")
-        self.assertIs(worker["requires_openai_auth"], False)
-        self.assertEqual(worker["http_headers"]["X-Company"], "test")
+        self.assertEqual(configured["model_provider"], "corp")
+        self.assertEqual(configured["model_providers"], original["model_providers"])
+        self.assertNotIn("model_provider", tomllib.loads(self.manager.profile_path.read_text(encoding="utf8")))
         with self.manager.change(False):
             pass
         self.assertEqual(tomllib.loads(self.config.read_text(encoding="utf8")), native_config(original))
 
-    def test_legacy_vision_profile_migrates_and_keeps_its_model_preferences(self):
-        with self.config.open("a", encoding="utf8") as out:
-            out.write('[profiles.isolated-vision]\nmodel="test-vision-model"\nmodel_reasoning_effort="low"\n')
+    def test_connection_owns_providers_independently_of_image_mode(self):
+        self.config.write_text('model="test"\n', encoding="utf8")
         self.enable()
-        profile = tomllib.loads(self.manager.profile_path.read_text(encoding="utf8"))
-        self.assertEqual(profile["model"], "test-vision-model")
-        self.assertEqual(profile["model_reasoning_effort"], "low")
+        providers = ProviderManager(self.manager.link, self.manager.relay_endpoint(),
+                                    "https://chatgpt.com/backend-api/codex")
+        routes = {}
+        def sync():
+            providers.sync(routes, lambda updated: routes.update(updated), retry_limit=10)
+        def connection(path):
+            data = tomllib.loads(path.read_text(encoding="utf8"))
+            return {key: value for key, value in data.items() if key not in {"tools", "mcp_servers"}}
+        def effective_provider(data, base):
+            selected = data.get("model_provider", base["model_provider"])
+            self.assertEqual(selected, PROVIDER)
+            return {**base["model_providers"][selected], **data.get("model_providers", {}).get(selected, {})}
+        sync()
+        paths = (self.config, self.manager.profile_path)
+        connected = {path: connection(path) for path in paths}
+        for data in connected.values():
+            self.assertTrue(effective_provider(data, connected[self.config])["base_url"].startswith(providers.endpoint))
+        with patch("packet_inspector.image_config.find_codex_cli", return_value="fake"), patch.object(self.manager, "_validate"):
+            for mode in ("optimized", "native", "disabled", "optimized", "native"):
+                with self.subTest(mode=mode), self.manager.change(mode):
+                    pass
+                self.assertEqual({path: connection(path) for path in paths}, connected)
+            self.manager.link.restore()
+            disconnected = {path: connection(path) for path in paths}
+            for data in disconnected.values():
+                self.assertEqual(effective_provider(data, disconnected[self.config])["base_url"],
+                                 "https://chatgpt.com/backend-api/codex")
+            with self.manager.change("optimized"):
+                pass
+            self.assertEqual({path: connection(path) for path in paths}, disconnected)
+            with self.manager.change("native"):
+                pass
+            sync()  # Reconnection also updates profiles while image optimization is off.
+            self.assertEqual({path: connection(path) for path in paths}, connected)
+
+    def test_legacy_image_provider_normalization_does_not_block_refresh_or_uninstall(self):
+        self.config.write_text('model="test"\n', encoding="utf8")
+        self.enable()
+        import tomlkit
+        document = tomlkit.parse(self.config.read_text(encoding="utf8"))
+        legacy = {"name": "Old image provider", "requires_openai_auth": True,
+                  "base_url": "https://chatgpt.com/backend-api/codex"}
+        document["model_providers"] = {VISION_PROVIDER: legacy}
+        self.config.write_text(tomlkit.dumps(document), encoding="utf8")
+        self.manager.profile_path.write_text(f'model_provider="{VISION_PROVIDER}"\n', encoding="utf8")
+        state = deepcopy(self.manager.state)
+        state.pop("profile_created", None)
+        state.update(schema_version=4, managed_provider=legacy,
+                     managed_profile={"model_provider": VISION_PROVIDER})
+        state["originals"].append({"table": "model_providers", "name": VISION_PROVIDER,
+                                   "present": False, "value": None})
+        self.manager._save(state)
+        providers = ProviderManager(self.manager.link, self.manager.relay_endpoint(),
+                                    "https://chatgpt.com/backend-api/codex")
+        providers.sync({}, lambda routes: None, retry_limit=10)
+        profile = self.manager.profile_path.read_bytes()
+        before = tomllib.loads(self.config.read_text(encoding="utf8"))
+        self.assertEqual(tomllib.loads(profile.decode())["model_provider"], PROVIDER)
+        self.manager.installation_error = "old warning"
+        with patch.object(self.manager, "_validate"), self.manager.change("optimized"):
+            pass
+        self.assertEqual(self.manager.status()["installation_error"], "")
+        with self.manager.change("native"):
+            pass
+        after = tomllib.loads(self.config.read_text(encoding="utf8"))
+        self.assertEqual(after["model_providers"], before["model_providers"])
+        self.assertEqual(after["model_provider"], before["model_provider"])
+        self.assertEqual(self.manager.profile_path.read_bytes(), profile)
+
+    def test_inline_vision_profile_is_preserved_in_place(self):
+        with self.config.open("a", encoding="utf8") as out:
+            out.write('[profiles.isolated-vision]\nmodel="test-vision-model"\nmodel_reasoning_effort="low"\nmodel_provider="custom"\n')
+        original = tomllib.loads(self.config.read_text(encoding="utf8"))
+        self.enable()
+        self.assertEqual(tomllib.loads(self.config.read_text(encoding="utf8"))["profiles"], original["profiles"])
+        self.assertFalse(self.manager.profile_path.exists())
         with self.manager.change(False):
             pass
-        self.assertNotIn("model_provider", tomllib.loads(self.config.read_text(encoding="utf8"))["profiles"]["isolated-vision"])
+        self.assertEqual(tomllib.loads(self.config.read_text(encoding="utf8"))["profiles"], original["profiles"])
         self.assertFalse(self.manager.profile_path.exists())
 
     def test_existing_native_profile_preserves_unrelated_edits_on_disable(self):
@@ -300,7 +376,7 @@ class ImageConfigurationTests(unittest.TestCase):
         self.assertEqual(self.manager.profile_path.read_bytes(), profile_before)
 
     def test_installed_cli_accepts_native_profile_and_disables_child_mcp_servers(self):
-        cli = shutil.which("codex")
+        cli = find_codex_cli()
         if not cli:
             self.skipTest("Codex CLI is not installed")
         with self.manager.change(True):
@@ -513,11 +589,46 @@ class ImageRelayTests(unittest.TestCase):
     def test_isolated_worker_keeps_image_and_private_header_is_removed(self):
         self.enable()
         raw = encode(request_body())
-        self.assertEqual(self.relay(raw, headers={WORKER_HEADER: self.server.image_config.state["worker_token"]})[0], 200)
+        self.server.image_config.state["worker_token"] = "legacy-test-worker"
+        self.addCleanup(self.server.image_config.state.pop, "worker_token", None)
+        self.assertEqual(self.relay(raw, headers={WORKER_HEADER: "legacy-test-worker"})[0], 200)
         self.assertEqual(self.up.requests[-1]["body"], raw)
         self.assertFalse(any(k.lower() == WORKER_HEADER.lower() for k in self.up.requests[-1]["headers"]))
         self.assertTrue(self.latest()[0]["image_isolation_worker"])
+        self.server.image_config.state.pop("worker_token", None)
         self.assertEqual(self.relay(raw, headers={WORKER_HEADER: "untrusted"})[0], 200)
+        self.assertNotIn("input_image", self.up.requests[-1]["body"].decode())
+
+    def test_independent_analysis_keeps_images_without_a_special_provider_or_header(self):
+        self.enable()
+        body = request_body()
+        body["input"][-1]["content"][0]["text"] = IMAGE_ANALYST_PREFIXES[-1] + " Read the error."
+        raw = encode(body)
+        self.server.settings["packet_size_protection_enabled"] = True
+        capture_before = self.server.settings["capture_enabled"]
+        try:
+            for capture in (True, False):
+                self.server.settings["capture_enabled"] = capture
+                for coding in ("identity", "zstd"):
+                    wire = zstandard.ZstdCompressor().compress(raw) if coding == "zstd" else raw
+                    with self.subTest(capture=capture, coding=coding), patch.object(
+                            self.server.image_isolation, "prepare", side_effect=AssertionError("independent image was rewritten")), patch.object(
+                            self.server.overflow, "prepare", side_effect=AssertionError("independent image was compacted")):
+                        self.assertEqual(self.relay(wire, headers={"Content-Encoding": coding})[0], 200)
+                    outgoing = self.up.requests[-1]
+                    encoding = next((value for key, value in outgoing["headers"].items()
+                                     if key.lower() == "content-encoding"), "identity")
+                    self.assertEqual(decode_body(outgoing["body"], encoding), raw)
+                    if capture:
+                        self.assertTrue(self.latest()[0]["image_isolation_worker"])
+        finally:
+            self.server.settings["capture_enabled"] = capture_before
+
+    def test_quoted_analyst_prompt_in_a_main_request_does_not_bypass_image_replacement(self):
+        self.enable()
+        body = request_body()
+        body["input"][-1]["content"][0]["text"] = "Explain this prompt: " + IMAGE_ANALYST_PREFIXES[-1]
+        self.assertEqual(self.relay(encode(body))[0], 200)
         self.assertNotIn("input_image", self.up.requests[-1]["body"].decode())
 
     def test_invalid_image_never_reaches_upstream(self):

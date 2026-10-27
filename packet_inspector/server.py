@@ -45,7 +45,7 @@ from .usage_trigger import (raw_chunks, request_size as usage_trigger_size,
                             trigger_threshold, DEFAULT_BUDGET_BYTES, MIN_BUDGET_BYTES)
 from .overflow import CheckpointStream, OverflowCompactor, OverflowFailure
 from .image_config import IMAGE_MODES, ImageToolConfig, WORKER_HEADER, image_mode
-from .image_isolation import ImageIsolation, ImageIsolationFailure, check_image_directory, resolve_image_directory
+from .image_isolation import ImageIsolation, ImageIsolationFailure, check_image_directory, resolve_image_directory, is_analysis_request
 
 HOP = {"connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
        "te", "trailer", "transfer-encoding", "upgrade"}
@@ -922,6 +922,11 @@ class Handler(BaseHTTPRequestHandler):
                              and urlsplit(suffix).path.rstrip("/").endswith("/responses")
                              and self.headers.get("Content-Encoding", "identity").strip().lower() in {"", "identity", "zstd"})
             auto_ticket = self.server.compression_policy.reserve() if auto_eligible else None
+        if (image_enabled and not image_worker and self.command == "POST"
+                and urlsplit(suffix).path.rstrip("/").endswith(("/responses", "/responses/compact"))
+                and is_analysis_request(body, self.headers)):
+            image_worker = True
+            auto_zstd_level, auto_ticket = False, None
         packet_id = None
         capture_meta = {}
         if self.server.settings["capture_enabled"]:

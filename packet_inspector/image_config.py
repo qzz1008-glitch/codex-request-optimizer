@@ -11,7 +11,7 @@ import tomllib
 
 import tomlkit
 
-from .config_link import ConfigLink, validate_upstream
+from .config_link import ConfigLink
 from .locking import file_lock
 from .image_tool_install import ImageToolInstallation
 
@@ -146,65 +146,31 @@ class ImageToolConfig:
         cli = find_codex_cli((old_tool or {}).get("env", {}).get("CODEX_CLI_PATH"))
         if not cli:
             raise ValueError("未找到 Codex CLI，无法安装独立图片工具。请先安装或打开 Codex 桌面版，或安装 Codex CLI 后重试。")
-        if (VISION_PROVIDER in data.get("model_providers", {}) or
-                VISION_PROVIDER in profile_data.get("model_providers", {})):
-            raise ValueError("独立识图 provider 名称已被占用，未修改原配置。")
-        legacy = data.get("profiles", {}).get(VISION_PROFILE, {})
-        if data.get("profile") is not None and data["profile"] != VISION_PROFILE:
-            raise ValueError("请先迁移旧版 profile 选择器，再启用图片工具替换。")
-        if data.get("profiles", {}).keys() - {VISION_PROFILE}:
-            raise ValueError("请先迁移其他旧版 profiles 到独立配置文件，再启用图片工具替换。")
-        if legacy and not profile_existed:
-            profile_document = tomlkit.parse(tomlkit.dumps(legacy))
-        effective = {**legacy, **profile_data}
-        selected = effective.get("model_provider", data.get("model_provider", "openai"))
-        provider = deepcopy(data.get("model_providers", {}).get(selected, {}))
-        provider.update(deepcopy(profile_data.get("model_providers", {}).get(selected, {})))
-        if provider.get("wire_api", "responses") != "responses":
-            raise ValueError("当前 provider 不支持 Responses 图片解析。")
-        provider.update(name="Codex isolated image reader", wire_api="responses", supports_websockets=False)
-        provider["base_url"] = validate_upstream(provider.get("base_url") or
-            effective.get("openai_base_url") or data.get("openai_base_url") or self.relay_endpoint())
-        if selected == "openai":
-            provider["requires_openai_auth"] = True
-        worker_token = previous.get("worker_token") or secrets.token_urlsafe(32)
-        for key in ("http_headers", "env_http_headers"):
-            provider[key] = {k: v for k, v in provider.get(key, {}).items() if k.lower() != WORKER_HEADER.lower()}
-        provider["http_headers"][WORKER_HEADER] = worker_token
         registration = self.installation.install(cli) if old_tool is None else None
-        fields = [("tools", "view_image"), ("model_providers", VISION_PROVIDER)]
+        fields = [("tools", "view_image")]
         if TOOL_SERVER not in data.get("mcp_servers", {}):
             fields.append(("mcp_servers", TOOL_SERVER))
-        if VISION_PROFILE in data.get("profiles", {}):
-            fields.append(("profiles", VISION_PROFILE))
-        if "profile" in data:
-            fields.append((None, "profile"))
         originals = []
         for table, name in fields:
-            values = data.get(table, {}) if table else data
+            values = data.get(table, {})
             originals.append({"table": table, "name": name, "present": name in values, "value": values.get(name)})
-            if table and table not in document:
+            if table not in document:
                 document[table] = tomlkit.table()
-        # Disable only the native entry. Keep a user's existing isolated tool unchanged.
         document["tools"]["view_image"] = False
         if old_tool is None:
             document["mcp_servers"][TOOL_SERVER] = registration
-        document["model_providers"][VISION_PROVIDER] = provider
-        if VISION_PROFILE in document.get("profiles", {}):
-            document["profiles"].pop(VISION_PROFILE)
-            if not document["profiles"]:
-                document.pop("profiles")
-        document.pop("profile", None)
-        profile_document["model_provider"] = VISION_PROVIDER
-        profile_updated = tomlkit.dumps(profile_document)
-        candidate = {"schema_version": 4, "config": str(self.link.config.resolve()), "enabled": True,
-            "cli": str(cli), "worker_token": worker_token, "originals": originals,
-            "managed_mcp": registration if old_tool is None else None, "managed_provider": provider,
-            "created_tables": sorted({table for table, _ in fields if table and table not in data}),
+        # Tool isolation uses a profile that inherits the current connection.
+        # Existing selectors/providers, including inline profiles, belong to
+        # connection management and are never rewritten by image installation.
+        inline_profile = VISION_PROFILE in data.get("profiles", {})
+        created = not profile_existed and not inline_profile
+        profile_updated = tomlkit.dumps(profile_document) if profile_existed or created else None
+        candidate = {"schema_version": 5, "config": str(self.link.config.resolve()), "enabled": True,
+            "cli": str(cli), "originals": originals,
+            "managed_mcp": registration if old_tool is None else None,
+            "created_tables": sorted({table for table, _ in fields if table not in data}),
             "existing_tool_preserved": old_tool is not None, "profile_existed": profile_existed,
-            "profile_selector_present": "model_provider" in profile_data,
-            "profile_selector_before": profile_data.get("model_provider"),
-            "managed_profile": tomllib.loads(profile_updated)}
+            "profile_created": created, "managed_profile": dict(profile_data)}
         return profile_updated, candidate
 
     def _refresh_managed_tool(self):
@@ -218,14 +184,14 @@ class ImageToolConfig:
         if managed and current != managed:
             raise ValueError("独立图片工具注册已被修改，未覆盖用户配置。")
         registration = self.installation.install(self.state["cli"])
-        if managed == registration and self.state.get("schema_version") == 4:
+        if managed == registration and self.state.get("schema_version") == 5:
             return False
         document = tomlkit.parse(before)
         document["mcp_servers"][TOOL_SERVER] = registration
         updated = tomlkit.dumps(document)
         previous = deepcopy(self.state)
         state_raw = self.path.read_bytes() if self.path.exists() else None
-        candidate = {**previous, "schema_version": 4, "managed_mcp": registration, "existing_tool_preserved": False}
+        candidate = {**previous, "schema_version": 5, "managed_mcp": registration, "existing_tool_preserved": False}
         candidate.pop("mcp_token", None)
         if adopted and not any(v["table"] == "mcp_servers" and v["name"] == TOOL_SERVER for v in candidate["originals"]):
             candidate["originals"] = [*candidate["originals"],
@@ -252,28 +218,23 @@ class ImageToolConfig:
             raise ValueError("独立图片工具注册已被修改，未覆盖用户配置。")
         if data.get("tools", {}).get("view_image") is not False:
             raise ValueError("原生图片工具配置已被修改，未覆盖用户配置。")
-        provider = data.get("model_providers", {}).get(VISION_PROVIDER, {})
-        comparable = lambda p: {k: v for k, v in p.items() if k not in {"base_url", "supports_websockets"}}
-        if comparable(provider) != comparable(previous["managed_provider"]) or profile_data.get("model_provider") != VISION_PROVIDER:
-            raise ValueError("独立识图配置已被修改，未覆盖用户配置。")
         for original in previous["originals"]:
             table = original["table"]
-            if table and table not in document:
+            if table not in {"tools", "mcp_servers"}:
+                continue  # Legacy provider records now belong to connection management.
+            if table not in document:
                 document[table] = tomlkit.table()
-            target = document[table] if table else document
+            target = document[table]
             target.pop(original["name"], None)
             if original["present"]:
                 target[original["name"]] = original["value"]
         for table in previous.get("created_tables", []):
-            if not document.get(table):
+            if table in {"tools", "mcp_servers"} and not document.get(table):
                 document.pop(table, None)
-        if not previous["profile_existed"] and profile_data == previous["managed_profile"]:
+        profile_updated = tomlkit.dumps(profile_document) if self.profile_path.exists() else None
+        if (previous.get("schema_version", 0) >= 5 and previous.get("profile_created")
+                and profile_data == previous.get("managed_profile")):
             profile_updated = None
-        else:
-            profile_document.pop("model_provider", None)
-            if previous["profile_selector_present"]:
-                profile_document["model_provider"] = previous["profile_selector_before"]
-            profile_updated = tomlkit.dumps(profile_document)
         return profile_updated, {**previous, "enabled": False}
 
     @contextmanager
@@ -297,7 +258,7 @@ class ImageToolConfig:
                 if mode == "optimized":
                     _, data, _ = read_configuration(self.link.config)
                     _, profile_data, _ = read_configuration(self.profile_path)
-                    if data.get("tools", {}).get("view_image") is not False or profile_data.get("model_provider") != VISION_PROVIDER:
+                    if data.get("tools", {}).get("view_image") is not False:
                         raise ValueError("图片工具配置已被修改，请先检查 Codex 配置。")
                 elif mode == "disabled":
                     before, data, _ = read_configuration(self.link.config)
@@ -309,6 +270,7 @@ class ImageToolConfig:
                 try:
                     changed = self._refresh_managed_tool() if mode == "optimized" else False
                     applied = self.link.config.read_bytes() if self.link.config.exists() else None
+                    self.installation_error = ""
                     yield changed
                 except BaseException:
                     if changed:
@@ -337,7 +299,7 @@ class ImageToolConfig:
             elif mode == "disabled":
                 candidate = self._disable_tools(document, data, previous)
             else:
-                candidate = {**previous, "schema_version": 4, "config": str(self.link.config.resolve()),
+                candidate = {**previous, "schema_version": 5, "profile_created": False, "config": str(self.link.config.resolve()),
                              "enabled": False, "mode": "native"}
                 if "tools" not in document:
                     document["tools"] = tomlkit.table()
@@ -362,6 +324,7 @@ class ImageToolConfig:
                 if mode == "optimized":
                     self._validate(candidate)
                 self._save(candidate)
+                self.installation_error = ""
                 if mode != "optimized":
                     self.installation.uninstall()
                 yield True

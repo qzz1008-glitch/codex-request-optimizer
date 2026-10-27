@@ -17,7 +17,9 @@ from urllib.request import Request, urlopen
 
 from tests.test_packet_inspector import Upstream, zstandard
 from tests.test_image_isolation import request_body
-from packet_inspector.image_config import VISION_PROVIDER, find_codex_cli
+from packet_inspector.analyzer import decode_body
+from packet_inspector.image_config import find_codex_cli
+from packet_inspector.request_context import IMAGE_ANALYST_PREFIXES
 from scripts.build_inspector import PUBLIC_FILES
 
 ROOT=Path(__file__).resolve().parents[2]
@@ -119,11 +121,12 @@ def main():
         if find_codex_cli():
             original_config=tomllib.loads(config.read_text(encoding="utf8"))
             assert "isolated_vision" not in original_config.get("mcp_servers",{})
-            assert VISION_PROVIDER not in original_config.get("model_providers",{})
             model_requests=len(upstream.requests)
             installed=api("/api/settings",{"image_isolation_enabled":True})
             assert installed["image_tool"]["managed_tool_installed"]
             image_config=tomllib.loads(config.read_text(encoding="utf8"))
+            assert image_config.get("model_providers")==original_config.get("model_providers")
+            assert image_config.get("model_provider")==original_config.get("model_provider")
             assert image_config["tools"]["view_image"] is False
             registration=image_config["mcp_servers"]["isolated_vision"]
             assert "command" in registration and "url" not in registration
@@ -138,6 +141,16 @@ def main():
             assert tool_check.returncode==0,tool_check.stderr[:500]
             replies=[json.loads(line) for line in tool_check.stdout.splitlines() if line.strip()]
             assert [tool["name"] for tool in replies[-1]["result"]["tools"]]==["analyze_image"]
+            independent=request_body()
+            independent["input"][-1]["content"][0]["text"]=IMAGE_ANALYST_PREFIXES[-1]+" Describe this synthetic image."
+            independent_raw=json.dumps(independent).encode()
+            connection=http.client.HTTPConnection("127.0.0.1",runtime["port"],timeout=5)
+            connection.request("POST","/relay/"+settings["relay_token"]+"/responses",independent_raw,{"Content-Type":"application/json"})
+            response=connection.getresponse();assert response.status==200;response.read();connection.close()
+            sent=upstream.requests[-1]
+            encoding=next((value for key,value in sent["headers"].items() if key.lower()=="content-encoding"),"identity")
+            assert decode_body(sent["body"],encoding)==independent_raw
+            assert api("/api/packets/"+api("/api/packets")[0]["id"])["image_isolation_worker"]
             api("/api/link",{"action":"restore"})
             disconnected_config=tomllib.loads(config.read_text(encoding="utf8"))
             connection=http.client.HTTPConnection("127.0.0.1",runtime["port"],timeout=5)
@@ -152,15 +165,13 @@ def main():
             expected_native=json.loads(json.dumps(disconnected_config))
             expected_native["mcp_servers"].pop("isolated_vision")
             if not expected_native["mcp_servers"]:expected_native.pop("mcp_servers")
-            expected_native["model_providers"].pop(VISION_PROVIDER)
-            if not expected_native["model_providers"]:expected_native.pop("model_providers")
             expected_native.setdefault("tools",{})["view_image"]=True
             if expected_native.get("features",{}).get("view_image") is False:
                 expected_native["features"].pop("view_image")
                 if not expected_native["features"]:expected_native.pop("features")
             assert tomllib.loads(config.read_text(encoding="utf8"))==expected_native
             assert not tool_file.exists()
-            assert len(upstream.requests)==model_requests+1
+            assert len(upstream.requests)==model_requests+2
             image_install="verified"
         reset=api("/api/settings",{"image_save_dir":""})
         assert reset["image_save_dir"]==reset["image_save_dir_default"]
