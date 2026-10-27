@@ -8,6 +8,11 @@ from packet_inspector.server import MAX_STORAGE_BYTES, MIN_STORAGE_BYTES, storag
 
 
 class StorageSizeUnitsTests(unittest.TestCase):
+    def test_default_quota_is_exactly_500_decimal_megabytes(self):
+        result = storage_settings({})
+        self.assertEqual(result["max_storage_bytes"], 500_000_000)
+        self.assertEqual(storage_settings(result), result)
+
     def test_legacy_limits_keep_the_original_byte_budget(self):
         for legacy in (16, 512, 8192):
             with self.subTest(legacy=legacy):

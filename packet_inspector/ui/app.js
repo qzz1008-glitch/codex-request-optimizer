@@ -884,15 +884,12 @@ function fillSettings() {
   fillEntryPort();
   if(!settingsEditing) {
     storageInput.value=storage.value;$("packet-limit").value=s.max_packets;
-    $("detail-limit").value=s.max_detail_packets??s.max_packets;
     $("start-on-login").checked=!!s.start_on_login;
     $("capacity-retry").checked=!!s.capacity_retry_enabled;
     $("capacity-retry-count").value=s.capacity_retry_max_retries??15;
     $("capacity-retry-delay").value=s.capacity_retry_delay_seconds??30;
   }
   for(const id of ["storage-limit","packet-limit"])$(id).disabled=settingsSaving;
-  $("detail-limit").disabled=settingsSaving||!Number.isInteger(s.max_detail_packets);
-  updateDetailLimit();
   $("start-on-login").disabled=settingsSaving||!s.start_on_login_supported;
   $("capacity-retry").disabled=settingsSaving||!s.capacity_retry_supported;
   $("capacity-retry-count").disabled=settingsSaving||s.capacity_retry_mode!=="native"||!Number.isInteger(s.capacity_retry_max_retries);
@@ -1220,10 +1217,6 @@ async function loadContextSettings() {
 }
 let updateStatus=null, updateBusy=false, updateAction="", updateFeedbackVisible=false;
 let updateRevision=0,updateStatusLoading=false;
-function updateDetailLimit() {
-  const count=Number($("packet-limit").value);
-  $("detail-limit").max=Number.isInteger(count)&&count>=0?String(count):"20000";
-}
 function readSettingsDraft() {
   const draft={
     entry_port:$("entry-port").value,
@@ -1239,7 +1232,6 @@ function readSettingsDraft() {
     image_save_dir:$("image-save-dir").value,
     max_storage_mb:$("storage-limit").value,
     max_packets:$("packet-limit").value,
-    max_detail_packets:$("detail-limit").value,
     language:settingsLanguage??uiI18n.language
   };
   for(const key of ["context","compact"])draft[key+"_tokens"]=$(key+"-default").checked?null:$(key+"-tokens").value;
@@ -1323,8 +1315,7 @@ async function saveSettings() {
       s.image_isolation_supported||["native","disabled","optimized"].includes(s.image_analysis_mode)],
     ["image_save_dir","image_save_dir",draft.image_save_dir===imageDefaultDirectory()?"":draft.image_save_dir,s.image_save_dir_supported],
     ["max_storage_mb",storage.key,storage.toBackend(draft.max_storage_mb),true],
-    ["max_packets","max_packets",Number(draft.max_packets),true],
-    ["max_detail_packets","max_detail_packets",Number(draft.max_detail_packets),Number.isInteger(s.max_detail_packets)]
+    ["max_packets","max_packets",Number(draft.max_packets),true]
   ].filter(([field,,,supported])=>supported&&changed.has(field));
   const contextChanged=contextSettings&&["context_tokens","compact_tokens"].some(key=>changed.has(key));
   const portChanged=s.entry_port_supported&&s.entry_port&&changed.has("entry_port");
@@ -1340,6 +1331,8 @@ async function saveSettings() {
         entries.some(([field])=>field==="start_on_login")?"开机启动与运行设置":"运行设置";
       await runSettingsSaveStep(label,async()=>{
         const values=Object.fromEntries(entries.map(([,key,value])=>[key,value]));
+        if(!s.retention_policy&&Number.isInteger(s.max_detail_packets)&&entries.some(([field])=>["max_packets","max_storage_mb"].includes(field)))
+          values.max_detail_packets=Number(draft.max_packets);
         const result=await api("/api/settings",values);
         state.status={...state.status,...result};
         for(const [field] of entries)settingsBaseline[field]=draft[field];
@@ -1906,7 +1899,7 @@ $("settings-dialog").addEventListener("close",()=>{
 for(const id of ["capacity-retry-count","capacity-retry-delay"])$(id).addEventListener("input",event=>{
   if(event.target.valueAsNumber>99)event.target.value="99";
 });
-$("settings-dialog").querySelector(".settings-content").addEventListener("input",()=>{updateDetailLimit();updateSettingsSaveState();});
+$("settings-dialog").querySelector(".settings-content").addEventListener("input",()=>updateSettingsSaveState());
 $("settings-dialog").querySelector(".settings-content").addEventListener("change",()=>updateSettingsSaveState());
 $("zstd-level").addEventListener("change",fillZstdLevel);
 action("zstd-level-open",openZstdLevelPicker);action("zstd-level-close",()=>closeZstdLevelPicker());

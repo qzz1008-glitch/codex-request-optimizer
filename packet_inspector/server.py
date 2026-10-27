@@ -31,7 +31,7 @@ from .updates import Updates
 from .token_window import TokenWindows
 from .response_usage import packet_usage
 from .session_summary import SessionSummaries
-from .storage import Store
+from .storage import DEFAULT_STORAGE_BYTES, Store
 from .transport import DEFAULT_ZSTD_LEVEL, prepare_request_info, validate_zstd_level
 from .compression_policy import CompressionPolicy, INITIAL_HIGH_BYTES, is_main_request
 from .request_context import request_session_context, temporary_request_kind
@@ -77,16 +77,28 @@ MAX_STORAGE_BYTES = 8192 * STORAGE_LEGACY_BYTES
 
 def storage_settings(saved):
     values = dict(saved)
-    legacy = values.get("max_storage_mb", 512)
+    legacy = values.get("max_storage_mb")
     if type(legacy) is not int or not 16 <= legacy <= 8192:
-        legacy = 512
+        legacy = None
     size = values.get("max_storage_bytes")
     if (type(size) is not int or not MIN_STORAGE_BYTES <= size <= MAX_STORAGE_BYTES
-            or ("max_storage_mb" in values and (size + STORAGE_LEGACY_BYTES - 1) // STORAGE_LEGACY_BYTES != legacy)):
-        size = legacy * STORAGE_LEGACY_BYTES
+            or (legacy is not None and (size + STORAGE_LEGACY_BYTES - 1) // STORAGE_LEGACY_BYTES != legacy)):
+        size = legacy * STORAGE_LEGACY_BYTES if legacy is not None else DEFAULT_STORAGE_BYTES
     values["max_storage_bytes"] = size
     # Older clients require whole legacy units; round up so a downgrade cannot shrink the limit.
     values["max_storage_mb"] = (size + STORAGE_LEGACY_BYTES - 1) // STORAGE_LEGACY_BYTES
+    return values
+
+
+def retention_settings(saved):
+    values = storage_settings(saved)
+    if values.get("retention_policy") != "records_first" and values["max_storage_bytes"] == 512 * STORAGE_LEGACY_BYTES:
+        # Migrate the old factory quota once; later explicit quota choices survive restarts.
+        values["max_storage_bytes"] = DEFAULT_STORAGE_BYTES
+        values["max_storage_mb"] = (DEFAULT_STORAGE_BYTES + STORAGE_LEGACY_BYTES - 1) // STORAGE_LEGACY_BYTES
+    values["retention_policy"] = "records_first"
+    # Read compatibility for older clients; details have no separate product limit.
+    values["max_detail_packets"] = values.get("max_packets", 2000)
     return values
 
 
@@ -104,7 +116,7 @@ def protection_settings(saved, *, default_enabled=False):
                               if type(budget) is int else DEFAULT_BUDGET_BYTES)
     values["auto_zstd_level_enabled"] = (values.get("auto_zstd_level_enabled") is True
                                          and values["packet_size_protection_enabled"] is True)
-    return storage_settings(values)
+    return retention_settings(values)
 
 
 class InspectorServer(ThreadingHTTPServer):
@@ -121,8 +133,7 @@ class InspectorServer(ThreadingHTTPServer):
         saved = json.loads(self.settings_path.read_text(encoding="utf8")) if settings_exist else {}
         self.settings = {"relay_token": secrets.token_urlsafe(32),
                          "capture_enabled": True, "budget_bytes": DEFAULT_BUDGET_BYTES,
-                         "max_storage_mb": 512, "max_packets": 2000,
-                         "max_detail_packets": saved.get("max_packets", 2000),
+                         "max_packets": 2000,
                          "zstd_level": DEFAULT_ZSTD_LEVEL,
                          "packet_size_protection_enabled": False,
                          "ui_language": "zh",
@@ -133,7 +144,6 @@ class InspectorServer(ThreadingHTTPServer):
                          "auto_detect_providers": True, "provider_routes": {},
                          **protection_settings(saved)}
         self.settings.pop("ui_token", None)
-        self.settings["max_detail_packets"] = min(self.settings["max_detail_packets"], self.settings["max_packets"])
         self.settings["image_analysis_mode"] = image_mode(saved)
         self.settings["image_isolation_enabled"] = self.settings["image_analysis_mode"] == "optimized"
         try:
@@ -173,8 +183,7 @@ class InspectorServer(ThreadingHTTPServer):
         self.token_windows = TokenWindows()
         self.session_summaries = SessionSummaries(self.token_windows)
         self.store = Store(self.data_dir, self.settings["max_storage_bytes"],
-                           self.settings["max_packets"], capture_owner="relay:" + worker_id if worker_id else "relay",
-                           max_detail_count=self.settings["max_detail_packets"])
+                           self.settings["max_packets"], capture_owner="relay:" + worker_id if worker_id else "relay")
         self.retry_journal = RetryJournal(self.data_dir)
         if not worker_id:
             self.save_settings()
@@ -250,10 +259,9 @@ class InspectorServer(ThreadingHTTPServer):
                     if "public_port" in data:
                         from .entry_port import validate_port
                         self.public_port = validate_port(data["public_port"])
-                    self.settings["max_detail_packets"] = min(self.settings["max_detail_packets"], self.settings["max_packets"])
                     self.save_settings()
                     self.store.configure_limits(self.settings["max_storage_bytes"],
-                                                self.settings["max_packets"], self.settings["max_detail_packets"])
+                                                self.settings["max_packets"])
                 if self.settings["auto_detect_providers"]:
                     self.auto_sync_providers()
                 self.worker_state = "active"
@@ -422,6 +430,7 @@ class InspectorServer(ThreadingHTTPServer):
                 "max_storage_bytes": self.settings["max_storage_bytes"],
                 "storage_limit_min_bytes": MIN_STORAGE_BYTES, "storage_limit_max_bytes": MAX_STORAGE_BYTES,
                 "max_detail_packets": self.settings["max_detail_packets"],
+                "retention_policy": self.settings["retention_policy"],
                 "capture_errors": self.capture_errors, "analysis_errors": self.analysis_errors,
                 "maintenance_errors": self.maintenance_errors, "overflow_cache": self.overflow.cache_status(),
                 "active_requests": self.active_requests,
@@ -702,10 +711,9 @@ class Handler(BaseHTTPRequestHandler):
                     candidate["max_storage_mb"] = legacy
                 elif "max_storage_mb" in data:
                     candidate["max_storage_bytes"] = candidate["max_storage_mb"] * STORAGE_LEGACY_BYTES
-                if "max_detail_packets" not in data:
-                    candidate["max_detail_packets"] = min(candidate["max_detail_packets"], candidate["max_packets"])
-                if candidate["max_detail_packets"] > candidate["max_packets"]:
+                if "max_detail_packets" in data and candidate["max_detail_packets"] > candidate["max_packets"]:
                     raise ValueError("详情上限不能大于记录上限")
+                candidate["max_detail_packets"] = candidate["max_packets"]
                 previous = self.server.settings
                 change = (self.server.image_config.change(candidate["image_analysis_mode"])
                           if {"image_isolation_enabled", "image_analysis_mode"} & data.keys() else nullcontext())
@@ -733,7 +741,7 @@ class Handler(BaseHTTPRequestHandler):
                         raise
                 self.server.image_isolation = image_isolation
                 self.server.store.configure_limits(candidate["max_storage_bytes"],
-                                                   candidate["max_packets"], candidate["max_detail_packets"])
+                                                   candidate["max_packets"])
                 if candidate["auto_zstd_level_enabled"] != previous["auto_zstd_level_enabled"]:
                     self.server.compression_policy.clear()
             self._json(200, self.server.status())

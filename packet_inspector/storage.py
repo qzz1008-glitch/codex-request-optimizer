@@ -21,6 +21,7 @@ COMPRESSED_SIZE_SQL = "coalesce(json_extract(meta,'$.overflow_original_wire_byte
 PENDING_CLASSIFICATION = f"coalesce(json_extract(meta,'$.classification_version'),0)<{CLASSIFICATION_VERSION}"
 RETAINED_DETAILS = "coalesce(json_extract(meta,'$.details_evicted'),0)=0"
 DETAIL_META_FIELDS = {"headers", "input_items"}
+DEFAULT_STORAGE_BYTES = 500_000_000
 
 
 def summary_values(row):
@@ -39,7 +40,7 @@ def summary_values(row):
 
 
 class Store:
-    def __init__(self, directory: Path, max_bytes=512 * 1024 * 1024, max_count=2000,
+    def __init__(self, directory: Path, max_bytes=DEFAULT_STORAGE_BYTES, max_count=2000,
                  capture_owner="relay", timeout=10, max_detail_count=None):
         directory.mkdir(parents=True, exist_ok=True)
         self.directory = directory
