@@ -143,6 +143,31 @@ class AnalyzerTests(unittest.TestCase):
         self.assertEqual(compare_packets({"outbound_wire_bytes": 0},
                                         {"outbound_wire_bytes": 0})["compressed_delta"], 0)
 
+    def test_summary_comparison_retains_size_changes_without_item_content(self):
+        old = {"top_fields": [{"name": "input", "bytes": 50}], "wire_bytes": 80, "decoded_bytes": 100,
+               "outbound_wire_bytes": 400, "input_items": [{"fingerprint": "old", "label": "private old"}]}
+        new = {"top_fields": [{"name": "input", "bytes": 80}], "wire_bytes": 90, "decoded_bytes": 130,
+               "outbound_wire_bytes": 450, "input_items": [{"fingerprint": "new", "label": "private new"}]}
+        for previous_evicted, current_evicted in ((True, False), (False, True), (True, True)):
+            with self.subTest(previous_evicted=previous_evicted, current_evicted=current_evicted):
+                diff = compare_packets({**old, "details_evicted": previous_evicted}, {**new, "details_evicted": current_evicted})
+                self.assertEqual(diff["state"], "summary_only")
+                self.assertEqual(diff["compressed_delta"], 50)
+                self.assertEqual(diff["decoded_delta"], 30)
+                self.assertEqual(diff["fields"], [{"name": "input", "before": 50, "after": 80}])
+                self.assertNotIn("added", diff)
+                self.assertNotIn("removed", diff)
+                self.assertNotIn("private", json.dumps(diff))
+
+    def test_summary_comparison_keeps_missing_statistics_unknown(self):
+        for missing in ({}, {"top_fields": None, "decoded_bytes": None, "wire_bytes": None, "outbound_wire_bytes": None}):
+            with self.subTest(missing=missing):
+                diff = compare_packets({"details_evicted": True, **missing}, {"top_fields": [{"name": "input", "bytes": 80}]})
+                self.assertFalse(diff["fields_available"])
+                self.assertEqual(diff["fields"], [])
+                for key in ("decoded_delta", "wire_delta", "upload_delta", "compressed_delta"):
+                    self.assertIsNone(diff[key])
+
     def test_compaction_dispatch_metadata_in_headers_and_body(self):
         dispatch={"request_kind":"compaction","compaction":{"trigger":"auto","reason":"context_limit",
                   "implementation":"responses","phase":"mid_turn","strategy":"memento","access_token":"secret"}}
