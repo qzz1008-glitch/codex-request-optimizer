@@ -100,6 +100,7 @@ class InspectorServer(ThreadingHTTPServer):
         self.settings = {"relay_token": secrets.token_urlsafe(32),
                          "capture_enabled": True, "budget_bytes": DEFAULT_BUDGET_BYTES,
                          "max_storage_mb": 512, "max_packets": 2000,
+                         "max_detail_packets": saved.get("max_packets", 2000),
                          "zstd_level": DEFAULT_ZSTD_LEVEL,
                          "packet_size_protection_enabled": False,
                          "ui_language": "zh",
@@ -109,6 +110,7 @@ class InspectorServer(ThreadingHTTPServer):
                          "auto_detect_providers": True, "provider_routes": {},
                          **protection_settings(saved)}
         self.settings.pop("ui_token", None)
+        self.settings["max_detail_packets"] = min(self.settings["max_detail_packets"], self.settings["max_packets"])
         self.settings["image_analysis_mode"] = image_mode(saved)
         self.settings["image_isolation_enabled"] = self.settings["image_analysis_mode"] == "optimized"
         try:
@@ -144,7 +146,8 @@ class InspectorServer(ThreadingHTTPServer):
         self.token_windows = TokenWindows()
         self.session_summaries = SessionSummaries(self.token_windows)
         self.store = Store(self.data_dir, self.settings["max_storage_mb"] * 1024 * 1024,
-                           self.settings["max_packets"], capture_owner="relay:" + worker_id if worker_id else "relay")
+                           self.settings["max_packets"], capture_owner="relay:" + worker_id if worker_id else "relay",
+                           max_detail_count=self.settings["max_detail_packets"])
         self.retry_journal = RetryJournal(self.data_dir)
         if not worker_id:
             self.save_settings()
@@ -220,9 +223,10 @@ class InspectorServer(ThreadingHTTPServer):
                     if "public_port" in data:
                         from .entry_port import validate_port
                         self.public_port = validate_port(data["public_port"])
+                    self.settings["max_detail_packets"] = min(self.settings["max_detail_packets"], self.settings["max_packets"])
                     self.save_settings()
-                    self.store.max_bytes = self.settings["max_storage_mb"] * 1024 * 1024
-                    self.store.max_count = self.settings["max_packets"]
+                    self.store.configure_limits(self.settings["max_storage_mb"] * 1024 * 1024,
+                                                self.settings["max_packets"], self.settings["max_detail_packets"])
                 if self.settings["auto_detect_providers"]:
                     self.auto_sync_providers()
                 self.worker_state = "active"
@@ -384,6 +388,7 @@ class InspectorServer(ThreadingHTTPServer):
                 "image_save_dir_default": str(self.default_image_save_dir), "image_save_dir_supported": True,
                 "budget_bytes": self.settings["budget_bytes"], "upstream": self.settings["upstream"],
                 "max_storage_mb": self.settings["max_storage_mb"], "max_packets": self.settings["max_packets"],
+                "max_detail_packets": self.settings["max_detail_packets"],
                 "capture_errors": self.capture_errors, "analysis_errors": self.analysis_errors,
                 "maintenance_errors": self.maintenance_errors, "overflow_cache": self.overflow.cache_status(),
                 "active_requests": self.active_requests,
@@ -648,12 +653,17 @@ class Handler(BaseHTTPRequestHandler):
                     candidate["image_analysis_mode"] = "optimized" if data["image_isolation_enabled"] else "native"
                 candidate["image_isolation_enabled"] = candidate["image_analysis_mode"] == "optimized"
                 for key, low, high in (("budget_bytes", MIN_BUDGET_BYTES, MAX_BODY), ("max_storage_mb", 16, 8192),
-                                       ("max_packets", 10, 20000), ("capacity_retry_max_retries", 1, RETRY_LIMIT)):
+                                       ("max_packets", 10, 20000), ("max_detail_packets", 0, 20000),
+                                       ("capacity_retry_max_retries", 1, RETRY_LIMIT)):
                     if key in data:
                         value = data[key]
                         if isinstance(value, bool) or not isinstance(value, int) or not low <= value <= high:
                             raise ValueError("设置超出有效范围: " + key)
                         candidate[key] = value
+                if "max_detail_packets" not in data:
+                    candidate["max_detail_packets"] = min(candidate["max_detail_packets"], candidate["max_packets"])
+                if candidate["max_detail_packets"] > candidate["max_packets"]:
+                    raise ValueError("详情上限不能大于记录上限")
                 previous = self.server.settings
                 change = (self.server.image_config.change(candidate["image_analysis_mode"])
                           if {"image_isolation_enabled", "image_analysis_mode"} & data.keys() else nullcontext())
@@ -670,8 +680,8 @@ class Handler(BaseHTTPRequestHandler):
                         self.server.save_settings(previous)
                         raise
                 self.server.image_isolation = image_isolation
-                self.server.store.max_bytes = candidate["max_storage_mb"] * 1024 * 1024
-                self.server.store.max_count = candidate["max_packets"]
+                self.server.store.configure_limits(candidate["max_storage_mb"] * 1024 * 1024,
+                                                   candidate["max_packets"], candidate["max_detail_packets"])
                 if candidate["auto_zstd_level_enabled"] != previous["auto_zstd_level_enabled"]:
                     self.server.compression_history.clear()
             self._json(200, self.server.status())

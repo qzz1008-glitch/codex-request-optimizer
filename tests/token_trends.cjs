@@ -63,6 +63,16 @@ function dualRows(){return [
   assert.equal(View.input(packet(1,{upstream_usage:{input_tokens:12345},usage_override_applied:true,reported_usage:{input_tokens:500000}}),{state:'available',input_tokens:500000}),12345);
   assert.equal(View.input(packet(1,{usage_override_applied:true}),{state:'available',input_tokens:500000}),null);
  });
+ await test('metadata-only records retain both charts and protection markers',()=>{
+  const rows=[packet(601,{details_evicted:true,upstream_usage:{input_tokens:12345},outbound_wire_bytes:345678,
+    usage_override_applied:true,overflow_cache_hit:true}),
+    packet(602,{details_evicted:true,upstream_usage:{input_tokens:22345},outbound_wire_bytes:445678})];
+  const {result}=rendered(rows);
+  assert.equal(result.charts[0].points.length,2);
+  assert.equal(result.charts[1].points.length,2);
+  assert.equal(View.input(rows[0],null),12345);
+  assert.deepEqual(Array.from(View.events(rows[0])),['predictive','overflow']);
+ });
  await test('invalid and missing usage never becomes zero',()=>{
   for(const value of [-1,NaN,1.5,Number.MAX_SAFE_INTEGER+1])assert.equal(View.input(packet(1,{upstream_usage:{input_tokens:value}}),null),null);
   assert.equal(View.input(packet(1),{state:'available',input_tokens:0}),0);
