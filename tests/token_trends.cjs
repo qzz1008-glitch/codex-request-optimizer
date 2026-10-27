@@ -13,16 +13,17 @@ let checks=0;
 function test(name,fn){return Promise.resolve().then(fn).then(()=>{checks++;}).catch(error=>{error.message=name+': '+error.message;throw error;});}
 function view(services={}) {
  const result=Object.create(View.prototype);
- Object.assign(result,{active:true,loading:false,hydrating:false,packets:new Map(),native:new Map(),hours:0,revision:null,lastFull:0,query:'',error:false,limited:false,
-  services:{api:async()=>[],status:()=>({storage:{revision:1}}),sessions:()=>[],peek:()=>null,isGeneration:context.isGeneration,...services},
+ Object.assign(result,{active:true,loading:false,hydrating:false,packets:new Map(),native:new Map(),hours:1,revision:null,lastFull:0,query:'',error:false,limited:false,
+  services:{api:async()=>[],status:()=>({storage:{revision:1},trend_packets_supported:true}),sessions:()=>[],peek:()=>null,isGeneration:context.isGeneration,...services},
   render(){},hydrate(){},scheduleRender(){}});
  return result;
 }
 class Node {
  constructor(tag){this.tag=tag;this.attrs={};this.children=[];this.dataset={};this.textContent='';this.hidden=true;this.clientWidth=640;this.clientHeight=240;this.offsetWidth=260;this.offsetHeight=150;
-  this.style={setProperty:(key,value)=>{this.style[key]=value;}};
+  this.style={setProperty:(key,value)=>{this.style[key]=value;}};this.events=new Map();
   this.classList={toggle:(key,on)=>{const names=new Set((this.attrs.class||'').split(' ').filter(Boolean));on?names.add(key):names.delete(key);this.attrs.class=[...names].join(' ');}};}
  setAttribute(key,value){this.attrs[key]=String(value);if(key.startsWith('data-'))this.dataset[key.slice(5).replace(/-([a-z])/g,(_,char)=>char.toUpperCase())]=String(value);}
+ addEventListener(type,callback,options){this.events.set(type,{callback,options});}
  append(...nodes){for(const node of nodes)this.children.push(...(node.tag==='#fragment'?node.children:[node]));}
  prepend(node){this.children.unshift(node);}
  replaceChildren(...nodes){this.children=[];this.append(...nodes);}
@@ -38,17 +39,16 @@ function rendered(rows,services={}){
  ids.get('trend-time-axis').clientHeight=32;ids.get('trend-time-axis').top=480;
  for(const id of ['trend-size-tooltip','trend-tooltip']){ids.get(id).offsetWidth=150;ids.get(id).offsetHeight=30;}
  ids.get('trend-time-tooltip').offsetWidth=128;ids.get('trend-time-tooltip').offsetHeight=24;
- const buttons=[1,6,24,0].map(hours=>{const node=new Node('button');node.dataset.hours=String(hours);return node;});
  context.document={hidden:false,addEventListener:(type,handler)=>events.set(type,handler),createDocumentFragment:()=>new Node('#fragment'),createElementNS:(_,tag)=>new Node(tag),
-  createTextNode:text=>{const node=new Node('#text');node.textContent=text;return node;},querySelectorAll:selector=>selector==='#trend-range button'?buttons:[]};
+  createTextNode:text=>{const node=new Node('#text');node.textContent=text;return node;},querySelectorAll:()=>[]};
  context.$=id=>ids.get(id);context.t=text=>text;context.nf=new Intl.NumberFormat('en-US');context.uiI18n={language:'en'};
  context.el=(tag,cls='',text='')=>{const node=new Node(tag);node.attrs.class=cls;node.textContent=text;return node;};
  context.reconcileContent=(target,fragment)=>target.replaceChildren(fragment);
  context.localStorage={getItem:()=>null,setItem(){}};
  context.ResizeObserver=class{constructor(callback){this.callback=callback;this.observed=[];}observe(node){this.observed.push(node);}};
  context.requestAnimationFrame=callback=>{frames.push(callback);return frames.length;};
- const result=new View(view(services).services);result.active=true;result.hours=0;result.packets=new Map(rows.map(row=>[row.id,row]));
- result.render();return {result,ids,buttons,frames,events};
+ const result=new View(view(services).services);result.active=true;result.packets=new Map(rows.map(row=>[row.id,row]));
+ result.render();return {result,ids,frames,events};
 }
 function chartNodes(chart,cls){return chart.svg.all(node=>(node.attrs.class||'').split(' ').includes(cls));}
 function focusLines(result){return chartNodes({svg:result.guide},'trend-focus-line');}
@@ -167,9 +167,9 @@ function dualRows(){return [
   await result.refresh(true);await old;assert.equal(result.packets.size,1);assert.ok(result.packets.has(id(77)));
  });
  await test('snapshot and metadata retention are bounded',async()=>{
-  let calls=0;
-  const result=view({api:async()=>Array.from({length:300},(_,i)=>packet(++calls*1000+i))});
-  await result.refresh();assert.equal(result.packets.size,12000);assert.equal(result.limited,true);
+  let n=0;
+  const result=view({api:async path=>Array.from({length:Number(new URL(path,'http://fixture').searchParams.get('limit'))},()=>packet(++n,{created:now-n/2}))});
+  await result.refresh();assert.equal(result.packets.size,20000);assert.equal(result.limited,true);
  });
  await test('native backfill is bounded to two readers and eight jobs per pass',async()=>{
   let active=0,maximum=0,calls=0;
@@ -216,7 +216,7 @@ function dualRows(){return [
   for(const chart of result.charts){chart.plot.clientWidth=900;chart.svg.clientWidth=900;chart.plot.clientHeight=300;chart.svg.clientHeight=300;}
   ids.get('trend-chart').top=300;ids.get('trend-time-axis').top=600;result.guide.clientWidth=900;result.guide.clientHeight=632;
   result.render();lines=focusLines(result);assert.equal(lines.length,1);assert.equal(lines[0].attrs.y2,'605');
-  assert.equal(Number(lines[0].attrs.x1),result.charts[0].points.find(point=>point.packet.id===result.hover).x);
+  assert.ok(Math.abs(Number(lines[0].attrs.x1)-result.charts[0].points.find(point=>point.packet.id===result.hover).x)<1e-6);
   assert.equal(result.guide.attrs.viewBox,'0 0 900 632');assert.equal(result.timeAxis.attrs.viewBox,'0 0 900 32');
   result.charts[1].svg.onpointerleave();assert.equal(focusLines(result).length,0);
  });
@@ -243,7 +243,7 @@ function dualRows(){return [
   assert.equal(result.timeTooltip.hidden,true);
  });
  await test('metric callouts stay in their own panels and time stays on the axis at both timeline edges',()=>{
-  const {result,ids}=rendered([packet(401,{created:now-300,upstream_usage:{input_tokens:0},outbound_wire_bytes:0}),
+  const {result,ids}=rendered([packet(401,{created:now-3599,upstream_usage:{input_tokens:0},outbound_wire_bytes:0}),
    packet(402,{created:now-.1,upstream_usage:{input_tokens:1000},outbound_wire_bytes:1000000})]);
   ids.get('trend-chart').top=240;result.timeTooltip.offsetWidth=180;
   for(const selected of [id(401),id(402)]){
@@ -297,8 +297,11 @@ function dualRows(){return [
   assert.equal(size.empty.hidden,false);assert.equal(token.empty.hidden,true);
  });
  await test('range controls and resize redraw both charts using the same domain',()=>{
-  const {result,buttons,frames}=rendered([...dualRows(),packet(106,{created:now-7200,upstream_usage:{input_tokens:900},outbound_wire_bytes:900000})]);
-  result.refresh=force=>{assert.equal(force,true);result.render();};buttons[0].onclick();
+  const {result,ids,frames}=rendered([...dualRows(),packet(106,{created:now-7200,upstream_usage:{input_tokens:900},outbound_wire_bytes:900000})]);
+  result.refresh=()=>assert.fail('zoom must not fetch history');
+  const slider=ids.get('trend-range-slider');slider.value='3';slider.oninput();assert.equal(result.hours,3);assert.equal(ids.get('trend-range-value').textContent,'3 小时');frames.shift()();
+  for(const chart of result.charts)assert.ok(chart.points.some(point=>point.packet.id===id(106)));
+  slider.value='1';slider.oninput();frames.shift()();
   for(const chart of result.charts){assert.equal(chart.bounds.end-chart.bounds.start,3600);assert.ok(chart.points.every(point=>point.packet.id!==id(106)));chart.plot.clientWidth=800;chart.plot.clientHeight=260;}
   result.resize.callback();frames.shift()();
   for(const chart of result.charts)assert.equal(chart.svg.attrs.viewBox,'0 0 800 260');
@@ -369,15 +372,15 @@ function dualRows(){return [
  });
  await test('line hits use screen distance, choose the closest series and never bridge sessions',()=>{
   let {result}=rendered([
-   packet(501,{created:now-600,upstream_usage:{input_tokens:100},outbound_wire_bytes:100000}),
+   packet(501,{created:now-3599,upstream_usage:{input_tokens:100},outbound_wire_bytes:100000}),
    packet(502,{created:now-1,upstream_usage:{input_tokens:100},outbound_wire_bytes:100000}),
-   packet(503,{thread_id:'session-b',created:now-600,upstream_usage:{input_tokens:105},outbound_wire_bytes:105000}),
+   packet(503,{thread_id:'session-b',created:now-3599,upstream_usage:{input_tokens:105},outbound_wire_bytes:105000}),
    packet(504,{thread_id:'session-b',created:now-1,upstream_usage:{input_tokens:105},outbound_wire_bytes:105000})
   ]);
   let token=result.charts[1];
   for(const id of ['session-a','session-b']){const [a,b]=token.points.filter(p=>p.series.id===id);token.svg.onpointermove({clientX:(a.x+b.x)/2,clientY:a.y});assert.equal(result.hoverSeries,id);assert.equal(result.hover,null);}
   ({result}=rendered([
-   packet(505,{created:now-600,upstream_usage:{input_tokens:100}}),
+   packet(505,{created:now-3599,upstream_usage:{input_tokens:100}}),
    packet(506,{created:now-1,upstream_usage:{input_tokens:100}})
   ]));
   token=result.charts[1];token.svg.clientWidth/=2;token.svg.clientHeight/=2;
@@ -385,11 +388,49 @@ function dualRows(){return [
   token.svg.onpointermove({clientX:x,clientY:y+6});assert.equal(result.hoverSeries,'session-a');
   token.svg.onpointermove({clientX:x,clientY:y+10});assert.equal(result.hoverSeries,null);
   ({result}=rendered([
-   packet(507,{created:now-600,upstream_usage:{input_tokens:100}}),
+   packet(507,{created:now-3599,upstream_usage:{input_tokens:100}}),
    packet(508,{thread_id:'session-b',created:now-1,upstream_usage:{input_tokens:300}})
   ]));
   token=result.charts[1];[a,b]=token.points;token.svg.onpointermove({clientX:(a.x+b.x)/2,clientY:(a.y+b.y)/2});
   assert.equal(result.hoverSeries,null);assert.equal(result.hover,null);
+ });
+ await test('wheel and slider share local bounds without canceling an in-flight request',()=>{
+  const {result,ids,frames}=rendered(dualRows()),slider=ids.get('trend-range-slider');
+  result.controller=new AbortController();result.loading=true;result.refresh=()=>assert.fail('local zoom performed network work');
+  let prevented=0;const wheel=ids.get('trend-charts').events.get('wheel');assert.equal(wheel.options.passive,false);
+  wheel.callback({deltaY:120,deltaMode:0,preventDefault(){prevented++;}});
+  assert.ok(result.hours>1);assert.equal(Number(slider.value),result.hours);assert.equal(result.controller.signal.aborted,false);assert.equal(prevented,1);frames.shift()();
+  result.setRange(100);assert.equal(result.hours,12);result.setRange(-10);assert.equal(result.hours,1);
+  result.oldestCreated=Date.now()/1000-7200;result.setRange(100);assert.ok(result.hours>=2&&result.hours<2.01);assert.equal(Number(slider.max),result.hours);
+  const before=result.hours;wheel.callback({deltaY:120,ctrlKey:true,preventDefault(){assert.fail('browser zoom was intercepted');}});assert.equal(result.hours,before);
+ });
+ await test('first paint precedes history loading and pending activation can be canceled',async()=>{
+  let reads=0;const {result,frames}=rendered([],{api:async()=>{reads++;return[];}});
+  result.setActive(false);result.setActive(true);assert.equal(reads,0);await result.refresh();assert.equal(reads,0);
+  result.setActive(false);frames.shift()();await new Promise(resolve=>setTimeout(resolve,5));assert.equal(reads,0);
+  result.setActive(true);assert.equal(reads,0);frames.shift()();await new Promise(resolve=>setTimeout(resolve,5));assert.equal(reads,1);
+ });
+ await test('progressive pages paint before completion, zoom locally and roll back a failed snapshot',async()=>{
+  let release,entered,reads=0;const second=new Promise(resolve=>entered=resolve),old=packet(900,{created:now-10,upstream_usage:{input_tokens:100}});
+  const {result,frames}=rendered([old],{api:async()=>{if(++reads===1)return Array.from({length:300},(_,i)=>packet(i+1));entered();return new Promise(resolve=>release=resolve);}});
+  const loading=result.refresh(true);await second;assert.equal(result.packets.size,1);assert.equal(result.previewPackets.size,301);
+  frames.shift()();assert.equal(result.model().series[0].points.length,301);
+  result.setRange(4);assert.equal(result.loading,true);assert.equal(result.controller.signal.aborted,false);frames.shift()();assert.equal(reads,2);
+  release({invalid:true});await loading;assert.equal(result.error,true);assert.equal(result.previewPackets,null);assert.equal(result.packets.size,1);assert.ok(result.packets.has(old.id));
+ });
+ await test('old backends use small pages and discard response payloads while retaining real usage',async()=>{
+  const queries=[],rows=Array.from({length:53},(_,i)=>packet(i+1,{upstream_usage:{input_tokens:i,payload:'x'.repeat(10000)},reported_usage:{input_tokens:500000},capacity_retry_diagnostic:{events:['private']}}));
+  const result=view({status:()=>({storage:{revision:1}}),api:async path=>{
+   const q=new URL(path,'http://fixture').searchParams;queries.push(q);const start=q.has('after')?rows.findIndex(p=>p.id===q.get('after'))+1:0;return rows.slice(start,start+Number(q.get('limit')));
+  }});
+  await result.refresh();assert.equal(result.packets.size,53);assert.equal(queries.length,2);
+  for(const q of queries){assert.equal(q.get('limit'),'50');assert.equal(q.get('view'),'trend');assert.ok(Number(q.get('since'))<=now-43199);}
+  for(const row of result.packets.values()){assert.deepEqual(Object.keys(row.upstream_usage),['input_tokens']);assert.equal(row.reported_usage,undefined);assert.equal(row.capacity_retry_diagnostic,undefined);}
+ });
+ await test('dense curves retain every hover point and event marker with bounded ordinary dots',()=>{
+  const rows=Array.from({length:12000},(_,i)=>packet(i+1,{created:now-i/4,upstream_usage:{input_tokens:1000+i},outbound_wire_bytes:200000+i,...(i%1000===0?{usage_override_applied:true}: {})}));
+  const {result}=rendered(rows);
+  for(const chart of result.charts){assert.equal(chart.points.length,12000);assert.equal(chartNodes(chart,'trend-event-predictive').length,12);assert.ok(chart.svg.all(n=>n.tag==='circle').length<500);assert.equal(chartNodes(chart,'trend-curve').length,1);}
  });
  console.log(JSON.stringify({passed:checks}));
 })().catch(error=>{console.error(error);process.exitCode=1;});

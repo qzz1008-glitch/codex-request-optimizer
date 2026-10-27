@@ -4,6 +4,7 @@ from pathlib import Path
 import unittest
 import tempfile
 import sqlite3
+import time
 from unittest.mock import patch
 
 from tests import test_packet_inspector as fixtures
@@ -70,6 +71,50 @@ class RuntimeSettingsTests(unittest.TestCase):
         self.assertTrue(result["capacity_retry_diagnostics_supported"])
         self.assertIsInstance(result["max_detail_packets"], int)
         self.assertLessEqual(result["max_detail_packets"], result["max_packets"])
+
+    def test_trend_projection_keeps_real_usage_and_markers_without_response_payloads(self):
+        now = time.time()
+        meta = {"thread_id": "trend-api-fixture", "method": "POST", "path": "/responses",
+                "upstream_usage": {"input_tokens": 12345, "output_tokens": 30, "payload": "x" * 200000},
+                "reported_usage": {"input_tokens": 500000}, "input_items": [{"kind": "message:user", "label": "private"}],
+                "capacity_retry_diagnostic": {"events": ["private"]}, "outbound_wire_bytes": 800000,
+                "usage_override_applied": True, "overflow_cache_hit": True, "native_retry_advised": True}
+        for age in (3600, 13 * 3600):
+            with patch("packet_inspector.storage.time.time", return_value=now - age):
+                packet = self.server.store.add(meta)
+            self.server.store.update(packet, state="complete", status=200)
+        status, compact = self.api(f"/api/packets?thread=trend-api-fixture&view=trend&since={now - 12 * 3600}")
+        self.assertEqual(status, 200)
+        self.assertEqual(len(compact), 1)
+        row = compact[0]
+        self.assertEqual(row["upstream_usage"], {"input_tokens": 12345})
+        self.assertEqual(row["outbound_wire_bytes"], 800000)
+        for key in ("usage_override_applied", "overflow_cache_hit", "native_retry_advised"):
+            self.assertIs(row[key], True)
+        for key in ("reported_usage", "input_items", "capacity_retry_diagnostic"):
+            self.assertNotIn(key, row)
+        self.assertLess(len(json.dumps(compact)), 2000)
+        self.assertEqual(self.api("/api/packets/" + row["id"] + "?view=trend"), (200, row))
+        status, full = self.api("/api/packets?thread=trend-api-fixture")
+        self.assertEqual(status, 200)
+        self.assertEqual(len(full), 2)
+        self.assertEqual(full[0]["upstream_usage"], meta["upstream_usage"])
+        self.assertGreater(len(json.dumps(full)), 400000)
+        self.assertTrue(self.api("/api/status")[1]["trend_packets_supported"])
+
+    def test_trend_projection_never_substitutes_reported_or_missing_usage(self):
+        meta = {"thread_id": "trend-missing-fixture", "method": "POST", "path": "/responses",
+                "reported_usage": {"input_tokens": 500000}, "usage_override_applied": True,
+                "request_purpose": "image_analysis", "is_compaction": True}
+        packet = self.server.store.add(meta)
+        self.server.store.update(packet, state="complete", status=200)
+        status, rows = self.api("/api/packets?thread=trend-missing-fixture&view=trend")
+        self.assertEqual(status, 200)
+        self.assertEqual(len(rows), 1)
+        self.assertNotIn("upstream_usage", rows[0])
+        self.assertNotIn("reported_usage", rows[0])
+        self.assertEqual(rows[0]["request_purpose"], "image_analysis")
+        self.assertTrue(rows[0]["is_compaction"])
 
     def test_automatic_details_use_the_storage_budget_and_keep_basic_information(self):
         previous = dict(self.server.settings)

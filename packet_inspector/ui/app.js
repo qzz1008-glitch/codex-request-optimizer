@@ -2009,7 +2009,7 @@ function isTrendGeneration(packet) {
 class TokenTrendView {
   constructor(services) {
     this.services=services;this.active=false;this.loading=false;this.hydrating=false;
-    this.packets=new Map();this.native=new Map();this.hours=1;
+    this.packets=new Map();this.native=new Map();this.hours=1;this.previewPackets=null;this.oldestCreated=null;this.paintRefresh=null;
     this.revision=null;this.lastFull=0;this.query="";this.error=false;this.limited=false;
     this.series=[];this.hover=null;this.hoverChart=null;this.hoverSeries=null;this.frame=null;this.legendVersion="";
     this.charts=[{key:"size",field:"size",prefix:"trend-size"},{key:"token",field:"input",prefix:"trend"}].map(chart=>({
@@ -2021,10 +2021,14 @@ class TokenTrendView {
       const key=icon.dataset.trendMarker,shape=TokenTrendView.markerShape(key);if(!shape)continue;
       const {tag,...attrs}=shape;icon.replaceChildren(this.svgNode(tag,{...attrs,class:"trend-event trend-event-"+key}));
     }
-    for(const button of document.querySelectorAll("#trend-range button"))button.onclick=()=>{
-      this.hours=Number(button.dataset.hours);
-      this.cancelPending();this.lastFull=0;this.hover=null;this.hoverChart=null;this.hoverSeries=null;this.refresh(true);
-    };
+    this.range=$("trend-range-slider");this.rangeValue=$("trend-range-value");
+    this.range.oninput=()=>this.setRange(Number(this.range.value));
+    this.tooltipHost.addEventListener("wheel",event=>{
+      if(!this.active||event.ctrlKey||event.metaKey||!Number.isFinite(event.deltaY)||!event.deltaY)return;
+      event.preventDefault();
+      const delta=event.deltaY*(event.deltaMode===1?16:event.deltaMode===2?400:1);
+      this.setRange(this.hours*Math.exp(Math.max(-240,Math.min(240,delta))/450));
+    },{passive:false});
     $("trend-search").oninput=event=>{this.query=event.currentTarget.value.trim().toLowerCase();this.hover=null;this.hoverChart=null;this.hoverSeries=null;this.emphasis=null;this.render();};
     this.resize=new ResizeObserver(()=>this.scheduleRender());
     for(const chart of this.charts) {
@@ -2060,6 +2064,14 @@ class TokenTrendView {
     if(packet.usage_override_applied)return null;
     return data?.state==="available"&&Number.isSafeInteger(data.input_tokens)&&data.input_tokens>=0?data.input_tokens:null;
   }
+  static packet(packet) {
+    // Older backends return full metadata. Keep only fields used by the charts and native usage lookup.
+    const result={};
+    for(const key of ["id","created","thread_id","method","path","state","status","duration_ms","is_compaction","request_kind","request_purpose","session_kind","image_isolation_worker","usage_override_applied","usage_override_request_bytes","overflow_compaction_calls","overflow_cache_hit","overflow_original_wire_bytes","relay_error","capacity_retry_count","native_retry_advised","outbound_wire_bytes"])
+      if(Object.hasOwn(packet,key))result[key]=packet[key];
+    if(packet.upstream_usage&&Object.hasOwn(packet.upstream_usage,"input_tokens"))result.upstream_usage={input_tokens:packet.upstream_usage.input_tokens};
+    return result;
+  }
   static size(packet) {return compressedBytes(packet);}
   static sizeScale(maximum) {
     return TokenTrendView.scale(maximum||1000);
@@ -2070,44 +2082,67 @@ class TokenTrendView {
     return {step,max:Math.max(step,Math.ceil(maximum/step)*step)};
   }
   static color(id) {let hash=2166136261;for(const char of id)hash=Math.imul(hash^char.charCodeAt(0),16777619);return "hsl("+((hash>>>0)%360)+" 62% 42%)";}
-  cancelPending() {this.controller?.abort();this.nativeController?.abort();this.controller=null;this.nativeController=null;this.loading=false;this.hydrating=false;}
-  setActive(active) {this.active=active;this.hover=null;this.hoverChart=null;this.hoverSeries=null;this.emphasis=null;if(!active){this.cancelPending();this.guide.replaceChildren();this.timeTooltip.hidden=true;for(const chart of this.charts)chart.tooltip.hidden=true;}else{this.render();this.refresh();}}
+  rangeLimit() {return this.oldestCreated===null||this.oldestCreated===undefined?12:Math.min(12,Math.max(1,(Date.now()/1000-this.oldestCreated+1)/3600));}
+  updateRange() {
+    const maximum=this.rangeLimit();this.hours=Math.max(1,Math.min(maximum,Number.isFinite(this.hours)?this.hours:1));
+    this.range.max=String(maximum);this.range.value=String(this.hours);
+    const label=t("{hours} 小时").replace("{hours}",nf.format(Math.round(this.hours*100)/100));
+    this.rangeValue.textContent=label;this.range.setAttribute("aria-valuetext",label);
+  }
+  setRange(hours) {if(!Number.isFinite(hours))return;this.hours=hours;this.updateRange();this.scheduleRender();}
+  cancelPending() {this.controller?.abort();this.nativeController?.abort();this.controller=null;this.nativeController=null;this.paintRefresh=null;this.previewPackets=null;this.loading=false;this.hydrating=false;}
+  setActive(active) {
+    this.active=active;this.hover=null;this.hoverChart=null;this.hoverSeries=null;this.emphasis=null;
+    if(!active){this.cancelPending();this.guide.replaceChildren();this.timeTooltip.hidden=true;for(const chart of this.charts)chart.tooltip.hidden=true;}
+    else {
+      this.render();const ticket={};this.paintRefresh=ticket;
+      requestAnimationFrame(()=>setTimeout(()=>{if(this.active&&this.paintRefresh===ticket){this.paintRefresh=null;this.refresh();}},0));
+    }
+  }
   scheduleRender() {if(!this.active||this.frame!==null)return;this.frame=requestAnimationFrame(()=>{this.frame=null;this.render();});}
   async refresh(force=false) {
-    if(!this.active||document.hidden||this.loading)return;
+    if(!this.active||document.hidden||this.loading||this.paintRefresh)return;
     const revision=this.services.status()?.storage?.revision,now=Date.now();
     const full=force||!this.lastFull||now-this.lastFull>=30000;
     if(!full&&revision===this.revision){this.render();this.hydrate();return;}
     const controller=new AbortController();this.controller=controller;this.loading=true;this.error=false;
-    const timeout=setTimeout(()=>controller.abort(),15000),incoming=new Map(),since=this.hours?now/1000-this.hours*3600:-Infinity;
+    const timeout=setTimeout(()=>controller.abort(),60000),incoming=new Map(),since=now/1000-12*3600;
+    const limit=this.services.status()?.trend_packets_supported?300:50,maximum=20000;let published=0;
     try {
       let after=null,limited=false;
-      for(let page=0;page<40;page++) {
-        const query=new URLSearchParams({limit:"300",sort:"created",direction:"desc"});if(after)query.set("after",after);
+      for(let page=0;page<Math.ceil(maximum/limit);page++) {
+        const query=new URLSearchParams({limit:String(limit),sort:"created",direction:"desc",view:"trend",since:String(since)});if(after)query.set("after",after);
         const values=await this.services.api("/api/packets?"+query,undefined,controller.signal);
         controller.signal.throwIfAborted();if(!Array.isArray(values))throw Error("invalid trend data");
-        for(const packet of values)if(packet?.id&&Number.isFinite(packet.created)&&packet.created>=since)incoming.set(packet.id,packet);
-        if(values.length<300||values.at(-1).created<since)break;
+        for(const packet of values)if(packet?.id&&Number.isFinite(packet.created)&&packet.created>=since)incoming.set(packet.id,TokenTrendView.packet(packet));
+        if(!published||Date.now()-published>=100) {
+          if(!this.active||this.controller!==controller)return;
+          this.previewPackets=new Map([...this.packets,...incoming]);this.scheduleRender();published=Date.now();
+          await new Promise(resolve=>setTimeout(resolve,0));controller.signal.throwIfAborted();
+        }
+        if(values.length<limit||values.at(-1).created<since)break;
         if(!full&&values.some(packet=>this.packets.has(packet.id)))break;
         const next=values.at(-1).id;if(next===after)throw Error("invalid trend cursor");after=next;
-        if(page===39)limited=true;
+        if(page===Math.ceil(maximum/limit)-1)limited=true;
       }
       if(!full) {
         const pending=[...this.packets.values()].filter(packet=>["captured","streaming"].includes(packet.state)&&!incoming.has(packet.id));
         const offset=this.activeCursor||0,jobs=pending.length?Array.from({length:Math.min(12,pending.length)},(_,i)=>pending[(offset+i)%pending.length]):[];
         let at=0;await Promise.all(Array.from({length:Math.min(3,jobs.length)},async()=>{
-          while(at<jobs.length){const packet=jobs[at++];try{const value=await this.services.api("/api/packets/"+packet.id,undefined,controller.signal);if(value?.id)incoming.set(value.id,value);}catch(error){controller.signal.throwIfAborted();}}
+          while(at<jobs.length){const packet=jobs[at++];try{const value=await this.services.api("/api/packets/"+packet.id+"?view=trend",undefined,controller.signal);if(value?.id)incoming.set(value.id,TokenTrendView.packet(value));}catch(error){controller.signal.throwIfAborted();}}
         }));this.activeCursor=offset+jobs.length;
       }
       controller.signal.throwIfAborted();if(!this.active||this.controller!==controller)return;
       if(full){this.packets=incoming;this.lastFull=now;this.limited=limited;}else for(const [id,packet] of incoming)this.packets.set(id,packet);
       for(const [id,packet] of this.packets)if(packet.created<since)this.packets.delete(id);
-      if(this.packets.size>12000){const keep=[...this.packets.values()].sort((a,b)=>b.created-a.created||b.id.localeCompare(a.id)).slice(0,12000);this.packets=new Map(keep.map(packet=>[packet.id,packet]));this.limited=true;}
+      if(this.packets.size>maximum){const keep=[...this.packets.values()].sort((a,b)=>b.created-a.created||b.id.localeCompare(a.id)).slice(0,maximum);this.packets=new Map(keep.map(packet=>[packet.id,packet]));this.limited=true;}
       for(const id of this.native.keys())if(!this.packets.has(id))this.native.delete(id);
+      const times=[...this.packets.values()].filter(packet=>packet.thread_id&&(packet.is_compaction||this.services.isGeneration(packet))).map(packet=>packet.created);
+      this.oldestCreated=times.length?Math.min(...times):now/1000;
       this.revision=revision;this.error=false;
     } catch(error) {if(this.active&&this.controller===controller)this.error=true;}
     finally {
-      clearTimeout(timeout);if(this.controller===controller){this.loading=false;this.controller=null;if(this.active){this.render();this.hydrate();}}
+      clearTimeout(timeout);if(this.controller===controller){this.loading=false;this.controller=null;this.previewPackets=null;if(this.active){this.render();this.hydrate();}}
     }
   }
   tokenData(packet) {
@@ -2137,8 +2172,8 @@ class TokenTrendView {
   model() {
     const names=new Map(this.services.sessions().map(row=>[row.thread_id,row.title||row.task_name||row.thread_id]));
     const groups=new Map();let unknown=0;
-    const now=Date.now()/1000,since=this.hours?now-this.hours*3600:-Infinity;
-    for(const packet of this.packets.values()) {
+    const now=Date.now()/1000,since=now-this.hours*3600;
+    for(const packet of (this.previewPackets||this.packets).values()) {
       if(packet.created<since||(!packet.is_compaction&&!this.services.isGeneration(packet)))continue;
       if(typeof packet.thread_id!=="string"||!packet.thread_id){unknown++;continue;}
       if(!groups.has(packet.thread_id))groups.set(packet.thread_id,{id:packet.thread_id,title:names.get(packet.thread_id)||packet.thread_id,color:TokenTrendView.color(packet.thread_id),points:[],latest:0});
@@ -2178,13 +2213,10 @@ class TokenTrendView {
   }
   render() {
     if(!this.active)return;
-    const model=this.model();this.series=model.series;this.renderLegend(model);
+    this.updateRange();const model=this.model();this.series=model.series;this.renderLegend(model);
     if(!model.visible.some(group=>group.id===this.hoverSeries&&group.points.some(point=>point.input!==null||point.size!==null)))this.hoverSeries=null;
     const emphasis=this.emphasis||this.hoverSeries||(this.hover?model.visible.find(group=>group.points.some(point=>point.packet.id===this.hover&&(point.input!==null||point.size!==null)))?.id:null);
-    for(const button of document.querySelectorAll("#trend-range button"))button.setAttribute("aria-pressed",String(Number(button.dataset.hours)===this.hours));
-    const values=model.visible.flatMap(group=>group.points);
-    let start=this.hours?model.now-this.hours*3600:Math.min(...values.map(point=>point.packet.created),model.now-60),end=this.hours?model.now:Math.max(...values.map(point=>point.packet.created),model.now);
-    if(end-start<60){start-=30;end+=30;}
+    const start=model.now-this.hours*3600,end=model.now;
     for(const chart of this.charts)this.renderChart(chart,model,start,end,emphasis);
     this.renderTimeAxis();
     this.renderFocus();
@@ -2211,14 +2243,16 @@ class TokenTrendView {
     chart.points=[];
     for(const group of model.visible) {
       // Set brightness before attachment: layout reads can otherwise start a fade from full opacity.
-      const layer=this.svgNode("g",{class:"trend-series-line"+(emphasis&&group.id!==emphasis?" dimmed":""),"data-series":group.id}),events=this.svgNode("g");let path="",pen=false;
+      const layer=this.svgNode("g",{class:"trend-series-line"+(emphasis&&group.id!==emphasis?" dimmed":""),"data-series":group.id}),events=this.svgNode("g");let path="",pen=false,lastDot=null,lastPoint=null;
       for(const source of group.points) {
         const value=source[chart.field];if(value===null)continue;
         const point={...source,value,series:group,x:x(source.packet.created),y:y(value)};
         path+=(pen?"L":"M")+point.x.toFixed(2)+","+point.y.toFixed(2);pen=true;chart.points.push(point);
         if(point.events.some(event=>["predictive","overflow","retry","compact"].includes(event)))this.marker(point,events);
-        else layer.append(this.svgNode("circle",{cx:point.x,cy:point.y,r:2.1,fill:group.color}));
+        else if(!lastDot||Math.hypot(point.x-lastDot.x,point.y-lastDot.y)>=4){layer.append(this.svgNode("circle",{cx:point.x,cy:point.y,r:2.1,fill:group.color}));lastDot=point;}
+        lastPoint=point;
       }
+      if(lastPoint&&lastDot!==lastPoint&&!lastPoint.events.length)layer.append(this.svgNode("circle",{cx:lastPoint.x,cy:lastPoint.y,r:2.1,fill:group.color}));
       layer.prepend(this.svgNode("path",{d:path,class:"trend-curve",stroke:group.color}));layer.append(events);root.append(layer);
     }
     if(limit!==null) {

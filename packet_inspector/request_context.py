@@ -88,6 +88,25 @@ def packet_metadata(meta):
     return {**meta, "request_purpose": kind} if kind else meta
 
 
+TREND_METADATA_FIELDS = (
+    "id", "created", "thread_id", "method", "path", "state", "status", "duration_ms",
+    "is_compaction", "request_kind", "request_purpose", "session_kind", "image_isolation_worker",
+    "usage_override_applied", "usage_override_request_bytes", "overflow_compaction_calls",
+    "overflow_cache_hit", "overflow_original_wire_bytes", "relay_error", "capacity_retry_count",
+    "native_retry_advised", "outbound_wire_bytes",
+)
+
+
+def trend_packet_metadata(meta):
+    """Charts need real input usage and markers, without full response metadata."""
+    meta = packet_metadata(meta)
+    result = {key: meta[key] for key in TREND_METADATA_FIELDS if key in meta}
+    usage = meta.get("upstream_usage")
+    if isinstance(usage, dict) and "input_tokens" in usage:
+        result["upstream_usage"] = {"input_tokens": usage["input_tokens"]}
+    return result
+
+
 def session_id(value):
     return value.lower() if isinstance(value, str) and SESSION_ID.fullmatch(value) else None
 

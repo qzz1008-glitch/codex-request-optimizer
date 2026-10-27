@@ -34,7 +34,7 @@ from .session_summary import SessionSummaries
 from .storage import DEFAULT_STORAGE_BYTES, Store
 from .transport import DEFAULT_ZSTD_LEVEL, prepare_request_info, validate_zstd_level
 from .compression_policy import CompressionPolicy, INITIAL_HIGH_BYTES, is_main_request
-from .request_context import request_session_context, temporary_request_kind
+from .request_context import request_session_context, temporary_request_kind, trend_packet_metadata
 from .installation import manage_installation
 from .startup import configure_startup, startup_supported
 from .native_retry import (DEFAULT_RETRIES, MAX_RETRIES, DEFAULT_DELAY_SECONDS, MAX_DELAY_SECONDS,
@@ -401,6 +401,7 @@ class InspectorServer(ThreadingHTTPServer):
         return {"version": VERSION, "ui_version": VERSION, "capture_enabled": self.settings["capture_enabled"],
                 "connection_state": "connected" if profile.get("active") else "disconnected",
                 "connection_policy": 1, "connection_reload_required": self.connection_reload_required,
+                "trend_packets_supported": True,
                 "zstd_level": self.settings["zstd_level"],
                 "auto_zstd_level_enabled": self.settings["auto_zstd_level_enabled"],
                 "ui_language": self.settings["ui_language"],
@@ -626,11 +627,13 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, self.server.store.filter_options())
         elif path == "/api/packets" and self.command == "GET":
             before = float(one("before")) if one("before") else None
+            since = float(one("since")) if one("since") else None
             self._json(200, self.server.store.list(limit=min(300, max(1, int(one("limit", "150")))),
                         thread=one("thread")[:200], query=one("q")[:200], before=before,
                         include_get=one("include_get") == "1", sort=one("sort", "created"),
                         direction=one("direction", "desc"), after=one("after")[:64] or None,
-                        kind=one("kind"), status=one("status"), thread_unknown=one("thread_unknown") == "1"))
+                        kind=one("kind"), status=one("status"), thread_unknown=one("thread_unknown") == "1",
+                        since=since, trend=one("view") == "trend"))
         elif path == "/api/entry-port" and self.command == "GET":
             self._json(200, port_status(self.server.data_dir, self.server.public_port))
         elif path == "/api/entry-port" and self.command == "POST":
@@ -817,6 +820,9 @@ class Handler(BaseHTTPRequestHandler):
                 self._bytes(200, encode(exported), "application/json; charset=utf-8",
                             {"Content-Disposition": 'attachment; filename="codex-packet-' + packet_id + '.json"'})
             elif not action:
+                if one("view") == "trend":
+                    self._json(200, trend_packet_metadata(meta))
+                    return
                 diagnostic = meta.get("capacity_retry_diagnostic")
                 if isinstance(diagnostic, dict):
                     diagnostic["journal_available"] = self.server.retry_journal.available(diagnostic.get("id", ""))
