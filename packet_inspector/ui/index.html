@@ -138,7 +138,7 @@
     <section id="request-protection-settings"><h3>请求保护</h3>
       <div class="packet-size-controls">
         <div class="overflow-toggle" data-settings-field="packet_size_protection_enabled"><input id="packet-size-protection" type="checkbox" aria-labelledby="packet-size-protection-label"><span id="packet-size-protection-label">请求大小保护</span></div>
-        <label class="packet-size-limit" for="budget" data-settings-field="budget"><span id="budget-label">压缩包上限</span><span class="packet-size-value"><input id="budget" type="number" min="50.001" max="134217.728" step="0.001" value="1000" aria-labelledby="budget-label" aria-describedby="budget-unit" required disabled><span id="budget-unit" class="packet-size-unit">kB</span></span></label>
+        <label class="packet-size-limit" for="budget" data-settings-field="budget"><span id="budget-label">压缩包上限</span><span class="packet-size-value"><input id="budget" type="number" min="50.001" max="134217.728" step="0.001" value="1000" aria-labelledby="budget-label" aria-describedby="budget-unit" required disabled><span id="budget-unit" class="packet-size-unit">KB</span></span></label>
       </div>
       <p id="packet-size-message" class="help" role="status" hidden></p>
       <div class="runtime-setting-row auto-zstd-row" data-settings-field="auto_zstd_level_enabled"><div class="runtime-toggle"><input id="auto-zstd-level" type="checkbox" aria-labelledby="auto-zstd-level-label" aria-describedby="auto-zstd-level-hint" disabled><span id="auto-zstd-level-label">按包大小自动压缩</span></div><p id="auto-zstd-level-hint" class="help muted runtime-inline-hint">根据包大小自动选择合适的压缩等级，开启后禁用手动选择。</p></div>
@@ -173,7 +173,7 @@
     <section><h3>运行设置</h3>
       <div class="runtime-setting-row"><div class="runtime-toggle" data-settings-field="start_on_login"><input id="start-on-login" type="checkbox" aria-labelledby="start-on-login-label" aria-describedby="startup-hint"><span id="start-on-login-label">开机启动</span></div><p id="startup-hint" class="muted help runtime-inline-hint">登录 Windows 后在后台启动，可从托盘打开窗口。</p></div>
     </section>
-    <section><h3>记录设置</h3><div class="settings-grid"><label for="packet-limit" data-settings-field="max_packets"><span>记录上限（条）</span><input id="packet-limit" type="number" min="10" max="20000" required></label><label for="detail-limit" data-settings-field="max_detail_packets"><span>详情上限（条）</span><input id="detail-limit" type="number" min="0" max="20000" required></label><label for="storage-limit" data-settings-field="max_storage_mb"><span>存储上限（MiB）</span><input id="storage-limit" type="number" min="16" max="8192" required></label></div><p class="help muted">详情包含在记录内；超出存储上限时先回收旧详情。</p></section>
+    <section><h3>记录设置</h3><div class="settings-grid"><label for="packet-limit" data-settings-field="max_packets"><span>记录上限（条）</span><input id="packet-limit" type="number" min="10" max="20000" required></label><label for="detail-limit" data-settings-field="max_detail_packets"><span>详情上限（条）</span><input id="detail-limit" type="number" min="0" max="20000" required></label><label for="storage-limit" data-settings-field="max_storage_mb"><span>存储上限（MB）</span><input id="storage-limit" type="number" min="16.777216" max="8589.934592" step="any" required></label></div><p class="help muted">详情包含在记录内；超出存储上限时先回收旧详情。</p></section>
     <section id="updates-settings"><h3>版本与升级</h3>
       <div class="button-row updates-actions">
         <div class="updates-buttons">

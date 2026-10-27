@@ -71,7 +71,7 @@ function Invoke-ImageAnalysis($Arguments) {
     if ($image.PSIsContainer -or $image.Extension.ToLowerInvariant() -notin @('.png', '.jpg', '.jpeg', '.webp', '.gif')) {
         throw 'path must identify a PNG, JPEG, WebP or GIF file.'
     }
-    if ($image.Length -le 0 -or $image.Length -gt 50MB) { throw 'Image is empty or exceeds 50 MiB.' }
+    if ($image.Length -le 0 -or $image.Length -gt 52428800) { throw 'Image is empty or exceeds 52.4288 MB.' }
     $instruction = 'Describe this image, including its visible text and any uncertainty.'
     if ($Arguments.PSObject.Properties['instruction']) { $instruction = $Arguments.instruction }
     if ($instruction -isnot [string] -or -not $instruction.Trim() -or $instruction.Length -gt 4000) {
@@ -88,7 +88,7 @@ function Invoke-ImageAnalysis($Arguments) {
     $null = New-Item -ItemType Directory -Path $work
     try {
         $upload = $image.FullName
-        if ($image.Length -gt 400KB) {
+        if ($image.Length -gt 409600) {
             $upload = Join-Path $work 'upload.jpg'
             $helper = Join-Path $PSScriptRoot 'compress_image.ps1'
             $powershell = Join-Path $PSHOME 'powershell.exe'
@@ -96,7 +96,7 @@ function Invoke-ImageAnalysis($Arguments) {
             $converted = Invoke-ToolProcess $powershell @('-NoLogo','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass',
                 '-File',$helper,'-InputPath',$image.FullName,'-OutputPath',$upload,'-MaxBytes','409600','-MaxDimension','1600') 90 $work
             if ($converted.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $upload -PathType Leaf) -or
-                (Get-Item -LiteralPath $upload).Length -gt 400KB) { throw 'Image compression failed.' }
+                (Get-Item -LiteralPath $upload).Length -gt 409600) { throw 'Image compression failed.' }
         }
         # Query configuration only; no model or MCP server is contacted here.
         $listed = Invoke-ToolProcess $cli @('--profile','isolated-vision','mcp','list','--json') 20 $work

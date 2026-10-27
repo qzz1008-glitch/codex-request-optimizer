@@ -34,6 +34,34 @@ class RuntimeSettingsTests(unittest.TestCase):
                                    "capacity_retry_max_retries": 3})
         self.server.startup_state_known = True
 
+    def test_exact_storage_byte_limits_survive_unrelated_settings_updates(self):
+        previous = dict(self.server.settings)
+        def restore():
+            self.server.save_settings(previous)
+            self.server.store.configure_limits(previous["max_storage_bytes"], previous["max_packets"], previous["max_detail_packets"])
+        self.addCleanup(restore)
+        status, result = self.api("/api/settings", {"max_storage_bytes": 512000123})
+        self.assertEqual(status, 200)
+        self.assertEqual(result["max_storage_bytes"], 512000123)
+        self.assertEqual(result["storage"]["max_bytes"], 512000123)
+        self.assertEqual(result["max_storage_mb"], 489)
+        status, result = self.api("/api/settings", {"capture_enabled": previous["capture_enabled"]})
+        self.assertEqual(status, 200)
+        self.assertEqual(result["storage"]["max_bytes"], 512000123)
+        saved = json.loads(self.server.settings_path.read_text(encoding="utf8"))
+        self.assertEqual(saved["max_storage_bytes"], 512000123)
+
+    def test_invalid_storage_byte_limits_reject_the_entire_update(self):
+        previous = dict(self.server.settings)
+        for fields in ({"max_storage_bytes": value} for value in (True, "512000000", 512000000.0, 0, 8589934593)):
+            with self.subTest(fields=fields):
+                status, _ = self.api("/api/settings", {"max_packets": 10, **fields})
+                self.assertEqual(status, 400)
+                self.assertEqual(self.server.settings, previous)
+        status, _ = self.api("/api/settings", {"max_storage_bytes": 512000000, "max_storage_mb": 512})
+        self.assertEqual(status, 400)
+        self.assertEqual(self.server.settings, previous)
+
     def test_defaults_and_capabilities(self):
         status, result = self.api("/api/status")
         self.assertEqual(status, 200)

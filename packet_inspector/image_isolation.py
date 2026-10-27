@@ -67,7 +67,7 @@ class ImageIsolation:
         if not match:
             raise ImageIsolationFailure("image_reference_unsupported", "图片隔离只接受内嵌图片；远程 URL 和文件 ID 未转发。")
         if len(match[2]) > (MAX_IMAGE_BYTES + 2) // 3 * 4 + 4096:
-            raise ImageIsolationFailure("image_too_large", "图片超过独立解析的 50 MiB 限制。", 413)
+            raise ImageIsolationFailure("image_too_large", f"图片超过独立解析的 {MAX_IMAGE_BYTES / 1000000:g} MB 限制。", 413)
         try:
             payload = base64.b64decode(match[2].replace("\r", "").replace("\n", ""), validate=True)
         except (ValueError, binascii.Error):
