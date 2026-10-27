@@ -238,7 +238,7 @@ class CompressionPolicyTests(unittest.TestCase):
 class AutomaticTransportTests(unittest.TestCase):
     def test_selected_mode_compresses_once_and_preserves_all_bytes(self):
         raw = encode({'input': 'retained text ' * 15000})
-        for level, actual in ((1, 1), (16, 16), (17, 16)):
+        for level, actual in ((1, 1), (16, 16), (17, 16), (22, 16)):
             with self.subTest(level=level), patch('zstandard.ZstdCompressor', wraps=zstandard.ZstdCompressor) as compressor:
                 prepared = prepare_request_info(raw, {}, 'POST', '/responses', 'zstd', level,
                                                 auto_zstd_level=True, budget_bytes=200000)
@@ -293,7 +293,7 @@ class AutomaticTransportTests(unittest.TestCase):
 
     def test_manual_mode_still_compresses_small_originals(self):
         raw = encode({'input': 'small manual request ' * 20})
-        for level in (9, 17):
+        for level in (9, 17, 22):
             with self.subTest(level=level), patch('zstandard.ZstdCompressor', wraps=zstandard.ZstdCompressor) as compressor:
                 result = prepare_request_info(raw, {}, 'POST', '/responses', 'zstd', level,
                                               auto_zstd_level=False, budget_bytes=1000000)
