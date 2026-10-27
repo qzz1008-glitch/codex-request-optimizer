@@ -3,11 +3,14 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('nod
 const source=fs.readFileSync('packet_inspector/ui/app.js','utf8');
 const classSource=source.slice(source.indexOf('function isTrendGeneration('),source.indexOf('tokenTrendView=new TokenTrendView('));
 const helpers=source.split(/\r?\n/).filter(line=>/^function (tokenVersion|compressedBytes|originalBytes|uploadBytes|compact)\(/.test(line)).join('\n');
-const context={Date,Map,Set,AbortController,setTimeout,clearTimeout,URLSearchParams,document:{hidden:false},
+// Keep samples and viewports on one clock, including on slower CI runners.
+const fixtureNow=Date.now();
+class FixtureDate extends Date{static now(){return fixtureNow;}}
+const context={Date:FixtureDate,Map,Set,AbortController,setTimeout,clearTimeout,URLSearchParams,document:{hidden:false},
   purposeFromMetadata:p=>p.session_kind||null,hasModelTokenUsage:p=>p.method==='POST'&&!p.is_compaction&&p.request_kind!=='tool_search',
   tokenVersion:null};
 vm.createContext(context);vm.runInContext(helpers+'\n'+classSource+'\nglobalThis.View=TokenTrendView;globalThis.isGeneration=isTrendGeneration;',context);
-const View=context.View,now=Date.now()/1000,id=n=>n.toString(16).padStart(32,'0');
+const View=context.View,now=fixtureNow/1000,id=n=>n.toString(16).padStart(32,'0');
 const packet=(n,extra={})=>({id:id(n),created:now-n,thread_id:'session-a',method:'POST',path:'/responses',state:'complete',status:200,...extra});
 let checks=0;
 function test(name,fn){return Promise.resolve().then(fn).then(()=>{checks++;}).catch(error=>{error.message=name+': '+error.message;throw error;});}
@@ -92,7 +95,7 @@ function eventRows(){return [
   const {result}=rendered([packet(702,{outbound_wire_bytes:1800000,upstream_usage:{input_tokens:100}})],{
    status:()=>({storage:{revision:1,oldest_created:now-12*3600},budget_bytes:budget}),api:async()=>{reads++;return[];}});
   const before=chartNodes(result.charts[0],'trend-budget-line')[0].attrs.y1,tokenPoints=Array.from(result.charts[1].points,point=>point.y);
-  result.lastFull=Date.now();result.revision=1;budget=1000000;await result.refresh();
+  result.lastFull=context.Date.now();result.revision=1;budget=1000000;await result.refresh();
   assert.notEqual(chartNodes(result.charts[0],'trend-budget-line')[0].attrs.y1,before);
   assert.ok(nodeText(chartNodes(result.charts[0],'trend-budget-label')[0]).includes(context.compact(budget)));
   assert.deepEqual(Array.from(result.charts[1].points,point=>point.y),tokenPoints);assert.equal(reads,0);
@@ -495,7 +498,7 @@ function eventRows(){return [
   const thumb=parseFloat(slider.style['--trend-thumb-width']);wheel.callback({deltaY:120,ctrlKey:true,preventDefault(){prevented++;}});
   assert.ok(result.hours>1);assert.ok(parseFloat(slider.style['--trend-thumb-width'])>thumb);assert.equal(prevented,2);frames.shift()();
   result.setRange(100);assert.equal(result.hours,12);result.setRange(-10);assert.equal(result.hours,1);
-  result.oldestCreated=Date.now()/1000-7200;result.setRange(100);assert.ok(result.hours>=2&&result.hours<2.01);assert.equal(Number(slider.max),1);
+  result.oldestCreated=context.Date.now()/1000-7200;result.setRange(100);assert.ok(result.hours>=2&&result.hours<2.01);assert.equal(Number(slider.max),1);
   const before=result.hours;wheel.callback({deltaY:120,metaKey:true,preventDefault(){assert.fail('system zoom was intercepted');}});assert.equal(result.hours,before);
  });
  await test('zooming in and out preserves the cursor time in either metric panel',()=>clocked(()=>{
