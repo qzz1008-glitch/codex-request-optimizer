@@ -31,7 +31,7 @@ class Node {
  contains(node){return this===node||this.children.some(child=>child.contains(node));}
  getBoundingClientRect(){return {left:this.left||0,top:this.top||0,width:this.clientWidth,height:this.clientHeight};}
 }
-function rendered(rows){
+function rendered(rows,services={}){
  const ids=new Map(),html=fs.readFileSync('packet_inspector/ui/index.html','utf8'),frames=[],events=new Map();
  for(const match of html.matchAll(/<(\w+)\b[^>]*\bid="([^"]+)"[^>]*>/g))ids.set(match[2],new Node(match[1]));
  ids.get('trend-charts').clientHeight=512;ids.get('trend-focus').clientHeight=512;
@@ -47,7 +47,7 @@ function rendered(rows){
  context.localStorage={getItem:()=>null,setItem(){}};
  context.ResizeObserver=class{constructor(callback){this.callback=callback;this.observed=[];}observe(node){this.observed.push(node);}};
  context.requestAnimationFrame=callback=>{frames.push(callback);return frames.length;};
- const result=new View(view().services);result.active=true;result.hours=0;result.packets=new Map(rows.map(row=>[row.id,row]));
+ const result=new View(view(services).services);result.active=true;result.hours=0;result.packets=new Map(rows.map(row=>[row.id,row]));
  result.render();return {result,ids,buttons,frames,events};
 }
 function chartNodes(chart,cls){return chart.svg.all(node=>(node.attrs.class||'').split(' ').includes(cls));}
@@ -59,6 +59,33 @@ function dualRows(){return [
  packet(103,{created:now-100,upstream_usage:{input_tokens:300},overflow_cache_hit:true,overflow_original_wire_bytes:400000,outbound_wire_bytes:300000}),
  packet(104,{created:now-50,is_compaction:true,outbound_wire_bytes:150000})];}
 (async()=>{
+ await test('configured size limits remain visible above the data and at the axis maximum',()=>{
+  for(const budget of [1000000,1048576])for(const rows of [[packet(701,{outbound_wire_bytes:100000,upstream_usage:{input_tokens:100}})],[]]){
+   const {result}=rendered(rows,{status:()=>({storage:{revision:1},budget_bytes:budget})}),[size,token]=result.charts;
+   const [line]=chartNodes(size,'trend-budget-line'),[label]=chartNodes(size,'trend-budget-label');
+   assert.equal(chartNodes(size,'trend-budget-line').length,1);assert.equal(chartNodes(token,'trend-budget-line').length,0);
+   assert.equal(Number(line.attrs.x1),size.bounds.left);assert.equal(Number(line.attrs.x2),size.bounds.width-size.bounds.right);
+   assert.equal(line.attrs.y1,line.attrs.y2);assert.ok(Number(line.attrs.y1)>=size.bounds.top&&Number(line.attrs.y1)<=size.bounds.height-size.bounds.bottom);
+   assert.ok(Number(label.attrs.y)>=0);assert.ok(nodeText(label).includes(context.compact(budget)));
+   assert.equal(chartNodes(size,'trend-budget')[0].attrs['pointer-events'],'none');
+  }
+ });
+ await test('saved size limit changes redraw without packet changes or additional reads',async()=>{
+  let budget=2000000,reads=0;
+  const {result}=rendered([packet(702,{outbound_wire_bytes:1800000,upstream_usage:{input_tokens:100}})],{
+   status:()=>({storage:{revision:1},budget_bytes:budget}),api:async()=>{reads++;return[];}});
+  const before=chartNodes(result.charts[0],'trend-budget-line')[0].attrs.y1,tokenPoints=Array.from(result.charts[1].points,point=>point.y);
+  result.lastFull=Date.now();result.revision=1;budget=1000000;await result.refresh();
+  assert.notEqual(chartNodes(result.charts[0],'trend-budget-line')[0].attrs.y1,before);
+  assert.ok(nodeText(chartNodes(result.charts[0],'trend-budget-label')[0]).includes(context.compact(budget)));
+  assert.deepEqual(Array.from(result.charts[1].points,point=>point.y),tokenPoints);assert.equal(reads,0);
+ });
+ await test('missing and invalid size limits do not create a guide or invalid coordinates',()=>{
+  for(const budget of [undefined,null,0,-5,NaN,Infinity,'1000000']){
+   const {result}=rendered([packet(703,{outbound_wire_bytes:100000,upstream_usage:{input_tokens:100}})],{status:()=>({budget_bytes:budget})});
+   for(const chart of result.charts){assert.equal(chartNodes(chart,'trend-budget-line').length,0);assert.ok(chart.points.every(point=>Number.isFinite(point.x)&&Number.isFinite(point.y)));}
+  }
+ });
  await test('real usage wins over reported and native synthetic counts',()=>{
   assert.equal(View.input(packet(1,{upstream_usage:{input_tokens:12345},usage_override_applied:true,reported_usage:{input_tokens:500000}}),{state:'available',input_tokens:500000}),12345);
   assert.equal(View.input(packet(1,{usage_override_applied:true}),{state:'available',input_tokens:500000}),null);

@@ -408,6 +408,7 @@ const uiI18n = (() => {
     "会话请求趋势":"Session request trends",
     "包大小":"Packet size",
     "请求大小":"Request size",
+    "阈值 {size}":"Limit {size}",
     "实际上传":"Uploaded size",
     "时间范围":"Time range",
     "时间轴":"Time axis",
