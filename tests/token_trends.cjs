@@ -74,7 +74,7 @@ function eventRows(){return [
   assert.equal(scale.step,200000);assert.equal(scale.max,1000000);
   const {result}=rendered([packet(700,{outbound_wire_bytes:250000})],{status:()=>({budget_bytes:1000000})});
   assert.ok(nodeText(chartNodes(result.charts[0],'trend-budget-label')[0]).includes('1.00 MB'));
-  assert.ok(chartNodes(result.charts[0],'trend-axis-label').some(node=>nodeText(node)==='200.0 KB'));
+  assert.ok(chartNodes(result.charts[0],'trend-axis-label').some(node=>nodeText(node)==='200 KB'));
  });
  await test('configured size limits remain visible above the data and at the axis maximum',()=>{
   for(const budget of [1000000,1048576])for(const rows of [[packet(701,{outbound_wire_bytes:100000,upstream_usage:{input_tokens:100}})],[]]){
@@ -237,7 +237,7 @@ function eventRows(){return [
   assert.equal(result.timeTooltip.hidden,false);assert.equal(result.timeTooltip.textContent,result.time(missing.packet.created,true));
   assert.equal(focusLines(result).length,1);
   assert.equal(chartNodes(token,'trend-focus-dot').length,0);assert.equal(size.tooltip.children.length,2);
-  assert.ok(nodeText(size.tooltip).includes('压缩包'));assert.ok(nodeText(size.tooltip).includes('250.0 KB'));
+  assert.ok(nodeText(size.tooltip).includes('压缩包'));assert.ok(nodeText(size.tooltip).includes('250 KB'));
   assert.equal(token.tooltip.children[1].textContent,'—');assert.ok(nodeText(token.tooltip).includes('输入 Token'));
   for(const text of ['输入 Token','实际上传','原始包',missing.packet.id,':'])assert.ok(!nodeText(size.tooltip).includes(text));
   for(const chart of result.charts){assert.equal(chart.svg.onclick,undefined);assert.equal(chart.svg.onkeydown,undefined);}
@@ -245,7 +245,7 @@ function eventRows(){return [
   const next=token.points.at(-1);token.svg.onpointermove({clientX:next.x,clientY:next.y});
   assert.equal(result.hover,id(103));assert.equal(token.tooltip.hidden,false);assert.equal(size.tooltip.hidden,false);
   assert.equal(token.tooltip.children.length,2);assert.ok(nodeText(token.tooltip).replace(/\s+/g,' ').includes('输入 Token 300'));
-  assert.equal(result.timeTooltip.textContent,result.time(next.packet.created,true));assert.ok(nodeText(size.tooltip).includes('400.0 KB'));
+  assert.equal(result.timeTooltip.textContent,result.time(next.packet.created,true));assert.ok(nodeText(size.tooltip).includes('400 KB'));
   assert.equal(chartNodes(size,'trend-focus-dot').length,1);
   token.svg.onpointerleave();assert.equal(result.hover,null);assert.equal(result.hoverChart,null);
   for(const chart of result.charts){assert.equal(chart.tooltip.hidden,true);assert.equal(chartNodes(chart,'trend-focus-line').length,0);}

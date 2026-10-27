@@ -2117,6 +2117,7 @@ class TokenTrendView {
     return result;
   }
   static size(packet) {return compressedBytes(packet);}
+  static sizeLabel(bytes) {return bytes>=1000&&bytes<1000000?Math.round(bytes/1000)+" KB":compact(bytes);}
   static sizeScale(maximum) {
     return TokenTrendView.scale(maximum||1000);
   }
@@ -2364,9 +2365,9 @@ class TokenTrendView {
     const x=value=>left+(value-start)/(end-start)*plotWidth,y=value=>top+plotHeight-value/scale.max*plotHeight;
     chart.bounds={width,height,left,right,top,bottom,start,end,x};
     const root=document.createDocumentFragment();chart.svg.setAttribute("viewBox",`0 0 ${width} ${height}`);
-    root.append(this.svgNode("text",{x:18,y:top+plotHeight/2,transform:`rotate(-90 18 ${top+plotHeight/2})`,"text-anchor":"middle","dominant-baseline":"central",class:"trend-axis-title"},t(chart.key==="size"?"请求大小":"输入 Token")));
+    root.append(this.svgNode("text",{x:36,y:top+plotHeight/2,transform:`rotate(-90 36 ${top+plotHeight/2})`,"text-anchor":"middle","dominant-baseline":"central",class:"trend-axis-title"},t(chart.key==="size"?"请求大小":"输入 Token")));
     for(let value=0;value<=scale.max+scale.step*.01;value+=scale.step) {
-      const py=y(value),label=chart.key==="size"?compact(value):value>=1000000?nf.format(value/1000000)+"M":value>=1000?nf.format(value/1000)+"k":nf.format(value);
+      const py=y(value),label=chart.key==="size"?TokenTrendView.sizeLabel(value):value>=1000000?nf.format(value/1000000)+"M":value>=1000?nf.format(value/1000)+"k":nf.format(value);
       root.append(this.svgNode("line",{x1:left,y1:py,x2:width-right,y2:py,class:"trend-grid"}),this.svgNode("text",{x:left-12,y:py+4,"text-anchor":"end",class:"trend-axis-label"},label));
     }
     for(let i=0;i<=5;i++) {
@@ -2391,7 +2392,7 @@ class TokenTrendView {
     if(limit!==null) {
       const py=y(limit),guide=this.svgNode("g",{class:"trend-budget","pointer-events":"none"});
       guide.append(this.svgNode("line",{x1:left,y1:py,x2:width-right,y2:py,class:"trend-budget-line"}),
-        this.svgNode("text",{x:width-right,y:py-8,"text-anchor":"end",class:"trend-budget-label"},t("阈值 {size}").replace("{size}",compact(limit))));
+        this.svgNode("text",{x:width-right,y:py-8,"text-anchor":"end",class:"trend-budget-label"},t("阈值 {size}").replace("{size}",TokenTrendView.sizeLabel(limit))));
       root.append(guide);
     }
     chart.focusLayer=this.svgNode("g",{"pointer-events":"none"});root.append(chart.focusLayer);chart.svg.replaceChildren(root);
@@ -2473,7 +2474,7 @@ class TokenTrendView {
       const point=chart.points.find(value=>value.packet.id===this.hover);
       if(point)chart.focusLayer.append(this.svgNode("circle",{cx:point.x,cy:point.y,r:5.5,class:"trend-focus-dot",style:"--series-color:"+point.series.color}));
       chart.tooltip.hidden=false;
-      chart.tooltip.replaceChildren(el("span","",t(chart.key==="size"?"压缩包":"输入 Token")),el("strong","",point?(chart.key==="size"?compact(point.value):nf.format(point.value)):"—"));
+      chart.tooltip.replaceChildren(el("span","",t(chart.key==="size"?"压缩包":"输入 Token")),el("strong","",point?(chart.key==="size"?TokenTrendView.sizeLabel(point.value):nf.format(point.value)):"—"));
       const rect=chart.svg.getBoundingClientRect(),panelTop=rect.top-originY;
       const px=rect.left-originX+chart.bounds.x(anchor.packet.created)*rect.width/chart.bounds.width;
       const py=panelTop+(point?point.y:(chart.bounds.top+chart.bounds.height-chart.bounds.bottom)/2)*rect.height/chart.bounds.height;
