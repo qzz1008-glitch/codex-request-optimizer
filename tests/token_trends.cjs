@@ -36,7 +36,7 @@ function rendered(rows,services={}){
  const ids=new Map(),html=fs.readFileSync('packet_inspector/ui/index.html','utf8'),frames=[],events=new Map();
  for(const match of html.matchAll(/<(\w+)\b[^>]*\bid="([^"]+)"[^>]*>/g))ids.set(match[2],new Node(match[1]));
  ids.get('trend-charts').clientHeight=512;ids.get('trend-focus').clientHeight=512;
- ids.get('trend-range-slider').clientWidth=140;
+ ids.get('trend-range-slider').clientWidth=180;
  ids.get('trend-time-axis').clientHeight=32;ids.get('trend-time-axis').top=480;
  for(const id of ['trend-size-tooltip','trend-tooltip']){ids.get(id).offsetWidth=150;ids.get(id).offsetHeight=30;}
  ids.get('trend-time-tooltip').offsetWidth=128;ids.get('trend-time-tooltip').offsetHeight=24;
@@ -210,14 +210,34 @@ function eventRows(){return [
  });
  await test('one bottom time axis aligns ticks with both equal-height metric panels',()=>{
   const {result}=rendered(dualRows()),labels=chartNodes({svg:result.timeAxis},'trend-axis-label');
-  assert.equal(labels.length,6);assert.equal(result.timeAxis.attrs.viewBox,'0 0 640 32');
+  assert.ok(labels.length>=1&&labels.length<=9);assert.ok(labels.every(label=>/^\d{2}:00$/.test(label.textContent)));assert.equal(result.timeAxis.attrs.viewBox,'0 0 640 32');
   const [size,token]=result.charts;
   assert.equal(size.bounds.height-size.bounds.top-size.bounds.bottom,token.bounds.height-token.bounds.top-token.bounds.bottom);
   for(const chart of result.charts){
    assert.ok(chartNodes(chart,'trend-axis-label').every(label=>!label.textContent.includes(':')));
-   for(let i=0;i<labels.length;i++)assert.equal(Number(labels[i].attrs.x),chart.bounds.x(chart.bounds.start+(chart.bounds.end-chart.bounds.start)*i/5));
+   const grids=chartNodes(chart,'trend-time-grid');assert.equal(grids.length,labels.length);
+   for(let i=0;i<labels.length;i++){
+    assert.equal(Number(labels[i].attrs.x),chart.bounds.x(Number(labels[i].dataset.time)));
+    assert.equal(grids[i].attrs.x1,labels[i].attrs.x);assert.equal(grids[i].dataset.time,labels[i].dataset.time);
+   }
   }
  });
+ await test('clock-aligned ticks and vertical grids move with panning and remain aligned after zooming',()=>clocked(()=>{
+  const {result}=rendered(dualRows());result.setRange(3);result.seek(.5);result.render();
+  const labels=()=>chartNodes({svg:result.timeAxis},'trend-axis-label'),before=new Map(labels().map(node=>[node.dataset.time,{x:Number(node.attrs.x),text:node.textContent}]));
+  const bounds=result.charts[0].bounds,shift=-300/(bounds.end-bounds.start)*(bounds.width-bounds.left-bounds.right);
+  result.pan(300);result.render();const common=labels().filter(node=>before.has(node.dataset.time));assert.ok(common.length>=1);
+  for(const node of common){assert.equal(node.textContent,before.get(node.dataset.time).text);assert.ok(Math.abs(Number(node.attrs.x)-before.get(node.dataset.time).x-shift)<.00001);}
+  result.setRange(2,.4);result.render();
+  for(const chart of result.charts){
+   const grids=chartNodes(chart,'trend-time-grid');assert.equal(grids.length,labels().length);
+   for(let i=0;i<grids.length;i++){
+    const stamp=Number(grids[i].dataset.time);assert.equal(new Date(stamp*1000).getSeconds(),0);assert.equal(new Date(stamp*1000).getMinutes(),0);
+    assert.equal(grids[i].attrs.x1,labels()[i].attrs.x);assert.equal(Number(grids[i].attrs.x1),chart.bounds.x(stamp));
+   }
+  }
+  result.cancelPending();
+ }));
  await test('one hover guide spans both panels and stays aligned after a resize',()=>{
   const {result,ids}=rendered(dualRows());ids.get('trend-chart').top=240;
   result.hover=id(101);result.hoverChart='token';result.renderFocus();
@@ -367,7 +387,7 @@ function eventRows(){return [
  await test('range controls and resize redraw both charts using the same domain',()=>{
   const {result,ids,frames}=rendered([...dualRows(),packet(106,{created:now-7200,upstream_usage:{input_tokens:900},outbound_wire_bytes:900000})]);
   result.refresh=()=>assert.fail('zoom must not fetch history');
-  const slider=ids.get('trend-range-slider');result.setRange(3);assert.equal(result.hours,3);assert.equal(ids.get('trend-range-value').textContent,'3 小时');frames.shift()();
+  const slider=ids.get('trend-range-slider');result.setRange(3);assert.equal(result.hours,3);assert.ok(slider.attrs['aria-valuetext'].endsWith('3 小时'));assert.equal(ids.has('trend-range-value'),false);frames.shift()();
   for(const chart of result.charts)assert.ok(chart.points.some(point=>point.packet.id===id(106)));
   slider.value='1';slider.oninput();assert.equal(result.hours,3);result.setRange(1);result.seek(1);frames.shift()();
   for(const chart of result.charts){assert.equal(chart.bounds.end-chart.bounds.start,3600);assert.ok(chart.points.every(point=>point.packet.id!==id(106)));chart.plot.clientWidth=800;chart.plot.clientHeight=260;}
