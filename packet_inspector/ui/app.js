@@ -786,7 +786,7 @@ function renderList() {
     const before=el("span","packet-size",compact(original));
     before.title=original===null?t("原始包大小未记录"):t("原始包：")+bytes(original);
     const after=el("span","packet-size",compact(upload));
-    after.title=upload===null?t("压缩包大小未记录"):t("压缩包：")+bytes(upload);
+    after.title=upload===null?t("处理后包大小未记录"):t("处理后包：")+bytes(upload);
     row.dataset.packetId=p.id;row.dataset.session=p.thread_id||"";row.title=(states[p.state]||p.state)+(p.status?" · HTTP "+p.status:"")+"\n"+(p.thread_id?"session_id: "+p.thread_id:t("会话未识别"));
     if(flags.retry)row.title+="\n"+(p.native_retry_advised===true?t("已向 Codex 发送重试提示"):t("自动重试：{count} 次").replace("{count}",nf.format(capacityRetryCount(p))));
     if(protection.length)after.title+=t("\n已触发请求大小保护：")+protection.join(" · ");
@@ -1502,9 +1502,9 @@ function renderProtectionPanelState() {
 }
 function renderCompression(m) {
   const root=document.createDocumentFragment();
-  const sizes=panel(t("传输压缩")), original=originalBytes(m), compressed=compressedBytes(m);
-  fact(sizes,t("原始包"),bytes(original));
-  fact(sizes,t("压缩包"),bytes(compressed));
+  const sizes=panel(t("请求大小")), original=originalBytes(m), compressed=compressedBytes(m);
+  fact(sizes,t("原始包"),bytes(original)).title=t("原始包大小（图片处理、传输压缩前）");
+  fact(sizes,t("处理后包"),bytes(compressed)).title=t("处理后包大小（图片处理、传输压缩后，超限摘要处理前）");
   const summaryTriggered=m.overflow_compaction_calls>0||m.overflow_cache_hit===true;
   const hasTransport=typeof m.transport_content_encoding==="string";
   // Older summary records only retain the final body's encoding and grade.
@@ -1513,7 +1513,7 @@ function renderCompression(m) {
   fact(sizes,t("压缩方式"),encoding==="identity"?t("不压缩"):encoding||"—");
   const level=hasTransport?m.transport_zstd_level:summaryTriggered?null:m.relay_zstd_level;
   fact(sizes,t("zstd 压缩等级"),Number.isInteger(level)&&level>=1&&level<=22?level:"—");
-  if(original>0 && compressed!==null)fact(sizes,t("减小比例"),(100*(1-compressed/original)).toFixed(1)+"%");
+  if(original>0 && compressed!==null)fact(sizes,t("总减小比例"),(100*(1-compressed/original)).toFixed(1)+"%").title=t("包含图片处理和传输压缩带来的大小变化，按超限摘要处理前的正文计算。");
   root.append(sizes);
   const steps=panel(t("请求保护"));steps.id="packet-protection-panel";steps.classList.add("packet-protection-panel");
   const triggerStatus=triggered=>triggered?t("已触发"):m.source==="live"?t("未触发"):t("暂无记录");
@@ -1746,7 +1746,7 @@ async function loadDiff() {
   const delta=data?await compressedDelta(data,state.detail):null;if(state.selected!==id)return;
   const root=document.createDocumentFragment();
   if(!data){reconcileContent($("diff-content"),el("p","muted",t("没有可比较的上条请求。")));return;}
-  const p=panel(t("相对上条请求"));fact(p,t("压缩包变化"),signed(delta));fact(p,t("原始包变化"),signed(data.decoded_delta));root.append(p);
+  const p=panel(t("相对上条请求"));fact(p,t("处理后包变化"),signed(delta));fact(p,t("原始包变化"),signed(data.decoded_delta));root.append(p);
   const changes=panel(t("变化明细")),rows=packetDiffRows(data,state.detail);
   const labels={added:t("新增"),removed:t("移除"),changed:t("内容改变")};
   if(rows.length) {
@@ -2474,7 +2474,7 @@ class TokenTrendView {
       const point=chart.points.find(value=>value.packet.id===this.hover);
       if(point)chart.focusLayer.append(this.svgNode("circle",{cx:point.x,cy:point.y,r:5.5,class:"trend-focus-dot",style:"--series-color:"+point.series.color}));
       chart.tooltip.hidden=false;
-      chart.tooltip.replaceChildren(el("span","",t(chart.key==="size"?"压缩包":"输入 Token")),el("strong","",point?(chart.key==="size"?TokenTrendView.sizeLabel(point.value):nf.format(point.value)):"—"));
+      chart.tooltip.replaceChildren(el("span","",t(chart.key==="size"?"处理后包":"输入 Token")),el("strong","",point?(chart.key==="size"?TokenTrendView.sizeLabel(point.value):nf.format(point.value)):"—"));
       const rect=chart.svg.getBoundingClientRect(),panelTop=rect.top-originY;
       const px=rect.left-originX+chart.bounds.x(anchor.packet.created)*rect.width/chart.bounds.width;
       const py=panelTop+(point?point.y:(chart.bounds.top+chart.bounds.height-chart.bounds.bottom)/2)*rect.height/chart.bounds.height;

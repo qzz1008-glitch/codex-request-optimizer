@@ -39,8 +39,8 @@
           <thead><tr>
             <th scope="col" aria-sort="descending"><button data-sort="created"><span>时间</span><span class="sort-arrow" aria-hidden="true"> ↓</span></button></th>
             <th scope="col"><label class="column-filter"><span class="column-filter-label" aria-hidden="true">类型</span><select id="filter-kind" data-filter="kind" aria-label="筛选类型" title="筛选类型"><option value="">全部类型</option></select></label></th>
-            <th scope="col" aria-sort="none"><button data-sort="decoded_bytes" title="原始包大小（传输压缩前）"><span>原始包</span><span class="sort-arrow" aria-hidden="true"></span></button></th>
-            <th scope="col" aria-sort="none"><button data-sort="compressed_bytes" title="压缩包大小（传输压缩后、摘要处理前）"><span>压缩包</span><span class="sort-arrow" aria-hidden="true"></span></button></th>
+            <th scope="col" aria-sort="none"><button data-sort="decoded_bytes" title="原始包大小（图片处理、传输压缩前）"><span>原始包</span><span class="sort-arrow" aria-hidden="true"></span></button></th>
+            <th scope="col" aria-sort="none"><button data-sort="compressed_bytes" title="处理后包大小（图片处理、传输压缩后，超限摘要处理前）"><span>处理后包</span><span class="sort-arrow" aria-hidden="true"></span></button></th>
           <th scope="col" aria-sort="none" title="本次请求的真实输入 Token"><button data-sort="input_tokens"><span>Token</span><span class="sort-arrow" aria-hidden="true"></span></button></th>
           </tr></thead>
           <tbody id="packet-rows"></tbody>
@@ -81,7 +81,7 @@
         <div id="trend-range" class="trend-range-control"><input id="trend-range-slider" type="range" min="0" max="1" step="any" value="1" disabled aria-label="时间位置" title="拖动浏览时间；滚轮前后移动，Ctrl + 滚轮缩放，最短 1 小时，最长 12 小时"><output id="trend-range-value" for="trend-range-slider">1 小时</output></div>
       </div>
       <div id="trend-charts" class="trend-charts">
-        <div id="trend-size-plot" class="trend-plot"><svg id="trend-size-chart" role="img" focusable="false" aria-label="压缩包大小随时间变化；悬停查看请求"></svg><div id="trend-size-empty" class="trend-empty" hidden></div></div>
+        <div id="trend-size-plot" class="trend-plot"><svg id="trend-size-chart" role="img" focusable="false" aria-label="处理后包大小随时间变化；悬停查看请求"></svg><div id="trend-size-empty" class="trend-empty" hidden></div></div>
         <div id="trend-plot" class="trend-plot"><svg id="trend-chart" role="img" focusable="false" aria-label="输入 Token 随时间变化；悬停查看请求"></svg><div id="trend-empty" class="trend-empty" hidden></div></div>
         <svg id="trend-time-axis" class="trend-time-axis" role="img" focusable="false" aria-label="时间轴"></svg>
         <svg id="trend-focus" class="trend-focus" aria-hidden="true" focusable="false"></svg>
@@ -138,7 +138,7 @@
     <section id="request-protection-settings"><h3>请求保护</h3>
       <div class="packet-size-controls">
         <div class="overflow-toggle" data-settings-field="packet_size_protection_enabled"><input id="packet-size-protection" type="checkbox" aria-labelledby="packet-size-protection-label"><span id="packet-size-protection-label">请求大小保护</span></div>
-        <label class="packet-size-limit" for="budget" data-settings-field="budget"><span id="budget-label">压缩包上限</span><span class="packet-size-value"><input id="budget" type="number" min="50.001" max="134217.728" step="0.001" value="1000" aria-labelledby="budget-label" aria-describedby="budget-unit" required disabled><span id="budget-unit" class="packet-size-unit">KB</span></span></label>
+        <label class="packet-size-limit" for="budget" data-settings-field="budget"><span id="budget-label">包大小上限</span><span class="packet-size-value"><input id="budget" type="number" min="50.001" max="134217.728" step="0.001" value="1000" aria-labelledby="budget-label" aria-describedby="budget-unit" required disabled><span id="budget-unit" class="packet-size-unit">KB</span></span></label>
       </div>
       <p id="packet-size-message" class="help" role="status" hidden></p>
       <div class="runtime-setting-row auto-zstd-row" data-settings-field="auto_zstd_level_enabled"><div class="runtime-toggle"><input id="auto-zstd-level" type="checkbox" aria-labelledby="auto-zstd-level-label" aria-describedby="auto-zstd-level-hint" disabled><span id="auto-zstd-level-label">按包大小自动压缩</span></div><p id="auto-zstd-level-hint" class="help muted runtime-inline-hint">根据包大小自动选择合适的压缩等级，开启后禁用手动选择。</p></div>
