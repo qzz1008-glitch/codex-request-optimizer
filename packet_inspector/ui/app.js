@@ -2183,7 +2183,8 @@ class TokenTrendView {
     if(!width||!height){chart.points=[];chart.bounds=null;return;}
     const left=104,right=28,top=30,bottom=12,plotWidth=Math.max(1,width-left-right),plotHeight=Math.max(1,height-top-bottom);
     const known=model.visible.flatMap(group=>group.points).filter(point=>point[chart.field]!==null);
-    const maximum=Math.max(0,...known.map(point=>point[chart.field])),scale=chart.key==="size"?TokenTrendView.sizeScale(maximum):TokenTrendView.scale(maximum);
+    const budget=this.services.status()?.budget_bytes,limit=chart.key==="size"&&Number.isSafeInteger(budget)&&budget>0?budget:null;
+    const maximum=Math.max(limit??0,...known.map(point=>point[chart.field])),scale=chart.key==="size"?TokenTrendView.sizeScale(maximum):TokenTrendView.scale(maximum);
     const x=value=>left+(value-start)/(end-start)*plotWidth,y=value=>top+plotHeight-value/scale.max*plotHeight;
     chart.bounds={width,height,left,right,top,bottom,start,end,x};
     const root=document.createDocumentFragment();chart.svg.setAttribute("viewBox",`0 0 ${width} ${height}`);
@@ -2208,6 +2209,12 @@ class TokenTrendView {
         else layer.append(this.svgNode("circle",{cx:point.x,cy:point.y,r:2.1,fill:group.color}));
       }
       layer.prepend(this.svgNode("path",{d:path,class:"trend-curve",stroke:group.color}));layer.append(events);root.append(layer);
+    }
+    if(limit!==null) {
+      const py=y(limit),guide=this.svgNode("g",{class:"trend-budget","pointer-events":"none"});
+      guide.append(this.svgNode("line",{x1:left,y1:py,x2:width-right,y2:py,class:"trend-budget-line"}),
+        this.svgNode("text",{x:width-right,y:py-8,"text-anchor":"end",class:"trend-budget-label"},t("阈值 {size}").replace("{size}",compact(limit))));
+      root.append(guide);
     }
     chart.focusLayer=this.svgNode("g",{"pointer-events":"none"});root.append(chart.focusLayer);chart.svg.replaceChildren(root);
     chart.empty.hidden=known.length>0;
