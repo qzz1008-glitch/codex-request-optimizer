@@ -30,6 +30,7 @@ from .entry_port import ConfiguredPortParser, port_status, save_port
 from .updates import Updates
 from .token_window import TokenWindows
 from .response_usage import packet_usage
+from .response_summary import ResponseSummary
 from .session_summary import SessionSummaries
 from .storage import DEFAULT_STORAGE_BYTES, Store
 from .transport import DEFAULT_ZSTD_LEVEL, prepare_request_info, validate_zstd_level
@@ -227,7 +228,7 @@ class InspectorServer(ThreadingHTTPServer):
 
     def _maintenance_step(self):
         try:
-            processed = self.store.reclassify_pending(limit=8)
+            processed = self.store.compact_usage_records(limit=16) + self.store.reclassify_pending(limit=8)
         except Exception:
             self.analysis_errors += 1
             processed = 0
@@ -1098,6 +1099,7 @@ class Handler(BaseHTTPRequestHandler):
         sent_headers = False
         received = 0
         observation = None
+        response_summary = None
         relay_state, relay_error, diagnostic_error = "relay_error", "", ""
         relay_phase = "upstream_open"
         try:
@@ -1122,6 +1124,8 @@ class Handler(BaseHTTPRequestHandler):
                     except Exception as exc:
                         self.server.retry_journal._error(exc)
                 observe_usage = self.command == "POST" and urlsplit(suffix).path.rstrip("/").endswith("/responses")
+                if packet_id:
+                    response_summary = ResponseSummary(response)
                 usage_stream = NativeRetryStream(response, update, rewrite_usage=trigger_size is not None,
                                                 policy=native_policy, on_event=diagnostic.record if diagnostic else None) if observe_usage else None
                 rewrite_response = bool(getattr(response, "changed", False) or (
@@ -1146,6 +1150,8 @@ class Handler(BaseHTTPRequestHandler):
                     for chunk in usage_stream.chunks() if usage_stream is not None else raw_chunks(response):
                         if observation:
                             observation.feed(chunk)
+                        if response_summary:
+                            response_summary.feed(chunk)
                         relay_phase = "downstream_write"
                         self.wfile.write(chunk)
                         self.wfile.flush()
@@ -1176,6 +1182,8 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as exc:
                 self.server.retry_journal._error(exc)
             fields = {"relay_error": relay_error} if relay_error else {}
+            if response_summary:
+                fields["response_summary"] = response_summary.finish(relay_state)
             update(state=relay_state, response_bytes=received,
                    duration_ms=round((time.monotonic() - started) * 1000, 1), **fields)
             self.close_connection = True

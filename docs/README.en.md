@@ -10,6 +10,8 @@ A tool for Windows x64 (64-bit) that analyzes and optimizes Codex requests. Brow
 
 ### 🔎 Session and request analysis
 
+- Response summaries: Request information shows up to 500 characters of visible reply text, tool names, the response ID, and the final state. Summaries are retained with requests, without a separate record limit.
+
 Browse request records by session to see what each request sent, how much space it used, and how it was handled.
 
 - View session names, request times, models, response statuses, and elapsed times.
@@ -163,6 +165,8 @@ Request records and processing results are stored in **SQLite**. Sensitive authe
 The storage quota counts the bytes in compressed, sanitized request copies and request metadata. SQLite indexes, journals, and reusable space make the database files' disk footprint differ from this value. Summary caches, diagnostic logs, and image attachments have separate retention rules.
 
 Record settings control only the request limit **N** and combined storage quota **Z**, defaulting to 2,000 requests and 500 MB. Within the quota, basic information for the latest N requests takes priority; remaining space retains as many request details as possible, with no separate detail-count setting. Basic information retains session relationships, time, status, packet sizes, actual Token usage, protection markers, and size breakdowns for the information panel, list, and charts. Bodies, HTTP headers, and input-item summaries containing body snippets are removed with details.
+
+Response summaries remain with basic request information after full details are removed, and are deleted with their requests, without a separate count limit. Local records keep authentic aggregate usage and cache counters but omit per-item Token attribution. Existing records are compacted in batches without changing request bodies.
 
 When Z is exceeded, older details are removed first by request creation time while basic information remains. The oldest requests are removed only if basic information alone still exceeds the quota. Request state does not exempt a record from cleanup. Removal does not interrupt ongoing relay requests, and later responses do not recreate removed details or records. Lower limits apply immediately; higher limits only affect subsequent retention and cannot restore removed content. Upgrades preserve existing N and custom quotas; the old default of 536.870912 MB is migrated once to 500 MB, and legacy detail-count limits stop applying. On startup, unfinished records left by the retired capture component are marked as interrupted.
 

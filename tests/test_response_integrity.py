@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import tempfile
 import threading
+import time
 import unittest
 
 from packet_inspector.server import InspectorServer
@@ -42,8 +43,10 @@ class ResponseIntegrityTests(unittest.TestCase):
             try:
                 body = json.dumps({"model": "test", "input": [{"role": "user",
                                   "content": "x" * 55_000}]}).encode()
-                usage = {"status": "completed", "usage": {
-                    "input_tokens": 40, "output_tokens": 2, "total_tokens": 42}}
+                usage = {"status": "completed", "id": "resp-integrity",
+                         "output": [{"type": "message", "content": [{"type": "output_text", "text": "visible result"}]}],
+                         "usage": {"input_tokens": 40, "output_tokens": 2, "total_tokens": 42,
+                                   "attribution": {"items": {"opaque": {"input_tokens": 40}}}}}
                 responses = [
                     ("application/json", json.dumps(usage).encode()),
                     ("text/event-stream", b"data: " + json.dumps({
@@ -62,6 +65,16 @@ class ResponseIntegrityTests(unittest.TestCase):
                             self.assertEqual(response.getheader("ETag"), '"authentic-usage"')
                         finally:
                             client.close()
+                        for _ in range(100):
+                            packet = relay.store.list(limit=1)[0]
+                            if packet.get("state") == "complete":
+                                break
+                            time.sleep(.01)
+                        self.assertEqual(packet["state"], "complete")
+                        self.assertNotIn("attribution", packet["upstream_usage"])
+                        self.assertEqual(packet["upstream_usage"]["input_tokens"], 40)
+                        self.assertEqual(packet["response_summary"]["text"], "visible result")
+                        self.assertEqual(packet["response_summary"]["response_id"], "resp-integrity")
                 self.assertEqual(received, [body, body])
                 self.assertEqual(config.read_text(encoding="utf8"), 'model="test"\n')
             finally:
