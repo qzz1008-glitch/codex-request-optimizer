@@ -71,7 +71,7 @@ class RuntimeSettingsTests(unittest.TestCase):
         self.assertIsInstance(result["max_detail_packets"], int)
         self.assertLessEqual(result["max_detail_packets"], result["max_packets"])
 
-    def test_tiered_retention_settings_apply_and_basic_information_remains_readable(self):
+    def test_automatic_details_use_the_storage_budget_and_keep_basic_information(self):
         previous = dict(self.server.settings)
         def restore():
             self.server.save_settings(previous)
@@ -80,11 +80,13 @@ class RuntimeSettingsTests(unittest.TestCase):
         self.addCleanup(restore)
         status, result = self.api("/api/settings", {"max_packets": 10, "max_detail_packets": 1, "max_storage_mb": 16})
         self.assertEqual(status, 200)
-        self.assertEqual((result["max_packets"], result["max_detail_packets"], result["max_storage_mb"]), (10, 1, 16))
+        self.assertEqual((result["max_packets"], result["max_detail_packets"], result["max_storage_mb"]), (10, 10, 16))
+        self.assertEqual(result["retention_policy"], "records_first")
+        self.assertIsNone(self.server.store.max_detail_count)
         saved = json.loads(self.server.settings_path.read_text(encoding="utf8"))
-        self.assertEqual(saved["max_detail_packets"], 1)
+        self.assertEqual(saved["max_detail_packets"], 10)
         packets = []
-        for index in range(3):
+        for index in range(10):
             meta, content = inspect_request(encode({"model": "test", "input": [{"role": "user", "content": "private body"}]}),
                                             {"session_id": "retention-api"}, "/responses")
             meta.update(method="POST", path="/responses")
@@ -92,6 +94,10 @@ class RuntimeSettingsTests(unittest.TestCase):
             self.server.store.update(packet, state="complete", status=200,
                                      upstream_usage={"input_tokens": 456, "output_tokens": 12, "total_tokens": 468})
             packets.append(packet)
+        self.assertTrue(all(self.server.store.get(packet, content=True)[1] is not None for packet in packets))
+        self.assertEqual(self.server.store.stats()["count"], 10)
+        budget = self.server.store.stats()["stored"] - 1
+        self.server.store.configure_limits(budget, 10)
         status, meta = self.api("/api/packets/" + packets[0])
         self.assertEqual(status, 200)
         self.assertTrue(meta["details_evicted"])
@@ -105,18 +111,23 @@ class RuntimeSettingsTests(unittest.TestCase):
         status, usage = self.api("/api/packets/" + packets[0] + "/token-window")
         self.assertEqual(status, 200)
         self.assertEqual(usage["input_tokens"], 456)
-        status, diff = self.api("/api/packets/" + packets[-1] + "/diff")
+        status, diff = self.api("/api/packets/" + packets[1] + "/diff")
         self.assertEqual(status, 200)
         self.assertEqual(diff["state"], "details_unavailable")
+        status, diff = self.api("/api/packets/" + packets[-1] + "/diff")
+        self.assertEqual(status, 200)
+        self.assertEqual(diff["previous_id"], packets[-2])
+        self.assertNotEqual(diff.get("state"), "details_unavailable")
         status, export = self.api("/api/packets/" + packets[-1] + "/export")
         self.assertEqual(status, 200)
         self.assertIsNotNone(export["view"])
         status, result = self.api("/api/settings", {"max_detail_packets": 0})
         self.assertEqual(status, 200)
-        self.assertEqual(result["storage"]["detail_count"], 0)
+        self.assertEqual(result["max_detail_packets"], 10)
+        self.assertGreater(result["storage"]["detail_count"], 0)
         self.assertLessEqual(result["storage"]["stored"], result["storage"]["max_bytes"])
 
-    def test_metadata_only_capture_still_forwards_the_complete_request_and_response(self):
+    def test_legacy_zero_detail_limit_keeps_full_capture_and_forwarding(self):
         before = dict(self.server.settings)
         def restore():
             self.server.save_settings(before)
@@ -132,10 +143,9 @@ class RuntimeSettingsTests(unittest.TestCase):
         self.assertEqual(self.up.requests[-1]["body"], raw)
         packet = self.server.store.list(limit=1)[0]
         meta, content = self.server.store.get(packet["id"], content=True)
-        self.assertIsNone(content)
-        self.assertTrue(meta["details_evicted"])
+        self.assertIsNotNone(content)
+        self.assertFalse(meta.get("details_evicted", False))
         self.assertEqual(meta["wire_bytes"], len(raw))
-        self.assertNotIn("complete private request body", json.dumps(meta))
 
     def test_invalid_detail_limits_do_not_partially_save_settings(self):
         before = dict(self.server.settings)
@@ -145,7 +155,7 @@ class RuntimeSettingsTests(unittest.TestCase):
                 self.assertEqual(status, 400)
                 self.assertEqual(self.server.settings, before)
 
-    def test_legacy_record_limit_changes_clamp_the_detail_limit(self):
+    def test_record_limit_changes_always_release_the_legacy_detail_cap(self):
         before = dict(self.server.settings)
         def restore():
             self.server.save_settings(before)
@@ -157,6 +167,10 @@ class RuntimeSettingsTests(unittest.TestCase):
         status, result = self.api("/api/settings", {"max_packets": 10})
         self.assertEqual(status, 200)
         self.assertEqual(result["max_detail_packets"], 10)
+        status, result = self.api("/api/settings", {"max_packets": 30})
+        self.assertEqual(status, 200)
+        self.assertEqual(result["max_detail_packets"], 30)
+        self.assertIsNone(self.server.store.max_detail_count)
 
     def test_capacity_setting_is_persisted_and_can_be_disabled(self):
         for enabled in [True, False]:

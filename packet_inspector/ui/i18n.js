@@ -368,8 +368,6 @@ const uiI18n = (() => {
     "存储上限（MB）":"Storage limit (MB)",
     "当前后台的存储上限步长为 1.048576 MB；更新后台后支持精确设置。":"This backend supports storage-limit steps of 1.048576 MB. Update the backend for exact limits.",
     "记录上限（条）":"Request limit",
-    "详情上限（条）":"Detail limit",
-    "详情包含在记录内；超出存储上限时先回收旧详情。":"Details belong to retained requests; older details are removed first when storage is full.",
     "详情上限不能大于记录上限":"The detail limit cannot exceed the request limit",
     "超出预算时标记超额，记录满后自动清理旧记录。":"Flag uploads over budget and remove older records when storage is full.",
     "保存观察设置":"Save capture settings",

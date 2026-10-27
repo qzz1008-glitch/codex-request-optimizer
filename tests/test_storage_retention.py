@@ -78,6 +78,33 @@ class TieredRetentionTests(unittest.TestCase):
         for packet, content in packets[1:]:
             self.assertEqual(store.get(packet, content=True)[1], content)
 
+    def test_storage_budget_keeps_target_record_count_as_new_requests_arrive(self):
+        store = Store(self.root, max_count=5)
+        packets = [self.add(store, index) for index in range(5)]
+        budget = store.stats()["stored"] - 1
+        store.configure_limits(budget, 5)
+        for index in range(5, 10):
+            packets.append(self.add(store, index))
+            stats = store.stats()
+            self.assertEqual(stats["count"], 5)
+            self.assertLessEqual(stats["stored"], budget)
+            self.assertGreater(stats["detail_count"], 0)
+            self.assertLess(stats["detail_count"], stats["count"])
+            self.assertEqual([row["id"] for row in store.list()],
+                             [packet for packet, _ in reversed(packets[-5:])])
+
+    def test_more_space_keeps_more_new_details_without_a_separate_count_limit(self):
+        store = Store(self.root, max_count=20)
+        packets = [self.add(store, index) for index in range(5)]
+        store.configure_limits(store.stats()["stored"] - 1, 20)
+        self.assertEqual(store.stats()["detail_count"], 4)
+        store.configure_limits(2_000_000, 20)
+        for index in range(5, 10):
+            self.add(store, index)
+        stats = store.stats()
+        self.assertEqual((stats["count"], stats["detail_count"]), (10, 9))
+        self.assertIsNone(store.get(packets[0][0], content=True)[1])
+
     def test_basic_records_are_also_bounded_when_no_details_fit(self):
         store = Store(self.root, max_count=8, max_detail_count=8)
         packets = [self.add(store, index, "streaming") for index in range(8)]

@@ -30,6 +30,10 @@ class InstallationSettingsTests(unittest.TestCase):
         self.assertEqual(status["connection_state"], "disconnected")
         self.assertNotIn("request_compression", server.settings)
         self.assertEqual(status["max_detail_packets"], status["max_packets"])
+        self.assertEqual(status["max_storage_bytes"], 500_000_000)
+        self.assertEqual(status["storage"]["max_bytes"], 500_000_000)
+        self.assertEqual(status["retention_policy"], "records_first")
+        self.assertIsNone(server.store.max_detail_count)
         for key in ("packet_size_protection_enabled", "image_isolation_enabled",
                     "capacity_retry_enabled", "start_on_login"):
             self.assertIs(status[key], False, key)
@@ -66,21 +70,54 @@ class InstallationSettingsTests(unittest.TestCase):
                 original = self.config.read_bytes()
                 active = self.server()
                 for key, value in values.items():
-                    if key != "request_compression":
+                    if key not in {"request_compression", "max_detail_packets"}:
                         self.assertEqual(active.settings[key], value, key)
+                self.assertEqual(active.settings["max_detail_packets"], values["max_packets"])
+                self.assertIsNone(active.store.max_detail_count)
                 candidate = self.server(worker_id="a" * 32)
                 # A user edit after the candidate started must also survive cutover.
                 latest = {**values, "budget_bytes": 888000, "capacity_retry_max_retries": 9}
                 active.save_settings({**active.settings, **latest})
                 candidate.worker_control({"action": "activate", "public_port": 48765})
                 for key, value in latest.items():
-                    if key != "request_compression":
+                    if key not in {"request_compression", "max_detail_packets"}:
                         self.assertEqual(candidate.settings[key], value, key)
                 saved = json.loads(candidate.settings_path.read_text(encoding="utf8"))
                 for key, value in latest.items():
-                    if key != "request_compression":
+                    if key not in {"request_compression", "max_detail_packets"}:
                         self.assertEqual(saved[key], value, key)
+                self.assertEqual(saved["max_detail_packets"], latest["max_packets"])
+                self.assertIsNone(candidate.store.max_detail_count)
                 self.assertEqual(self.config.read_bytes(), original)
+
+    def test_legacy_factory_quota_migrates_once_and_later_explicit_choice_survives(self):
+        for precise in (False, True):
+            with self.subTest(precise=precise):
+                self.data = self.root / ("precise" if precise else "legacy")
+                self.data.mkdir()
+                values = {"max_storage_mb": 512, "max_packets": 1234, "max_detail_packets": 1,
+                          "auto_detect_providers": False}
+                if precise:
+                    values["max_storage_bytes"] = 512 * 1048576
+                (self.data / "settings.json").write_text(json.dumps(values), encoding="utf8")
+                server = self.server()
+                self.assertEqual(server.settings["max_storage_bytes"], 500_000_000)
+                self.assertEqual(server.settings["max_detail_packets"], 1234)
+                self.assertEqual(server.settings["retention_policy"], "records_first")
+                self.assertIsNone(server.store.max_detail_count)
+                server.save_settings({**server.settings, "max_storage_bytes": 512 * 1048576,
+                                      "max_storage_mb": 512})
+                reopened = self.server()
+                self.assertEqual(reopened.settings["max_storage_bytes"], 512 * 1048576)
+
+    def test_old_zero_detail_limit_is_replaced_by_storage_budget_retention(self):
+        self.data.mkdir()
+        (self.data / "settings.json").write_text(json.dumps({"max_packets": 321, "max_detail_packets": 0,
+            "max_storage_bytes": 123_000_000, "auto_detect_providers": False}), encoding="utf8")
+        server = self.server()
+        self.assertEqual(server.settings["max_storage_bytes"], 123_000_000)
+        self.assertEqual(server.settings["max_detail_packets"], 321)
+        self.assertIsNone(server.store.max_detail_count)
 
     def test_inactive_worker_activation_does_not_implicitly_connect(self):
         original = self.config.read_bytes()
