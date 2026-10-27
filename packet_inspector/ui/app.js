@@ -263,8 +263,7 @@ function renderStorageInfo() {
   const storage=state.status?.storage;if(!storage)return;
   reconcileContent($("storage-info"),
     el("span","",compact(storage.stored)+"/"+compact(storage.max_bytes)),
-    el("span","",t("{count} 请求").replace("{count}",nf.format(storage.count))+
-      (Number.isInteger(storage.detail_count)?" · "+t("{count} 详情").replace("{count}",nf.format(storage.detail_count)):""))
+    el("span","",t("{count} 请求").replace("{count}",nf.format(storage.count)))
   );
 }
 function signed(n) { return (n > 0 ? "+" : "") + bytes(n); }
