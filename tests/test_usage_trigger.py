@@ -267,6 +267,44 @@ class UsageRelayTests(unittest.TestCase):
                 client.close()
             self.assertEqual(self.up.requests[-1][0], body)
 
+    def test_both_auto_levels_apply_prediction_and_high_phase_does_not_oscillate(self):
+        import base64
+        import random
+        import zstandard
+        rng = random.Random(19)
+        a, b = (base64.b64encode(rng.randbytes(300000)).decode() for _ in range(2))
+        body = json.dumps({'input': a + b + a}).encode()
+        fast_size = len(zstandard.ZstdCompressor(level=1).compress(body))
+        high_size = len(zstandard.ZstdCompressor(level=17).compress(body))
+        budget = fast_size * 100 // 97
+        self.assertGreaterEqual(fast_size, budget - 50000)
+        self.assertLess(high_size, budget * .8)  # Reproduces the old downgrade.
+        self.assertEqual(self.api({'auto_zstd_level_enabled': True, 'budget_bytes': budget})[0], 200)
+        self.server.settings['auto_detect_providers'] = True
+        high_wire = json.dumps({'input': base64.b64encode(rng.randbytes(900000)).decode()}).encode()
+        samples = ((b'{"input":"initial small context"}', 0, USAGE['input_tokens']),
+                   (body, 1, 500000), (body, 17, USAGE['input_tokens']),
+                   (high_wire, 17, 500000), (b'{"input":"native compacted context"}', 0, USAGE['input_tokens']),
+                   (body, 1, 500000))
+        for raw, phase, tokens in samples:
+            with self.subTest(phase=phase, tokens=tokens):
+                client, response = self.post(raw)
+                try:
+                    self.assertEqual(response.status, 200)
+                    value = json.loads(response.read()[len(DELTA):].split(b'data: ', 1)[1].strip())
+                    self.assertEqual(value['response']['usage']['input_tokens'], tokens)
+                finally:
+                    client.close()
+                meta = self.server.store.list(limit=1)[0]
+                self.assertEqual(meta['relay_auto_zstd_phase'], phase)
+                self.assertEqual(meta['relay_auto_zstd_next_phase'], 17 if phase else 0)
+                self.assertEqual(meta['relay_zstd_level'], phase or None)
+                if phase == 1:
+                    self.assertTrue(meta['usage_override_applied'])
+                    self.assertEqual(meta['upstream_usage'], USAGE)
+                self.assertNotIn('relay_auto_zstd_prediction_deferred', meta)
+                self.assertEqual(self.up.requests[-1][0], raw)
+
     def test_real_summary_and_cache_reuse_still_rewrite_usage_using_original_size(self):
         from tests.test_overflow_compaction import message
         self.assertEqual(self.api({"packet_size_protection_enabled": True, "budget_bytes": 700000})[0], 200)

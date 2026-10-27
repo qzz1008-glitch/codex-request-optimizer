@@ -34,7 +34,9 @@ from .token_window import TokenWindows
 from .response_usage import packet_usage
 from .session_summary import SessionSummaries
 from .storage import Store
-from .transport import CompressionHistory, DEFAULT_ZSTD_LEVEL, prepare_request_info, validate_zstd_level
+from .transport import DEFAULT_ZSTD_LEVEL, prepare_request_info, validate_zstd_level
+from .compression_policy import CompressionPolicy, INITIAL_HIGH_BYTES, is_main_request
+from .request_context import request_session_context, temporary_request_kind
 from .installation import manage_installation
 from .startup import configure_startup, startup_supported
 from .capacity_retry import MAX_RETRIES, MAX_RETRY_SECONDS, RETRY_LIMIT, notify, open_response
@@ -155,7 +157,7 @@ class InspectorServer(ThreadingHTTPServer):
         self.opener = build_opener(ProxyHandler(outbound_proxies()), HTTPSHandler(context=ssl_context), NoRedirect())
         self.local_opener = build_opener(ProxyHandler({}), NoRedirect())
         self.overflow = OverflowCompactor(self.data_dir)
-        self.compression_history = CompressionHistory()
+        self.compression_policy = CompressionPolicy(self.store)
         self.image_config = ImageToolConfig(self.link, self.data_dir, lambda: self.endpoint)
         self.image_isolation = ImageIsolation(self.data_dir, self.settings["image_save_dir"])
         self.default_image_save_dir = resolve_image_directory(self.data_dir)
@@ -683,7 +685,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.server.store.configure_limits(candidate["max_storage_mb"] * 1024 * 1024,
                                                    candidate["max_packets"], candidate["max_detail_packets"])
                 if candidate["auto_zstd_level_enabled"] != previous["auto_zstd_level_enabled"]:
-                    self.server.compression_history.clear()
+                    self.server.compression_policy.clear()
             self._json(200, self.server.status())
         elif path == "/api/link" and self.command == "POST":
             data = json.loads(self._body(8192))
@@ -854,6 +856,23 @@ class Handler(BaseHTTPRequestHandler):
                                       "message": "Use HTTP POST for Responses API requests through this relay."}})
             return
         started = time.monotonic()
+        with self.server.guard:
+            # Disconnected clients may briefly retain an old relay URL until
+            # ChatGPT restarts. Keep forwarding them without extra zstd work.
+            compression = "zstd" if self.server.settings["auto_detect_providers"] else "off"
+            zstd_level = self.server.settings["zstd_level"]
+            protection_enabled = self.server.settings["packet_size_protection_enabled"]
+            budget = self.server.settings["budget_bytes"]
+            image_enabled = self.server.settings["image_isolation_enabled"]
+            image_isolation = self.server.image_isolation
+            image_configured = self.server.image_config.state.get("enabled", False)
+            image_worker = self.server.image_config.is_worker(self.headers.get(WORKER_HEADER, ""))
+            auto_zstd_level = (protection_enabled and self.server.settings["auto_zstd_level_enabled"]
+                               and compression == "zstd" and not image_worker)
+            auto_eligible = (auto_zstd_level and self.command == "POST"
+                             and urlsplit(suffix).path.rstrip("/").endswith("/responses")
+                             and self.headers.get("Content-Encoding", "identity").strip().lower() in {"", "identity", "zstd"})
+            auto_ticket = self.server.compression_policy.reserve() if auto_eligible else None
         packet_id = None
         capture_meta = {}
         if self.server.settings["capture_enabled"]:
@@ -876,63 +895,40 @@ class Handler(BaseHTTPRequestHandler):
                    if k.lower() not in HOP | connection_tokens | {"host", "content-length", "x-codex-inspector-packet-id", WORKER_HEADER.lower()}}
         # urllib preserves content bytes, does not decompress responses, and
         # uses the OS/environment proxy. Redirects and inference retries are disabled.
-        with self.server.guard:
-            # Disconnected clients may briefly retain an old relay URL until
-            # ChatGPT restarts. Keep forwarding them without extra zstd work.
-            compression = "zstd" if self.server.settings["auto_detect_providers"] else "off"
-            zstd_level = self.server.settings["zstd_level"]
-            protection_enabled = self.server.settings["packet_size_protection_enabled"]
-            budget = self.server.settings["budget_bytes"]
-            image_enabled = self.server.settings["image_isolation_enabled"]
-            image_isolation = self.server.image_isolation
-            image_configured = self.server.image_config.state.get("enabled", False)
-            image_worker = self.server.image_config.is_worker(self.headers.get(WORKER_HEADER, ""))
-            auto_zstd_level = (protection_enabled and self.server.settings["auto_zstd_level_enabled"]
-                               and compression == "zstd" and not image_worker)
         trigger_size = None
         applied_zstd_level = None
         compression_scope = hashlib.sha256(upstream.encode()).hexdigest()
-        auto_key, remember_auto = None, False
-        if auto_zstd_level and self.command == "POST" and urlsplit(suffix).path.rstrip("/").endswith("/responses"):
-            if not capture_meta:
-                try:
-                    source_encoding = next((v for k, v in headers.items() if k.lower() == "content-encoding"), "identity")
-                    value = json.loads(decode_body(body, source_encoding))
-                    capture_meta = {**classify_request(value, headers, suffix), "thread_id": thread_identity(headers, value)}
-                except Exception:
-                    capture_meta = {}
-            thread = capture_meta.get("thread_id")
-            if thread:
-                auto_key = (upstream, thread)
-                previous_level = self.server.compression_history.level(auto_key, budget)
-                if previous_level is None:
-                    # Reuse existing measurements after restart; ignore the new
-                    # captured row and auxiliary/native-compaction requests.
-                    try:
-                        for previous in self.server.store.list(limit=10, thread=thread):
-                            if (previous.get("id") == packet_id or previous.get("is_compaction")
-                                    or previous.get("source") != "live"
-                                    or previous.get("relay_compression_scope") != compression_scope
-                                    or previous.get("request_kind") in {"prewarm", "memory"}
-                                    or previous.get("image_isolation_worker")
-                                    or not previous.get("path", "").split("?", 1)[0].rstrip("/").endswith("/responses")):
-                                continue
-                            if time.time() - previous.get("created", 0) >= self.server.compression_history.ttl:
-                                break
-                            size = next((previous.get(k) for k in ("overflow_original_wire_bytes", "usage_override_request_bytes", "outbound_wire_bytes", "relay_wire_bytes")
-                                         if type(previous.get(k)) is int and previous[k] >= 0), None)
-                            if size is not None:
-                                self.server.compression_history.remember(auto_key, size, previous.get("relay_zstd_level"), only_if_missing=True)
-                                previous_level = self.server.compression_history.level(auto_key, budget)
-                                break
-                    except Exception:
-                        pass
-                zstd_level = previous_level or 1
-                remember_auto = (not capture_meta.get("is_compaction")
-                                 and capture_meta.get("request_kind") not in {"prewarm", "memory"})
-            else:
-                zstd_level = 1
+        auto_key, auto_decision = None, None
         try:
+            if auto_eligible:
+                if capture_meta.get("inspection") != "json":
+                    try:
+                        source_encoding = self.headers.get("Content-Encoding", "identity")
+                        decoded = decode_body(body, source_encoding)
+                        value = json.loads(decoded)
+                        capture_meta = {**classify_request(value, headers, suffix),
+                                        **request_session_context(value, headers),
+                                        "thread_id": thread_identity(headers, value), "decoded_bytes": len(decoded)}
+                        kind = temporary_request_kind(value)
+                        if kind:
+                            capture_meta["request_kind"] = kind
+                    except (ValueError, TypeError):
+                        capture_meta = {}
+                zstd_level = 1
+                thread = capture_meta.get("thread_id")
+                original_bytes = capture_meta.get("decoded_bytes")
+                if type(original_bytes) is int:
+                    auto_key = (compression_scope, thread) if thread else None
+                    if auto_key and is_main_request(capture_meta):
+                        auto_decision = self.server.compression_policy.begin(
+                            auto_key, auto_ticket, original_bytes, budget)
+                        zstd_level = auto_decision.level
+                        update(relay_auto_zstd_phase=auto_decision.phase,
+                               relay_auto_zstd_previous_phase=auto_decision.previous_phase,
+                               relay_auto_zstd_initial_threshold_bytes=INITIAL_HIGH_BYTES,
+                               relay_auto_zstd_budget_bytes=budget)
+                    else:
+                        zstd_level = self.server.compression_policy.level(auto_key, original_bytes, budget)
             if image_enabled and not image_configured:
                 raise ImageIsolationFailure("image_configuration_missing", "图片隔离配置不完整，请在设置中重新启用。", 503)
             prepared = None
@@ -956,8 +952,9 @@ class Handler(BaseHTTPRequestHandler):
                 encoded = prepare_request_info(body, headers, self.command, suffix, compression, zstd_level,
                                                 auto_zstd_level=auto_zstd_level, budget_bytes=budget)
                 outbound_body, outbound_encoding, applied_zstd_level = encoded
-            if remember_auto and outbound_encoding.strip().lower() in {"", "identity", "zstd"}:
-                self.server.compression_history.remember(auto_key, len(outbound_body), applied_zstd_level or zstd_level)
+            if auto_decision is not None:
+                next_phase = self.server.compression_policy.finish(auto_key, auto_decision, len(outbound_body), budget)
+                update(relay_auto_zstd_next_phase=next_phase)
             if protection_enabled and not image_worker:
                 trigger_size = usage_trigger_size(body, dict(self.headers.items()), self.command, suffix, len(outbound_body), budget)
                 if trigger_size is not None:
