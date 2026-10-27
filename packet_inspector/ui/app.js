@@ -258,7 +258,7 @@ async function compressedDelta(data,current) {
   return before!==null&&after!==null?after-before:null;
 }
 function originalBytes(p) { return Number.isFinite(p.decoded_bytes) && p.decoded_bytes >= 0 ? p.decoded_bytes : null; }
-function compact(n) { if (n === undefined || n === null) return "—"; return n >= 1048576 ? (n/1048576).toFixed(2)+" MiB" : n >= 1024 ? (n/1024).toFixed(1)+" KiB" : n+" B"; }
+function compact(n) { if (n === undefined || n === null) return "—"; return n >= 1000000 ? (n/1000000).toFixed(2)+" MB" : n >= 1000 ? (n/1000).toFixed(1)+" KB" : n+" B"; }
 function renderStorageInfo() {
   const storage=state.status?.storage;if(!storage)return;
   reconcileContent($("storage-info"),
@@ -869,11 +869,21 @@ function renderStatus(fill=false) {
     $("settings-restart-dialog").showModal();
   }
 }
+function storageLimitSettings(status) {
+  const precise=Number.isSafeInteger(status.max_storage_bytes),legacyUnit=1048576;
+  const size=precise?status.max_storage_bytes:status.storage?.max_bytes??status.max_storage_mb*legacyUnit;
+  return {value:size/1000000,min:(status.storage_limit_min_bytes??16*legacyUnit)/1000000,
+    max:(status.storage_limit_max_bytes??8192*legacyUnit)/1000000,step:precise?"any":String(legacyUnit/1000000),
+    key:precise?"max_storage_bytes":"max_storage_mb",toBackend:value=>Math.round(Number(value)*1000000/(precise?1:legacyUnit))};
+}
 function fillSettings() {
   const s=state.status,p=s.profile;
+  const storage=storageLimitSettings(s),storageInput=$("storage-limit");
+  storageInput.min=storage.min;storageInput.max=storage.max;storageInput.step=storage.step;
+  storageInput.title=storage.key==="max_storage_bytes"?"":t("当前后台的存储上限步长为 1.048576 MB；更新后台后支持精确设置。");
   fillEntryPort();
   if(!settingsEditing) {
-    $("storage-limit").value=s.max_storage_mb;$("packet-limit").value=s.max_packets;
+    storageInput.value=storage.value;$("packet-limit").value=s.max_packets;
     $("detail-limit").value=s.max_detail_packets??s.max_packets;
     $("start-on-login").checked=!!s.start_on_login;
     $("capacity-retry").checked=!!s.capacity_retry_enabled;
@@ -1294,7 +1304,7 @@ async function saveSettings() {
   for(const input of $("settings-dialog").querySelectorAll(".settings-content input:not(:disabled)")) {
     if(!input.reportValidity())return;
   }
-  const protectionSupported="packet_size_protection_enabled" in s;
+  const protectionSupported="packet_size_protection_enabled" in s,storage=storageLimitSettings(s);
   const entries=[
     ["zstd_level","zstd_level",Number(draft.zstd_level),Number.isInteger(s.zstd_level)],
     ["packet_size_protection_enabled","packet_size_protection_enabled",draft.packet_size_protection_enabled,protectionSupported],
@@ -1307,7 +1317,7 @@ async function saveSettings() {
       "image_analysis_mode" in s?draft.image_analysis_mode:draft.image_analysis_mode==="optimized",
       s.image_isolation_supported||["native","disabled","optimized"].includes(s.image_analysis_mode)],
     ["image_save_dir","image_save_dir",draft.image_save_dir===imageDefaultDirectory()?"":draft.image_save_dir,s.image_save_dir_supported],
-    ["max_storage_mb","max_storage_mb",Number(draft.max_storage_mb),true],
+    ["max_storage_mb",storage.key,storage.toBackend(draft.max_storage_mb),true],
     ["max_packets","max_packets",Number(draft.max_packets),true],
     ["max_detail_packets","max_detail_packets",Number(draft.max_detail_packets),Number.isInteger(s.max_detail_packets)]
   ].filter(([field,,,supported])=>supported&&changed.has(field));
@@ -2050,8 +2060,7 @@ class TokenTrendView {
   }
   static size(packet) {return compressedBytes(packet);}
   static sizeScale(maximum) {
-    const step=2**Math.ceil(Math.log2(Math.max(1,(maximum||1024)/5)));
-    return {step,max:Math.max(step,Math.ceil((maximum||1024)/step)*step)};
+    return TokenTrendView.scale(maximum||1000);
   }
   static scale(maximum) {
     const rough=(maximum||1000)/5,power=10**Math.floor(Math.log10(rough));

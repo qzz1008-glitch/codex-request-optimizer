@@ -70,6 +70,26 @@ def outbound_proxies():
     return proxies
 
 
+STORAGE_LEGACY_BYTES = 1024 * 1024
+MIN_STORAGE_BYTES = 16 * STORAGE_LEGACY_BYTES
+MAX_STORAGE_BYTES = 8192 * STORAGE_LEGACY_BYTES
+
+
+def storage_settings(saved):
+    values = dict(saved)
+    legacy = values.get("max_storage_mb", 512)
+    if type(legacy) is not int or not 16 <= legacy <= 8192:
+        legacy = 512
+    size = values.get("max_storage_bytes")
+    if (type(size) is not int or not MIN_STORAGE_BYTES <= size <= MAX_STORAGE_BYTES
+            or ("max_storage_mb" in values and (size + STORAGE_LEGACY_BYTES - 1) // STORAGE_LEGACY_BYTES != legacy)):
+        size = legacy * STORAGE_LEGACY_BYTES
+    values["max_storage_bytes"] = size
+    # Older clients require whole legacy units; round up so a downgrade cannot shrink the limit.
+    values["max_storage_mb"] = (size + STORAGE_LEGACY_BYTES - 1) // STORAGE_LEGACY_BYTES
+    return values
+
+
 def protection_settings(saved, *, default_enabled=False):
     values = dict(saved)
     values.pop("request_compression", None)  # Legacy analysis/optimization modes.
@@ -84,7 +104,7 @@ def protection_settings(saved, *, default_enabled=False):
                               if type(budget) is int else DEFAULT_BUDGET_BYTES)
     values["auto_zstd_level_enabled"] = (values.get("auto_zstd_level_enabled") is True
                                          and values["packet_size_protection_enabled"] is True)
-    return values
+    return storage_settings(values)
 
 
 class InspectorServer(ThreadingHTTPServer):
@@ -147,7 +167,7 @@ class InspectorServer(ThreadingHTTPServer):
         self.upgrade_draining = False
         self.token_windows = TokenWindows()
         self.session_summaries = SessionSummaries(self.token_windows)
-        self.store = Store(self.data_dir, self.settings["max_storage_mb"] * 1024 * 1024,
+        self.store = Store(self.data_dir, self.settings["max_storage_bytes"],
                            self.settings["max_packets"], capture_owner="relay:" + worker_id if worker_id else "relay",
                            max_detail_count=self.settings["max_detail_packets"])
         self.retry_journal = RetryJournal(self.data_dir)
@@ -227,7 +247,7 @@ class InspectorServer(ThreadingHTTPServer):
                         self.public_port = validate_port(data["public_port"])
                     self.settings["max_detail_packets"] = min(self.settings["max_detail_packets"], self.settings["max_packets"])
                     self.save_settings()
-                    self.store.configure_limits(self.settings["max_storage_mb"] * 1024 * 1024,
+                    self.store.configure_limits(self.settings["max_storage_bytes"],
                                                 self.settings["max_packets"], self.settings["max_detail_packets"])
                 if self.settings["auto_detect_providers"]:
                     self.auto_sync_providers()
@@ -390,6 +410,8 @@ class InspectorServer(ThreadingHTTPServer):
                 "image_save_dir_default": str(self.default_image_save_dir), "image_save_dir_supported": True,
                 "budget_bytes": self.settings["budget_bytes"], "upstream": self.settings["upstream"],
                 "max_storage_mb": self.settings["max_storage_mb"], "max_packets": self.settings["max_packets"],
+                "max_storage_bytes": self.settings["max_storage_bytes"],
+                "storage_limit_min_bytes": MIN_STORAGE_BYTES, "storage_limit_max_bytes": MAX_STORAGE_BYTES,
                 "max_detail_packets": self.settings["max_detail_packets"],
                 "capture_errors": self.capture_errors, "analysis_errors": self.analysis_errors,
                 "maintenance_errors": self.maintenance_errors, "overflow_cache": self.overflow.cache_status(),
@@ -655,6 +677,7 @@ class Handler(BaseHTTPRequestHandler):
                     candidate["image_analysis_mode"] = "optimized" if data["image_isolation_enabled"] else "native"
                 candidate["image_isolation_enabled"] = candidate["image_analysis_mode"] == "optimized"
                 for key, low, high in (("budget_bytes", MIN_BUDGET_BYTES, MAX_BODY), ("max_storage_mb", 16, 8192),
+                                       ("max_storage_bytes", MIN_STORAGE_BYTES, MAX_STORAGE_BYTES),
                                        ("max_packets", 10, 20000), ("max_detail_packets", 0, 20000),
                                        ("capacity_retry_max_retries", 1, RETRY_LIMIT)):
                     if key in data:
@@ -662,6 +685,13 @@ class Handler(BaseHTTPRequestHandler):
                         if isinstance(value, bool) or not isinstance(value, int) or not low <= value <= high:
                             raise ValueError("设置超出有效范围: " + key)
                         candidate[key] = value
+                if "max_storage_bytes" in data:
+                    legacy = (candidate["max_storage_bytes"] + STORAGE_LEGACY_BYTES - 1) // STORAGE_LEGACY_BYTES
+                    if "max_storage_mb" in data and candidate["max_storage_mb"] != legacy:
+                        raise ValueError("存储上限设置冲突")
+                    candidate["max_storage_mb"] = legacy
+                elif "max_storage_mb" in data:
+                    candidate["max_storage_bytes"] = candidate["max_storage_mb"] * STORAGE_LEGACY_BYTES
                 if "max_detail_packets" not in data:
                     candidate["max_detail_packets"] = min(candidate["max_detail_packets"], candidate["max_packets"])
                 if candidate["max_detail_packets"] > candidate["max_packets"]:
@@ -682,7 +712,7 @@ class Handler(BaseHTTPRequestHandler):
                         self.server.save_settings(previous)
                         raise
                 self.server.image_isolation = image_isolation
-                self.server.store.configure_limits(candidate["max_storage_mb"] * 1024 * 1024,
+                self.server.store.configure_limits(candidate["max_storage_bytes"],
                                                    candidate["max_packets"], candidate["max_detail_packets"])
                 if candidate["auto_zstd_level_enabled"] != previous["auto_zstd_level_enabled"]:
                     self.server.compression_policy.clear()

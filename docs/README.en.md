@@ -27,7 +27,7 @@ Reduce upload size while preserving the original content and meaning.
 
 Choose from **compression levels 1–17** and compare compressed sizes and estimated local processing times. Requests already using zstd can also be recompressed; the new body is used only when it is smaller.
 
-With request size protection enabled, use **automatic compression by packet size**. Smaller requests keep their original body. Without a saved phase, the original body's 1,500 kB threshold selects level 1 below it or level 17 at or above it. When a level-1 packet reaches the promotion threshold, the next request uses level 17 and stays there until the main request's uncompressed body is small again. Both levels apply predictive and overflow protection based on the actual compressed packet size. Turning automatic mode off restores the manual level. See the user guide for the exact thresholds.
+With request size protection enabled, use **automatic compression by packet size**. Smaller requests keep their original body. Without a saved phase, the original body's 1,500 KB threshold selects level 1 below it or level 17 at or above it. When a level-1 packet reaches the promotion threshold, the next request uses level 17 and stays there until the main request's uncompressed body is small again. Both levels apply predictive and overflow protection based on the actual compressed packet size. Turning automatic mode off restores the manual level. See the user guide for the exact thresholds.
 
 Selection first uses the saved phase. If it is missing, metadata from the previous request for the same upstream and session can restore it, whether full details or only the summary remain. Neither request bodies nor cache expiry are required. Compressed size, encoding, and level in request details all describe the body before summary substitution; missing encoding or level in older records is shown as “—”.
 
@@ -54,7 +54,7 @@ Once enabled in Settings, explicit model capacity errors trigger automatic retri
 
 Retry detection and diagnostics share structural event classification: response metadata and its extensions keep waiting for the result; output items, reasoning, or tool calls end replay eligibility. Events with unknown semantics pass through unchanged with the reason recorded. Successful responses preserve their original bytes. Only explicit capacity errors are retried; HTTP 403, 413, ordinary 5xx responses, and connection failures do not introduce retries.
 
-“Automatic retries” in request details only shows “Triggered / Not triggered,” based on retries actually started. Background diagnostic logs are retained separately from request bodies: retries and abnormal outcomes for up to 30 days; ordinary successful requests for 24 hours, limited to 2,000 records. Automatic cleanup also applies a 20,000-record and 32 MiB content budget. Logs contain only timestamps, settings, and structural events, without conversation text, tool content, or authentication data.
+“Automatic retries” in request details only shows “Triggered / Not triggered,” based on retries actually started. Background diagnostic logs are retained separately from request bodies: retries and abnormal outcomes for up to 30 days; ordinary successful requests for 24 hours, limited to 2,000 records. Automatic cleanup also applies a 20,000-record and ≈33.55 MB content budget. Logs contain only timestamps, settings, and structural events, without conversation text, tool content, or authentication data.
 
 ### 🖼️ Image request optimization
 
@@ -113,7 +113,9 @@ The default data directory is:
 
 Request records, settings, configuration backups, and image attachments are stored locally. See the **[user guide (Chinese)](https://github.com/qzz1008-glitch/codex-request-optimizer/blob/main/docs/usage.md)** for detailed instructions.
 
-Request records default to limits of **512 MiB / 2,000 records**, adjustable in Record settings. The left sidebar footer shows stored-record usage / the storage limit and the current request count. Usage measures record content rather than the entire data directory's disk footprint.
+Sizes use decimal units: 1 KB = 1,000 bytes and 1 MB = 1,000,000 bytes. Upgrades preserve the original byte budget of existing storage limits.
+
+Request records default to limits of **≈536.87 MB / 2,000 records**, adjustable in Record settings. The left sidebar footer shows stored-record usage / the storage limit and the current request count. Usage measures record content rather than the entire data directory's disk footprint.
 
 ---
 
@@ -150,7 +152,7 @@ Image handling has two parts: saving local attachments and providing a separate 
 
 When enabled, the relay saves embedded images as local attachments and uses their paths in the main request sent upstream. The EXE installs and registers a separate stdio MCP image tool; Codex launches it, analyzes images in an independent session, and returns text to the main session. The tool runs with Windows PowerShell and has its own installed files. The EXE installs, updates, and uninstalls it without hosting an image-tool HTTP endpoint or using tool hooks. Selecting Native uninstalls the image tool installed by this application and restores the native `view_image` tool.
 
-Image optimization copies `codex-clipboard-*` images from the system temporary directory into `%TEMP%\CodexRequestOptimizer\` and uses the copy paths in the current request, retaining the originals. The copy cache is limited to 256 MiB; later image processing removes copies unused for more than seven days. If copying fails, the original path is retained.
+Image optimization copies `codex-clipboard-*` images from the system temporary directory into `%TEMP%\CodexRequestOptimizer\` and uses the copy paths in the current request, retaining the originals. The copy cache is limited to ≈268.44 MB; later image processing removes copies unused for more than seven days. If copying fails, the original path is retained.
 
 ### Usage and request records
 
