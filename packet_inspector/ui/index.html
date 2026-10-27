@@ -78,7 +78,7 @@
     <section class="trend-main">
       <div class="trend-toolbar">
         <div class="trend-event-legend" aria-label="机制标记"><span class="trend-predictive"><svg class="trend-legend-marker" data-trend-marker="predictive" viewBox="-10 -10 20 20" aria-hidden="true"></svg><span>预测保护</span></span><span class="trend-overflow"><svg class="trend-legend-marker" data-trend-marker="overflow" viewBox="-10 -10 20 20" aria-hidden="true"></svg><span>超限保护</span></span><span class="trend-retry"><svg class="trend-legend-marker" data-trend-marker="retry" viewBox="-10 -10 20 20" aria-hidden="true"></svg><span>自动重试</span></span><span class="trend-compact"><svg class="trend-legend-marker" data-trend-marker="compact" viewBox="-10 -10 20 20" aria-hidden="true"></svg><span>上下文压缩</span></span></div>
-        <div id="trend-range" class="trend-range-control"><input id="trend-range-slider" type="range" min="1" max="12" step="any" value="1" aria-label="时间范围（小时）" title="拖动或滚轮缩放，最短 1 小时，最长 12 小时"><output id="trend-range-value" for="trend-range-slider">1 小时</output></div>
+        <div id="trend-range" class="trend-range-control"><input id="trend-range-slider" type="range" min="1" max="1" step="any" value="1" disabled aria-label="时间范围（小时）" title="拖动或滚轮缩放，最短 1 小时，最长 12 小时"><output id="trend-range-value" for="trend-range-slider">1 小时</output></div>
       </div>
       <div id="trend-charts" class="trend-charts">
         <div id="trend-size-plot" class="trend-plot"><svg id="trend-size-chart" role="img" focusable="false" aria-label="压缩包大小随时间变化；悬停查看请求"></svg><div id="trend-size-empty" class="trend-empty" hidden></div></div>

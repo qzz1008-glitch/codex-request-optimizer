@@ -2021,7 +2021,7 @@ function isTrendGeneration(packet) {
 class TokenTrendView {
   constructor(services) {
     this.services=services;this.active=false;this.loading=false;this.hydrating=false;
-    this.packets=new Map();this.native=new Map();this.hours=1;this.previewPackets=null;this.oldestCreated=null;this.paintRefresh=null;
+    this.packets=new Map();this.native=new Map();this.hours=1;this.previewPackets=null;this.oldestCreated=null;this.boundsReady=false;this.paintRefresh=null;
     this.revision=null;this.lastFull=0;this.query="";this.error=false;this.limited=false;
     this.series=[];this.hover=null;this.hoverChart=null;this.hoverSeries=null;this.frame=null;this.legendVersion="";
     this.charts=[{key:"size",field:"size",prefix:"trend-size"},{key:"token",field:"input",prefix:"trend"}].map(chart=>({
@@ -2034,9 +2034,10 @@ class TokenTrendView {
       const {tag,...attrs}=shape;icon.replaceChildren(this.svgNode(tag,{...attrs,class:"trend-event trend-event-"+key}));
     }
     this.range=$("trend-range-slider");this.rangeValue=$("trend-range-value");
+    this.statusRange();this.updateRange();
     this.range.oninput=()=>this.setRange(Number(this.range.value));
     this.tooltipHost.addEventListener("wheel",event=>{
-      if(!this.active||event.ctrlKey||event.metaKey||!Number.isFinite(event.deltaY)||!event.deltaY)return;
+      if(!this.active||!this.boundsReady||event.ctrlKey||event.metaKey||!Number.isFinite(event.deltaY)||!event.deltaY)return;
       event.preventDefault();
       const delta=event.deltaY*(event.deltaMode===1?16:event.deltaMode===2?400:1);
       this.setRange(this.hours*Math.exp(Math.max(-240,Math.min(240,delta))/450));
@@ -2094,14 +2095,34 @@ class TokenTrendView {
     return {step,max:Math.max(step,Math.ceil(maximum/step)*step)};
   }
   static color(id) {let hash=2166136261;for(const char of id)hash=Math.imul(hash^char.charCodeAt(0),16777619);return "hsl("+((hash>>>0)%360)+" 62% 42%)";}
-  rangeLimit() {return this.oldestCreated===null||this.oldestCreated===undefined?12:Math.min(12,Math.max(1,(Date.now()/1000-this.oldestCreated+1)/3600));}
+  rangeLimit() {return !this.boundsReady||!Number.isFinite(this.oldestCreated)?1:Math.min(12,Math.max(1,(Date.now()/1000-this.oldestCreated+1)/3600));}
+  statusRange() {
+    const storage=this.services.status()?.storage;
+    if(!storage||!Object.hasOwn(storage,"oldest_created"))return false;
+    const oldest=storage.oldest_created;
+    if(oldest!==null&&(!Number.isFinite(oldest)||oldest<0))return false;
+    this.oldestCreated=oldest??Date.now()/1000;this.boundsReady=true;return true;
+  }
+  async loadRange(controller,full) {
+    if(!this.statusRange()&&(!this.boundsReady||full)) {
+      // Legacy backends already support indexed ascending pagination: one row establishes the range.
+      try {
+        const rows=await this.services.api("/api/packets?limit=1&sort=created&direction=asc&view=trend",undefined,controller.signal);
+        controller.signal.throwIfAborted();if(!this.active||this.controller!==controller)return false;
+        if(!Array.isArray(rows)||(rows.length&&(!Number.isFinite(rows[0]?.created)||rows[0].created<0)))throw Error("invalid trend range");
+        this.oldestCreated=rows.length?rows[0].created:Date.now()/1000;this.boundsReady=true;
+      }catch(error){controller.signal.throwIfAborted();if(!this.boundsReady)throw error;}
+    }
+    if(this.range)this.updateRange();this.scheduleRender();return true;
+  }
   updateRange() {
     const maximum=this.rangeLimit();this.hours=Math.max(1,Math.min(maximum,Number.isFinite(this.hours)?this.hours:1));
+    this.range.disabled=!this.boundsReady;this.range.setAttribute("aria-busy",String(!this.boundsReady));
     this.range.max=String(maximum);this.range.value=String(this.hours);
     const label=t("{hours} 小时").replace("{hours}",nf.format(Math.round(this.hours*100)/100));
     this.rangeValue.textContent=label;this.range.setAttribute("aria-valuetext",label);
   }
-  setRange(hours) {if(!Number.isFinite(hours))return;this.hours=hours;this.updateRange();this.scheduleRender();}
+  setRange(hours) {if(!this.boundsReady||!Number.isFinite(hours))return;this.hours=hours;this.updateRange();this.scheduleRender();}
   cancelPending() {this.controller?.abort();this.nativeController?.abort();this.controller=null;this.nativeController=null;this.paintRefresh=null;this.previewPackets=null;this.loading=false;this.hydrating=false;}
   setActive(active) {
     this.active=active;this.hover=null;this.hoverChart=null;this.hoverSeries=null;this.emphasis=null;
@@ -2121,6 +2142,7 @@ class TokenTrendView {
     const timeout=setTimeout(()=>controller.abort(),60000),incoming=new Map(),since=now/1000-12*3600;
     const limit=this.services.status()?.trend_packets_supported?300:50,maximum=20000;let published=0;
     try {
+      if(!await this.loadRange(controller,full))return;
       let after=null,limited=false;
       for(let page=0;page<Math.ceil(maximum/limit);page++) {
         const query=new URLSearchParams({limit:String(limit),sort:"created",direction:"desc",view:"trend",since:String(since)});if(after)query.set("after",after);
@@ -2149,8 +2171,6 @@ class TokenTrendView {
       for(const [id,packet] of this.packets)if(packet.created<since)this.packets.delete(id);
       if(this.packets.size>maximum){const keep=[...this.packets.values()].sort((a,b)=>b.created-a.created||b.id.localeCompare(a.id)).slice(0,maximum);this.packets=new Map(keep.map(packet=>[packet.id,packet]));this.limited=true;}
       for(const id of this.native.keys())if(!this.packets.has(id))this.native.delete(id);
-      const times=[...this.packets.values()].filter(packet=>packet.thread_id&&(packet.is_compaction||this.services.isGeneration(packet))).map(packet=>packet.created);
-      this.oldestCreated=times.length?Math.min(...times):now/1000;
       this.revision=revision;this.error=false;
     } catch(error) {if(this.active&&this.controller===controller)this.error=true;}
     finally {

@@ -71,6 +71,8 @@ class RuntimeSettingsTests(unittest.TestCase):
         self.assertTrue(result["capacity_retry_diagnostics_supported"])
         self.assertIsInstance(result["max_detail_packets"], int)
         self.assertLessEqual(result["max_detail_packets"], result["max_packets"])
+        oldest = self.server.store.list(limit=1, sort="created", direction="asc")
+        self.assertEqual(result["storage"]["oldest_created"], oldest[0]["created"] if oldest else None)
 
     def test_trend_projection_keeps_real_usage_and_markers_without_response_payloads(self):
         now = time.time()

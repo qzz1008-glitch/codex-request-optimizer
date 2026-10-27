@@ -30,6 +30,21 @@ class TieredRetentionTests(unittest.TestCase):
                      upstream_usage={"input_tokens": index + 100, "output_tokens": 7, "total_tokens": index + 107})
         return packet, content
 
+    def test_chart_range_tracks_retained_requests_without_loading_details(self):
+        store = Store(self.root, max_count=5, max_detail_count=0)
+        self.assertIsNone(store.stats()["oldest_created"])
+        with patch("packet_inspector.storage.time.time", return_value=900):
+            store.add({"method": "GET", "path": "/models"})
+        self.assertIsNone(store.stats()["oldest_created"])
+        for index in range(3):
+            self.add(store, index)
+        with patch("packet_inspector.storage.json.loads", side_effect=AssertionError("loaded request JSON")):
+            self.assertEqual(store.stats()["oldest_created"], 1001)
+        store.configure_limits(1_000_000, 2, 0)
+        self.assertEqual(store.stats()["oldest_created"], 1002)
+        store.configure_limits(1, 2, 0)
+        self.assertIsNone(store.stats()["oldest_created"])
+
     def test_basic_records_keep_all_frontend_statistics_without_body_or_snippets(self):
         store = Store(self.root, max_count=5, max_detail_count=2)
         packets = [self.add(store, index) for index in range(5)]
