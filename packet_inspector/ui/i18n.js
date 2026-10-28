@@ -247,7 +247,6 @@ const uiI18n = (() => {
     "关闭原生与优化图片工具":"Disable native and optimized image tools.",
     "主请求仅保留图片路径":"Keep only image paths in the main request.",
     "当前后台暂不支持禁用模式，升级后可用。":"Upgrade the backend to use disabled mode.",
-    "图片保存路径":"Image save folder",
     "保存目录":"Save folder",
     "默认目录":"Default folder",
     "图片保存路径已保存，立即用于新保存的图片。":"Image folder saved. Newly saved images use it immediately.",
