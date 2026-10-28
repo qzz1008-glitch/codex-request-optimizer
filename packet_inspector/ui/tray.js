@@ -82,7 +82,12 @@
   function setVisible(value) {cancel();visible=!!value;if(visible)timer=setTimeout(refresh,0);}
   async function sync() {
     const request=++stateSync;
-    try {const state=await api().panel_state();if(request===stateSync)setVisible(state.visible);} catch(_) {}
+    try {
+      const state=await api().panel_state();if(request!==stateSync)return;
+      const minimum=Number.isFinite(state.min_width)?state.min_width:240;
+      document.documentElement.style.setProperty("--tray-min-width",minimum+"px");
+      measure();setVisible(state.visible);
+    } catch(_) {}
   }
   async function action(name) {
     if(busy||!api()?.[name])return;

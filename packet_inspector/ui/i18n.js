@@ -8,7 +8,7 @@ const uiI18n = (() => {
     "中转正常":"Relay running",
     "中转切换中":"Relay switching",
     "状态暂不可用":"Status unavailable",
-    "记录请求":"Recorded requests",
+    "记录请求":"Requests",
     "条":"requests",
     "个会话":"sessions",
     "记录时间范围":"Record time range",
