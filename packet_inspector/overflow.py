@@ -6,7 +6,7 @@ this adapter requests a text handoff without exposing executable tools.
 """
 from __future__ import annotations
 
-from collections import Counter
+from collections import Counter, OrderedDict
 from copy import deepcopy
 from contextlib import contextmanager
 import gzip
@@ -17,7 +17,7 @@ import sqlite3
 import threading
 import time
 
-from .analyzer import JsonBytes, MAX_BODY, decode_body, encode, thread_identity
+from .analyzer import JsonBytes, MAX_BODY, classify_request, decode_body, encode, thread_identity
 from .transport import DEFAULT_ZSTD_LEVEL, PreparedRequest, prepare_request_info, prepare_zstd
 from .maintenance import SQLiteReclaimer
 from .locking import file_lock
@@ -280,6 +280,22 @@ class OverflowCompactor:
         self.next_cleanup = 0.0
         self.last_cleanup = {"expired": 0, "evicted": 0, "entries": 0, "bytes": 0}
         self.reclaimer = SQLiteReclaimer(self.path, self.db_lock, interval=cleanup_interval)
+        self.native_summary_sizes = OrderedDict()
+
+    def _native_allowance(self, scope, budget):
+        """Bounded, size-only experience; request bodies still decide the actual cut."""
+        with self.db_lock:
+            samples = self.native_summary_sizes.get(scope, ())
+            estimate = max(samples) if samples else min(16_384, max(1, budget // 50))
+        headroom = min(max(1, budget // 20), max(1, budget // 100 + estimate // 4))
+        return estimate, headroom
+
+    def _remember_native_size(self, scope, size):
+        with self.db_lock:
+            samples = self.native_summary_sizes.pop(scope, ())
+            self.native_summary_sizes[scope] = [*samples[-7:], max(0, size)]
+            while len(self.native_summary_sizes) > 64:
+                self.native_summary_sizes.popitem(last=False)
 
     @contextmanager
     def request_scope(self):
@@ -447,6 +463,7 @@ class OverflowCompactor:
             if value.get("previous_response_id") or value.get("conversation"):
                 raise OverflowFailure("overflow_stateful_input", "超限兜底不改写服务端会话引用。")
             items = value["input"]
+            native = classify_request(value, headers, path)["is_compaction"]
             scope = digest({"model": value.get("model"), "instructions": value.get("instructions"),
                             "tools": value.get("tools"), "replacement_format": REPLACEMENT_FORMAT})
             mapping = self._read(key)
@@ -460,6 +477,16 @@ class OverflowCompactor:
                 else:
                     self._clear(key)
                     metrics["overflow_cache_reset"] = True
+            summaries = []
+            if native and replacement:
+                parts = user_text_parts(replacement[-1])
+                text = "".join(part["text"] for part in parts) if parts is not None else ""
+                if text.startswith(CHECKPOINT_PREFIX + "\n"):
+                    summaries.append(text[len(CHECKPOINT_PREFIX) + 1:])
+                else:
+                    self._clear(key)
+                    covered, replacement = 0, []
+                    metrics.update(overflow_cache_hit=False, overflow_cache_reset=True)
             current = replacement + items[covered:]
             span = JsonBytes(decoded).spans["/input"]
 
@@ -472,40 +499,88 @@ class OverflowCompactor:
                 metrics["relay_zstd_level"] = prepared.zstd_level
                 return prepared.body, prepared.encoding
 
+            def checkpoint(prefix):
+                request_body = self._checkpoint_request(value, prefix, key)
+                return encode_changed(encode(request_body), headers, path, compression, zstd_level,
+                                      auto_zstd_level=auto_zstd_level, budget_bytes=budget)
+
+            plan_scope = digest([scope, value.get("reasoning"), compression, zstd_level, auto_zstd_level])
+
+            def native_plan():
+                # Each additional checkpoint sees fresh original history, never an earlier generated summary.
+                tail = items[covered:]
+                cuts = [c for c in safe_cuts(tail) if any(not protected(i) for i in tail[:c])]
+                if not cuts:
+                    raise OverflowFailure("overflow_no_safe_prefix", "没有可安全压缩的旧上下文；最新内容或工具定义可能过大。")
+                context = [item for item in items[:covered] if protected(item)]
+                estimate, headroom = self._native_allowance(plan_scope, budget)
+                metrics.update(overflow_strategy="native_minimal_prefix", overflow_summary_estimate_bytes=estimate,
+                               overflow_target_wire_bytes=budget - headroom)
+                lo, hi, smallest, largest = 0, len(cuts) - 1, None, None
+                while lo <= hi:
+                    mid = (lo + hi) // 2
+                    cut = cuts[mid]
+                    request_wire, request_encoding = checkpoint(context + tail[:cut])
+                    if len(request_wire) > budget:
+                        hi = mid - 1
+                        continue
+                    empty = rebuild_prefix(items[:covered + cut], "\n\n".join(summaries)) + tail[cut:]
+                    empty_wire, _ = wire(empty)
+                    plan = cut, request_wire, request_encoding, len(empty_wire)
+                    if largest is None or cut > largest[0]:
+                        largest = plan
+                    if len(empty_wire) + estimate + headroom <= budget:
+                        smallest = plan
+                        hi = mid - 1
+                    else:
+                        lo = mid + 1
+                # Very large histories need several independent fragments before the final native request fits.
+                return smallest or largest
+
             result, encoding = wire(current) if mapping and metrics["overflow_cache_hit"] else (original, original_encoding)
             calls = 0
             started = time.monotonic()
             while len(result) > budget:
                 if calls >= MAX_COMPACTIONS or time.monotonic() - started > 240:
                     raise OverflowFailure("overflow_compaction_limit", "本次超限兜底达到压缩次数或时间限制；原请求未发送。")
-                cuts = [c for c in safe_cuts(current) if c > len(replacement) and any(not protected(i) for i in current[:c])]
-                if not cuts:
-                    raise OverflowFailure("overflow_no_safe_prefix", "没有可安全压缩的旧上下文；最新内容或工具定义可能过大。")
-                # Select a prefix whose *own* encoded compaction request fits.
-                lo, hi, plan = 0, len(cuts) - 1, None
-                while lo <= hi:
-                    mid = (lo + hi) // 2
-                    cut = cuts[mid]
-                    request_body = self._checkpoint_request(value, current[:cut], key)
-                    request_wire, request_encoding = encode_changed(encode(request_body), headers, path, compression, zstd_level,
-                                                                    auto_zstd_level=auto_zstd_level, budget_bytes=budget)
-                    if len(request_wire) <= budget:
-                        plan = (cut, request_wire, request_encoding)
-                        lo = mid + 1
-                    else:
-                        hi = mid - 1
+                if native:
+                    plan = native_plan()
+                else:
+                    cuts = [c for c in safe_cuts(current) if c > len(replacement) and any(not protected(i) for i in current[:c])]
+                    if not cuts:
+                        raise OverflowFailure("overflow_no_safe_prefix", "没有可安全压缩的旧上下文；最新内容或工具定义可能过大。")
+                    # Generation fallback still maximizes reusable coverage.
+                    lo, hi, plan = 0, len(cuts) - 1, None
+                    while lo <= hi:
+                        mid = (lo + hi) // 2
+                        cut = cuts[mid]
+                        request_wire, request_encoding = checkpoint(current[:cut])
+                        if len(request_wire) <= budget:
+                            plan = (cut, request_wire, request_encoding)
+                            lo = mid + 1
+                        else:
+                            hi = mid - 1
                 if plan is None:
                     raise OverflowFailure("overflow_compaction_too_large", "最小安全压缩请求仍超过上传限制；原请求未发送。")
-                cut, request_wire, request_encoding = plan
+                cut, request_wire, request_encoding = plan[:3]
                 summary = compact(request_wire, request_encoding)
                 if not isinstance(summary, str) or not summary.strip():
                     raise OverflowFailure("overflow_compaction_empty", "上游压缩摘要为空；原请求未发送。", 502)
-                next_replacement = rebuild_prefix(current[:cut], summary)
-                candidate = next_replacement + current[cut:]
+                if native:
+                    summaries.append(summary)
+                    next_covered = covered + cut
+                    next_replacement = rebuild_prefix(items[:next_covered], "\n\n".join(summaries))
+                    candidate = next_replacement + items[next_covered:]
+                else:
+                    next_covered = covered + cut - len(replacement)
+                    next_replacement = rebuild_prefix(current[:cut], summary)
+                    candidate = next_replacement + current[cut:]
                 candidate_wire, candidate_encoding = wire(candidate)
-                if len(candidate_wire) >= len(result):
+                if native:
+                    self._remember_native_size(plan_scope, len(candidate_wire) - plan[3])
+                elif len(candidate_wire) >= len(result):
                     raise OverflowFailure("overflow_compaction_no_progress", "压缩未缩小上传包；原请求未发送。")
-                covered += cut - len(replacement)
+                covered = next_covered
                 replacement = next_replacement
                 current, result, encoding = candidate, candidate_wire, candidate_encoding
                 calls += 1
