@@ -82,7 +82,13 @@ class LaunchRoutingTests(unittest.TestCase):
             server = SimpleNamespace(port=47844, tray_status=Mock(return_value={}))
             on_started(server)
             callbacks["exit"]()
-            callbacks["show_panel"]()
+            with patch("packet_inspector.window_lifecycle.tray_panel_ready", return_value=False), \
+                    patch("packet_inspector.window_lifecycle.tray_panel_host_running", return_value=False):
+                self.assertFalse(callbacks["show_panel"]())
+            with patch("packet_inspector.window_lifecycle.tray_panel_ready", return_value=True), \
+                    patch("packet_inspector.window_lifecycle.request_tray_panel", return_value=True) as signal:
+                self.assertTrue(callbacks["show_panel"]())
+                signal.assert_called_once_with(self.data)
             self.assertIs(callbacks["status_reader"], server.tray_status)
             self.assertTrue(server.desktop_tray)
             return 0
@@ -96,7 +102,7 @@ class LaunchRoutingTests(unittest.TestCase):
             self.assertEqual(launch.main(["--background", "--tray", *self.arguments]), 0)
         request.assert_called_once_with(self.data, callbacks["open"])
         commands = [call.args[0] for call in start.call_args_list]
-        self.assertTrue(any("--tray-panel" in command for command in commands))
+        self.assertFalse(any("--tray-panel" in command for command in commands))
         self.assertTrue(any("--tray-preload" in command for command in commands))
         self.assertTrue(all("--background" not in command for command in commands))
         api.assert_not_called()

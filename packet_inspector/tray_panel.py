@@ -8,15 +8,19 @@ import os
 from pathlib import Path
 import threading
 
-from .tray_popup import popup_interaction_at, show_panel_window
+from .tray_popup import PopupPolicy, popup_interaction_at, show_panel_window
 
 
-def popup_position(anchor, monitor_bounds, size):
+def popup_position(anchor, monitor_bounds, size, policy=None):
     """Keep an edge at the cursor, flipping only to fit on this monitor."""
     left, top, right, bottom = monitor_bounds
     width, height = size
-    x = anchor[0] if anchor[0] + width <= right else anchor[0] - width
-    y = anchor[1] if anchor[1] + height <= bottom else anchor[1] - height
+    policy = policy or PopupPolicy()
+    x = anchor[0] - width if policy.horizontal == "before" or (
+        policy.horizontal == "auto" and anchor[0] + width > right) else anchor[0]
+    y = anchor[1] - height if policy.vertical == "before" or (
+        policy.vertical == "auto" and anchor[1] + height > bottom) else anchor[1]
+    x, y = x + policy.offset_x, y + policy.offset_y
     return max(left, min(x, right - width)), max(top, min(y, bottom - height))
 
 
@@ -41,7 +45,7 @@ def popup_anchor():
     return (point.x, point.y), (bounds.left, bounds.top, bounds.right, bounds.bottom)
 
 
-def place_panel(window, anchor):
+def place_panel(window, anchor, policy=None):
     if os.name != "nt":
         return
     user = ctypes.WinDLL("user32", use_last_error=True)
@@ -50,10 +54,11 @@ def place_panel(window, anchor):
                                   ctypes.c_int, ctypes.c_int, wintypes.UINT]
     handle, rect = int(window.native.Handle.ToInt64()), wintypes.RECT()
     if user.GetWindowRect(handle, ctypes.byref(rect)):
-        x, y = popup_position(*anchor, (rect.right - rect.left, rect.bottom - rect.top))
+        policy = policy or PopupPolicy()
+        x, y = popup_position(*anchor, (rect.right - rect.left, rect.bottom - rect.top), policy)
         # Keep the visible popup above the overflow panel when layout changes.
         # No SHOWWINDOW flag: positioning a preloaded popup must keep it hidden.
-        user.SetWindowPos(handle, -1, x, y, 0, 0, 0x01 | 0x10 | 0x0200)
+        user.SetWindowPos(handle, -1 if policy.topmost else -2, x, y, 0, 0, 0x01 | 0x10 | 0x0200)
 
 
 def resize_panel_window(window, width, height):
@@ -112,6 +117,9 @@ class PanelAPI:
     def panel_state(self):
         return self._panel.panel_state()
 
+    def configure_window(self, options):
+        return self._panel.configure_window(options)
+
     def resize_panel(self, width, height):
         return self._panel.resize_panel(width, height)
 
@@ -128,7 +136,7 @@ class PanelAPI:
 class TrayPanel:
     MIN_WIDTH = 192
 
-    def __init__(self, create_window, ui_url, data_dir, show_main):
+    def __init__(self, create_window, ui_url, data_dir, show_main, *, ready_changed=None):
         self.create_window, self.ui_url = create_window, ui_url
         self.data_dir, self.show_main = Path(data_dir), show_main
         self.window = None
@@ -143,6 +151,8 @@ class TrayPanel:
         self._size = (216, 280)
         self._api = PanelAPI(self)
         self._bridge_ready = False
+        self._ready_changed = ready_changed or (lambda ready: None)
+        self._policy = PopupPolicy()
         self._notification = threading.Event()
         self._notifier = None
         self._interaction = None
@@ -176,6 +186,7 @@ class TrayPanel:
                 window = self.create_window("Codex 请求优化器", self.ui_url + "tray.html", width=self._size[0],
                     height=self._size[1], min_size=(self.MIN_WIDTH, 120), resizable=False, frameless=True, easy_drag=False,
                     hidden=True, on_top=True, shadow=True, text_select=False, background_color="#ffffff", js_api=self._api)
+                window.events.before_load += self._on_loading
                 window.events.loaded += self._on_loaded
                 window.events.closing += self._on_closing
                 window.events.closed += self._on_closed
@@ -196,6 +207,7 @@ class TrayPanel:
 
     def _on_closed(self):
         self._closed.set()
+        self._ready_changed(False)
         self.visible = False
         self._stop_interaction()
         self._notification.set()
@@ -205,6 +217,13 @@ class TrayPanel:
             return True
         self._request_dismiss()
         return False
+
+    def _on_loading(self):
+        # pywebview raises this synchronously on its UI thread. Never wait for
+        # our guard or invoke the UI here: a bridge call may already hold it.
+        self._bridge_ready = False
+        self._loaded.clear()
+        self._ready_changed(False)
 
     def _on_loaded(self):
         if self._closed.is_set():
@@ -217,21 +236,29 @@ class TrayPanel:
                 configure_panel(window, self._deactivate)
                 resize_panel_window(window, *self._size)
                 self._configured = True
-        self._loaded.set()
+            if not self._bridge_ready or self._loaded.is_set():
+                return
+            # Native navigation completion is not page readiness. The page
+            # acknowledges its CSS/fonts, measured layout and bridge first.
+            self._loaded.set()
+            self._ready_changed(True)
         if self.visible:
             self._present()
         else:
             self._notify()
 
     def _present(self):
-        window = self.window
-        if self._closed.is_set() or not self.visible or window is None:
-            return
-        place_panel(window, self._anchor)
-        inactive = self._interaction is not None and self._interaction.preserve_shell_focus
-        show_panel_window(window, inactive=inactive)
-        self._watch_interaction()
-        self._notify()
+        with self._guard:
+            window = self.window
+            if self._closed.is_set() or not self.visible or window is None or not self._loaded.is_set():
+                return
+            policy = self._policy
+            place_panel(window, self._anchor, policy)
+            inactive = not policy.activate or (policy.preserve_overflow_focus and self._interaction is not None
+                                               and self._interaction.preserve_shell_focus)
+            show_panel_window(window, inactive=inactive, topmost=policy.topmost)
+            self._watch_interaction()
+            self._notify()
 
     def _stop_interaction(self):
         if self._interaction_stop:
@@ -248,7 +275,9 @@ class TrayPanel:
         def watch():
             while not stop.wait(.05):
                 try:
-                    dismiss = interaction.should_dismiss(window)
+                    policy = self._policy
+                    dismiss = interaction.should_dismiss(window, outside=policy.dismiss_outside,
+                                                         escape=policy.dismiss_escape, switch=policy.dismiss_switch)
                 except (OSError, ValueError):
                     continue  # A failed observation is not a user dismissal.
                 if dismiss:
@@ -299,6 +328,17 @@ class TrayPanel:
         self._on_loaded()
         return self.panel_state()
 
+    def configure_window(self, options):
+        try:
+            policy = self._policy.updated(options)
+        except ValueError:
+            return False
+        with self._guard:
+            if self._closed.is_set():
+                return False
+            self._policy = policy
+        return True
+
     def panel_state(self):
         return {"visible": self.visible and not self._closed.is_set(), "min_width": self.MIN_WIDTH}
 
@@ -311,8 +351,8 @@ class TrayPanel:
                 return True
             if self.window and self._configured and not self._closed.is_set():
                 resize_panel_window(self.window, *size)
-                if self.visible:
-                    place_panel(self.window, self._anchor)
+                if self.visible and self._loaded.is_set():
+                    place_panel(self.window, self._anchor, self._policy)
             self._size = size
         return True
 
@@ -345,6 +385,7 @@ class TrayPanel:
     def destroy(self):
         already_closed = self._closed.is_set()
         self._closed.set()
+        self._ready_changed(False)
         self.visible = False
         self._stop_interaction()
         self._notification.set()
