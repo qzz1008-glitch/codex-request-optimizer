@@ -10,7 +10,7 @@ import threading
 import unittest
 
 from packet_inspector.desktop import SingleWindow
-from packet_inspector.window_lifecycle import request_window_exit, request_tray_panel, tray_panel_host_running
+from packet_inspector.window_lifecycle import request_window_exit, request_tray_panel, tray_panel_host_running, tray_panel_ready
 
 
 @unittest.skipUnless(os.name == "nt", "Windows named window handles")
@@ -81,6 +81,26 @@ raise SystemExit(desktop.run(sys.argv[2:]))
         self.assertEqual(result.returncode, 0, result.stderr[-1000:])
         self.assertNotEqual(owner.kernel.WaitForSingleObject(owner.panel_event, 0), 0)
         self.assertNotEqual(owner.kernel.WaitForSingleObject(owner.event, 0), 0)
+
+    def test_panel_readiness_is_separate_from_host_existence_and_not_consumed_by_probes(self):
+        self.assertFalse(tray_panel_ready(self.folder))
+        owner = SingleWindow(self.folder)
+        self.addCleanup(owner.close)
+        self.assertTrue(tray_panel_host_running(self.folder))
+        self.assertFalse(tray_panel_ready(self.folder))
+        owner.set_panel_ready(True)
+        duplicate = SingleWindow(self.folder)
+        self.addCleanup(duplicate.close)
+        self.assertTrue(duplicate.existing)
+        for _ in range(2):
+            self.assertTrue(tray_panel_ready(self.folder))
+        self.assertFalse(tray_panel_ready(self.folder / "other"))
+        duplicate.close()
+        owner.set_panel_ready(False)
+        self.assertFalse(tray_panel_ready(self.folder))
+        owner.set_panel_ready(True)
+        owner.close()
+        self.assertFalse(tray_panel_ready(self.folder))
 
     def test_upgrade_exit_signal_targets_only_the_same_profile(self):
         owner = SingleWindow(self.folder)

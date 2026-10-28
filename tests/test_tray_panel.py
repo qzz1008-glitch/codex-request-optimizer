@@ -9,6 +9,7 @@ from unittest.mock import Mock, patch
 
 from packet_inspector.tray import NativeTray, NATIVE_MENU_MESSAGE
 from packet_inspector.tray_panel import PanelAPI, TrayPanel, popup_position, resize_panel_window
+from packet_inspector.tray_popup import PopupPolicy, show_panel_window
 from tests.test_window_lifecycle import Callbacks
 
 
@@ -28,6 +29,22 @@ class NativePanelResizeTests(unittest.TestCase):
         window.native.PerformLayout.assert_called_once()
         window.resize.assert_not_called()
 
+    def test_overflow_popup_updates_managed_visibility_without_explicit_activation(self):
+        user, window = Mock(), Mock()
+        user.GetWindowLongPtrW.return_value = 0
+        window.native.Handle.ToInt64.return_value = 123
+        window.native.InvokeRequired = True
+        window.native.Invoke.side_effect = lambda callback: callback()
+        with patch("packet_inspector.tray_popup.os.name", "nt"), \
+                patch("packet_inspector.tray_popup.ctypes.WinDLL", return_value=user), \
+                patch.dict(sys.modules, {"System": SimpleNamespace(Action=lambda callback: callback)}):
+            show_panel_window(window, inactive=True)
+        user.SetWindowLongPtrW.assert_called_once_with(123, -20, 0x08000000)
+        window.native.Show.assert_called_once()
+        window.native.Activate.assert_not_called()
+        self.assertTrue(window.native.TopMost)
+        user.SetWindowPos.assert_called_once_with(123, -1, 0, 0, 0, 0, 0x01 | 0x02 | 0x10 | 0x40 | 0x0200)
+
 
 class TrayPanelTests(unittest.TestCase):
     def setUp(self):
@@ -35,9 +52,11 @@ class TrayPanelTests(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
         self.window = Mock()
-        self.window.events = SimpleNamespace(loaded=Callbacks(), closing=Callbacks(), closed=Callbacks())
+        self.window.events = SimpleNamespace(before_load=Callbacks(), loaded=Callbacks(), closing=Callbacks(), closed=Callbacks())
         self.factory, self.open_main = Mock(return_value=self.window), Mock()
-        self.panel = TrayPanel(self.factory, "http://127.0.0.1:12345/", self.root, self.open_main)
+        self.readiness = Mock()
+        self.panel = TrayPanel(self.factory, "http://127.0.0.1:12345/", self.root, self.open_main,
+                               ready_changed=self.readiness)
         for name in ("popup_anchor", "place_panel", "configure_panel", "resize_panel_window", "popup_interaction_at", "show_panel_window"):
             patcher = patch("packet_inspector.tray_panel." + name)
             setattr(self, name, patcher.start())
@@ -50,6 +69,7 @@ class TrayPanelTests(unittest.TestCase):
     def load(self):
         self.panel.show()
         self.window.events.loaded[0]()
+        self.panel.panel_ready()
 
     def test_repeated_right_clicks_reuse_one_frameless_window_and_no_service(self):
         self.load()
@@ -67,12 +87,25 @@ class TrayPanelTests(unittest.TestCase):
     def test_preload_stays_hidden_and_is_reused_on_first_click(self):
         self.panel.prepare()
         self.window.events.loaded[0]()
+        self.panel.panel_ready()
         self.assertFalse(self.panel.panel_state()["visible"])
         self.window.show.assert_not_called()
         self.open_main.assert_not_called()
         self.panel.show()
         self.window.show.assert_called_once()
         self.assertEqual(self.factory.call_count, 1)
+
+    def test_navigation_completion_waits_for_page_layout_and_does_not_publish_false_readiness(self):
+        self.panel.show()
+        self.window.events.loaded[0]()
+        self.assertFalse(self.panel._loaded.is_set())
+        self.window.show.assert_not_called()
+        self.readiness.assert_not_called()
+        self.panel.resize_panel(240, 250)
+        self.panel.panel_ready()
+        self.window.show.assert_called_once()
+        self.resize_panel_window.assert_called_with(self.window, 240, 250)
+        self.readiness.assert_called_once_with(True)
 
     def test_native_show_and_hide_do_not_wait_for_a_blocked_page(self):
         entered, release, returned = threading.Event(), threading.Event(), threading.Event()
@@ -83,6 +116,7 @@ class TrayPanelTests(unittest.TestCase):
         self.window.evaluate_js.side_effect = slow_page
         self.panel.prepare()
         self.window.events.loaded[0]()
+        self.panel.panel_ready()
         self.assertTrue(entered.wait(1))
         def click():
             self.panel.show()
@@ -107,12 +141,24 @@ class TrayPanelTests(unittest.TestCase):
 
     def test_hot_page_reload_preserves_visibility_and_does_not_reconfigure_native_hooks(self):
         self.load()
+        self.window.events.before_load[0]()
+        self.assertFalse(self.panel._loaded.is_set())
+        self.readiness.assert_called_with(False)
+        self.window.show.reset_mock()
+        self.window.events.loaded[0]()
+        self.window.show.assert_not_called()
+        self.assertTrue(self.panel.configure_window({"topmost": False, "activate": False, "offset_y": -8}))
         self.panel.panel_ready()
+        self.show_panel_window.assert_called_with(self.window, inactive=True, topmost=False)
+        self.place_panel.assert_called_with(self.window, self.popup_anchor.return_value, self.panel._policy)
+        self.readiness.assert_called_with(True)
         self.assertTrue(self.panel.panel_state()["visible"])
         self.assertEqual(self.configure_panel.call_count, 1)
         self.panel.dismiss()
         self.window.show.reset_mock()
+        self.window.events.before_load[0]()
         self.window.events.loaded[0]()
+        self.panel.panel_ready()
         self.assertFalse(self.panel.panel_state()["visible"])
         self.window.show.assert_not_called()
 
@@ -120,9 +166,11 @@ class TrayPanelTests(unittest.TestCase):
         self.panel.show()
         self.panel.destroy()
         self.window.events.loaded[0]()
+        self.panel.panel_ready()
         self.panel.show()
         self.window.show.assert_not_called()
         self.window.destroy.assert_called_once()
+        self.readiness.assert_called_with(False)
         self.panel.destroy()
         self.window.destroy.assert_called_once()
 
@@ -172,13 +220,25 @@ class TrayPanelTests(unittest.TestCase):
         self.load()
         self.resize_panel_window.reset_mock()
         methods = {name for name in dir(PanelAPI) if not name.startswith("_")}
-        self.assertEqual(methods, {"panel_ready", "panel_state", "resize_panel", "dismiss", "open_main", "exit_app"})
+        self.assertEqual(methods, {"panel_ready", "panel_state", "configure_window", "resize_panel", "dismiss", "open_main", "exit_app"})
         for values in ((True, 200), (400, float("nan")), ("400", 200)):
             self.assertFalse(self.panel.resize_panel(*values))
         self.assertTrue(self.panel.resize_panel(9999, 9999))
         self.resize_panel_window.assert_called_with(self.window, 600, 800)
         self.panel.resize_panel(9999, 9999)
         self.assertEqual(self.resize_panel_window.call_count, 1)
+
+    def test_hot_policy_is_bounded_and_rejected_edits_preserve_the_previous_policy(self):
+        self.assertTrue(self.panel.configure_window({"horizontal": "before", "offset_x": -12, "topmost": False}))
+        previous = self.panel._policy
+        for options in ({"offset_x": 65}, {"offset_y": True}, {"topmost": 1}, {"vertical": "center"},
+                        {"offset_y": float("nan")}, {"command": "anything"}, [], None):
+            with self.subTest(options=options):
+                self.assertFalse(self.panel.configure_window(options))
+                self.assertEqual(self.panel._policy, previous)
+        self.assertEqual(popup_position((500, 400), (0, 0, 1920, 1080), (240, 250), previous), (248, 400))
+        policy = PopupPolicy(horizontal="after", vertical="before", offset_y=-8)
+        self.assertEqual(popup_position((1900, 20), (0, 0, 1920, 1080), (240, 250), policy), (1680, 0))
 
     def test_missing_panel_host_keeps_the_native_menu_as_a_fallback(self):
         tray = NativeTray(Mock(), Mock(), show_panel=Mock(side_effect=OSError("launch failed")))

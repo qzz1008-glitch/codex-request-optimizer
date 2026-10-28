@@ -1,4 +1,7 @@
 :root{color-scheme:light;--tray-width:240px;--tray-text:#29313d;--tray-muted:#687282;font-family:"Segoe UI","Microsoft YaHei UI",sans-serif;font-size:12px;font-weight:400;line-height:18px;color:var(--tray-text);background:#fff}
+/* Validated native popup policy. Offsets are screen pixels (-64..64).
+   Placement: auto / before / after. Switches: 1 / 0. Dev reload applies all. */
+:root{--tray-placement-x:auto;--tray-placement-y:auto;--tray-offset-x:0px;--tray-offset-y:0px;--tray-topmost:1;--tray-activate:1;--tray-preserve-overflow-focus:1;--tray-dismiss-outside:1;--tray-dismiss-escape:1;--tray-dismiss-switch:1}
 *{box-sizing:border-box}
 html,body{margin:0;padding:0;overflow:hidden}
 body{width:max(var(--tray-width),var(--tray-min-width,0px));background:#fff}
