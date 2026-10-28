@@ -259,6 +259,10 @@ function eventRows(){return [
   assert.ok(nodeText(breaks[0]).includes(result.time(Number(breaks[0].dataset.start),true)));
   for(const chart of result.charts){
    assert.equal(chartNodes(chart,'trend-idle-gap').length,0);
+    const folds=chartNodes(chart,'trend-time-fold');assert.equal(folds.length,1);assert.equal(folds[0].dataset.start,breaks[0].dataset.start);assert.equal(folds[0].dataset.end,breaks[0].dataset.end);
+    const shade=chartNodes(chart,'trend-fold-shade')[0],center=Number(shade.attrs.x)+Number(shade.attrs.width)/2;
+    assert.ok(Math.abs(center-(chart.bounds.x(axis.gaps[0].start)+chart.bounds.x(axis.gaps[0].end))/2)<1e-5);
+    assert.ok(Number(shade.attrs.width)>=12);assert.equal(Number(shade.attrs.height),chart.bounds.height-chart.bounds.top-chart.bounds.bottom);
    assert.equal((chartNodes(chart,'trend-curve')[0].attrs.d.match(/M/g)||[]).length,1);
    for(const point of chart.points)assert.equal(point.x,size.bounds.x(point.packet.created));
    for(const grid of chartNodes(chart,'trend-time-grid'))assert.equal(Number(grid.attrs.x1),size.bounds.x(Number(grid.dataset.time)));
