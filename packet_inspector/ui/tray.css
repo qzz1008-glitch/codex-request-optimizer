@@ -20,7 +20,7 @@ dd [data-stat]+span{font-size:11px;font-weight:400;color:var(--tray-muted)}
 .record-totals{display:flex;align-items:baseline;gap:5px}
 .record-totals>span[aria-hidden]{color:#a4acb8;font-size:11px}
 :lang(en) .record-request-unit{display:none}
-button{display:flex;align-items:center;gap:10px;width:100%;min-height:36px;border:0;border-radius:7px;padding:0 12px;background:transparent;color:var(--tray-text);font:inherit;font-size:13px;font-weight:400;line-height:18px;text-align:left;cursor:default}
+button{display:flex;align-items:center;gap:10px;width:100%;min-height:36px;border:0;border-radius:7px;padding:0 12px;background:transparent;color:var(--tray-text);font:inherit;font-size:12px;font-weight:400;line-height:18px;text-align:left;cursor:default}
 button:hover{background:#f2f4f7}
 button:active{background:#e9edf2}
 button:focus-visible{outline:2px solid #738dd3;outline-offset:-2px;background:#f2f4f7}

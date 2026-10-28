@@ -1,4 +1,4 @@
-"""Mouse-opened tray menus that leave Explorer's overflow popup active."""
+"""Tray popup display and dismissal driven by explicit user input."""
 from __future__ import annotations
 
 import ctypes
@@ -22,42 +22,41 @@ def _user32():
     return user
 
 
-class OverflowPopup:
-    def __init__(self, user, owner):
-        self.user, self.owner = user, owner
-        self.foreground = user.GetForegroundWindow()
+class PopupInteraction:
+    def __init__(self, user, *, preserve_shell_focus=False):
+        self.user = user
+        self.preserve_shell_focus = preserve_shell_focus
         self.buttons = self._buttons()
-        self.escape = bool(user.GetAsyncKeyState(0x1B) & 0x8000)
+        self.cancel_key = self._cancel_key()
 
     def _buttons(self):
         return sum(1 << index for index, key in enumerate((0x01, 0x02, 0x04))
                    if self.user.GetAsyncKeyState(key) & 0x8000)
 
+    def _cancel_key(self):
+        def down(key):
+            return bool(self.user.GetAsyncKeyState(key) & 0x8000)
+
+        return (any(down(key) for key in (0x1B, 0x5B, 0x5C))  # Escape or Windows key
+                or down(0x12) and (down(0x09) or down(0x73)))  # Alt+Tab / Alt+F4
+
     def should_dismiss(self, window):
         user = self.user
         handle = int(window.native.Handle.ToInt64())
-        foreground = user.GetForegroundWindow()
-        root = user.GetAncestor(foreground, 2) if foreground else 0
-        # Clicking a menu action can focus WebView before its click handler runs.
-        # Let that action finish rather than hiding it on mouse-down.
-        in_menu = foreground == handle or root == handle
-        if not in_menu and (foreground not in (self.foreground, self.owner)
-                            or not user.IsWindowVisible(self.owner)):
-            return True
-        escape = bool(user.GetAsyncKeyState(0x1B) & 0x8000)
+        cancel_key = self._cancel_key()
         pressed = self._buttons()
         new_press = pressed & ~self.buttons
-        cancel = escape and not self.escape
-        self.buttons, self.escape = pressed, escape
+        cancel = cancel_key and not self.cancel_key
+        self.buttons, self.cancel_key = pressed, cancel_key
         if new_press:
             point, rect = wintypes.POINT(), wintypes.RECT()
             if not user.GetCursorPos(ctypes.byref(point)) or not user.GetWindowRect(handle, ctypes.byref(rect)):
-                return True
+                return bool(cancel)
             cancel |= not (rect.left <= point.x < rect.right and rect.top <= point.y < rect.bottom)
         return bool(cancel)
 
 
-def overflow_popup_at(anchor):
+def popup_interaction_at(anchor):
     if os.name != "nt":
         return None
     user = _user32()
@@ -69,8 +68,10 @@ def overflow_popup_at(anchor):
         name = ctypes.create_unicode_buffer(128)
         if root and user.IsWindowVisible(root) and user.GetClassNameW(root, name, len(name)):
             if name.value in OVERFLOW_CLASSES:
-                return OverflowPopup(user, root)
-    return None
+                return PopupInteraction(user, preserve_shell_focus=True)
+    # Normal tray menus also use explicit cancellation. Losing activation alone
+    # can be caused by WebView reloads or shell updates while the user is idle.
+    return PopupInteraction(user)
 
 
 def show_panel_window(window, inactive=False):
