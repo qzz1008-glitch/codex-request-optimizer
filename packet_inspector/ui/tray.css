@@ -3,7 +3,7 @@
 html,body{margin:0;padding:0;overflow:hidden}
 body{width:max(var(--tray-width),var(--tray-min-width,0px));background:#fff}
 .tray-panel{padding:8px;border:1px solid #e8ebef;border-radius:12px;background:#fff;user-select:none}
-.tray-heading{display:flex;align-items:center;gap:8px;min-height:36px;padding:4px 12px;font-size:12px;font-weight:600;line-height:18px}
+.tray-heading{display:flex;align-items:center;gap:8px;min-height:28px;padding:2px 12px;font-size:12px;font-weight:600;line-height:18px}
 .status-dot{width:7px;height:7px;flex:none;border-radius:50%;background:#a6aeb9}
 .status-dot[data-state=connected]{background:#38966e;box-shadow:0 0 0 3px #38966e10}
 .status-dot[data-state=disconnected]{background:#a6aeb9}
