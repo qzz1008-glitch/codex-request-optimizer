@@ -122,6 +122,8 @@ python -m scripts.verify.verify_self_upgrade_exe --release-dir release/local-bui
 
 升级后的托盘由当前 worker 内的 `WorkerPresentation` 承载。候选版本验证期间保留旧托盘，通过认证的 `desktop_refresh` 控制动作提交新托盘所有权；旧协议 1 入口无需替换。关闭旧入口托盘时核对 PID、隐藏窗口类名和可执行文件路径，只关闭托盘线程。worker 启动及 Explorer 恢复后使用当前 EXE 的图标；托盘打开动作按活动版本记录选择窗口。每次无缝升级均执行 `installation_refresh`，刷新托盘关联资源、开始菜单及本安装的任务栏快捷方式，并保留实际登录启动状态。
 
+托盘通过 `NativeTray.status_reader` 异步读取 `/api/tray-status` 同口径的状态；当前 worker 和直接启动的服务调用 `InspectorServer.tray_status`，旧入口托盘通过固定入口读取。首次启动及打开菜单时刷新，菜单打开期间每秒读取，关闭后不轮询。Win32 线程仅处理缓存快照及菜单文字更新，统计失败显示缺失值，不执行窗口或退出操作。`Store.tray_statistics` 只查询概要元数据，以概要索引 revision 缓存聚合；保护按请求去重，平均上下文只包含成功原生 compact 请求的真实上游输入 Token，缺失或无效用量排除。回收详情不丢失样本，删除请求后同步移出统计，无新增持久化统计文件。
+
 升级完成后保留共享数据库和配置，更新运行版本记录，再保守回收过期版本与下载副本：保护 7 天内的文件、两个回退副本及活动、排空、桌面窗口和其他仍存活的 worker；目录或元信息无法确认归属时跳过清理。只删除白名单程序文件，保留用户扩展内容。回滚时可重启已经正常退役的旧 worker；如果无法回滚，不停止当前活动 worker。
 
 ## 固定分支与工作树流程

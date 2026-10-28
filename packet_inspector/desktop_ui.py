@@ -27,7 +27,7 @@ UI_FILES = {"/": ("index.html", "text/html; charset=utf-8"),
             "/app.js": ("app.js", "text/javascript; charset=utf-8"),
             "/style.css": ("style.css", "text/css; charset=utf-8")}
 POST_PATHS = {"/api/settings", "/api/context-settings", "/api/link"}
-GET_PATHS = {"/api/status", "/api/context-settings", "/api/packet-filters", "/api/packets"}
+GET_PATHS = {"/api/status", "/api/tray-status", "/api/context-settings", "/api/packet-filters", "/api/packets"}
 
 
 def window_geometry(ui_dir=None):

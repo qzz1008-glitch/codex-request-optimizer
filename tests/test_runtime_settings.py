@@ -74,6 +74,16 @@ class RuntimeSettingsTests(unittest.TestCase):
         oldest = self.server.store.list(limit=1, sort="created", direction="asc")
         self.assertEqual(result["storage"]["oldest_created"], oldest[0]["created"] if oldest else None)
 
+    def test_tray_status_returns_aggregate_counters_without_request_payloads(self):
+        statistics = {"recorded_requests": 20, "protected_requests": 3,
+                      "compaction_samples": 2, "average_compact_input_tokens": 200000}
+        with patch.object(self.server, "connection_profile", return_value={"active": True}), \
+                patch.object(self.server.store, "tray_statistics", return_value=statistics):
+            status, result = self.api("/api/tray-status")
+        self.assertEqual(status, 200)
+        self.assertEqual(result, {"connection_state": "connected", "relay_state": "running",
+                                  "language": self.server.settings["ui_language"], **statistics})
+
     def test_trend_projection_keeps_real_usage_and_markers_without_response_payloads(self):
         now = time.time()
         meta = {"thread_id": "trend-api-fixture", "method": "POST", "path": "/responses",

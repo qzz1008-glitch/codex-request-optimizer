@@ -394,6 +394,19 @@ class InspectorServer(ThreadingHTTPServer):
         profile["active"] = bool(matches)
         return profile
 
+    def tray_status(self):
+        try:
+            connection = "connected" if self.connection_profile().get("active") else "disconnected"
+        except Exception:
+            connection = "unknown"
+        try:
+            statistics = self.store.tray_statistics()
+        except (OSError, sqlite3.Error):
+            statistics = {}
+        return {"connection_state": connection,
+                "relay_state": "running" if self.worker_state == "active" and not self.upgrade_draining else "switching",
+                "language": self.settings["ui_language"], **statistics}
+
     def status(self):
         try:
             profile = self.connection_profile()
@@ -584,6 +597,8 @@ class Handler(BaseHTTPRequestHandler):
         one = lambda k, default="": query.get(k, [default])[0]
         if path == "/api/status" and self.command == "GET":
             self._json(200, self.server.status())
+        elif path == "/api/tray-status" and self.command == "GET":
+            self._json(200, self.server.tray_status())
         elif path == "/api/retry-diagnostics" and self.command == "GET":
             self._json(200, {"records": self.server.retry_journal.list(
                 session_id=one("session_id"), packet_id=one("packet_id"), limit=int(one("limit", "50")),

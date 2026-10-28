@@ -18,7 +18,8 @@ class PresentationTests(unittest.TestCase):
         self.config.write_text('model="test"', encoding="utf8")
         self.identity, self.other = "1" * 32, "2" * 32
         self.server = SimpleNamespace(data_dir=self.data, link=SimpleNamespace(config=self.config),
-                                      worker_id=self.identity, worker_state="standby", public_port=47844)
+                                      worker_id=self.identity, worker_state="standby", public_port=47844,
+                                      tray_status=Mock(return_value={}))
         self.factory, self.retire = Mock(), Mock()
         self.tray = self.factory.return_value.start.return_value
         self.tray.thread.is_alive.return_value = True
@@ -62,7 +63,8 @@ class PresentationTests(unittest.TestCase):
         self.worker(self.identity, committed=True)
         self.server.worker_state = "active"
         self.presentation.reconcile()
-        self.factory.assert_called_once()
+        self.factory.assert_called_once_with(self.presentation._open_window, self.presentation._exit,
+                                             status_reader=self.server.tray_status)
         self.retire.assert_called_once()
 
     def test_old_tray_stays_until_the_next_tray_commits_and_survives_rollback(self):

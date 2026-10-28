@@ -2,11 +2,36 @@
 from __future__ import annotations
 
 import ctypes
+import math
 from ctypes import wintypes
 import os
 import threading
 
 from .app_icon import APP_ICON
+
+STATUS_MESSAGE = 0x8002
+
+
+def tray_status_lines(status):
+    """Four read-only menu rows; unknown values stay unknown."""
+    english = status.get("language") == "en"
+    connection = {"connected": "Connected" if english else "已接入",
+                  "disconnected": "Disconnected" if english else "未接入"}.get(
+                      status.get("connection_state"), "Connection unknown" if english else "接入状态未知")
+    relay = {"running": "Relay running" if english else "中转正常",
+             "switching": "Relay switching" if english else "中转切换中"}.get(status.get("relay_state"))
+    header = connection + " · " + relay if relay else "Status unavailable" if english else "状态暂不可用"
+    def count(key):
+        value = status.get(key)
+        return f"{value:,}" if type(value) is int and value >= 0 else "—"
+    average, samples = status.get("average_compact_input_tokens"), status.get("compaction_samples")
+    average = (f"{average:,.0f}" if type(samples) is int and samples > 0
+               and type(average) in (int, float) and math.isfinite(average) and average >= 0 else "—")
+    if english:
+        return (header, "Recorded requests: " + count("recorded_requests"),
+                "Protection triggers: " + count("protected_requests"), "Average context window: " + average + " Token")
+    return (header, "记录请求：" + count("recorded_requests") + " 个",
+            "触发保护：" + count("protected_requests") + " 次", "平均上下文窗口：" + average + " Token")
 
 
 def close_entry_tray(pid, executable):
@@ -48,26 +73,94 @@ def close_entry_tray(pid, executable):
 
 
 class NativeTray:
-    def __init__(self, open_window, exit_app):
+    def __init__(self, open_window, exit_app, *, status_reader=None):
         self.open_window, self.exit_app = open_window, exit_app
+        self.status_reader = status_reader
         self.ready = threading.Event()
         self.error = None
         self.hwnd = None
         self.thread = None
         self.owned_icon = None
+        self.status_thread = None
+        self._status = {}
+        self._status_guard = threading.Lock()
+        self._status_requested = threading.Event()
+        self._stopped = threading.Event()
+        self._menu_open = False
+        self._menu = None
+        self._menu_text = {}
 
     def start(self):
         self.thread = threading.Thread(target=self._run, name="inspector-tray", daemon=True)
         self.thread.start()
         if not self.ready.wait(5) or self.error:
             raise RuntimeError("托盘入口启动失败：" + str(self.error or "timeout"))
+        if self.status_reader is not None:
+            self._status_requested.set()
+            self.status_thread = threading.Thread(target=self._status_loop, name="tray-status", daemon=True)
+            self.status_thread.start()
         return self
 
     def stop(self):
+        self._stopped.set()
+        self._status_requested.set()
         if self.hwnd:
             self.user.PostMessageW(self.hwnd, 0x10, 0, 0)  # WM_CLOSE
         if self.thread and self.thread is not threading.current_thread():
             self.thread.join(timeout=3)
+        if self.status_thread and self.status_thread is not threading.current_thread():
+            self.status_thread.join(timeout=3)
+
+    def update_status(self, status):
+        with self._status_guard:
+            self._status = dict(status)
+        if self.hwnd:
+            self.user.PostMessageW(self.hwnd, STATUS_MESSAGE, 0, 0)
+
+    def _status_loop(self):
+        while not self._stopped.is_set():
+            requested = self._status_requested.wait(1 if self._menu_open else None)
+            self._status_requested.clear()
+            if self._stopped.is_set():
+                break
+            if not requested and not self._menu_open:
+                continue
+            try:
+                status = self.status_reader()
+                if not isinstance(status, dict):
+                    raise ValueError("invalid tray status")
+            except Exception:
+                with self._status_guard:
+                    status = {"language": self._status.get("language")}
+            self.update_status(status)
+
+    def menu_items(self):
+        with self._status_guard:
+            status = dict(self._status)
+        header, recorded, protected, context = tray_status_lines(status)
+        english = status.get("language") == "en"
+        return [(100, header, 0x3), (0, None, 0x800),
+                (101, recorded, 0x3), (102, protected, 0x3), (103, context, 0x3), (0, None, 0x800),
+                (1, "Open main window" if english else "打开主窗口", 0), (0, None, 0x800),
+                (2, "Exit" if english else "退出程序", 0)]
+
+    def _refresh_menu(self):
+        items = self.menu_items()
+        if self._menu:
+            changed = False
+            for identity, text, flags in items:
+                if identity and self._menu_text.get(identity) != text:
+                    self.user.ModifyMenuW(self._menu, identity, flags, identity, text)
+                    self._menu_text[identity] = text
+                    changed = True
+            if changed:
+                self.user.DrawMenuBar(self.hwnd)
+        with self._status_guard:
+            english = self._status.get("language") == "en"
+        tip = ("Codex Request Optimizer" if english else "Codex 请求优化器") + " · " + items[0][1]
+        if self.icon.szTip != tip[:127]:
+            self.icon.szTip = tip[:127]
+            self.shell.Shell_NotifyIconW(1, ctypes.byref(self.icon))
 
     def _run(self):
         try:
@@ -79,7 +172,7 @@ class NativeTray:
     def _message_loop(self):
         user = self.user = ctypes.WinDLL("user32", use_last_error=True)
         kernel = ctypes.WinDLL("kernel32", use_last_error=True)
-        shell = ctypes.WinDLL("shell32", use_last_error=True)
+        shell = self.shell = ctypes.WinDLL("shell32", use_last_error=True)
         result_type = ctypes.c_ssize_t
         callback_type = ctypes.WINFUNCTYPE(result_type, wintypes.HWND, wintypes.UINT,
                                           wintypes.WPARAM, wintypes.LPARAM)
@@ -135,6 +228,8 @@ class NativeTray:
         user.DispatchMessageW.restype = result_type
         user.CreatePopupMenu.restype = wintypes.HMENU
         user.AppendMenuW.argtypes = [wintypes.HMENU, wintypes.UINT, ctypes.c_size_t, wintypes.LPCWSTR]
+        user.ModifyMenuW.argtypes = [wintypes.HMENU, wintypes.UINT, wintypes.UINT, ctypes.c_size_t, wintypes.LPCWSTR]
+        user.DrawMenuBar.argtypes = [wintypes.HWND]
         user.TrackPopupMenu.argtypes = [wintypes.HMENU, wintypes.UINT, ctypes.c_int, ctypes.c_int,
                                        ctypes.c_int, wintypes.HWND, ctypes.c_void_p]
         user.TrackPopupMenu.restype = wintypes.UINT
@@ -160,19 +255,31 @@ class NativeTray:
                     point = wintypes.POINT()
                     user.GetCursorPos(ctypes.byref(point))
                     menu = user.CreatePopupMenu()
-                    user.AppendMenuW(menu, 0x3, 0, "中转服务运行中")
-                    user.AppendMenuW(menu, 0x800, 0, None)
-                    user.AppendMenuW(menu, 0, 1, "打开主窗口")
-                    user.AppendMenuW(menu, 0x800, 0, None)
-                    user.AppendMenuW(menu, 0, 2, "退出程序")
+                    self._menu = menu
+                    self._menu_text = {}
+                    for identity, text, flags in self.menu_items():
+                        user.AppendMenuW(menu, flags, identity, text)
+                        if identity:
+                            self._menu_text[identity] = text
                     user.SetForegroundWindow(hwnd)
-                    selection = user.TrackPopupMenu(menu, 0x102, point.x, point.y, 0, hwnd, None)
-                    user.DestroyMenu(menu)
+                    self._menu_open = True
+                    if self.status_reader is not None:
+                        self._status_requested.set()
+                    try:
+                        selection = user.TrackPopupMenu(menu, 0x102, point.x, point.y, 0, hwnd, None)
+                    finally:
+                        self._menu_open = False
+                        self._menu = None
+                        self._menu_text = {}
+                        user.DestroyMenu(menu)
                     user.PostMessageW(hwnd, 0, 0, 0)
                     if selection == 1:
                         invoke(self.open_window)
                     elif selection == 2:
                         invoke(self.exit_app)
+                return 0
+            if message == STATUS_MESSAGE:
+                self._refresh_menu()
                 return 0
             if message == taskbar_created:
                 shell.Shell_NotifyIconW(0, ctypes.byref(self.icon))
@@ -181,6 +288,8 @@ class NativeTray:
                 user.DestroyWindow(hwnd)
                 return 0
             if message == 2:  # WM_DESTROY
+                self._stopped.set()
+                self._status_requested.set()
                 shell.Shell_NotifyIconW(2, ctypes.byref(self.icon))
                 if self.owned_icon:
                     user.DestroyIcon(self.owned_icon)

@@ -52,6 +52,8 @@ class Store:
         self.capture_owner = capture_owner
         self.timeout = timeout
         self.lock = threading.RLock()
+        self._tray_lock = threading.Lock()
+        self._tray_cache = None
         self.reclaimer = SQLiteReclaimer(self.path, self.lock)
         with self.connect() as c:
             c.execute("PRAGMA journal_mode=WAL")
@@ -355,6 +357,35 @@ class Store:
                 "detail_count": detail_count,
                 "max_detail_count": max(0, min(self.max_count, self.max_count if self.max_detail_count is None else self.max_detail_count)),
                 "threads": [dict(r) for r in threads]}
+
+    def tray_statistics(self):
+        """Aggregate retained metadata, never reading bodies or reported token overrides."""
+        with self._tray_lock, self.connect() as c:
+            c.execute("BEGIN")
+            revision = c.execute("SELECT revision FROM packet_index_state WHERE singleton=1").fetchone()[0]
+            if self._tray_cache is not None and self._tray_cache[0] == revision:
+                return dict(self._tray_cache[1])
+            usage_valid = " AND ".join(
+                f"json_type(meta,'$.upstream_usage.{key}')='integer' AND json_extract(meta,'$.upstream_usage.{key}')>=0"
+                for key in ("input_tokens", "output_tokens", "total_tokens"))
+            row = c.execute(f"""WITH counters AS (
+                SELECT CASE WHEN json_type(meta,'$.usage_override_applied')='true'
+                    OR (json_type(meta,'$.overflow_compaction_calls')='integer' AND json_extract(meta,'$.overflow_compaction_calls')>0)
+                    OR json_type(meta,'$.overflow_cache_hit')='true'
+                    OR substr(json_extract(meta,'$.relay_error'),1,9)='overflow_'
+                    OR json_type(meta,'$.native_retry_advised')='true'
+                    OR (json_type(meta,'$.capacity_retry_count')='integer' AND json_extract(meta,'$.capacity_retry_count')>0)
+                    THEN 1 ELSE 0 END AS protected,
+                CASE WHEN kind='compaction' AND method='POST' AND status=200
+                    AND state IN ('streaming','complete') AND {usage_valid}
+                    THEN json_extract(meta,'$.upstream_usage.input_tokens') END AS compact_tokens
+                FROM packet_summaries)
+                SELECT count(*) AS recorded_requests,coalesce(sum(protected),0) AS protected_requests,
+                    count(compact_tokens) AS compaction_samples,avg(compact_tokens) AS average_compact_input_tokens
+                FROM counters""").fetchone()
+            result = dict(row)
+            self._tray_cache = revision, result
+            return dict(result)
 
     def compare(self, packet_id):
         current, _ = self.get(packet_id)

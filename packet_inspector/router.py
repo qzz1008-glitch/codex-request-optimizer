@@ -589,7 +589,8 @@ def main(argv=None):
                 except (OSError, ValueError):
                     import ctypes
                     ctypes.windll.user32.MessageBoxW(0, "无法打开退出确认，中转服务继续运行。请稍后重试。", "Codex 请求优化器", 0x40)
-            tray = NativeTray(open_window, exit_app).start()
+            tray = NativeTray(open_window, exit_app,
+                              status_reader=lambda: local_json(server.port, "/api/tray-status", timeout=2)).start()
         server.serve_forever(poll_interval=.1)
     finally:
         if tray:

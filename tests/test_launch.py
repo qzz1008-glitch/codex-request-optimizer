@@ -3,7 +3,7 @@ from pathlib import Path
 import tempfile
 from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from packet_inspector import launch
 
@@ -74,14 +74,15 @@ class LaunchRoutingTests(unittest.TestCase):
         callbacks = {}
         tray = SimpleNamespace(start=lambda: tray, stop=lambda: None)
 
-        def native_tray(open_window, exit_app):
-            callbacks.update(open=open_window, exit=exit_app)
+        def native_tray(open_window, exit_app, *, status_reader=None):
+            callbacks.update(open=open_window, exit=exit_app, status_reader=status_reader)
             return tray
 
         def service(arguments, on_started):
-            server = SimpleNamespace(port=47844)
+            server = SimpleNamespace(port=47844, tray_status=Mock(return_value={}))
             on_started(server)
             callbacks["exit"]()
+            self.assertIs(callbacks["status_reader"], server.tray_status)
             self.assertTrue(server.desktop_tray)
             return 0
 
