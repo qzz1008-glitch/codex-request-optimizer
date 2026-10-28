@@ -1,6 +1,6 @@
 "use strict";
 (() => {
-  let visible=false,timer=null,controller=null,sequence=0,busy=false;
+  let visible=false,timer=null,controller=null,sequence=0,busy=false,stateSync=0;
   const buttons=[document.getElementById("tray-open"),document.getElementById("tray-exit")];
   const api=()=>window.pywebview?.api;
   const setText=(node,text)=>{if(node.textContent!==text)node.textContent=text;};
@@ -17,6 +17,13 @@
         :Number.isSafeInteger(value)&&value>=0;
       setText(node,known?numbers.format(value):"—");
     }
+    const range=document.getElementById("tray-record-range"),first=status.first_recorded_at,last=status.last_recorded_at;
+    if(Number.isFinite(first)&&Number.isFinite(last)&&first>=0&&last>=first&&last<=8.64e12) {
+      const start=new Date(first*1000),end=new Date(last*1000),pad=value=>String(value).padStart(2,"0");
+      const short=date=>pad(date.getMonth()+1)+"/"+pad(date.getDate())+" "+pad(date.getHours())+":"+pad(date.getMinutes());
+      setText(range,short(start)+(first===last?"":" – "+short(end)));
+      range.title=t("记录时间范围")+": "+start.toLocaleString()+" – "+end.toLocaleString();
+    } else {setText(range,"—");range.title=t("记录时间范围");}
     measure();
   }
   function measure() {
@@ -34,7 +41,11 @@
     } catch(_) {if(visible&&request===sequence)render({language:uiI18n.language});}
     finally {clearTimeout(timeout);if(request===sequence){controller=null;if(visible&&!document.hidden)timer=setTimeout(refresh,1000);}}
   }
-  function setVisible(value) {cancel();visible=!!value;if(visible)refresh();}
+  function setVisible(value) {cancel();visible=!!value;if(visible)timer=setTimeout(refresh,0);}
+  async function sync() {
+    const request=++stateSync;
+    try {const state=await api().panel_state();if(request===stateSync)setVisible(state.visible);} catch(_) {}
+  }
   async function action(name) {
     if(busy||!api()?.[name])return;
     busy=true;for(const button of buttons)button.disabled=true;
@@ -54,7 +65,7 @@
   document.addEventListener("contextmenu",event=>event.preventDefault());
   document.addEventListener("visibilitychange",()=>{cancel();if(visible&&!document.hidden)refresh();});
   window.addEventListener("beforeunload",cancel);
-  window.addEventListener("pywebviewready",async()=>{measure();try{setVisible((await api().panel_ready()).visible);}catch(_) {}});
+  window.addEventListener("pywebviewready",async()=>{measure();try{await api().panel_ready();sync();}catch(_) {}});
   if(typeof ResizeObserver!=="undefined")new ResizeObserver(measure).observe(document.body);
-  window.trayPanel={setVisible,render};
+  window.trayPanel={setVisible,render,sync};
 })();

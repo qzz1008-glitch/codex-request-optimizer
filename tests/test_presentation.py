@@ -25,6 +25,9 @@ class PresentationTests(unittest.TestCase):
         self.tray.thread.is_alive.return_value = True
         self.presentation = WorkerPresentation(self.server, enabled=True, tray_factory=self.factory, retire_entry=self.retire)
         self.addCleanup(self.presentation.stop)
+        preload = patch.object(self.presentation, "_preload_panel")
+        self.preload = preload.start()
+        self.addCleanup(preload.stop)
         atomic_json(self.data / "runtime.json", {"pid": 98765})
         self.worker(self.identity)
         self.worker(self.other)
@@ -125,6 +128,32 @@ class PresentationTests(unittest.TestCase):
                 patch("packet_inspector.presentation.subprocess.Popen") as launch:
             self.presentation._show_panel()
         signal.assert_called_once_with(self.data)
+        launch.assert_not_called()
+
+    def test_committed_tray_warms_the_host_once_and_never_during_validation(self):
+        import threading
+        warmed = threading.Event()
+        self.preload.side_effect = warmed.set
+        self.presentation.reconcile()
+        self.preload.assert_not_called()
+        self.server.worker_state = "active"
+        self.presentation.commit()
+        self.assertTrue(warmed.wait(1))
+        self.presentation.reconcile()
+        self.preload.assert_called_once()
+
+    def test_warmup_starts_a_hidden_current_version_and_reuses_an_existing_host(self):
+        self.active(self.other)
+        target = self.worker(self.other)
+        with patch("packet_inspector.window_lifecycle.tray_panel_host_running", return_value=False), \
+                patch("packet_inspector.presentation.subprocess.Popen") as launch:
+            WorkerPresentation._preload_panel(self.presentation)
+        self.assertEqual(launch.call_args.args[0][0], str(target.resolve()))
+        self.assertIn("--tray-preload", launch.call_args.args[0])
+        self.assertNotIn("--tray-panel", launch.call_args.args[0])
+        with patch("packet_inspector.window_lifecycle.tray_panel_host_running", return_value=True), \
+                patch("packet_inspector.presentation.subprocess.Popen") as launch:
+            WorkerPresentation._preload_panel(self.presentation)
         launch.assert_not_called()
 
     def test_foreign_executable_and_profile_cannot_be_launched_or_retired(self):

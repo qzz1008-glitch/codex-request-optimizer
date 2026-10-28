@@ -369,7 +369,7 @@ class Store:
                 f"json_type(meta,'$.upstream_usage.{key}')='integer' AND json_extract(meta,'$.upstream_usage.{key}')>=0"
                 for key in ("input_tokens", "output_tokens", "total_tokens"))
             row = c.execute(f"""WITH counters AS (
-                SELECT CASE WHEN json_type(meta,'$.usage_override_applied')='true'
+                SELECT thread,created,CASE WHEN json_type(meta,'$.usage_override_applied')='true'
                     OR (json_type(meta,'$.overflow_compaction_calls')='integer' AND json_extract(meta,'$.overflow_compaction_calls')>0)
                     OR json_type(meta,'$.overflow_cache_hit')='true'
                     OR substr(json_extract(meta,'$.relay_error'),1,9)='overflow_'
@@ -381,6 +381,8 @@ class Store:
                     THEN json_extract(meta,'$.upstream_usage.input_tokens') END AS compact_tokens
                 FROM packet_summaries)
                 SELECT count(*) AS recorded_requests,coalesce(sum(protected),0) AS protected_requests,
+                    count(DISTINCT nullif(trim(thread),'')) AS recorded_sessions,
+                    min(created) AS first_recorded_at,max(created) AS last_recorded_at,
                     count(compact_tokens) AS compaction_samples,avg(compact_tokens) AS average_compact_input_tokens
                 FROM counters""").fetchone()
             result = dict(row)

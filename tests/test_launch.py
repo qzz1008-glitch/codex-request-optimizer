@@ -95,8 +95,10 @@ class LaunchRoutingTests(unittest.TestCase):
                 patch("packet_inspector.desktop.local_api") as api:
             self.assertEqual(launch.main(["--background", "--tray", *self.arguments]), 0)
         request.assert_called_once_with(self.data, callbacks["open"])
-        self.assertIn("--tray-panel", start.call_args.args[0])
-        self.assertNotIn("--background", start.call_args.args[0])
+        commands = [call.args[0] for call in start.call_args_list]
+        self.assertTrue(any("--tray-panel" in command for command in commands))
+        self.assertTrue(any("--tray-preload" in command for command in commands))
+        self.assertTrue(all("--background" not in command for command in commands))
         api.assert_not_called()
 
 

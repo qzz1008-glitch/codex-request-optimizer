@@ -158,6 +158,7 @@ def run(arguments):
     parser.add_argument("--desktop-check", type=Path, help="isolated packaged UI verification report")
     parser.add_argument("--desktop-check-ui", type=Path, help=argparse.SUPPRESS)
     parser.add_argument("--tray-panel", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--tray-preload", action="store_true", help=argparse.SUPPRESS)
     options = parser.parse_args(arguments)
     profile = load_profile()
     ui_dir = profile.ui_dir
@@ -175,7 +176,10 @@ def run(arguments):
     ui = None
     try:
         if instance.existing:
-            instance.signal_panel() if options.tray_panel else instance.signal()
+            if options.tray_panel:
+                instance.signal_panel()
+            elif not options.tray_preload:
+                instance.signal()
             return 0
         profile = resolve_profile(profile, options.data_dir)
         if not options.desktop_check_ui:
@@ -192,10 +196,10 @@ def run(arguments):
         # Explicitly require Chromium. Do not fall back to an external browser or IE.
         title = "Codex 请求优化器 · 开发版" if profile.development else "Codex 请求优化器"
         chrome = WindowChrome()
-        main_loaded = not options.tray_panel
+        main_loaded = not (options.tray_panel or options.tray_preload)
         window = webview.create_window(title, ui.ui_url if main_loaded else "about:blank",
                                        **window_geometry(ui_dir), maximized=False,
-                                       js_api=chrome, text_select=True, background_color="#f5f7fb", hidden=bool(options.desktop_check or options.tray_panel))
+                                       js_api=chrome, text_select=True, background_color="#f5f7fb", hidden=bool(options.desktop_check or not main_loaded))
         chrome._bind(window)
         loaded = threading.Event()
         lifecycle = WindowLifecycle(window, lambda: tray_available(options.data_dir, status))
@@ -220,6 +224,8 @@ def run(arguments):
             threading.Thread(target=instance.watch, args=(show, lifecycle.exit, panel.show), daemon=True).start()
             if options.tray_panel:
                 panel.show()
+            else:
+                panel.prepare()
             if not lifecycle.wait_loaded(loaded):
                 if options.desktop_check and not lifecycle.exiting.is_set() and not lifecycle.closed.is_set():
                     options.desktop_check.write_text(json.dumps({"passed": False, "error": "page_load_timeout"}), encoding="utf-8")

@@ -46,8 +46,9 @@ class TrayStatisticsTests(unittest.TestCase):
         with patch.object(self.store, "get", side_effect=AssertionError("loaded request body")), \
                 patch("packet_inspector.storage.json.loads", side_effect=AssertionError("decoded metadata")):
             result = self.store.tray_statistics()
-        self.assertEqual(result, {"recorded_requests": 12, "protected_requests": 5,
-                                  "compaction_samples": 2, "average_compact_input_tokens": 300000})
+        expected = {"recorded_requests": 12, "protected_requests": 5,
+                    "compaction_samples": 2, "average_compact_input_tokens": 300000}
+        self.assertEqual({key: result[key] for key in expected}, expected)
         reopened = Store(self.root, max_count=100, max_detail_count=0)
         self.assertEqual(reopened.tray_statistics(), result)
 
@@ -73,7 +74,20 @@ class TrayStatisticsTests(unittest.TestCase):
         self.assertEqual(self.store.tray_statistics()["average_compact_input_tokens"], 200000)
         self.store.configure_limits(1, 1, 0)
         self.assertEqual(self.store.tray_statistics(), {"recorded_requests": 0, "protected_requests": 0,
+                                                       "recorded_sessions": 0, "first_recorded_at": None, "last_recorded_at": None,
                                                        "compaction_samples": 0, "average_compact_input_tokens": None})
+
+    def test_record_scope_uses_retained_times_and_distinct_nonempty_session_ids(self):
+        for timestamp, thread in ((1000, "one"), (2000, "two"), (3000, "one"), (4000, ""), (5000, " ")):
+            with patch("packet_inspector.storage.time.time", return_value=timestamp):
+                self.record(thread_id=thread)
+        result = self.store.tray_statistics()
+        self.assertEqual((result["recorded_requests"], result["recorded_sessions"], result["first_recorded_at"], result["last_recorded_at"]),
+                         (5, 2, 1000, 5000))
+        self.store.configure_limits(1_000_000, 2, 0)
+        result = self.store.tray_statistics()
+        self.assertEqual((result["recorded_requests"], result["recorded_sessions"], result["first_recorded_at"], result["last_recorded_at"]),
+                         (2, 0, 4000, 5000))
 
     def test_missing_malformed_and_non_compact_usage_never_becomes_a_zero_sample(self):
         for value in ({"input_tokens": 500000}, usage(-1), {**usage(123), "input_tokens": 123.5}):

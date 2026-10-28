@@ -3,6 +3,7 @@ import ctypes
 import json
 from pathlib import Path
 import sys
+import threading
 
 from packet_inspector.server import main as service_main, default_data_dir, argument_parser
 
@@ -24,7 +25,7 @@ def main(argv=None):
     provided = [arg for arg in provided if arg not in {"--upgrade", "--quiet"}]
     background, use_tray = "--background" in provided, "--tray" in provided
     arguments = [arg for arg in provided if arg not in {"--background", "--tray"}]
-    tray = None
+    tray, preload = None, None
     try:
         if upgrade_requested:
             from packet_inspector.upgrade import run_integrated
@@ -42,7 +43,7 @@ def main(argv=None):
             return run(arguments)
 
         def started(server):
-            nonlocal tray
+            nonlocal tray, preload
             from packet_inspector.desktop import service_arguments, start_process
             from packet_inspector.exit_flow import request_exit
             from packet_inspector.server import argument_parser
@@ -66,6 +67,15 @@ def main(argv=None):
             tray = NativeTray(open_window, exit_app, status_reader=server.tray_status,
                               show_panel=show_panel).start()
             server.desktop_tray = True
+            def prepare_panel():
+                from packet_inspector.window_lifecycle import tray_panel_host_running
+                try:
+                    if not tray_panel_host_running(options.data_dir):
+                        start_process(["--tray-preload"] + service_arguments(options))
+                except OSError:
+                    pass
+            preload = threading.Thread(target=prepare_panel, name="tray-panel-warmup", daemon=True)
+            preload.start()
 
         return service_main(arguments, on_started=started if use_tray else None)
     except Exception as exc:
@@ -80,6 +90,8 @@ def main(argv=None):
                                            "Codex 请求优化器", 0x10)
         return 1
     finally:
+        if preload:
+            preload.join(timeout=2)
         if tray:
             tray.stop()
 

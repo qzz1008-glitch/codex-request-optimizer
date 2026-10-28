@@ -30,7 +30,12 @@ def request_tray_panel(data_dir):
     return _signal_window(data_dir, "-tray-panel")
 
 
-def _signal_window(data_dir, suffix):
+def tray_panel_host_running(data_dir):
+    """Check for the desktop host without showing either of its windows."""
+    return _signal_window(data_dir, "-tray-panel", notify=False)
+
+
+def _signal_window(data_dir, suffix, *, notify=True):
     if os.name != "nt":
         return False
     kernel = ctypes.WinDLL("kernel32", use_last_error=True)
@@ -42,7 +47,7 @@ def _signal_window(data_dir, suffix):
     if not handle:
         return False
     try:
-        return bool(kernel.SetEvent(handle))
+        return bool(kernel.SetEvent(handle)) if notify else True
     finally:
         kernel.CloseHandle(handle)
 

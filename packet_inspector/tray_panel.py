@@ -130,9 +130,11 @@ class TrayPanel:
         self._creating = False
         self._configured = False
         self._anchor = None
-        self._size = (344, 270)
+        self._size = (288, 280)
         self._api = PanelAPI(self)
         self._bridge_ready = False
+        self._notification = threading.Event()
+        self._notifier = None
 
     def show(self):
         anchor = popup_anchor()
@@ -140,6 +142,15 @@ class TrayPanel:
             if self._closed.is_set():
                 return
             self._anchor, self.visible = anchor, True
+        self.prepare()
+        if self._loaded.is_set():
+            self._present()
+
+    def prepare(self):
+        """Load the small menu during startup, without showing it or reading statistics."""
+        with self._guard:
+            if self._closed.is_set():
+                return
             create = self.window is None and not self._creating
             if create:
                 self._creating = True
@@ -159,16 +170,17 @@ class TrayPanel:
                     self._on_loaded()
             except Exception as exc:
                 with self._guard:
+                    show_fallback = self.visible
                     self._creating, self.visible = False, False
                     self.error = type(exc).__name__
-                self.show_main()
+                if show_fallback:
+                    self.show_main()
                 return
-        if self._loaded.is_set():
-            self._present()
 
     def _on_closed(self):
         self._closed.set()
         self.visible = False
+        self._notification.set()
 
     def _on_closing(self):
         if self._closed.is_set():
@@ -191,7 +203,7 @@ class TrayPanel:
         if self.visible:
             self._present()
         else:
-            self._notify(False)
+            self._notify()
 
     def _present(self):
         window = self.window
@@ -199,13 +211,27 @@ class TrayPanel:
             return
         place_panel(window, self._anchor)
         window.show()
-        self._notify(True)
+        self._notify()
 
-    def _notify(self, visible):
-        try:
-            self.window.evaluate_js("window.trayPanel && window.trayPanel.setVisible(" + ("true" if visible else "false") + "); true")
-        except Exception:
-            pass  # The next loaded/bridge event restores state after a resource reload.
+    def _notify(self):
+        with self._guard:
+            if self._notifier is None and not self._closed.is_set():
+                self._notifier = threading.Thread(target=self._notification_loop, name="tray-panel-state", daemon=True)
+                self._notifier.start()
+        self._notification.set()
+
+    def _notification_loop(self):
+        while True:
+            self._notification.wait()
+            self._notification.clear()
+            if self._closed.is_set():
+                return
+            try:
+                # The page asks for the current state, so a late notification
+                # cannot restore visibility from before a newer dismiss/show.
+                self.window.evaluate_js("window.trayPanel && window.trayPanel.sync(); true")
+            except Exception:
+                pass  # A loaded/bridge event retries after a resource reload.
 
     def _deactivate(self, *_):
         if self.visible:
@@ -236,8 +262,8 @@ class TrayPanel:
     def dismiss(self):
         self.visible = False
         if self.window and not self._closed.is_set():
-            self._notify(False)
             self.window.hide()
+            self._notify()
 
     def open_main(self):
         self.dismiss()
@@ -259,5 +285,6 @@ class TrayPanel:
         already_closed = self._closed.is_set()
         self._closed.set()
         self.visible = False
+        self._notification.set()
         if self.window and not already_closed:
             self.window.destroy()
