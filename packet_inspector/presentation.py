@@ -21,6 +21,7 @@ class WorkerPresentation:
         self.thread = None
         self.tray = None
         self.error = ""
+        self._preload_started = False
 
     def start(self):
         self.thread = threading.Thread(target=self._monitor, name="worker-presentation", daemon=True)
@@ -41,7 +42,15 @@ class WorkerPresentation:
         if not request_tray_panel(self.server.data_dir):
             self._launch_window(panel=True)
 
-    def _launch_window(self, *, panel=False):
+    def _preload_panel(self):
+        from .window_lifecycle import tray_panel_host_running
+        try:
+            if not self.stop_event.is_set() and not tray_panel_host_running(self.server.data_dir):
+                self._launch_window(preload=True)
+        except (OSError, ValueError, KeyError):
+            pass  # A failed warmup must not affect the relay or tray actions.
+
+    def _launch_window(self, *, panel=False, preload=False):
         state = self._state()
         worker = worker_info(self.server.data_dir, state["active"])
         executable = Path(worker["executable"]).resolve()
@@ -51,6 +60,8 @@ class WorkerPresentation:
                      "--config", str(self.server.link.config)]
         if panel:
             arguments.append("--tray-panel")
+        elif preload:
+            arguments.append("--tray-preload")
         subprocess.Popen(arguments,
                          env={**os.environ, "PYINSTALLER_RESET_ENVIRONMENT": "1"},
                          creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
@@ -122,6 +133,9 @@ class WorkerPresentation:
                 if active == self.server.worker_id and self.server.worker_state == "active":
                     self._ensure_tray()
                     self._retire_entry_tray()
+                    if not self._preload_started:
+                        self._preload_started = True
+                        threading.Thread(target=self._preload_panel, name="tray-panel-warmup", daemon=True).start()
                 elif active != self.server.worker_id:
                     self._stop_tray()
                 self.error = ""

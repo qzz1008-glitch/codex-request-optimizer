@@ -18,7 +18,7 @@ Browse requests by session to understand what was sent, how much space it used, 
 - Analyze the size of messages, tool outputs, reasoning, and other components, and compare successive requests in a session.
 - Browse structured request JSON, search it, navigate to a path, and download a redacted copy.
 - Select and copy text, with valid selections preserved across live refreshes and sorting.
-- Right-click the tray icon to open a white panel showing connection status, retained request count, requests that triggered protection, and average input tokens before compaction; statistics follow retained records.
+- Right-click the tray icon to open a white panel showing connection status, retained request count / time range / session count, requests that triggered protection, and average input tokens before compaction; statistics follow retained records.
 
 ### 📈 Trends and historical browsing
 

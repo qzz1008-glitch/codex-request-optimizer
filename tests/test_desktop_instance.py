@@ -10,7 +10,7 @@ import threading
 import unittest
 
 from packet_inspector.desktop import SingleWindow
-from packet_inspector.window_lifecycle import request_window_exit, request_tray_panel
+from packet_inspector.window_lifecycle import request_window_exit, request_tray_panel, tray_panel_host_running
 
 
 @unittest.skipUnless(os.name == "nt", "Windows named window handles")
@@ -67,6 +67,19 @@ raise SystemExit(desktop.run(sys.argv[2:]))
                                 cwd=Path(__file__).resolve().parents[1], capture_output=True, text=True, timeout=10)
         self.assertEqual(result.returncode, 0, result.stderr[-1000:])
         self.assertEqual(owner.kernel.WaitForSingleObject(owner.panel_event, 1000), 0)
+        self.assertNotEqual(owner.kernel.WaitForSingleObject(owner.event, 0), 0)
+
+    def test_preload_reuses_the_existing_host_without_opening_either_window(self):
+        self.assertFalse(tray_panel_host_running(self.folder))
+        owner = SingleWindow(self.folder)
+        self.addCleanup(owner.close)
+        self.assertTrue(tray_panel_host_running(self.folder))
+        script = "from packet_inspector.desktop import run; import sys; raise SystemExit(run(sys.argv[1:]))"
+        result = subprocess.run([sys.executable, "-c", script, "--tray-preload", "--data-dir", str(self.folder),
+                                 "--config", str(self.folder / "config.toml")],
+                                cwd=Path(__file__).resolve().parents[1], capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr[-1000:])
+        self.assertNotEqual(owner.kernel.WaitForSingleObject(owner.panel_event, 0), 0)
         self.assertNotEqual(owner.kernel.WaitForSingleObject(owner.event, 0), 0)
 
     def test_upgrade_exit_signal_targets_only_the_same_profile(self):

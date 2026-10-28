@@ -24,6 +24,8 @@ class StatusHandler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         self.server.requests.append(self.path)
+        self.server.started.set()
+        self.server.release.wait(10)
         raw = json.dumps(self.server.snapshot).encode()
         self.send_response(200 if self.path == "/api/tray-status" else 404)
         self.send_header("Content-Type", "application/json")
@@ -71,8 +73,11 @@ def run():
         backend = ThreadingHTTPServer(("127.0.0.1", 0), StatusHandler)
         backend.daemon_threads = True
         backend.requests = []
+        backend.started, backend.release = threading.Event(), threading.Event()
+        backend.release.set()
         backend.snapshot = {"connection_state": "connected", "relay_state": "running", "language": "zh",
                             "recorded_requests": 5000, "protected_requests": 34,
+                            "recorded_sessions": 12, "first_recorded_at": time.time()-3600, "last_recorded_at": time.time(),
                             "average_compact_input_tokens": 254080.5, "compaction_samples": 31}
         threading.Thread(target=backend.serve_forever, kwargs={"poll_interval": .05}, daemon=True).start()
         ui = DesktopUI(backend.server_port, ui_dir=root, live_reload=True).start()
@@ -86,7 +91,7 @@ def run():
 
         def check():
             try:
-                panel.show()
+                panel.prepare()
                 assert panel._loaded.wait(25), "panel did not load"
                 evaluate = panel.window.evaluate_js
                 wait_until(lambda: evaluate("!!window.trayPanel && !!window.pywebview?.api?.panel_ready"))
@@ -95,7 +100,7 @@ def run():
                 style = evaluate("({background:getComputedStyle(document.body).backgroundColor,"
                                  "width:document.body.getBoundingClientRect().width,"
                                  "overflow:document.body.scrollWidth>document.body.getBoundingClientRect().width,buttons:document.querySelectorAll('button').length})")
-                assert style == {"background": "rgb(255, 255, 255)", "width": 344, "overflow": False, "buttons": 2}, style
+                assert style == {"background": "rgb(255, 255, 255)", "width": 288, "overflow": False, "buttons": 2}, style
                 height = panel._size[1]
                 evaluate("const error=document.getElementById('tray-error');error.textContent='Test message';error.hidden=false;window.trayPanel.render({});true")
                 result["stage"] = "growing content"
@@ -105,13 +110,25 @@ def run():
                 result["stage"] = "shrinking content"
                 wait_until(lambda: panel._size[1] == height and sized_for_content(panel))
                 assert not is_visible(panel.window), "check must keep the popup hidden"
+                assert backend.requests == [], "startup warmup queried statistics"
+                backend.release.clear()
+                panel.visible = True
+                panel._anchor = (1900, 1040), (0, 0, 1920, 1040)
                 evaluate("Object.defineProperty(document,'hidden',{configurable:true,get:()=>false});window.trayPanel.setVisible(true);true")
+                assert backend.started.wait(3), "status request did not start"
+                assert evaluate("document.querySelector('[data-stat=recorded_requests]').textContent") == "—"
+                evaluate("document.dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowDown'}));true")
+                assert evaluate("document.activeElement.id") == "tray-open", "menu was not interactive during slow statistics"
+                backend.release.set()
                 wait_until(lambda: evaluate("document.querySelector('[data-stat=recorded_requests]').textContent==='5,000'"))
                 assert evaluate("document.querySelector('[data-stat=average_compact_input_tokens]').textContent") == "254,081"
+                assert evaluate("document.querySelector('[data-stat=recorded_sessions]').textContent") == "12"
+                assert " – " in evaluate("document.getElementById('tray-record-range').textContent")
                 backend.snapshot = {**backend.snapshot, "language": "en", "recorded_requests": 5001}
                 wait_until(lambda: evaluate("document.documentElement.lang==='en'&&document.querySelector('[data-stat=recorded_requests]').textContent==='5,001'"))
                 assert evaluate("document.getElementById('tray-open').textContent.trim()") == "Open main window"
                 assert not evaluate("document.body.scrollWidth>document.body.getBoundingClientRect().width"), "English menu overflows"
+                panel.visible = False
                 evaluate("window.trayPanel.setVisible(false);true")
                 time.sleep(.2)
                 requests = len(backend.requests)
@@ -119,8 +136,8 @@ def run():
                 assert len(backend.requests) == requests, "hidden popup kept polling statistics"
                 original = ui_build_id(root)
                 with (root / "tray.css").open("a", encoding="utf8") as stylesheet:
-                    stylesheet.write("\n:root{--tray-width:360px}\n")
-                wait_until(lambda: evaluate("document.body.getBoundingClientRect().width===360"))
+                    stylesheet.write("\n:root{--tray-width:304px}\n")
+                wait_until(lambda: evaluate("document.body.getBoundingClientRect().width===304"))
                 wait_until(lambda: sized_for_content(panel))
                 assert ui_build_id(root) == original, "tray edit invalidated the main window"
                 assert not is_visible(panel.window), "hot reload exposed a hidden popup"
@@ -134,7 +151,7 @@ def run():
                 evaluate("document.getElementById('tray-exit').click();true")
                 wait_until(lambda: len(actions) == 2 and (root / REQUEST_FILE).is_file())
                 assert set(backend.requests) == {"/api/tray-status"}, "panel called a business or stop endpoint"
-                result.update(passed=True, checks=["hidden WebView", "white layout", "content sizing", "Chinese/English", "authentic value formatting",
+                result.update(passed=True, checks=["hidden startup warmup", "288px layout", "content sizing", "Chinese/English", "responsive before statistics", "record scope",
                                                   "visible polling", "hidden idle", "independent hot reload", "Alt+F4 dismissal", "Open/Exit bridge"])
                 result.pop("stage", None)
             except Exception as exc:
@@ -155,6 +172,7 @@ def run():
                 result.update(passed=False, error="Main window closure did not destroy the panel")
                 panel.destroy()
         finally:
+            backend.release.set()
             ui.close()
             backend.shutdown()
             backend.server_close()

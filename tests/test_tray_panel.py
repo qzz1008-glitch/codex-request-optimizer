@@ -43,6 +43,7 @@ class TrayPanelTests(unittest.TestCase):
             setattr(self, name, patcher.start())
             self.addCleanup(patcher.stop)
         self.popup_anchor.return_value = (1900, 1040), (0, 0, 1920, 1040)
+        self.addCleanup(self.panel.destroy)
 
     def load(self):
         self.panel.show()
@@ -60,6 +61,47 @@ class TrayPanelTests(unittest.TestCase):
         self.assertTrue(self.panel.panel_state()["visible"])
         self.open_main.assert_not_called()
         self.assertEqual(self.configure_panel.call_count, 1)
+
+    def test_preload_stays_hidden_and_is_reused_on_first_click(self):
+        self.panel.prepare()
+        self.window.events.loaded[0]()
+        self.assertFalse(self.panel.panel_state()["visible"])
+        self.window.show.assert_not_called()
+        self.open_main.assert_not_called()
+        self.panel.show()
+        self.window.show.assert_called_once()
+        self.assertEqual(self.factory.call_count, 1)
+
+    def test_native_show_and_hide_do_not_wait_for_a_blocked_page(self):
+        entered, release, returned = threading.Event(), threading.Event(), threading.Event()
+        self.addCleanup(release.set)
+        def slow_page(*args):
+            entered.set()
+            release.wait(3)
+        self.window.evaluate_js.side_effect = slow_page
+        self.panel.prepare()
+        self.window.events.loaded[0]()
+        self.assertTrue(entered.wait(1))
+        def click():
+            self.panel.show()
+            self.panel.dismiss()
+            returned.set()
+        caller = threading.Thread(target=click, daemon=True)
+        caller.start()
+        try:
+            self.assertTrue(returned.wait(.2), "native popup waited for the page")
+            self.window.show.assert_called_once()
+            self.window.hide.assert_called_once()
+        finally:
+            release.set()
+            caller.join(2)
+
+    def test_preload_failure_does_not_open_main_but_a_click_failure_does(self):
+        self.factory.side_effect = OSError("WebView unavailable")
+        self.panel.prepare()
+        self.open_main.assert_not_called()
+        self.panel.show()
+        self.open_main.assert_called_once()
 
     def test_hot_page_reload_preserves_visibility_and_does_not_reconfigure_native_hooks(self):
         self.load()
