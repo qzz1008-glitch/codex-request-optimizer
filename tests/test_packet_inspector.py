@@ -25,6 +25,7 @@ from packet_inspector.analyzer import (CLASSIFICATION_VERSION, JsonBytes, compar
                                       encode, inspect_request, resolve, search_body)
 from packet_inspector.config_link import ConfigLink, PROVIDER
 from packet_inspector.server import InspectorServer, outbound_proxies
+from tests.relay_fixture import HTTP_TIMEOUT, wait_for_idle
 from packet_inspector.storage import Store
 from packet_inspector.transport import prepare_request
 
@@ -757,17 +758,26 @@ class RelayTests(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         cls.up.release.set()
-        for s in [cls.server,cls.up]:s.shutdown();s.server_close()
+        cls.server.shutdown()
+        try:
+            wait_for_idle(cls.server)
+        finally:
+            cls.server.server_close()
+            cls.server.analysis_thread.join(timeout=HTTP_TIMEOUT)
+            cls.up.shutdown()
+            cls.up.server_close()
         cls.temp.cleanup()
 
-    def relay(self,raw,path="/responses",headers=None,chunked=False,*,timeout=5):
+    def relay(self,raw,path="/responses",headers=None,chunked=False,*,timeout=HTTP_TIMEOUT):
         c=http.client.HTTPConnection("127.0.0.1",self.server.port,timeout=timeout)
         try:
             h={"Content-Type":"application/json","session_id":"test-thread",**(headers or {})}
             if chunked:h["Transfer-Encoding"]="chunked"
             c.request("POST",self.server.endpoint.split(str(self.server.port),1)[1]+path,[raw[:4],raw[4:]] if chunked else raw,h,encode_chunked=chunked)
             r=c.getresponse()
-            return r.status,r.read()
+            result = r.status, r.read()
+            wait_for_idle(self.server)
+            return result
         finally:
             c.close()
 

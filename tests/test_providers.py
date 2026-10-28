@@ -14,6 +14,7 @@ from urllib.request import Request, ProxyHandler, build_opener
 from packet_inspector.config_link import ConfigLink, PROVIDER
 from packet_inspector.providers import ProviderManager
 from packet_inspector.server import InspectorServer
+from tests.relay_fixture import HTTP_TIMEOUT, wait_for_idle
 
 
 class ProviderConfigTests(unittest.TestCase):
@@ -295,12 +296,21 @@ class ProviderRelayTests(unittest.TestCase):
     def stop_servers(self):
         for server in [self.server, *self.upstreams]:
             server.shutdown()
-            server.server_close()
+            try:
+                if server is self.server:
+                    wait_for_idle(server)
+            finally:
+                server.server_close()
+                if server is self.server:
+                    server.analysis_thread.join(timeout=HTTP_TIMEOUT)
 
     def post(self, url, auth="Bearer test"):
         request = Request(url, data=b'{"input":[]}', headers={"Authorization": auth, "Content-Type": "application/json"})
-        with self.opener.open(request, timeout=3) as response:
-            return response.status
+        with self.opener.open(request, timeout=HTTP_TIMEOUT) as response:
+            response.read()
+            status = response.status
+        wait_for_idle(self.server)
+        return status
 
     def test_routes_generation_compaction_query_and_legacy_to_correct_upstream(self):
         providers = tomllib.loads(self.config.read_text())["model_providers"]
@@ -339,7 +349,7 @@ class ProviderRelayTests(unittest.TestCase):
         with patch.object(self.server.session_summaries, "read", return_value={"state": "available", "sessions": []}) as read:
             with self.opener.open(self.server.ui_url + "api/session-summaries", timeout=3) as response:
                 self.assertEqual(json.load(response), {"state": "available", "sessions": []})
-            read.assert_called_once_with(self.server.data_dir)
+            read.assert_called_once_with(self.server.cache_dir)
         with patch.object(self.server.session_summaries, "read", side_effect=OSError("not available")):
             with self.opener.open(self.server.ui_url + "api/session-summaries", timeout=3) as response:
                 self.assertEqual(json.load(response)["state"], "unavailable")
