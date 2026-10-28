@@ -58,7 +58,7 @@ def main(argv=None):
                 except OSError:
                     ctypes.windll.user32.MessageBoxW(0, "无法打开退出确认，中转服务继续运行。请稍后重试。", "Codex 请求优化器", 0x40)
 
-            tray = NativeTray(open_window, exit_app).start()
+            tray = NativeTray(open_window, exit_app, status_reader=server.tray_status).start()
             server.desktop_tray = True
 
         return service_main(arguments, on_started=started if use_tray else None)

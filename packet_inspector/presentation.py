@@ -64,7 +64,7 @@ class WorkerPresentation:
         if factory is None:
             from .tray import NativeTray
             factory = NativeTray
-        self.tray = factory(self._open_window, self._exit).start()
+        self.tray = factory(self._open_window, self._exit, status_reader=self.server.tray_status).start()
         self.server.desktop_tray = True
 
     def _stop_tray(self):
