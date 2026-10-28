@@ -185,8 +185,8 @@ class TrayPanelTests(unittest.TestCase):
         tray.user, tray.hwnd = Mock(), 123
         tray._launch_panel()
         tray.user.PostMessageW.assert_called_once_with(123, NATIVE_MENU_MESSAGE, 0, 0)
-        self.assertEqual(popup_position((1910, 1050), (0, 0, 1920, 1040), (344, 264)), (1566, 770))
-        self.assertEqual(popup_position((-1910, 20), (-1920, 0, 0, 1040), (344, 264)), (-1914, 6))
+        self.assertEqual(popup_position((1910, 1050), (0, 0, 1920, 1080), (344, 264)), (1566, 786))
+        self.assertEqual(popup_position((-1910, 20), (-1920, 0, 0, 1040), (344, 264)), (-1910, 20))
 
 
 if __name__ == "__main__":
