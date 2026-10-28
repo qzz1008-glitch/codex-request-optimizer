@@ -101,6 +101,8 @@ The release EXE includes the interface and background service; no separate Pytho
 
 Click **Save** at the bottom to apply settings. **Restore** discards unsaved changes, while **Default** next to a context setting restores its model default. Settings that require a Codex restart are marked separately.
 
+Language changes are previewed immediately and remembered after **Save**. **Restore** or closing unsaved settings cancels the preview. Session names and original request and response content stay unchanged.
+
 **Storage locations** groups the log folder, cache folder, and image save folder. The cache folder holds request records and context-summary caches. Log and cache folder changes take effect on the next launch of this app; existing data remains in its original folder. The image folder applies to newly saved images. Configuration and upgrade information continue to use the original data directory, and upgrades preserve these folder settings.
 
 ### Connection and error diagnostics
