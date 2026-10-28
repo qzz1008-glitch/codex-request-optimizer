@@ -118,6 +118,8 @@ class PanelAPI:
 
 
 class TrayPanel:
+    MIN_WIDTH = 192
+
     def __init__(self, create_window, ui_url, data_dir, show_main):
         self.create_window, self.ui_url = create_window, ui_url
         self.data_dir, self.show_main = Path(data_dir), show_main
@@ -130,7 +132,7 @@ class TrayPanel:
         self._creating = False
         self._configured = False
         self._anchor = None
-        self._size = (288, 280)
+        self._size = (216, 280)
         self._api = PanelAPI(self)
         self._bridge_ready = False
         self._notification = threading.Event()
@@ -157,7 +159,7 @@ class TrayPanel:
         if create:
             try:
                 window = self.create_window("Codex 请求优化器", self.ui_url + "tray.html", width=self._size[0],
-                    height=self._size[1], min_size=(240, 120), resizable=False, frameless=True, easy_drag=False,
+                    height=self._size[1], min_size=(self.MIN_WIDTH, 120), resizable=False, frameless=True, easy_drag=False,
                     hidden=True, on_top=True, shadow=True, text_select=False, background_color="#ffffff", js_api=self._api)
                 window.events.loaded += self._on_loaded
                 window.events.closing += self._on_closing
@@ -243,12 +245,12 @@ class TrayPanel:
         return self.panel_state()
 
     def panel_state(self):
-        return {"visible": self.visible and not self._closed.is_set()}
+        return {"visible": self.visible and not self._closed.is_set(), "min_width": self.MIN_WIDTH}
 
     def resize_panel(self, width, height):
         if not all(type(value) in (int, float) and math.isfinite(value) for value in (width, height)):
             return False
-        size = max(240, min(600, math.ceil(width))), max(120, min(800, math.ceil(height)))
+        size = max(self.MIN_WIDTH, min(600, math.ceil(width))), max(120, min(800, math.ceil(height)))
         with self._guard:
             if size == self._size:
                 return True

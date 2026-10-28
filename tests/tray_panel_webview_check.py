@@ -74,7 +74,7 @@ def sized_for_content(panel):
     return panel._size == expected and actual == tuple(int(value * scale) for value in expected)
 
 
-def run():
+def run(*, legacy_host=False):
     import webview
 
     with tempfile.TemporaryDirectory(prefix="tray-panel-check-") as temporary:
@@ -101,6 +101,11 @@ def run():
             panel.visible = False  # Keep the runtime-created test window hidden even if its page loads immediately.
             return webview.create_window(*args, **kwargs)
         panel = TrayPanel(create_hidden, ui.ui_url, root, lambda: actions.append("main"))
+        if legacy_host:
+            panel.MIN_WIDTH = 240
+            panel._size = (288, 280)
+            panel.panel_state = lambda: {"visible": panel.visible and not panel._closed.is_set()}
+        expected_width = 240 if legacy_host else 216
         master.events.closed += panel.destroy
 
         def check():
@@ -114,7 +119,7 @@ def run():
                 style = evaluate("({background:getComputedStyle(document.body).backgroundColor,"
                                  "width:document.body.getBoundingClientRect().width,"
                                  "overflow:document.body.scrollWidth>document.body.getBoundingClientRect().width,buttons:document.querySelectorAll('button').length})")
-                assert style == {"background": "rgb(255, 255, 255)", "width": 288, "overflow": False, "buttons": 2}, style
+                assert style == {"background": "rgb(255, 255, 255)", "width": expected_width, "overflow": False, "buttons": 2}, style
                 height = panel._size[1]
                 evaluate("const error=document.getElementById('tray-error');error.textContent='Test message';error.hidden=false;window.trayPanel.render({});true")
                 result["stage"] = "growing content"
@@ -187,7 +192,7 @@ def run():
                     if urlsplit(path).path=="/api/packets":
                         query=parse_qs(urlsplit(path).query)
                         assert query.get("limit")==["1"] and query.get("include_get")==["1"] and query.get("view")==["trend"], "legacy fallback loaded request history"
-                result.update(passed=True, checks=["hidden startup warmup", "288px layout", "content sizing", "Chinese/English", "responsive before statistics", "record scope",
+                result.update(passed=True, checks=["hidden startup warmup", f"{expected_width}px layout", "content sizing", "Chinese/English", "responsive before statistics", "record scope",
                                                   "legacy backend scope", "truncated legacy groups", "empty store resets scope",
                                                   "visible polling", "hidden idle", "independent hot reload", "Alt+F4 dismissal", "Open/Exit bridge"])
                 result.pop("stage", None)
