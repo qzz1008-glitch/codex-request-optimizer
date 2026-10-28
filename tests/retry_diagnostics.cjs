@@ -60,14 +60,14 @@ const interrupted={source:'live',state:'relay_error',status:200,
 function facts(section){return Object.fromEntries(rendered.children[section].children.map(row=>[row.label,row.value]));}
 context.renderCompression(interrupted);
 assert.equal(facts(0)['压缩方式'],'—');
-assert.equal(facts(0)['zstd 压缩等级'],'—');
+assert.equal(facts(0)['压缩等级'],'—');
 assert.equal(facts(1)['预测保护'],'未完成');
 assert.equal(facts(1)['超限保护'],'已触发');
 context.renderCompression({...interrupted,transport_content_encoding:'zstd',transport_zstd_level:17});
 assert.equal(facts(0)['压缩方式'],'zstd');
-assert.equal(facts(0)['zstd 压缩等级'],17);
+assert.equal(facts(0)['压缩等级'],17);
 context.renderCompression({...interrupted,transport_content_encoding:'zstd',transport_zstd_level:22});
-assert.equal(facts(0)['zstd 压缩等级'],22);
+assert.equal(facts(0)['压缩等级'],22);
 context.renderCompression({...interrupted,state:'streaming'});
 assert.equal(facts(1)['预测保护'],'等待响应');
 context.renderCompression({...interrupted,state:'complete',usage_override_applied:true});
@@ -76,7 +76,7 @@ context.renderCompression({...interrupted,state:'complete',usage_override_applie
 assert.equal(facts(1)['预测保护'],'已满足');
 context.renderCompression({source:'live',relay_content_encoding:'zstd',relay_zstd_level:1});
 assert.equal(facts(0)['压缩方式'],'zstd');
-assert.equal(facts(0)['zstd 压缩等级'],1);
+assert.equal(facts(0)['压缩等级'],1);
 context.renderCompression({...interrupted,overflow_compaction_calls:0,overflow_cache_hit:true});
 assert.equal(facts(0)['压缩方式'],'—');
 english=true;

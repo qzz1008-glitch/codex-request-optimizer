@@ -36,6 +36,7 @@ const contextCustomValues = new Map();
 let settingsEditing = false, settingsSaving = false, settingsOpening = false, settingsRevision = 0;
 let linkSaving = "", linkRevision = 0;
 let settingsBaseline = null, settingsLanguage = null;
+let interfaceLanguageRevision = 0;
 let settingsSaveProgress = {total:0,steps:[]};
 const settingsRestartChanges = new Map();
 const directoryOpening = new Set();
@@ -513,7 +514,7 @@ async function selectSession(value) {
   renderSessions();renderList();
   await loadPackets();
 }
-function message(text, error=false) { $("notice").textContent = text; $("notice").className = "notice"+(error?" error":""); $("notice").hidden = false; }
+function message(text, error=false) { uiI18n.text($("notice"),text); $("notice").className = "notice"+(error?" error":""); $("notice").hidden = false; }
 function fail(err) { message(err.message || String(err), true); }
 async function api(path, data, signal) { const r = await fetch(path, {method:data === undefined ? "GET" : "POST",headers:data === undefined ? {} : {"Content-Type":"application/json"},body:data === undefined ? undefined : JSON.stringify(data),signal}); const value = await r.json(); if (!r.ok) throw Object.assign(Error(value.error || ("HTTP "+r.status)),{status:r.status}); return value; }
 function action(id, fn) { $(id).addEventListener("click", () => Promise.resolve().then(fn).catch(fail)); }
@@ -1084,9 +1085,9 @@ async function confirmCompressionChange() {
     connectionRestartNotified=true;
     if(result.reload_required){$("settings-restart-items").replaceChildren(el("li","",t("Codex 接入与原生压缩")));$("settings-restart-dialog").showModal();}
     renderStatus();
-    message(t("已断开并开启 Codex 原生压缩。重启 ChatGPT App 生效。"));
+    message("已断开并开启 Codex 原生压缩。重启 ChatGPT App 生效。");
   } catch(error) {
-    $("compression-confirm-message").textContent=error.message;
+    uiI18n.text($("compression-confirm-message"),error.message);
     $("compression-confirm-message").hidden=false;
   } finally {compressionSaving=false;compressionRevision++;renderConnectionActions();}
 }
@@ -1131,7 +1132,7 @@ async function confirmConnection() {
   $("connect-confirm-message").hidden=true;
   try {
     const result=await linkAction("activate");
-    if(!state.status.profile.active)throw Error(t("接入未完成，请检查 Codex 配置后重试。"));
+    if(!state.status.profile.active)throw Error("接入未完成，请检查 Codex 配置后重试。");
     $("connect-confirm-dialog").close();connectSource=null;
     if(result?.reload_required) {
       connectionRestartNotified=true;
@@ -1139,7 +1140,7 @@ async function confirmConnection() {
       $("settings-restart-dialog").showModal();
     }
   } catch(error) {
-    $("connect-confirm-message").textContent=t(error.message);$("connect-confirm-message").hidden=false;
+    uiI18n.text($("connect-confirm-message"),error.message);$("connect-confirm-message").hidden=false;
   } finally {connectSaving=false;renderConnectionActions();renderConnectPrompt();}
 }
 function renderExitRequest() {
@@ -1177,11 +1178,11 @@ async function confirmExit(which) {
   $("exit-confirm-message").hidden=true;
   try {
     const result=await api("/api/exit",{request_id:exitRequest,action:which});
-    if(which==="cancel"?!result.cancelled:!result.stopped)throw Error(t("退出未完成，请稍后重试。"));
+    if(which==="cancel"?!result.cancelled:!result.stopped)throw Error("退出未完成，请稍后重试。");
     exitFinished=which!=="cancel";
     state.status.ui_exit_request=null;exitRequest=null;$("exit-confirm-dialog").close();
   } catch(error) {
-    $("exit-confirm-message").textContent=t(error.message);$("exit-confirm-message").hidden=false;
+    uiI18n.text($("exit-confirm-message"),error.message);$("exit-confirm-message").hidden=false;
     if(!$("exit-confirm-dialog").open)$("exit-confirm-dialog").showModal();
   } finally {
     exitSaving=false;exitRevision++;renderConnectionActions();renderExitRequest();
@@ -1220,7 +1221,7 @@ async function openSettingsDirectory(id) {
   const input=$(id),path=input.value.trim()||input.placeholder;
   directoryOpening.add(id);fillDirectoryOpenButtons();setSettingsMessage("");
   try {await api("/api/open-directory",{path});}
-  catch(error) {setSettingsMessage(t(error.message),true);}
+  catch(error) {setSettingsMessage(error.message,true);}
   finally {directoryOpening.delete(id);fillDirectoryOpenButtons();}
 }
 function fillEntryPort() {
@@ -1247,7 +1248,7 @@ function providerStatus(s) {
   if(s.auto_detect_providers && s.profile.all_providers)return t("已自动接管 {count} 个 provider").replace("{count}",s.provider_count);
   return s.profile.active?t("已配置接入"):t("尚未接入");
 }
-function contextMessage(text,error=false) { const node=$("context-message");node.textContent=text;node.className="help"+(error?" error":"");node.hidden=!text; }
+function contextMessage(text,error=false) { const node=$("context-message");uiI18n.text(node,text);node.className="help"+(error?" error":"");node.hidden=!node.textContent; }
 function syncContextDefaults() {
   for(const key of ["context","compact"]) {
     const unavailable=settingsSaving||!contextSettings;
@@ -1290,7 +1291,7 @@ function renderContextPlaceholders() {
 async function loadContextSettings() {
   contextMessage("");
   try {fillContextSettings(await api("/api/context-settings"));}
-  catch(error) {contextSettings=null;syncContextDefaults();contextMessage(t("上下文配置读取失败：")+error.message,true);}
+  catch(error) {contextSettings=null;syncContextDefaults();contextMessage(()=>t("上下文配置读取失败：")+t(error.message),true);}
 }
 let updateStatus=null, updateBusy=false, updateAction="", updateFeedbackVisible=false;
 let updateRevision=0,updateStatusLoading=false;
@@ -1320,7 +1321,7 @@ function changedSettings(draft=readSettingsDraft()) {
   return settingsBaseline?Object.keys(draft).filter(key=>draft[key]!==settingsBaseline[key]):[];
 }
 function setSettingsMessage(text,error=false) {
-  const node=$("settings-message");node.textContent=text;node.className="help "+(error?"error":"muted");
+  const node=$("settings-message");uiI18n.text(node,text);node.className="help "+(error?"error":"muted");
 }
 function renderSettingsSaveProgress() {
   $("settings-save").setAttribute("aria-busy",String(settingsSaving));
@@ -1335,7 +1336,7 @@ function renderSettingsSaveProgress() {
   log.hidden=!settingsSaveProgress.steps.length;log.scrollTop=log.scrollHeight;
   if(settingsSaving) {
     const completed=settingsSaveProgress.steps.filter(step=>step.state==="done").length;
-    setSettingsMessage(t("正在保存设置…")+" "+completed+"/"+settingsSaveProgress.total);
+    setSettingsMessage(()=>t("正在保存设置…")+" "+completed+"/"+settingsSaveProgress.total);
   }
 }
 function resetSettingsSaveProgress() {
@@ -1353,7 +1354,7 @@ function updateSettingsSaveState(clearMessage=true) {
     node.classList.toggle("settings-dirty",changed.has(node.dataset.settingsField));
   $("settings-save").disabled=settingsSaving||!!linkSaving||!dirty;
   $("settings-restore").disabled=settingsSaving||!dirty;$("settings-close").disabled=settingsSaving;
-  if(clearMessage&&settingsEditing&&!settingsSaving)setSettingsMessage(dirty?t("有未保存的修改"):"");
+  if(clearMessage&&settingsEditing&&!settingsSaving)setSettingsMessage(dirty?"有未保存的修改":"");
   if(state.status)renderEntryPortStatus();
 }
 function trackSettingsRestart(field,before,after) {
@@ -1368,7 +1369,7 @@ function finishSettingsSave() {
   if(state.status.entry_port?.pending)items.unshift(t("入口端口"));
   if(!items.length){closeSettings();return;}
   $("settings-restart-items").replaceChildren(...items.map(label=>el("li","",label)));
-  setSettingsMessage(t("设置已保存。"));
+  setSettingsMessage("设置已保存。");
   $("settings-restart-dialog").showModal();
   if(settingsRestartChanges.has("capacity_retry"))connectionRestartNotified=true;
 }
@@ -1448,7 +1449,7 @@ async function saveSettings() {
       await runSettingsSaveStep("语言",async()=>{
         if(["zh","en"].includes(state.status.ui_language)) {
           const result=await api("/api/settings",{ui_language:draft.language});
-          if(result.ui_language!==draft.language)throw Error(t("语言设置未保存，请重试。"));
+          if(result.ui_language!==draft.language)throw Error("语言设置未保存，请重试。");
           state.status={...state.status,...result};
         }
         try {await setInterfaceLanguage(draft.language);}
@@ -1456,7 +1457,7 @@ async function saveSettings() {
         saved++;
       });
     }
-    if(changedSettings().length)throw Error(t("有未保存的修改"));
+    if(changedSettings().length)throw Error("有未保存的修改");
   } catch(failure) {error=failure;}
   finally {
     settingsSaving=false;settingsRevision++;
@@ -1464,7 +1465,7 @@ async function saveSettings() {
     $("settings-dialog").setAttribute("aria-busy","false");
     renderSettingsSaveProgress();
     fillSettings();renderContextPlaceholders();renderUpdates();renderStatus();updateSettingsSaveState(false);
-    if(error)setSettingsMessage(t(saved?"部分设置已保存，剩余修改未保存：":"保存失败：")+error.message,true);
+    if(error)setSettingsMessage(()=>t(saved?"部分设置已保存，剩余修改未保存：":"保存失败：")+t(error.message),true);
     else finishSettingsSave();
   }
 }
@@ -1483,7 +1484,7 @@ function renderUpdates() {
   $("updates-install-label").textContent=t(installing?"升级中":"立即升级");
   const message=$("updates-message");
   message.hidden=!updateFeedbackVisible;
-  message.textContent=displayedState==="error"?u.error:displayedState==="available"&&u.latest_version?t("最新版本：{version}").replace("{version}",u.latest_version):t(labels[displayedState]||labels.idle);
+  message.textContent=displayedState==="error"?t(u.error):displayedState==="available"&&u.latest_version?t("最新版本：{version}").replace("{version}",u.latest_version):t(labels[displayedState]||labels.idle);
   message.title=message.textContent;
   message.classList.toggle("error",displayedState==="error");
 }
@@ -1567,8 +1568,8 @@ function renderCompression(m) {
   const encoding=hasTransport?m.transport_content_encoding:summaryTriggered?null:m.relay_content_encoding||m.outbound_content_encoding;
   fact(sizes,t("压缩方式"),encoding==="identity"?t("不压缩"):encoding||"—");
   const level=hasTransport?m.transport_zstd_level:summaryTriggered?null:m.relay_zstd_level;
-  fact(sizes,t("zstd 压缩等级"),Number.isInteger(level)&&level>=1&&level<=22?level:"—");
-  if(original>0 && compressed!==null)fact(sizes,t("总减小比例"),(100*(1-compressed/original)).toFixed(1)+"%").title=t("包含图片处理和传输压缩带来的大小变化，按超限摘要处理前的正文计算。");
+  fact(sizes,t("压缩等级"),Number.isInteger(level)&&level>=1&&level<=22?level:"—");
+  if(original>0 && compressed!==null)fact(sizes,t("减小比例"),(100*(1-compressed/original)).toFixed(1)+"%").title=t("包含图片处理和传输压缩带来的大小变化，按超限摘要处理前的正文计算。");
   if(summaryTriggered) {
     const estimate=requestTokenUsage(m), actual=m.upstream_usage?.input_tokens;
     fact(sizes,t("输入 Token（估算）"),sortInputTokens(estimate)!==null?"≈ "+nf.format(estimate.input_tokens):"—").title=t("超限摘要前输入 Token（估算）");
@@ -1595,7 +1596,7 @@ function bars(title, rows, total,bodyAvailable=true) {
 }
 function renderOverview(m) {
   const root=document.createDocumentFragment();
-  if(m.inspection!=="json") {reconcileContent($("overview"),el("p","muted",t("正文未展开：")+(m.inspection_error||t("正文为空"))+t("。转发仍按原始正文进行。")));return;}
+  if(m.inspection!=="json") {reconcileContent($("overview"),el("p","muted",t("正文未展开：")+(t(m.inspection_error)||t("正文为空"))+t("。转发仍按原始正文进行。")));return;}
   const cols=el("div","two-columns");
   const fields=[...(m.top_fields||[]).map(r=>({...r,path:"/"+r.name.replaceAll("~","~0").replaceAll("/","~1")})),{name:t("字段名、标点及空白"),bytes:m.json_envelope_bytes,path:""}].sort((a,b)=>b.bytes-a.bytes);
   cols.append(bars(t("字段构成"),fields,m.decoded_bytes,!m.details_evicted));
@@ -1666,13 +1667,13 @@ function clearJsonFocus() {
   requestBodyHighlight?.classList.remove("json-focused");requestBodyHighlight=null;
 }
 async function ensureJsonView(id,sequence) {
-  if(state.detail?.id===id&&state.detail.details_evicted)throw new Error(t("请求详情已回收，仅保留基本信息。"));
+  if(state.detail?.id===id&&state.detail.details_evicted)throw new Error("请求详情已回收，仅保留基本信息。");
   if(requestBodyView?.id===id&&requestBodyView.language===uiI18n.language)return requestBodyView;
   const root=$("json-tree");root.textContent=t("加载中…");requestBodyView=null;clearJsonFocus();clearJsonDownload();
   if(requestBodyCache?.id!==id) {
     const pending={id,promise:null};
     pending.promise=api("/api/packets/"+id+"/export").then(data=>{
-      if(!data.view||!Object.prototype.hasOwnProperty.call(data.view,"body"))throw new Error(t("此请求没有可解析的 JSON 正文"));
+      if(!data.view||!Object.prototype.hasOwnProperty.call(data.view,"body"))throw new Error("此请求没有可解析的 JSON 正文");
       return data.view.body;
     }).catch(error=>{if(requestBodyCache===pending)requestBodyCache=null;throw error;});
     requestBodyCache=pending;
@@ -1689,11 +1690,11 @@ async function ensureJsonView(id,sequence) {
   return requestBodyView;
 }
 function focusJsonPath(view,path) {
-  if(path&&(!path.startsWith("/")||/~(?![01])/.test(path)))throw new Error(t("JSON 路径不存在。"));
+  if(path&&(!path.startsWith("/")||/~(?![01])/.test(path)))throw new Error("JSON 路径不存在。");
   const segments=path?path.slice(1).split("/").map(segment=>segment.replace(/~1/g,"/").replace(/~0/g,"~")):[];
   let value=view.body;
   for(const segment of segments) {
-    if(value===null||typeof value!=="object"||!Object.prototype.hasOwnProperty.call(value,segment))throw new Error(t("JSON 路径不存在。"));
+    if(value===null||typeof value!=="object"||!Object.prototype.hasOwnProperty.call(value,segment))throw new Error("JSON 路径不存在。");
     value=value[segment];
   }
   let node=view.root;
@@ -1721,7 +1722,7 @@ async function loadTree(path) {
     else {$("json-tree").scrollTop=0;$("json-tree").scrollLeft=0;}
   } catch(error) {
     if(state.selected===id&&sequence===requestBodySequence) {
-      $("body-results").hidden=false;$("body-results").replaceChildren(el("small","muted",error.message));
+      $("body-results").hidden=false;$("body-results").replaceChildren(el("small","muted",t(error.message)));
       if(!requestBodyView)$("json-tree").textContent="";
     }
   }
@@ -1758,7 +1759,7 @@ async function searchBody(query) {
     if(results.length) {state.path=results[0].path||"";focusJsonPath(view,state.path);}
   } catch(error) {
     if(state.selected===id&&sequence===requestBodySequence) {
-      root.replaceChildren(el("small","muted",error.message));
+      root.replaceChildren(el("small","muted",t(error.message)));
       if(!requestBodyView)$("json-tree").textContent="";
     }
   }
@@ -1934,7 +1935,7 @@ function renderHeaders(m) {
   const result=relayFailed?states[m.state]:code>=400?t("失败"):Object.hasOwn(endings,ended)?t(endings[ended]):m.state==="complete"?t("已结束"):states[m.state]||t("尚未收到");
   fact(p,t("结果"),result+(code!==null?" · HTTP "+code:""));
   fact(p,t("总耗时"),Number.isFinite(m.duration_ms)&&m.duration_ms>=0?nf.format(Math.round(m.duration_ms/100)/10)+" "+t("秒"):"—");
-  if(typeof m.relay_error==="string"&&m.relay_error)fact(p,t("错误原因"),m.relay_error);
+  if(typeof m.relay_error==="string"&&m.relay_error)fact(p,t("错误原因"),t(m.relay_error));
   const session=sessionSummaries.find(row=>row.thread_id===m.thread_id);
   const auxiliary=auxiliarySessionKind(session),purpose=purposeFromMetadata(m);
   const specialKind=[purpose,m.request_kind,auxiliary].find(kind=>kind&&kind!=="subagent"&&Object.hasOwn(auxiliaryLabels,kind));
@@ -1961,42 +1962,53 @@ function renderHeaders(m) {
   }
   reconcileContent($("headers-content"),root);
 }
-async function setInterfaceLanguage(language) {
-  if(language===uiI18n.language)return;
+async function setInterfaceLanguage(language,{persist=true}={}) {
+  const changed=language!==uiI18n.language;
+  uiI18n.setLanguage(language,{persist});
+  if(!changed)return;
+  const revision=++interfaceLanguageRevision;
   const buttons=document.querySelectorAll("#language-toggle button");
   for(const button of buttons)button.disabled=true;
   try {
-    uiI18n.setLanguage(language);
     tokenTrendView?.render();
     if(document.documentElement.classList.contains("desktop-titlebar"))renderWindowState({enabled:true,maximized:document.documentElement.classList.contains("desktop-maximized")});
     state.listVersion="";state.sessionVersion="";
-    renderStatus();renderContextPlaceholders();
+    renderStatus(true);renderContextPlaceholders();renderSettingsSaveProgress();renderUpdates();
+    if($("connect-confirm-dialog").open)renderConnectPrompt();
+    if($("exit-confirm-dialog").open)renderExitRequest();
     if(state.status) {
       if(!("packet_size_protection_enabled" in state.status))$("packet-size-message").textContent=t("当前中转暂不支持此功能。");
     }
     if(state.detail) {
-      renderOverview(state.detail);renderHeaders(state.detail);
+      showTab(state.tab);renderOverview(state.detail);renderCompression(state.detail);renderHeaders(state.detail);
       const selected=state.selected, path=state.path, query=$("tree-query").value, searchVisible=!$("body-results").hidden;
       await loadTree(path);
+      if(revision!==interfaceLanguageRevision)return;
       if(state.selected===selected && state.path===path && $("tree-query").value===path) {
         $("tree-query").value=query;
         if(searchVisible&&query.trim()&&!query.trim().startsWith("/"))await searchBody(query.trim());
       }
       await loadDiff();
+      if(revision!==interfaceLanguageRevision)return;
     }
     if(state.status)await refreshFilters();
-  } finally {for(const button of buttons)button.disabled=settingsSaving;renderLanguageSelection();}
+  } finally {if(revision===interfaceLanguageRevision){for(const button of buttons)button.disabled=settingsSaving;renderLanguageSelection();}}
 }
-for(const button of document.querySelectorAll("#language-toggle button"))action(button.id,()=>{
+for(const button of document.querySelectorAll("#language-toggle button"))action(button.id,async()=>{
   if(!settingsEditing||settingsSaving)return;
   settingsLanguage=button.dataset.language;renderLanguageSelection();updateSettingsSaveState();
+  await setInterfaceLanguage(settingsLanguage,{persist:false});
 });
 action("settings-open",openSettings);action("empty-connect",openSettings);
 function discardSettingsDraft() {
+  if(!settingsEditing&&!settingsBaseline&&settingsLanguage===null)return;
+  const language=settingsBaseline?.language??state.status?.ui_language??uiI18n.language;
   settingsEditing=false;settingsBaseline=null;settingsLanguage=null;
+  const restore=setInterfaceLanguage(language,{persist:false});
   resetSettingsSaveProgress();
   if(state.status)fillSettings();if(contextSettings)fillContextSettings(contextSettings);renderUpdates();
   setSettingsMessage("");
+  return restore.catch(fail);
 }
 function restoreSettings() {
   if(!settingsEditing||settingsSaving||$("settings-restart-dialog").open)return;
@@ -2007,7 +2019,7 @@ function restoreSettings() {
 function closeSettings() {
   if(settingsSaving||$("settings-restart-dialog").open)return;
   closeZstdLevelPicker(false);
-  $("settings-dialog").close();discardSettingsDraft();
+  $("settings-dialog").close();return discardSettingsDraft();
 }
 action("settings-restart-confirm",()=>{
   $("settings-restart-dialog").close();settingsRestartChanges.clear();closeSettings();
@@ -2094,8 +2106,8 @@ async function applyLinkAction(which) {
     const result=await api("/api/link",{action:which,...(which==="activate"?{upstream:state.status.upstream}:{})});
     const status=await api("/api/status");state.status={...state.status,...status};
     if(which==="activate"&&(!status.profile.active||status.profile.config_error||status.provider_sync_error))
-      throw Error(t("接入未完成，请检查 Codex 配置后重试。"));
-    if(which==="restore"&&status.profile.active)throw Error(t("恢复未完成，请重试。"));
+      throw Error("接入未完成，请检查 Codex 配置后重试。");
+    if(which==="restore"&&status.profile.active)throw Error("恢复未完成，请重试。");
     return result;
   } finally {linkRevision++;}
 }
@@ -2106,7 +2118,7 @@ async function linkAction(which) {
   linkSaving=which;renderConnectionActions();updateSettingsSaveState(false);
   try {
     const result=await applyLinkAction(which);renderStatus(true);
-    message((which==="activate"?t("已接入。"):t("已恢复原配置。"))+(result.reload_required?t("重启 ChatGPT App 生效。"):t("配置无需更改，无需重启。")));
+    message(()=>(which==="activate"?t("已接入。"):t("已恢复原配置。"))+(result.reload_required?t("重启 ChatGPT App 生效。"):t("配置无需更改，无需重启。")));
     return result;
   } finally {linkSaving="";renderConnectionActions();updateSettingsSaveState(false);}
 }
