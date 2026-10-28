@@ -2161,10 +2161,61 @@ class TokenTrendView {
   static color(id) {let hash=2166136261;for(const char of id)hash=Math.imul(hash^char.charCodeAt(0),16777619);return "hsl("+((hash>>>0)%360)+" 62% 42%)";}
   static timeTicks(start,end,width) {
     const target=(end-start)/Math.max(2,Math.min(8,Math.floor(width/100)));
-    const step=[600,1200,1800,3600,7200,10800,21600,43200].find(value=>value>=target)||43200;
+    const step=[1,2,5,10,15,30,60,120,300,600,1200,1800,3600,7200,10800,21600,43200].find(value=>value>=target)||43200;
     const day=new Date(start*1000);day.setHours(0,0,0,0);const origin=day.getTime()/1000,ticks=[];
     for(let stamp=origin+Math.ceil((start-origin)/step)*step;stamp<=end;stamp+=step)ticks.push(stamp);
     return ticks;
+  }
+  static compactTimeScale(start,end,activity,width,coverage={start,end}) {
+    const span=end-start,intervals=activity.filter(([a,b])=>Number.isFinite(a)&&Number.isFinite(b)&&b>=a&&a-60<=coverage.end&&b+60>=coverage.start)
+      .map(([a,b])=>[Math.max(coverage.start,a-60),Math.min(coverage.end,b+60)]).sort((a,b)=>a[0]-b[0]);
+    // Detect idle intervals in the loaded buffer, then clip to the viewport to keep edge transitions smooth.
+    const gaps=[],addGap=(a,b)=>{
+      const from=Math.max(start,a),to=Math.min(end,b);
+      if(b-a>=600&&to>from)gaps.push({start:from,end:to,weight:(to-from)/(b-a)});
+    };
+    let cursor=coverage.start;
+    for(const [a,b]of intervals){addGap(cursor,a);cursor=Math.max(cursor,b);}
+    if(intervals.length)addGap(cursor,coverage.end);
+    let active=span-gaps.reduce((sum,gap)=>sum+gap.end-gap.start,0);
+    if(active<=0){gaps.length=0;active=span;}
+    const wanted=gaps.reduce((sum,gap)=>sum+18*gap.weight,0),factor=wanted?Math.min(1,Math.max(1,width)*.2/wanted):0;
+    const unitsPerPixel=active/(Math.max(1,width)-wanted*factor);
+    const segments=[];let virtual=0;cursor=start;
+    for(const gap of gaps) {
+      if(gap.start>cursor){segments.push({start:cursor,end:gap.start,a:virtual,b:virtual+gap.start-cursor});virtual+=gap.start-cursor;}
+      const gapUnits=18*gap.weight*factor*unitsPerPixel;
+      gap.a=virtual;gap.b=virtual+gapUnits;segments.push({...gap,compressed:true});virtual+=gapUnits;cursor=gap.end;
+    }
+    if(cursor<end){segments.push({start:cursor,end,a:virtual,b:virtual+end-cursor});virtual+=end-cursor;}
+    const locate=(value,key)=>{
+      let lo=0,hi=segments.length-1;
+      while(lo<hi){const mid=(lo+hi)>>1;if(segments[mid][key]<value)lo=mid+1;else hi=mid;}
+      return segments[lo];
+    };
+    const fraction=value=>{
+      value=Math.max(start,Math.min(end,value));const part=locate(value,"end");
+      return (part.a+(value-part.start)/(part.end-part.start)*(part.b-part.a))/virtual;
+    };
+    const timeAt=value=>{
+      value=Math.max(0,Math.min(1,value))*virtual;const part=locate(value,"b");
+      return part.start+(value-part.a)/(part.b-part.a)*(part.end-part.start);
+    };
+    const isGap=value=>gaps.some(gap=>value>gap.start&&value<gap.end);
+    let ticks=TokenTrendView.timeTicks(start,end,width);
+    if(gaps.length) {
+      const candidates=segments.filter(part=>!part.compressed).flatMap(part=>[
+        part.start,...TokenTrendView.timeTicks(part.start,part.end,(fraction(part.end)-fraction(part.start))*width),part.end
+      ]);
+      ticks=[];
+      for(const stamp of [...new Set(candidates)].sort((a,b)=>a-b))if(!ticks.length||(fraction(stamp)-fraction(ticks.at(-1)))*width>=80)ticks.push(stamp);
+    }
+    return {fraction,timeAt,gaps,ticks,isGap,crossesGap:(a,b)=>gaps.some(gap=>a<gap.end&&b>gap.start)};
+  }
+  chartAxis(start,end,activity,width) {
+    const complete=!this.error&&!this.limited&&this.covers(this.loadedBounds,{start,end});
+    const coverage=complete?{start:Math.min(start,this.loadedBounds.since),end:Math.max(end,this.loadedBounds.before??Date.now()/1000)}:{start,end};
+    return TokenTrendView.compactTimeScale(start,end,complete?activity:[],width,coverage);
   }
   rangeLimit() {return !this.boundsReady||!Number.isFinite(this.oldestCreated)?1:Math.min(12,Math.max(1,(Date.now()/1000-this.oldestCreated+1)/3600));}
   timeline(now=Date.now()/1000) {return {start:Math.min(now-3600,this.boundsReady&&Number.isFinite(this.oldestCreated)?this.oldestCreated-1:now-3600),end:now};}
@@ -2185,7 +2236,7 @@ class TokenTrendView {
     if(!this.boundsReady){if(event.ctrlKey)event.preventDefault();return;}
     event.preventDefault();const delta=raw*(event.deltaMode===1?16:event.deltaMode===2?400:1);
     if(event.ctrlKey) {
-      let fraction=.5;
+      let fraction=.5,anchorTime=null;
       if(Number.isFinite(event.clientX)) {
         if(onRange) {
           const rect=this.range.getBoundingClientRect(),width=rect.width,view=this.viewport(),bounds=this.timeline();
@@ -2193,10 +2244,13 @@ class TokenTrendView {
           fraction=(event.clientX-rect.left-(width-thumb)*Number(this.range.value))/Math.max(1,thumb);
         }else {
           const chart=this.charts[0],rect=chart.svg.getBoundingClientRect(),bounds=chart.bounds;
-          if(bounds&&rect.width)fraction=((event.clientX-rect.left)*bounds.width/rect.width-bounds.left)/(bounds.width-bounds.left-bounds.right);
+          if(bounds&&rect.width) {
+            fraction=((event.clientX-rect.left)*bounds.width/rect.width-bounds.left)/(bounds.width-bounds.left-bounds.right);
+            anchorTime=bounds.axis.timeAt(fraction);
+          }
         }
       }
-      this.setRange(this.hours*Math.exp(Math.max(-240,Math.min(240,delta))/450),Math.max(0,Math.min(1,fraction)));
+      this.setRange(this.hours*Math.exp(Math.max(-240,Math.min(240,delta))/450),Math.max(0,Math.min(1,fraction)),anchorTime);
     }else {
       const bounds=this.charts[0].bounds,width=bounds?bounds.width-bounds.left-bounds.right:500;
       this.pan(Math.max(-1,Math.min(1,delta/Math.max(1,width)))*this.hours*3600);
@@ -2237,11 +2291,27 @@ class TokenTrendView {
     end=Math.max(bounds.start+duration,Math.min(bounds.end,end));this.windowEnd=end>=bounds.end-.001?null:end;
     this.hover=null;this.hoverChart=null;this.hoverSeries=null;this.updateRange();this.scheduleRender();this.ensureWindow();
   }
-  setRange(hours,fraction=.5) {
+  setRange(hours,fraction=.5,anchorTime=null) {
     if(!this.boundsReady||!Number.isFinite(hours))return;
     const view=this.viewport(),next=Math.max(1,Math.min(this.rangeLimit(),hours));if(Math.abs(next-this.hours)<1e-9)return;
     fraction=Number.isFinite(fraction)?Math.max(0,Math.min(1,fraction)):.5;
-    const anchor=view.start+(view.end-view.start)*fraction;this.hours=next;this.navigate(anchor+(1-fraction)*next*3600);
+    const anchor=Number.isFinite(anchorTime)?anchorTime:view.start+(view.end-view.start)*fraction,duration=next*3600;
+    let end=anchor+(1-fraction)*duration;
+    if(Number.isFinite(anchorTime)) {
+      // A folded gap changes the projection as the window moves. Keep the cursor's real time anchored.
+      const timeline=this.timeline(),activity=this.model().activity,width=Math.max(1,this.charts[0].plot.clientWidth-132);
+      let low=Math.max(timeline.start+duration,anchor),high=Math.min(timeline.end,anchor+duration),best=Infinity;
+      const measure=candidate=>{
+        const error=this.chartAxis(candidate-duration,candidate,activity,width).fraction(anchor)-fraction;
+        if(Math.abs(error)<best){best=Math.abs(error);end=candidate;}return error;
+      };
+      measure(Math.max(low,Math.min(high,end)));
+      for(let iteration=0;iteration<16&&best*width>.1;iteration++) {
+        const middle=(low+high)/2;
+        if(measure(middle)>0)low=middle;else high=middle;
+      }
+    }
+    this.hours=next;this.navigate(end);
   }
   pan(seconds) {if(this.boundsReady&&Number.isFinite(seconds)&&seconds)this.navigate(this.viewport().end+seconds);}
   seek(position) {
@@ -2340,10 +2410,13 @@ class TokenTrendView {
   }
   model() {
     const names=new Map(this.services.sessions().map(row=>[row.thread_id,row.title||row.task_name||row.thread_id]));
-    const groups=new Map();let unknown=0;
+    const groups=new Map(),activity=[];let unknown=0;
     const view=this.viewport(),now=view.end,since=view.start;
     for(const packet of (this.previewPackets||this.packets).values()) {
-      if(packet.created<since||packet.created>now||(!packet.is_compaction&&!this.services.isGeneration(packet)))continue;
+      if(!Number.isFinite(packet.created)||(!packet.is_compaction&&!this.services.isGeneration(packet)))continue;
+      const duration=Number.isFinite(packet.duration_ms)&&packet.duration_ms>=0?packet.duration_ms/1000:0;
+      activity.push([packet.created,["captured","streaming"].includes(packet.state)?Date.now()/1000:packet.created+duration]);
+      if(packet.created<since||packet.created>now)continue;
       if(typeof packet.thread_id!=="string"||!packet.thread_id){unknown++;continue;}
       if(!groups.has(packet.thread_id))groups.set(packet.thread_id,{id:packet.thread_id,title:names.get(packet.thread_id)||packet.thread_id,color:TokenTrendView.color(packet.thread_id),points:[],latest:0});
       const group=groups.get(packet.thread_id);group.latest=Math.max(group.latest,packet.created);
@@ -2352,7 +2425,7 @@ class TokenTrendView {
     const series=[...groups.values()].sort((a,b)=>b.latest-a.latest||a.id.localeCompare(b.id));
     for(const group of series)group.points.sort((a,b)=>a.packet.created-b.packet.created||a.packet.id.localeCompare(b.packet.id));
     const matched=series.filter(group=>!this.query||(group.title+" "+group.id).toLowerCase().includes(this.query));
-    return {series,matched,visible:matched,unknown,now};
+    return {series,matched,visible:matched,unknown,now,activity};
   }
   svgNode(tag,attrs={},text) {const node=document.createElementNS("http://www.w3.org/2000/svg",tag);for(const [name,value]of Object.entries(attrs))node.setAttribute(name,String(value));if(text!==undefined)node.textContent=text;return node;}
   time(value,withSeconds=false) {
@@ -2389,11 +2462,12 @@ class TokenTrendView {
     if(!model.visible.some(group=>group.id===this.hoverSeries&&group.points.some(point=>point.input!==null||point.size!==null)))this.hoverSeries=null;
     const emphasis=this.eventKey()?null:this.emphasis||this.hoverSeries||(this.hover?model.visible.find(group=>group.points.some(point=>point.packet.id===this.hover&&(point.input!==null||point.size!==null)))?.id:null);
     const start=model.now-this.hours*3600,end=model.now;
-    for(const chart of this.charts)this.renderChart(chart,model,start,end,emphasis);
+    const axis=this.chartAxis(start,end,model.activity,Math.max(1,this.charts[0].plot.clientWidth-132));
+    for(const chart of this.charts)this.renderChart(chart,model,start,end,emphasis,axis);
     this.renderTimeAxis();
     this.renderFocus();
   }
-  renderChart(chart,model,start,end,emphasis) {
+  renderChart(chart,model,start,end,emphasis,axis) {
     const width=chart.plot.clientWidth,height=chart.plot.clientHeight;
     if(!width||!height){chart.points=[];chart.eventNodes=[];chart.bounds=null;return;}
     chart.eventKey=this.eventKey();chart.svg.classList.toggle("trend-event-filtering",!!chart.eventKey);chart.eventNodes=[];
@@ -2401,9 +2475,9 @@ class TokenTrendView {
     const known=model.visible.flatMap(group=>group.points).filter(point=>point[chart.field]!==null);
     const budget=this.services.status()?.budget_bytes,limit=chart.key==="size"&&Number.isSafeInteger(budget)&&budget>0?budget:null;
     const maximum=Math.max(limit??0,...known.map(point=>point[chart.field])),scale=chart.key==="size"?TokenTrendView.sizeScale(maximum):TokenTrendView.scale(maximum);
-    const x=value=>left+(value-start)/(end-start)*plotWidth,y=value=>top+plotHeight-value/scale.max*plotHeight;
-    const ticks=TokenTrendView.timeTicks(start,end,plotWidth);
-    chart.bounds={width,height,left,right,top,bottom,start,end,x,ticks};
+    const x=value=>left+axis.fraction(value)*plotWidth,y=value=>top+plotHeight-value/scale.max*plotHeight;
+    const ticks=axis.ticks;
+    chart.bounds={width,height,left,right,top,bottom,start,end,x,ticks,axis};
     const root=document.createDocumentFragment();chart.svg.setAttribute("viewBox",`0 0 ${width} ${height}`);
     root.append(this.svgNode("text",{x:36,y:top+plotHeight/2,transform:`rotate(-90 36 ${top+plotHeight/2})`,"text-anchor":"middle","dominant-baseline":"central",class:"trend-axis-title"},t(chart.key==="size"?"请求大小":"输入 Token")));
     for(let value=0;value<=scale.max+scale.step*.01;value+=scale.step) {
@@ -2414,14 +2488,18 @@ class TokenTrendView {
       const px=x(stamp);
       root.append(this.svgNode("line",{x1:px,y1:top,x2:px,y2:height-bottom,class:"trend-grid trend-time-grid","data-time":stamp}));
     }
+    for(const gap of axis.gaps) {
+      const band=this.svgNode("rect",{x:x(gap.start),y:top,width:x(gap.end)-x(gap.start),height:plotHeight,class:"trend-idle-gap","data-start":gap.start,"data-end":gap.end});
+      band.append(this.svgNode("title",{},t("已压缩无请求时段：{start} – {end}").replace("{start}",this.time(gap.start,true)).replace("{end}",this.time(gap.end,true))));root.append(band);
+    }
     chart.points=[];
     for(const group of model.visible) {
       // Set brightness before attachment: layout reads can otherwise start a fade from full opacity.
       const layer=this.svgNode("g",{class:"trend-series-line"+(emphasis&&group.id!==emphasis?" dimmed":""),"data-series":group.id}),events=this.svgNode("g");let path="",pen=false,lastDot=null,lastPoint=null;
       for(const source of group.points) {
         const value=source[chart.field];if(value===null)continue;
-        const point={...source,value,series:group,x:x(source.packet.created),y:y(value)};
-        path+=(pen?"L":"M")+point.x.toFixed(2)+","+point.y.toFixed(2);pen=true;chart.points.push(point);
+        const point={...source,value,series:group,x:x(source.packet.created),y:y(value),breakBefore:!!lastPoint&&axis.crossesGap(lastPoint.packet.created,source.packet.created)};
+        path+=(pen&&!point.breakBefore?"L":"M")+point.x.toFixed(2)+","+point.y.toFixed(2);pen=true;chart.points.push(point);
         if(point.events.some(event=>["predictive","overflow","retry","compact"].includes(event)))chart.eventNodes.push(this.marker(point,events));
         else if(!lastDot||Math.hypot(point.x-lastDot.x,point.y-lastDot.y)>=4){layer.append(this.svgNode("circle",{cx:point.x,cy:point.y,r:2.1,fill:group.color,class:"trend-sample"}));lastDot=point;}
         lastPoint=point;
@@ -2443,13 +2521,20 @@ class TokenTrendView {
   renderTimeAxis() {
     const bounds=this.charts[0].bounds,root=document.createDocumentFragment();
     if(bounds) {
-      const {width,left,right,x,ticks}=bounds;
+      const {width,left,right,x,ticks,axis}=bounds;
       this.timeAxis.setAttribute("viewBox",`0 0 ${width} 32`);
       root.append(this.svgNode("line",{x1:left,y1:1,x2:width-right,y2:1,class:"trend-time-tick"}));
+      const withSeconds=ticks.some(stamp=>new Date(stamp*1000).getSeconds()!==0);
       for(const stamp of ticks) {
         const px=x(stamp);
-        const label=new Date(stamp*1000).toLocaleTimeString(uiI18n.language==="en"?"en-GB":"zh-CN",{hour:"2-digit",minute:"2-digit",hourCycle:"h23"});
+        const label=new Date(stamp*1000).toLocaleTimeString(uiI18n.language==="en"?"en-GB":"zh-CN",{hour:"2-digit",minute:"2-digit",...(withSeconds?{second:"2-digit"}:{}),hourCycle:"h23"});
         root.append(this.svgNode("line",{x1:px,y1:1,x2:px,y2:5,class:"trend-time-tick","data-time":stamp}),this.svgNode("text",{x:px,y:22,"text-anchor":px>width-right-40?"end":px<left+40?"start":"middle",class:"trend-axis-label","data-time":stamp},label));
+      }
+      for(const gap of axis.gaps) {
+        const a=x(gap.start),b=x(gap.end),center=(a+b)/2,offset=Math.min(4,(b-a)/4);
+        const mark=this.svgNode("g",{class:"trend-time-break","data-start":gap.start,"data-end":gap.end});
+        mark.append(this.svgNode("title",{},t("已压缩无请求时段：{start} – {end}").replace("{start}",this.time(gap.start,true)).replace("{end}",this.time(gap.end,true))),
+          this.svgNode("rect",{x:a,y:0,width:b-a,height:7}),this.svgNode("path",{d:`M${center-offset+1},-2l-2,8M${center+offset+1},-2l-2,8`}));root.append(mark);
       }
     }
     this.timeAxis.replaceChildren(root);
@@ -2458,12 +2543,14 @@ class TokenTrendView {
     if(!chart.bounds)return;
     const rect=chart.svg.getBoundingClientRect();if(!rect.width||!rect.height)return;
     const x=event.clientX-rect.left,y=event.clientY-rect.top,scaleX=rect.width/chart.bounds.width,scaleY=rect.height/chart.bounds.height;
+    const fraction=(x/scaleX-chart.bounds.left)/(chart.bounds.width-chart.bounds.left-chart.bounds.right);
+    if(chart.bounds.axis.isGap(chart.bounds.axis.timeAt(fraction))) {this.hover=null;this.hoverChart=null;this.hoverSeries=null;this.renderFocus();return;}
     let nearest=null,distance=28*28,line=null,lineDistance=8*8,previous=null,lastX=0,lastY=0;
     for(const point of chart.points) {
       const px=point.x*scaleX,py=point.y*scaleY,value=(px-x)**2+(py-y)**2;
       if(value<distance){nearest=point;distance=value;}
       // Match the rendered segments, including connections across missing values.
-      if(previous?.series.id===point.series.id) {
+      if(previous?.series.id===point.series.id&&!point.breakBefore) {
         const dx=px-lastX,dy=py-lastY,length=dx*dx+dy*dy;
         const ratio=length?Math.max(0,Math.min(1,((x-lastX)*dx+(y-lastY)*dy)/length)):0;
         const gap=(lastX+ratio*dx-x)**2+(lastY+ratio*dy-y)**2;
