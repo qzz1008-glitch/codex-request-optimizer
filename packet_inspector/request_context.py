@@ -132,13 +132,18 @@ def request_session_context(body, headers=None):
     kind = temporary_request_kind(body)
     parents = set()
     for candidate in candidates:
+        if candidate.get("codex_inspector_request_kind") == "image_analysis":
+            kind = "image_analysis"
+            parent = session_id(candidate.get("codex_inspector_parent_thread_id"))
+            if parent:
+                parents.add(parent)
         source = candidate.get("thread_source")
         trigger = candidate.get("turn_trigger")
         if source == "thread_description" or trigger == "thread_description":
             kind = "session_index"
         elif isinstance(source, str) and source in AUXILIARY_KINDS and (source != "subagent" or not kind):
             kind = source
-        for key in ("parent_thread_id", "parent_session_id", "forked_from_thread_id"):
+        for key in ("parent_thread_id", "parent_session_id", "forked_from_thread_id", "x-codex-parent-thread-id"):
             parent = session_id(candidate.get(key))
             if parent:
                 parents.add(parent)

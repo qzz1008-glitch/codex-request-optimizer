@@ -209,6 +209,24 @@ class StdioRuntimeTests(unittest.TestCase):
         self.assertEqual(replies[0]["error"]["code"], -32700)
         self.assertEqual(replies[-1]["error"]["code"], -32601)
 
+    def test_parent_identity_uses_each_mcp_call_not_shared_process_environment(self):
+        parent = "01a15d9a-f5e3-73c1-b4e7-87b3c5db9a3c"
+        other = "01a166b7-e4a7-7550-8eaa-06e64a78e986"
+        report = self.powershell("""
+function Invoke-ImageAnalysis($Arguments, [string]$ParentThreadId) { return ('parent=' + $ParentThreadId) }
+$env:CODEX_THREAD_ID = '00000000-0000-0000-0000-000000000099'
+$null = Invoke-McpRequest ([pscustomobject]@{jsonrpc='2.0';id=1;method='initialize';params=@{}})
+$results = @(foreach ($value in @('""" + parent.upper() + """','""" + other + """','invalid',$null,17,@('""" + parent + """'),
+    ('""" + parent + """' + "`n"),('""" + parent + """' + '";ignored=true'))) {
+    $request = [pscustomobject]@{jsonrpc='2.0';id=2;method='tools/call';params=[pscustomobject]@{
+        name='analyze_image';arguments=[pscustomobject]@{path='not-read.png'};_meta=[pscustomobject]@{threadId=$value}}}
+    $reply = Invoke-McpRequest $request
+    $reply.result.content[0].text
+})
+@{parents=$results} | ConvertTo-Json -Compress
+""")
+        self.assertEqual(report["parents"], ["parent=" + parent, "parent=" + other, *["parent="] * 6])
+
     def powershell(self, body):
         wrapper = self.root / "check.ps1"
         source = str(self.script).replace("'", "''")
@@ -236,10 +254,12 @@ function Invoke-ToolProcess($Executable, $Arguments, $TimeoutSeconds, $WorkingDi
     [IO.File]::WriteAllText($result,'Visible error text',[Text.Encoding]::UTF8)
     return @{ExitCode=0;Output=''}
 }
-$value = Invoke-ImageAnalysis ([pscustomobject]@{path='""" + path + """';instruction='Read the error'})
+$value = Invoke-ImageAnalysis ([pscustomobject]@{path='""" + path + """';instruction='Read the error'}) '01a15d9a-f5e3-73c1-b4e7-87b3c5db9a3c'
 $arguments = $script:ObservedArguments
 @{answer=$value;ephemeral=('--ephemeral' -in $arguments);image=$arguments[[array]::IndexOf($arguments,'--image')+1];
-  override=$arguments[[array]::IndexOf($arguments,'-c')+1];cleaned=(-not(Test-Path -LiteralPath $script:ObservedWork))} | ConvertTo-Json -Compress
+  override=$arguments[[array]::IndexOf($arguments,'-c')+1];
+  metadata=@($arguments | Where-Object {$_ -like 'responses_api_metadata.*'});
+  cleaned=(-not(Test-Path -LiteralPath $script:ObservedWork))} | ConvertTo-Json -Compress
 """)
         self.assertEqual(report["answer"], "Visible error text")
         self.assertTrue(report["ephemeral"])
@@ -247,6 +267,9 @@ $arguments = $script:ObservedArguments
         self.assertTrue(report["cleaned"])
         self.assertIn('"isolated_vision"={enabled=false}', report["override"])
         self.assertIn('"other"={enabled=false}', report["override"])
+        self.assertEqual(report["metadata"], [
+            'responses_api_metadata.codex_inspector_request_kind="image_analysis"',
+            'responses_api_metadata.codex_inspector_parent_thread_id="01a15d9a-f5e3-73c1-b4e7-87b3c5db9a3c"'])
 
     def test_native_process_quoting_preserves_spaces_quotes_and_unicode(self):
         echo = self.root / "echo.ps1"
