@@ -2,6 +2,121 @@
 
 const uiI18n = (() => {
   const english = {
+    "已接入":"Connected",
+    "未接入":"Disconnected",
+    "不支持的 provider 配置类型":"Unsupported provider configuration type",
+    "上游地址须为不含密码、查询参数的 HTTP/HTTPS 地址":"The upstream must be an HTTP/HTTPS URL without a password or query parameters",
+    "非本机的上游必须使用 HTTPS":"Remote upstreams must use HTTPS",
+    "请同时提供上下文窗口和自动压缩阈值；null 表示模型默认":"Provide both the context window and compaction threshold; null uses the default",
+    "上下文窗口超过当前模型支持的上限":"The context window exceeds the current model's limit",
+    "自动压缩阈值不能大于有效上下文窗口":"The compaction threshold cannot exceed the effective context window",
+    "已经接入采集器；如需更换先恢复原出口":"Already connected to the inspector; restore the original endpoint before switching",
+    "已有同名 provider，未覆盖":"A provider with this name already exists and was not overwritten",
+    "上游不能指向采集器自身":"The upstream cannot point to the inspector itself",
+    "当前配置不是本采集器接入的状态，未修改":"This configuration is not connected through this inspector and was not changed",
+    "接入块已被改动，请使用备份手动核对":"The connection block has changed; compare it with the backup",
+    "现有 codex_packet_inspector 与所选 provider 的上游或认证不同，未覆盖已有会话的连接配置。":"The existing codex_packet_inspector uses a different upstream or authentication. Existing session connections were not overwritten.",
+    "后台服务未能启动，请查看数据目录中的 startup-error.txt。":"The service could not start. See startup-error.txt in the data folder.",
+    "桌面窗口当前支持 Windows。其他平台可使用 --background 启动服务。":"The desktop window currently supports Windows. On other platforms, use --background to start the service.",
+    "无法创建桌面窗口标识。":"Unable to create the desktop window identifier.",
+    "桌面验证只允许使用隔离的数据目录。":"Desktop checks require an isolated data folder.",
+    "测试前端只允许用于隔离的开发版桌面验证。":"The test frontend is only available for isolated development desktop checks.",
+    "此端口被其他程序占用，请先释放端口。":"This port is in use by another program. Free it before continuing.",
+    "此端口正在使用另一个数据目录。":"This port is using a different data folder.",
+    "此端口正在使用另一份 Codex 配置。":"This port is using a different Codex configuration.",
+    "无法读取当前中转版本。":"Unable to read the current relay version.",
+    "无法读取中转配置目录。":"Unable to read the relay configuration folder.",
+    "入口端口配置暂不可用。":"Entry port settings are temporarily unavailable.",
+    "版本更新功能暂不可用。":"Updates are temporarily unavailable.",
+    "入口端口配置格式无效。":"Invalid entry port configuration format.",
+    "入口端口配置无效，请重新保存。":"Invalid entry port configuration. Save it again.",
+    "开发版前端目录不可用，请在当前项目中重新构建开发版 EXE。":"The development UI folder is unavailable. Rebuild the development EXE from the current project.",
+    "EXE 构建配置无效或开发目录不可用，请重新构建。":"The EXE build profile is invalid or the development folder is unavailable. Rebuild the EXE.",
+    "桌面运行模式记录无效，未切换运行模式。":"The desktop mode record is invalid. The mode was not changed.",
+    "图片工具配置属于另一个 Codex 配置文件。":"The image tool belongs to a different Codex configuration file.",
+    "原生图片工具配置已被修改，未覆盖用户配置。":"The native image tool settings have changed. Your configuration was not overwritten.",
+    "Codex CLI 不接受独立识图配置，请检查 CLI 版本；原设置已恢复。":"Codex CLI rejected the separate image profile. Check the CLI version; the original settings were restored.",
+    "现有独立图片工具已被禁用，请先恢复该工具。":"The existing separate image tool is disabled. Restore it first.",
+    "未找到 Codex CLI，无法安装独立图片工具。请先安装或打开 Codex 桌面版，或安装 Codex CLI 后重试。":"Codex CLI was not found. Install or open Codex desktop, or install Codex CLI, then retry installing the image tool.",
+    "独立图片工具注册已被修改，未覆盖用户配置。":"The separate image tool registration has changed. Your configuration was not overwritten.",
+    "未找到 Codex CLI，无法更新独立图片工具。请先安装或打开 Codex 桌面版后重试。":"Codex CLI was not found. Install or open Codex desktop, then retry updating the image tool.",
+    "独立图片工具配置已被修改，未覆盖用户配置。":"The separate image tool settings have changed. Your configuration was not overwritten.",
+    "无法验证 Codex CLI 的独立识图配置，原设置已恢复。":"Unable to verify the Codex CLI image profile. The original settings were restored.",
+    "图片工具迁移期间配置被修改，未覆盖用户更改。":"The configuration changed during image tool migration. Your changes were not overwritten.",
+    "图片工具配置已被修改，请先检查 Codex 配置。":"The image tool configuration has changed. Check the Codex configuration first.",
+    "配置发生并发修改；备份已保留，请检查后恢复。":"The configuration was modified concurrently. A backup was kept; review it before restoring.",
+    "识图 profile 发生并发修改；备份已保留，请检查后恢复。":"The image profile was modified concurrently. A backup was kept; review it before restoring.",
+    "图片保存路径必须是绝对文件夹路径。":"The image folder must use an absolute path.",
+    "无法访问图片保存路径，请检查文件夹路径。":"The image folder cannot be accessed. Check its path.",
+    "图片保存路径必须是可写的文件夹。":"The image folder must be writable.",
+    "未找到 PowerShell，无法安装独立图片工具。":"PowerShell was not found. The image tool could not be installed.",
+    "独立图片工具目录不能是链接。":"The image tool folder cannot be a link.",
+    "图片工具安装记录不匹配，未修改。":"The image tool installation record does not match. No changes were made.",
+    "图片工具文件已存在且不属于本程序，未覆盖。":"The image tool file already exists and belongs to another program. It was not overwritten.",
+    "独立图片工具文件已被修改，未覆盖或删除。":"The image tool file has changed. It was not overwritten or deleted.",
+    "安装功能请使用正式 EXE 和默认数据目录。源码运行无需安装。":"Installation requires the release EXE and default data folder. Source runs do not need installation.",
+    "provider 上游地址必须是字符串":"The provider upstream URL must be a string",
+    "provider 路由缺少原上游记录，请从备份恢复":"The provider route has no original upstream record. Restore it from a backup",
+    "Codex 配置在扫描期间发生变化，请重新检测":"The Codex configuration changed during scanning. Scan again",
+    "provider 上游不能指向采集器自身":"The provider upstream cannot point to the inspector itself",
+    "记录或字段不存在":"The record or field does not exist",
+    "仅支持接入和断开；接入后由本软件管理 zstd 压缩。":"Only connected and disconnected modes are supported. This app manages zstd compression when connected.",
+    "请求大小保护开关值冲突":"Conflicting request size protection settings",
+    "图片解析设置冲突":"Conflicting image analysis settings",
+    "存储上限设置冲突":"Conflicting storage limit settings",
+    "开机启动功能请使用已安装的 Windows EXE。":"Login startup requires an installed Windows EXE.",
+    "分页位置已过期，请刷新请求列表":"The page position has expired. Refresh the request list",
+    "目录必须是文本路径":"The folder path must be text",
+    "版本号格式无效。":"Invalid version number format.",
+    "更新下载跳转到了不受支持的地址。":"The update download redirected to an unsupported address.",
+    "仓库格式应为 owner/repository。":"Use owner/repository for the repository.",
+    "自动升级设置必须为布尔值。":"The automatic update setting must be a boolean.",
+    "无效的 GitHub API 地址。":"Invalid GitHub API URL.",
+    "版本信息过大。":"The release metadata is too large.",
+    "更新源返回了非正式版本。":"The update source returned a prerelease.",
+    "请先检查更新。":"Check for updates first.",
+    "当前版本无需升级，请重新检查。":"No upgrade is needed for this version. Check for updates again.",
+    "更新文件名无效。":"Invalid update filename.",
+    "无效的更新操作。":"Invalid update action.",
+    "新版缺少带 SHA-256 校验的正式版 EXE。":"The new release has no release EXE with a SHA-256 checksum.",
+    "正式版文件信息无效。":"Invalid release file metadata.",
+    "仓库尚无正式版本，或私有仓库需要先登录 GitHub CLI。":"The repository has no public release, or this private repository requires signing in with GitHub CLI.",
+    "正式版文件 SHA-256 校验失败。":"The release file failed SHA-256 verification.",
+    "正式版文件大小与版本信息不符。":"The release file size does not match its metadata.",
+    "新版中转健康检查超时，原服务保持运行。":"The new relay health check timed out. The original service is still running.",
+    "入口服务健康检查超时。":"The entry service health check timed out.",
+    "无法确认旧程序状态，升级未中断现有中转。":"Unable to confirm the old program's state. The upgrade left the existing relay running.",
+    "旧版优化器窗口未退出，请关闭窗口后再升级。中转仍在运行。":"The old optimizer window is still open. Close it before upgrading. The relay is still running.",
+    "无法确认桌面窗口状态，未切换服务。":"Unable to confirm the desktop window state. The service was not switched.",
+    "升级包的入口协议不兼容。":"The update uses an incompatible entry protocol.",
+    "升级包的入口模式不兼容。":"The update uses an incompatible entry mode.",
+    "入口端口无效。":"Invalid entry port.",
+    "已暂存的新版程序校验失败。":"The staged update failed verification.",
+    "此端口未使用当前配置，未执行升级。":"This port is using a different configuration. No upgrade was performed.",
+    "已安装更新的版本，未执行降级。":"A newer version is already installed. No downgrade was performed.",
+    "升级暂存目录无效。":"Invalid update staging folder.",
+    "旧后台恢复超时，已保留当前中转。":"Restoring the old backend timed out. The current relay was kept.",
+    "接入配置验证失败。":"Connection configuration verification failed.",
+    "升级包校验失败。":"Update verification failed.",
+    "端口属于其他服务或配置，未修改它。":"The port belongs to another service or configuration. It was not changed.",
+    "旧版不支持安全排空，请先手动关闭旧中转再运行升级程序。":"The old version cannot drain requests safely. Close the old relay manually before upgrading.",
+    "入口协议不兼容，未修改正在运行的服务。":"The entry protocol is incompatible. The running service was not changed.",
+    "旧服务仍有请求，已取消本次升级。现有中转继续运行。":"The old service still has active requests. The upgrade was cancelled and the existing relay is still running.",
+    "旧监听端口未释放，取消替换。":"The old listening port was not released. Replacement was cancelled.",
+    "现有服务暂不可用，未替换入口。":"The existing service is temporarily unavailable. The entry was not replaced.",
+    "新版中转未能启动，原服务保持运行。":"The new relay could not start. The original service is still running.",
+    "托盘交接状态待确认，已保留当前中转。":"The tray handoff is unconfirmed. The current relay was kept.",
+    "旧后台未能恢复，已保留当前中转。":"The old backend could not be restored. The current relay was kept.",
+    "旧服务尚未退出，取消替换。":"The old service has not exited. Replacement was cancelled.",
+    "切换后验证失败。":"Verification failed after switching.",
+    "新版入口仍在运行，未覆盖它的程序或配置，请查看升级结果。":"The new entry is still running. Its program and configuration were not overwritten. Check the upgrade result.",
+    "安装入口操作失败：":"Installation entry operation failed: ",
+    "本地端口已被占用或程序无法启动: ":"The local port is in use or the program could not start: ",
+    "设置超出有效范围: ":"Settings are out of range: ",
+    "目录无法写入：":"The folder is not writable: ",
+    "托盘入口启动失败：":"The tray could not start: ",
+    "检查或升级失败：":"Update check or upgrade failed: ",
+    "无法读取入口端口配置：":"Unable to read the entry port configuration: ",
     "存储位置":"Storage locations",
     "日志目录":"Log folder",
     "缓存目录":"Cache folder",
@@ -80,7 +195,7 @@ const uiI18n = (() => {
     "可在设置中开启重试保护":"Enable retry protection in Settings",
     "输入后自动定位；支持关键词或 / 开头的路径；始终显示完整 JSON":"Navigate as you type; use keywords or a path starting with /; always show the full JSON",
     "压缩方式":"Compression method",
-    "zstd 压缩等级":"zstd compression level",
+    "压缩登记":"Compression level",
     "接入":"Connected",
     "Codex 接入与原生压缩":"Codex connection and native compression",
     "由本软件管理 zstd 压缩，保留完整内容。":"This app manages lossless zstd compression.",
@@ -97,7 +212,7 @@ const uiI18n = (() => {
     "原始包变化":"Original packet change",
     "处理后包变化":"Processed packet change",
     "不压缩":"No compression",
-    "总减小比例":"Total size reduction",
+    "减小比例":"Size reduction",
     "包含图片处理和传输压缩带来的大小变化，按超限摘要处理前的正文计算。":"Includes size changes from image processing and transport compression, measured before overflow summarization.",
     "生成摘要 ":"Summaries generated: ",
     "\n已触发请求保护：":"\nRequest protection triggered: ",
@@ -606,7 +721,8 @@ const uiI18n = (() => {
   };
   let language = "zh";
   try { if(localStorage.getItem("packet-inspector-language")==="en")language="en"; } catch(_) {}
-  const textNodes=[], attributes=[];
+  const textNodes=[], attributes=[], boundText=new Map();
+  const messagePrefixes=Object.keys(english).filter(key=>/[:：]\s*$/u.test(key)).sort((a,b)=>b.length-a.length);
   const walker=document.createTreeWalker(document.documentElement,NodeFilter.SHOW_TEXT);
   while(walker.nextNode()) {
     const node=walker.currentNode;
@@ -621,23 +737,38 @@ const uiI18n = (() => {
       if(value && /[\u4e00-\u9fff]/.test(value))attributes.push({node,name,value});
     }
   }
-  function t(value) { return language==="en" && Object.hasOwn(english,value)?english[value]:value; }
+  function t(value) {
+    if(language!=="en"||typeof value!=="string")return value;
+    if(Object.hasOwn(english,value))return english[value];
+    // Only known UI diagnostic prefixes are translated; paths, identifiers
+    // and the original technical details after the prefix remain intact.
+    const prefix=messagePrefixes.find(key=>value.startsWith(key));
+    return prefix?english[prefix]+t(value.slice(prefix.length)):value;
+  }
+  function text(node,value) {
+    const render=typeof value==="function"?value:()=>t(value);
+    boundText.set(node,render);node.textContent=render();
+  }
   function apply() {
     document.documentElement.lang=language==="en"?"en":"zh-CN";
     for(const {node,key,before,after} of textNodes)if(node.isConnected)node.nodeValue=before+t(key)+after;
     for(const {node,name,value} of attributes)if(node.isConnected)node.setAttribute(name,t(value));
+    for(const [node,render] of boundText) {
+      if(node.isConnected)node.textContent=render();else boundText.delete(node);
+    }
     for(const button of document.querySelectorAll("#language-toggle [data-language]")) {
       button.setAttribute("aria-pressed",String(button.dataset.language===language));
     }
   }
-  function setLanguage(value) {
-    language=value==="en"?"en":"zh";
-    try {localStorage.setItem("packet-inspector-language",language);} catch(_) {}
-    apply();
+  function setLanguage(value,{persist=true}={}) {
+    const next=value==="en"?"en":"zh",changed=next!==language;
+    language=next;
+    if(persist)try {localStorage.setItem("packet-inspector-language",language);} catch(_) {}
+    if(changed)apply();
   }
   function labels(values) {return new Proxy(values,{get:(target,key)=>typeof target[key]==="string"?t(target[key]):target[key]});}
   apply();
-  return {t,apply,setLanguage,labels,get language(){return language;}};
+  return {t,text,apply,setLanguage,labels,get language(){return language;}};
 })();
 
 function t(value) {return uiI18n.t(value);}
