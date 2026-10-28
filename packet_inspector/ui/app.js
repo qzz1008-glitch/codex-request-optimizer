@@ -1558,8 +1558,8 @@ function renderCompression(m) {
   const encoding=hasTransport?m.transport_content_encoding:summaryTriggered?null:m.relay_content_encoding||m.outbound_content_encoding;
   fact(sizes,t("压缩方式"),encoding==="identity"?t("不压缩"):encoding||"—");
   const level=hasTransport?m.transport_zstd_level:summaryTriggered?null:m.relay_zstd_level;
-  fact(sizes,t("zstd 压缩等级"),Number.isInteger(level)&&level>=1&&level<=22?level:"—");
-  if(original>0 && compressed!==null)fact(sizes,t("总减小比例"),(100*(1-compressed/original)).toFixed(1)+"%").title=t("包含图片处理和传输压缩带来的大小变化，按超限摘要处理前的正文计算。");
+  fact(sizes,t("压缩登记"),Number.isInteger(level)&&level>=1&&level<=22?level:"—");
+  if(original>0 && compressed!==null)fact(sizes,t("减小比例"),(100*(1-compressed/original)).toFixed(1)+"%").title=t("包含图片处理和传输压缩带来的大小变化，按超限摘要处理前的正文计算。");
   root.append(sizes);
   const steps=panel(t("请求保护"));steps.id="packet-protection-panel";steps.classList.add("packet-protection-panel");
   const triggerStatus=triggered=>triggered?t("已触发"):m.source==="live"?t("未触发"):t("暂无记录");
