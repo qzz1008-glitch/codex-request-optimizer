@@ -2454,9 +2454,9 @@ class TokenTrendView {
     const key=["overflow","compact","predictive","retry"].find(value=>events.includes(value)),shape=TokenTrendView.markerShape(key);
     if(!shape)return;
     const {tag,...attrs}=shape,x=point.x,y=point.y;
-    const selected=this.eventKey(),node=this.svgNode("g",{class:"trend-event-node"+(selected?(events.includes(selected)?" highlighted":" dimmed"):""),"data-events":events.join(" "),"data-packet":point.packet.id,style:"--series-color:"+point.series.color,transform:`translate(${x} ${y})`});
-    node.append(this.svgNode(tag,{...attrs,class:"trend-event trend-event-"+key}));
-    if(key!=="overflow"&&events.length>1)node.append(this.svgNode("text",{x:6,y:-6,class:"trend-event-count"},"+"+(events.length-1)));
+    const selected=this.eventKey(),node=this.svgNode("g",{class:"trend-event-node"+(selected?(events.includes(selected)?" highlighted":" dimmed"):""),"data-events":events.join(" "),"data-packet":point.packet.id,transform:`translate(${x} ${y})`});
+    node.append(this.svgNode(tag,{...attrs,class:"trend-event trend-event-"+key,stroke:point.series.color}));
+    if(key!=="overflow"&&events.length>1)node.append(this.svgNode("text",{x:6,y:-6,class:"trend-event-count",fill:point.series.color},"+"+(events.length-1)));
     layer.append(node);return node;
   }
   render() {
