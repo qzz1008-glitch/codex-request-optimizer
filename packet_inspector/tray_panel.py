@@ -11,11 +11,13 @@ import threading
 from .tray_popup import popup_interaction_at, show_panel_window
 
 
-def popup_position(anchor, work_area, size):
-    left, top, right, bottom = work_area
+def popup_position(anchor, monitor_bounds, size):
+    """Keep an edge at the cursor, flipping only to fit on this monitor."""
+    left, top, right, bottom = monitor_bounds
     width, height = size
-    return (max(left + 6, min(anchor[0] - width, right - width - 6)),
-            max(top + 6, min(anchor[1] - height - 8, bottom - height - 6)))
+    x = anchor[0] if anchor[0] + width <= right else anchor[0] - width
+    y = anchor[1] if anchor[1] + height <= bottom else anchor[1] - height
+    return max(left, min(x, right - width)), max(top, min(y, bottom - height))
 
 
 def popup_anchor():
@@ -34,7 +36,9 @@ def popup_anchor():
     if not user.GetCursorPos(ctypes.byref(point)) or not user.GetMonitorInfoW(
             user.MonitorFromPoint(point, 2), ctypes.byref(monitor)):
         raise ctypes.WinError(ctypes.get_last_error())
-    return (point.x, point.y), (monitor.work.left, monitor.work.top, monitor.work.right, monitor.work.bottom)
+    # The cursor can be on the taskbar; excluding it would introduce a gap.
+    bounds = monitor.monitor
+    return (point.x, point.y), (bounds.left, bounds.top, bounds.right, bounds.bottom)
 
 
 def place_panel(window, anchor):
