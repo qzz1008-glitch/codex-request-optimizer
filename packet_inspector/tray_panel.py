@@ -8,6 +8,8 @@ import os
 from pathlib import Path
 import threading
 
+from .tray_popup import overflow_popup_at, show_panel_window
+
 
 def popup_position(anchor, work_area, size):
     left, top, right, bottom = work_area
@@ -137,12 +139,17 @@ class TrayPanel:
         self._bridge_ready = False
         self._notification = threading.Event()
         self._notifier = None
+        self._overflow = None
+        self._interaction_stop = None
 
     def show(self):
         anchor = popup_anchor()
+        overflow = overflow_popup_at(anchor)
         with self._guard:
             if self._closed.is_set():
                 return
+            self._stop_interaction()
+            self._overflow = overflow
             self._anchor, self.visible = anchor, True
         self.prepare()
         if self._loaded.is_set():
@@ -182,6 +189,7 @@ class TrayPanel:
     def _on_closed(self):
         self._closed.set()
         self.visible = False
+        self._stop_interaction()
         self._notification.set()
 
     def _on_closing(self):
@@ -212,8 +220,35 @@ class TrayPanel:
         if self._closed.is_set() or not self.visible or window is None:
             return
         place_panel(window, self._anchor)
-        window.show()
+        show_panel_window(window, inactive=self._overflow is not None)
+        self._watch_interaction()
         self._notify()
+
+    def _stop_interaction(self):
+        if self._interaction_stop:
+            self._interaction_stop.set()
+            self._interaction_stop = None
+
+    def _watch_interaction(self):
+        with self._guard:
+            if not self._overflow or self._interaction_stop or not self.visible or self._closed.is_set():
+                return
+            stop = self._interaction_stop = threading.Event()
+            overflow, window = self._overflow, self.window
+
+        def watch():
+            while not stop.wait(.05):
+                try:
+                    dismiss = overflow.should_dismiss(window)
+                except (OSError, ValueError):
+                    dismiss = True
+                if dismiss:
+                    with self._guard:
+                        if self._interaction_stop is stop:
+                            self.dismiss()
+                    return
+
+        threading.Thread(target=watch, name="tray-popup-interaction", daemon=True).start()
 
     def _notify(self):
         with self._guard:
@@ -262,10 +297,13 @@ class TrayPanel:
         return True
 
     def dismiss(self):
-        self.visible = False
-        if self.window and not self._closed.is_set():
-            self.window.hide()
-            self._notify()
+        with self._guard:
+            self.visible = False
+            self._stop_interaction()
+            self._overflow = None
+            if self.window and not self._closed.is_set():
+                self.window.hide()
+                self._notify()
 
     def open_main(self):
         self.dismiss()
@@ -287,6 +325,7 @@ class TrayPanel:
         already_closed = self._closed.is_set()
         self._closed.set()
         self.visible = False
+        self._stop_interaction()
         self._notification.set()
         if self.window and not already_closed:
             self.window.destroy()

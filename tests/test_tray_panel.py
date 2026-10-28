@@ -38,11 +38,13 @@ class TrayPanelTests(unittest.TestCase):
         self.window.events = SimpleNamespace(loaded=Callbacks(), closing=Callbacks(), closed=Callbacks())
         self.factory, self.open_main = Mock(return_value=self.window), Mock()
         self.panel = TrayPanel(self.factory, "http://127.0.0.1:12345/", self.root, self.open_main)
-        for name in ("popup_anchor", "place_panel", "configure_panel", "resize_panel_window"):
+        for name in ("popup_anchor", "place_panel", "configure_panel", "resize_panel_window", "overflow_popup_at", "show_panel_window"):
             patcher = patch("packet_inspector.tray_panel." + name)
             setattr(self, name, patcher.start())
             self.addCleanup(patcher.stop)
         self.popup_anchor.return_value = (1900, 1040), (0, 0, 1920, 1040)
+        self.overflow_popup_at.return_value = None
+        self.show_panel_window.side_effect = lambda window, **_: window.show()
         self.addCleanup(self.panel.destroy)
 
     def load(self):
