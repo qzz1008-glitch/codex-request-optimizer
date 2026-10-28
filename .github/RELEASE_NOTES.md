@@ -10,6 +10,7 @@
 - **存储位置设置**：集中配置日志、缓存和图片目录，支持打开目录及恢复默认路径。日志、缓存目录修改在下次启动本软件时生效，原目录数据保留。
 - **图片会话归组**：独立图片解析请求关联已知主会话，即使主会话名称尚未加载，也能保持正确归组。
 - **原生压缩请求保护**：根据实际上传大小为前置处理预留空间，精简前置摘要，改善接近网关上限时的压缩请求转发。
+- **英文界面**：完善动态面板和语言切换预览，统一压缩相关名称。
 
 发布文件仅包含 **CodexPacketInspector.exe**、**README.md**、**LICENSE** 和 **THIRD_PARTY_NOTICES.txt**。双击主程序即可安装或升级，也可在设置中检查更新。升级保留已有记录、设置及开发版／正式版模式；正常升级时，新请求交给新版服务，处理中请求由原服务继续完成。
 
@@ -25,5 +26,6 @@ This release updates the tray panel, trend timeline, connection diagnostics, sto
 - **Storage location settings**: configure log, cache, and image directories together, with actions to open directories or restore default paths. Changes to log and cache directories take effect on the next application start; data in previous directories is retained.
 - **Image-session grouping**: associate independent image-analysis requests with their known parent session even before the parent's title has loaded.
 - **Native compaction request protection**: reserve headroom for preprocessing based on actual upload size and shorten preliminary summaries, improving forwarding near the gateway limit.
+- **English interface**: improve dynamic panels and language-switch previews, and standardize compression terminology.
 
 Release assets contain only **CodexPacketInspector.exe**, **README.md**, **LICENSE**, and **THIRD_PARTY_NOTICES.txt**. Run the EXE to install or upgrade, or check for updates in Settings. Upgrades preserve records, settings, and the installed development or release mode. During a normal upgrade, the new service handles new requests while the previous service finishes requests already in progress.
