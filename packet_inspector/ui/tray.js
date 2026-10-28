@@ -1,9 +1,42 @@
 "use strict";
 (() => {
   let visible=false,timer=null,controller=null,sequence=0,busy=false,stateSync=0;
+  let legacyScope=null,legacyScopeAt=0;
   const buttons=[document.getElementById("tray-open"),document.getElementById("tray-exit")];
   const api=()=>window.pywebview?.api;
   const setText=(node,text)=>{if(node.textContent!==text)node.textContent=text;};
+  const knownCount=value=>Number.isSafeInteger(value)&&value>=0;
+  const knownRange=(first,last)=>Number.isFinite(first)&&Number.isFinite(last)&&first>=0&&last>=first&&last<=8.64e12;
+  function withScope(status,scope) {
+    const result={...status};
+    if(status.recorded_requests===0){result.recorded_sessions=0;result.first_recorded_at=null;result.last_recorded_at=null;return result;}
+    if(!knownCount(result.recorded_sessions)&&knownCount(scope?.recorded_sessions))result.recorded_sessions=scope.recorded_sessions;
+    if(!knownRange(result.first_recorded_at,result.last_recorded_at)&&knownRange(scope?.first_recorded_at,scope?.last_recorded_at)) {
+      result.first_recorded_at=scope.first_recorded_at;result.last_recorded_at=scope.last_recorded_at;
+    }
+    return result;
+  }
+  async function readJSON(path,signal) {
+    const response=await fetch(path,{cache:"no-store",signal});
+    if(!response.ok)throw Error("status unavailable");
+    return response.json();
+  }
+  async function readLegacyScope(signal) {
+    if(legacyScope&&Date.now()-legacyScopeAt<5000)return legacyScope;
+    const bounds="/api/packets?include_get=1&limit=1&sort=created&view=trend&direction=";
+    const [status,oldest,newest]=await Promise.all([readJSON("/api/status",signal),readJSON(bounds+"asc",signal),readJSON(bounds+"desc",signal)]);
+    const storage=status.storage,scope={},groups=storage?.threads;
+    if(knownCount(storage?.count)&&Array.isArray(groups)&&groups.every(group=>typeof group?.thread==="string"&&knownCount(group.count))) {
+      // Old backends cap the group list. Count sessions only when it covers
+      // every retained request, rather than presenting that cap as a total.
+      const covered=groups.reduce((total,group)=>total+group.count,0);
+      if(Number.isSafeInteger(covered)&&covered===storage.count)scope.recorded_sessions=new Set(groups.map(group=>group.thread.trim()).filter(Boolean)).size;
+    }
+    const first=Array.isArray(oldest)?oldest[0]?.created:undefined,last=Array.isArray(newest)?newest[0]?.created:undefined;
+    if(knownRange(first,last)){scope.first_recorded_at=first;scope.last_recorded_at=last;}
+    legacyScope=scope;legacyScopeAt=Date.now();
+    return scope;
+  }
   function render(status={}) {
     if(status.language&&status.language!==uiI18n.language)uiI18n.setLanguage(status.language);
     const linked={connected:t("已接入"),disconnected:t("未接入")}[status.connection_state]||t("接入状态未知");
@@ -18,7 +51,7 @@
       setText(node,known?numbers.format(value):"—");
     }
     const range=document.getElementById("tray-record-range"),first=status.first_recorded_at,last=status.last_recorded_at;
-    if(Number.isFinite(first)&&Number.isFinite(last)&&first>=0&&last>=first&&last<=8.64e12) {
+    if(knownRange(first,last)) {
       const start=new Date(first*1000),end=new Date(last*1000),pad=value=>String(value).padStart(2,"0");
       const short=date=>pad(date.getMonth()+1)+"/"+pad(date.getDate())+" "+pad(date.getHours())+":"+pad(date.getMinutes());
       setText(range,short(start)+(first===last?"":" – "+short(end)));
@@ -35,9 +68,14 @@
     if(!visible||document.hidden)return;
     const request=++sequence,current=new AbortController();controller=current;const timeout=setTimeout(()=>current.abort(),2500);
     try {
-      const response=await fetch("/api/tray-status",{cache:"no-store",signal:current.signal});
-      if(!response.ok)throw Error("status unavailable");
-      const status=await response.json();if(visible&&request===sequence)render(status);
+      const status=await readJSON("/api/tray-status",current.signal);
+      if(visible&&request===sequence)render(withScope(status,legacyScope));
+      if(status.recorded_requests!==0&&(!knownCount(status.recorded_sessions)||!knownRange(status.first_recorded_at,status.last_recorded_at))) {
+        try {
+          const scope=await readLegacyScope(current.signal);
+          if(visible&&request===sequence)render(withScope(status,scope));
+        } catch(_) {} // Missing legacy metadata must not erase valid tray counters.
+      }
     } catch(_) {if(visible&&request===sequence)render({language:uiI18n.language});}
     finally {clearTimeout(timeout);if(request===sequence){controller=null;if(visible&&!document.hidden)timer=setTimeout(refresh,1000);}}
   }

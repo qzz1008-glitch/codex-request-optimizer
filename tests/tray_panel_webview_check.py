@@ -11,6 +11,7 @@ import shutil
 import tempfile
 import threading
 import time
+from urllib.parse import parse_qs, urlsplit
 
 from packet_inspector.desktop_ui import DesktopUI, UI_DIR, ui_build_id
 from packet_inspector.exit_flow import REQUEST_FILE
@@ -26,8 +27,18 @@ class StatusHandler(BaseHTTPRequestHandler):
         self.server.requests.append(self.path)
         self.server.started.set()
         self.server.release.wait(10)
-        raw = json.dumps(self.server.snapshot).encode()
-        self.send_response(200 if self.path == "/api/tray-status" else 404)
+        target=urlsplit(self.path)
+        if target.path == "/api/tray-status":
+            value=self.server.snapshot
+        elif target.path == "/api/status":
+            value={"storage":self.server.legacy_storage}
+        elif target.path == "/api/packets":
+            direction=parse_qs(target.query).get("direction",[""])[0]
+            value=[{"created":self.server.bounds[0 if direction=="asc" else 1]}]
+        else:
+            value={}
+        raw = json.dumps(value).encode()
+        self.send_response(200 if target.path in {"/api/tray-status","/api/status","/api/packets"} else 404)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(raw)))
         self.end_headers()
@@ -79,6 +90,9 @@ def run():
                             "recorded_requests": 5000, "protected_requests": 34,
                             "recorded_sessions": 12, "first_recorded_at": time.time()-3600, "last_recorded_at": time.time(),
                             "average_compact_input_tokens": 254080.5, "compaction_samples": 31}
+        backend.bounds=backend.snapshot["first_recorded_at"],backend.snapshot["last_recorded_at"]
+        backend.legacy_storage={"count":5001,"threads":[{"thread":"s0","count":4980}]+
+                                [{"thread":f"s{i}","count":1} for i in range(1,12)]+[{"thread":"","count":10}]}
         threading.Thread(target=backend.serve_forever, kwargs={"poll_interval": .05}, daemon=True).start()
         ui = DesktopUI(backend.server_port, ui_dir=root, live_reload=True).start()
         master = webview.create_window("Isolated tray check", "about:blank", hidden=True)
@@ -128,6 +142,24 @@ def run():
                 wait_until(lambda: evaluate("document.documentElement.lang==='en'&&document.querySelector('[data-stat=recorded_requests]').textContent==='5,001'"))
                 assert evaluate("document.getElementById('tray-open').textContent.trim()") == "Open main window"
                 assert not evaluate("document.body.scrollWidth>document.body.getBoundingClientRect().width"), "English menu overflows"
+                assert set(backend.requests)=={"/api/tray-status"}, "new backend unnecessarily used compatibility queries"
+                complete=dict(backend.snapshot)
+                backend.snapshot={key:value for key,value in complete.items() if key not in {"recorded_sessions","first_recorded_at","last_recorded_at"}}
+                result["stage"]="legacy record scope"
+                wait_until(lambda: "/api/status" in backend.requests)
+                wait_until(lambda: evaluate("document.querySelector('[data-stat=recorded_sessions]').textContent==='12'&&document.getElementById('tray-record-range').textContent!=='—'"))
+                assert evaluate("document.querySelector('[data-stat=recorded_requests]').textContent") == "5,001"
+                backend.legacy_storage={**backend.legacy_storage,"threads":backend.legacy_storage["threads"][:1]}
+                evaluate("window.__trayTestNow=Date.now;Date.now=()=>window.__trayTestNow()+6000;true")
+                result["stage"]="truncated legacy group list"
+                wait_until(lambda: evaluate("document.querySelector('[data-stat=recorded_sessions]').textContent==='—'"))
+                assert evaluate("document.querySelector('[data-stat=recorded_requests]').textContent") == "5,001"
+                assert evaluate("document.getElementById('tray-record-range').textContent") != "—"
+                backend.snapshot={**complete,"recorded_requests":0,"recorded_sessions":0,"first_recorded_at":None,"last_recorded_at":None}
+                wait_until(lambda: evaluate("document.querySelector('[data-stat=recorded_sessions]').textContent==='0'&&document.getElementById('tray-record-range').textContent==='—'"))
+                backend.snapshot=complete
+                evaluate("Date.now=window.__trayTestNow;delete window.__trayTestNow;true")
+                wait_until(lambda: evaluate("document.querySelector('[data-stat=recorded_sessions]').textContent==='12'"))
                 panel.visible = False
                 evaluate("window.trayPanel.setVisible(false);true")
                 time.sleep(.2)
@@ -150,8 +182,13 @@ def run():
                 wait_until(lambda: len(actions) == 1)
                 evaluate("document.getElementById('tray-exit').click();true")
                 wait_until(lambda: len(actions) == 2 and (root / REQUEST_FILE).is_file())
-                assert set(backend.requests) == {"/api/tray-status"}, "panel called a business or stop endpoint"
+                assert all(urlsplit(path).path in {"/api/tray-status","/api/status","/api/packets"} for path in backend.requests), "panel called a business or stop endpoint"
+                for path in backend.requests:
+                    if urlsplit(path).path=="/api/packets":
+                        query=parse_qs(urlsplit(path).query)
+                        assert query.get("limit")==["1"] and query.get("include_get")==["1"] and query.get("view")==["trend"], "legacy fallback loaded request history"
                 result.update(passed=True, checks=["hidden startup warmup", "288px layout", "content sizing", "Chinese/English", "responsive before statistics", "record scope",
+                                                  "legacy backend scope", "truncated legacy groups", "empty store resets scope",
                                                   "visible polling", "hidden idle", "independent hot reload", "Alt+F4 dismissal", "Open/Exit bridge"])
                 result.pop("stage", None)
             except Exception as exc:
