@@ -106,7 +106,15 @@ class RuntimeSettingsTests(unittest.TestCase):
         for key in ("reported_usage", "input_items", "capacity_retry_diagnostic"):
             self.assertNotIn(key, row)
         self.assertLess(len(json.dumps(compact)), 2000)
-        self.assertEqual(self.api("/api/packets/" + row["id"] + "?view=trend"), (200, row))
+        status, detail = self.api("/api/packets/" + row["id"] + "?view=trend")
+        self.assertEqual(status, 200)
+        # A legacy record without a retained body becomes explicitly unavailable
+        # when first read, rather than reusing the post-summary upstream count.
+        estimate = detail.pop("request_token_estimate")
+        self.assertEqual(estimate, {"state": "unavailable", "source": "codex_estimate", "estimated": True})
+        self.assertEqual(detail, row)
+        refreshed = self.api(f"/api/packets?thread=trend-api-fixture&view=trend&since={now - 12 * 3600}")[1]
+        self.assertEqual(refreshed[0], {**row, "request_token_estimate": estimate})
         status, full = self.api("/api/packets?thread=trend-api-fixture")
         self.assertEqual(status, 200)
         self.assertEqual(len(full), 2)

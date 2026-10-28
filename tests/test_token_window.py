@@ -1,4 +1,4 @@
-"""Token displays must use the selected request's local usage, never byte estimates."""
+"""Keep genuine usage separate from explicitly labelled pre-summary estimates."""
 from contextlib import closing
 from datetime import datetime, timezone
 import json

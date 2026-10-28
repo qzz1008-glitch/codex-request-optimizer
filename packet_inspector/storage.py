@@ -15,7 +15,9 @@ import zlib
 from .analyzer import CLASSIFICATION_VERSION, classify_request, encode, compare_packets
 from .maintenance import SQLiteReclaimer
 from .request_context import packet_metadata, trend_packet_metadata
-from .response_usage import compact_packet_usage
+from .response_usage import compact_packet_usage, packet_usage
+from .token_estimate import request_basis, calibrate, overflow_applied, unavailable
+from .token_window import is_token_request
 
 SUMMARY_COLUMNS = "id,created,thread,status,method,kind,status_key,state,capture_owner,wire_bytes,stored_bytes,meta"
 COMPRESSED_SIZE_SQL = "coalesce(json_extract(meta,'$.overflow_original_wire_bytes'),json_extract(meta,'$.usage_override_request_bytes'),json_extract(meta,'$.outbound_wire_bytes'),-1)"
@@ -143,6 +145,9 @@ class Store:
                 "state": "captured", "source": meta.get("source", "live"),
                 "capture_owner": self.capture_owner}
         meta = compact_packet_usage(packet_metadata(meta))
+        if (meta.get("source") == "live" and meta.get("method") == "POST" and is_token_request(meta, include_compaction=True)
+                and isinstance(content, dict) and isinstance(content.get("body"), dict)):
+            meta["request_token_estimate"] = self._input_estimate(meta, content["body"])
         if self.max_detail_count == 0:
             meta = self._basic_metadata(meta)
             content = None
@@ -247,7 +252,67 @@ class Store:
             raise KeyError("packet_not_found")
         meta = packet_metadata(json.loads(row["meta"]))
         body = json.loads(zlib.decompress(row["content"])) if content and row["content"] else None
+        if overflow_applied(meta) and "request_token_estimate" not in meta:
+            try:
+                if not content:
+                    with self.connect() as c:
+                        saved = c.execute("SELECT content FROM packets WHERE id=?", (packet_id,)).fetchone()
+                    retained = json.loads(zlib.decompress(saved[0])) if saved and saved[0] else None
+                else:
+                    retained = body
+                estimate = (self._input_estimate(meta, retained["body"])
+                            if isinstance(retained, dict) and isinstance(retained.get("body"), dict)
+                            else unavailable("request_details_unavailable"))
+            except (ValueError, TypeError, OSError, sqlite3.Error, zlib.error):
+                estimate = unavailable("request_details_unavailable")
+            meta["request_token_estimate"] = estimate
+            self.update(packet_id, request_token_estimate=estimate)
         return meta, body
+
+    def _input_estimate(self, meta, body):
+        """Keep the native coarse basis, calibrated only against an exact prefix.
+
+        Authentic usage from an unreplaced request is the anchor. Both detail
+        and summary records retain the small basis; old browsing copies are
+        consulted only when a historical record has no basis yet.
+        """
+        try:
+            basis = request_basis(body)
+            if basis["state"] != "available" or not meta.get("thread_id"):
+                return basis
+            with self.connect() as c:
+                rows = c.execute("""SELECT id,meta FROM packet_summaries
+                    WHERE thread=? AND created<? AND method='POST' AND kind='generation'
+                    AND status=200 AND state='complete'
+                    AND json_extract(meta,'$.source')='live' AND json_extract(meta,'$.model')=?
+                    AND coalesce(json_extract(meta,'$.overflow_compaction_calls'),0)=0
+                    AND coalesce(json_extract(meta,'$.overflow_cache_hit'),0)=0
+                    ORDER BY created DESC,id DESC LIMIT 16""",
+                    (meta["thread_id"], meta["created"], meta.get("model"))).fetchall()
+                read_legacy = False
+                for row in rows:
+                    previous_meta = json.loads(row["meta"])
+                    usage = packet_usage(previous_meta)
+                    if (not is_token_request(previous_meta) or usage is None
+                            or previous_meta.get("source") != "live"
+                            or previous_meta.get("model") != meta.get("model")):
+                        continue
+                    previous = previous_meta.get("request_token_estimate")
+                    if not isinstance(previous, dict):
+                        if read_legacy:
+                            continue
+                        read_legacy = True
+                        saved = c.execute("SELECT content FROM packets WHERE id=?", (row["id"],)).fetchone()
+                        if not saved or not saved[0]:
+                            continue
+                        retained = json.loads(zlib.decompress(saved[0]))
+                        previous = request_basis(retained.get("body"))
+                    result = calibrate(basis, body, previous, usage["input_tokens"], row["id"])
+                    if "basis_packet_id" in result:
+                        return result
+            return basis
+        except (ValueError, TypeError, OSError, KeyError, sqlite3.Error, zlib.error):
+            return unavailable("estimation_failed")
 
     def reclassify_pending(self, limit=8):
         with self.connect() as c:

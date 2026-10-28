@@ -12,6 +12,7 @@ import zlib
 from .request_context import (IMAGE_ANALYST_PREFIXES, last_user_text, temporary_kind_from_metadata,
                               temporary_request_kind, request_session_context, session_id)
 from .response_usage import packet_usage
+from .token_estimate import estimate_usage, overflow_applied
 
 MAX_SESSIONS = 300
 INDEX_TASK_PREFIX = "You are in a fork of an existing Codex thread.\nFill the structured description field"
@@ -206,7 +207,7 @@ class SessionSummaries:
                 try:
                     meta = json.loads(row[2])
                     size = meta.get("outbound_wire_bytes")
-                    if meta.get("usage_override_applied") or meta.get("upstream_usage"):
+                    if meta.get("usage_override_applied") or meta.get("upstream_usage") or overflow_applied(meta):
                         reported_packets[thread] = meta
                 except (ValueError, TypeError, AttributeError):
                     meta, size = {}, None
@@ -229,6 +230,7 @@ class SessionSummaries:
             self._prepare_records(path, records, labels)
             ids = [r["thread_id"] for r in records if r["thread_id"]
                    and packet_usage(reported_packets.get(r["thread_id"], {})) is None
+                   and not overflow_applied(reported_packets.get(r["thread_id"], {}))
                    and not reported_packets.get(r["thread_id"], {}).get("usage_override_applied")]
             self._token_states = {k: v for k, v in self._token_states.items() if k in ids}
             # At most eight bounded history reads per refresh, rotating through larger lists.
@@ -240,7 +242,11 @@ class SessionSummaries:
                 record["token_window"] = self._token_states.get(record["thread_id"], {"state": "loading" if record["thread_id"] else "unavailable"})
                 packet = reported_packets.get(record["thread_id"], {})
                 usage = packet_usage(packet)
-                if usage is not None:
+                estimate = estimate_usage(packet)
+                if overflow_applied(packet):
+                    record["token_window"] = ({**estimate, "recorded_at": record["latest_packet"]["created"]}
+                                              if estimate else {"state": "unavailable"})
+                elif usage is not None:
                     record["token_window"] = {"state": "available", "source": "upstream_response",
                         "input_tokens": usage["input_tokens"], "output_tokens": usage["output_tokens"],
                         "used_tokens": usage["total_tokens"],

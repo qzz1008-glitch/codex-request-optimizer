@@ -1,6 +1,7 @@
 """Read request purpose and local image paths without opening any attachments."""
 import json
 import re
+from .token_estimate import overflow_applied
 from urllib.parse import unquote, urlsplit
 
 NEXT_MESSAGE_PREFIX = (
@@ -104,6 +105,10 @@ def trend_packet_metadata(meta):
     usage = meta.get("upstream_usage")
     if isinstance(usage, dict) and "input_tokens" in usage:
         result["upstream_usage"] = {"input_tokens": usage["input_tokens"]}
+    estimate = meta.get("request_token_estimate")
+    if overflow_applied(meta) and isinstance(estimate, dict):
+        result["request_token_estimate"] = {key: estimate[key] for key in
+            ("state", "source", "estimated", "input_tokens") if key in estimate}
     return result
 
 

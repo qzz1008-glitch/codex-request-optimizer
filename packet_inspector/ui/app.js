@@ -470,11 +470,11 @@ function renderSessions() {
     if(updated)when.title=timestampFormat.format(updated);
     if(!otherGroup) {
       if(id)item.append(el("code","session-id",id));
-      const tokens=data.token_window, estimated=tokens?.estimated, used=estimated?tokens?.used_tokens:tokens?.input_tokens;
+      const tokens=data.token_window, estimated=tokens?.estimated, used=tokens?.source==="codex_estimate"?tokens?.input_tokens:estimated?tokens?.used_tokens:tokens?.input_tokens;
       const available=tokens?.state==="available"&&Number.isFinite(used)&&used>=0;
       const tokenText=available?(estimated?"≈ ":"")+nf.format(used):"—";
       const usage=el("span","session-token","Token "+tokenText);
-      usage.title=available?(estimated?t("压缩后上下文总量估算"):t("最近请求输入 Token"))+(tokens.recorded_at?" · "+timestampFormat.format(new Date(tokens.recorded_at*1000)):""):t("尚无可用的输入 Token 记录");
+      usage.title=available?(estimated?t(tokens?.source==="codex_estimate"?"超限摘要前输入 Token（估算）":"压缩后上下文总量估算"):t("最近请求输入 Token"))+(tokens.recorded_at?" · "+timestampFormat.format(new Date(tokens.recorded_at*1000)):""):t("尚无可用的输入 Token 记录");
       meta.append(usage);
     }
     meta.append(when);item.append(meta);
@@ -517,7 +517,7 @@ function message(text, error=false) { $("notice").textContent = text; $("notice"
 function fail(err) { message(err.message || String(err), true); }
 async function api(path, data, signal) { const r = await fetch(path, {method:data === undefined ? "GET" : "POST",headers:data === undefined ? {} : {"Content-Type":"application/json"},body:data === undefined ? undefined : JSON.stringify(data),signal}); const value = await r.json(); if (!r.ok) throw Object.assign(Error(value.error || ("HTTP "+r.status)),{status:r.status}); return value; }
 function action(id, fn) { $(id).addEventListener("click", () => Promise.resolve().then(fn).catch(fail)); }
-function tokenVersion(packet) { return [packet.state,packet.status,packet.duration_ms,packet.method,packet.path,packet.is_compaction,packet.request_kind].join(":"); }
+function tokenVersion(packet) { return [packet.state,packet.status,packet.duration_ms,packet.method,packet.path,packet.is_compaction,packet.request_kind,packet.overflow_compaction_calls,packet.overflow_cache_hit,packet.request_token_estimate?.state,packet.request_token_estimate?.input_tokens].join(":"); }
 function cancelTokenRead() {
   clearTimeout(tokenTimer);tokenTimer=null;
   tokenController?.abort();tokenController=null;
@@ -594,25 +594,35 @@ function packetProtection(p) {
     retry:p.native_retry_advised===true||capacityRetryCount(p)>0
   };
 }
+function overflowApplied(p) {return p.overflow_compaction_calls>0||p.overflow_cache_hit===true;}
+function requestTokenUsage(p,data=null) {
+  if(overflowApplied(p)) {
+    const estimate=p.request_token_estimate??(data?.source==="codex_estimate"?data:null);
+    if(!estimate)return data&&data.state!=="available"?data:null;
+    return estimate.source==="codex_estimate"&&estimate.estimated===true&&estimate.state==="available"&&Number.isSafeInteger(estimate.input_tokens)&&estimate.input_tokens>=0?
+      estimate:{state:"unavailable",source:"codex_estimate",estimated:true};
+  }
+  const real=p.upstream_usage?.input_tokens;
+  if(Number.isSafeInteger(real)&&real>=0)return {state:"available",input_tokens:real};
+  return p.usage_override_applied?{state:"unavailable"}:data;
+}
 function listTokens(p) {
   if(!hasModelTokenUsage(p))return {state:"unavailable"};
-  const usage=p.upstream_usage;
-  if(Number.isInteger(usage?.input_tokens) && usage.input_tokens>=0)return {state:"available",input_tokens:usage.input_tokens};
-  if(p.usage_override_applied)return {state:"unavailable"};
+  const direct=requestTokenUsage(p);if(direct)return direct;
   const sorted=tokenSortCache?.entries.get(p.id);
-  if(sorted && sorted.version===tokenVersion(p) && (sorted.expires>Date.now() || p.state==="complete" && sortInputTokens(sorted.data)!==null))return sorted.data;
+  if(sorted && sorted.version===tokenVersion(p) && (sorted.expires>Date.now() || p.state==="complete" && sortInputTokens(sorted.data)!==null))return requestTokenUsage(p,sorted.data);
   const cached=cachedTokenWindow(p);
-  if(cached)return cached;
+  if(cached)return requestTokenUsage(p,cached);
   const entry=listTokenCache.get(p.id);
-  if(entry && entry.version===tokenVersion(p) && entry.expires>Date.now())return entry.data;
+  if(entry && entry.version===tokenVersion(p) && entry.expires>Date.now())return requestTokenUsage(p,entry.data);
   if(p.method!=="POST" || p.is_compaction || p.status!==200 || !["streaming","complete"].includes(p.state))return {state:p.state==="captured"?"pending":"unavailable"};
   return null;
 }
 function renderListTokens(p) {
   const cell=listTokenCells.get(p.id);if(!cell)return;
-  const data=listTokens(p), available=data?.state==="available" && !data.estimated && Number.isInteger(data.input_tokens) && data.input_tokens>=0;
-  setText(cell,available?nf.format(data.input_tokens):"—");
-  cell.title=available?t("本次请求的真实输入 Token"):!data || ["loading","pending"].includes(data.state)?t("等待输入 Token 记录"):t("暂无对应的输入 Token 记录");
+  const data=listTokens(p), value=sortInputTokens(data), available=value!==null;
+  setText(cell,available?(data.estimated?"≈ ":"")+nf.format(value):"—");
+  cell.title=available?t(data.estimated?"超限摘要前输入 Token（估算）":"本次请求的真实输入 Token"):!data || ["loading","pending"].includes(data.state)?t("等待输入 Token 记录"):t("暂无对应的输入 Token 记录");
 }
 function tokenDataLifetime(data) {
   return data?.state==="available"?300000:["loading","pending"].includes(data?.state)?1500:30000;
@@ -679,7 +689,7 @@ function renderSort() {
   }
 }
 function sortInputTokens(data) {
-  return data?.state==="available" && !data.estimated && Number.isInteger(data.input_tokens) && data.input_tokens>=0?data.input_tokens:null;
+  return data?.state==="available" && (!data.estimated||data.source==="codex_estimate") && Number.isSafeInteger(data.input_tokens) && data.input_tokens>=0?data.input_tokens:null;
 }
 function sortedTokenPackets(cache,direction) {
   if(cache.orders.has(direction))return cache.orders.get(direction);
@@ -754,7 +764,7 @@ async function tokenSortedPackets(query,revision,signal) {
     for(const p of records) {
       const version=tokenVersion(p),data=listTokens(p);
       const reusable=[previous?.entries.get(p.id),listTokenCache.get(p.id),tokenCache.get(p.id)].find(entry=>entry?.version===version && entry.data===data);
-      const native=hasModelTokenUsage(p) && p.status===200 && ["streaming","complete"].includes(p.state) && !p.usage_override_applied && !(Number.isInteger(p.upstream_usage?.input_tokens) && p.upstream_usage.input_tokens>=0);
+      const native=hasModelTokenUsage(p) && p.status===200 && ["streaming","complete"].includes(p.state) && (!p.usage_override_applied||overflowApplied(p)) && requestTokenUsage(p)===null;
       entries.set(p.id,{version,data,expires:!native?Infinity:reusable?.expires??(data?Date.now()+tokenDataLifetime(data):0)});
     }
     tokenSortCache?.controller?.abort();
@@ -1559,6 +1569,11 @@ function renderCompression(m) {
   const level=hasTransport?m.transport_zstd_level:summaryTriggered?null:m.relay_zstd_level;
   fact(sizes,t("zstd 压缩等级"),Number.isInteger(level)&&level>=1&&level<=22?level:"—");
   if(original>0 && compressed!==null)fact(sizes,t("总减小比例"),(100*(1-compressed/original)).toFixed(1)+"%").title=t("包含图片处理和传输压缩带来的大小变化，按超限摘要处理前的正文计算。");
+  if(summaryTriggered) {
+    const estimate=requestTokenUsage(m), actual=m.upstream_usage?.input_tokens;
+    fact(sizes,t("输入 Token（估算）"),sortInputTokens(estimate)!==null?"≈ "+nf.format(estimate.input_tokens):"—").title=t("超限摘要前输入 Token（估算）");
+    fact(sizes,t("上游实际输入 Token"),Number.isSafeInteger(actual)&&actual>=0?nf.format(actual):"—");
+  }
   root.append(sizes);
   const steps=panel(t("请求保护"));steps.id="packet-protection-panel";steps.classList.add("packet-protection-panel");
   const triggerStatus=triggered=>triggered?t("已触发"):m.source==="live"?t("未触发"):t("暂无记录");
@@ -2174,10 +2189,7 @@ class TokenTrendView {
     return null;
   }
   static input(packet,data) {
-    const real=packet.upstream_usage?.input_tokens;
-    if(Number.isSafeInteger(real)&&real>=0)return real;
-    if(packet.usage_override_applied)return null;
-    return data?.state==="available"&&Number.isSafeInteger(data.input_tokens)&&data.input_tokens>=0?data.input_tokens:null;
+    return sortInputTokens(requestTokenUsage(packet,data));
   }
   static packet(packet) {
     // Older backends return full metadata. Keep only fields used by the charts and native usage lookup.
@@ -2185,6 +2197,7 @@ class TokenTrendView {
     for(const key of ["id","created","thread_id","method","path","state","status","duration_ms","is_compaction","request_kind","request_purpose","session_kind","image_isolation_worker","usage_override_applied","usage_override_request_bytes","overflow_compaction_calls","overflow_cache_hit","overflow_original_wire_bytes","relay_error","capacity_retry_count","native_retry_advised","outbound_wire_bytes"])
       if(Object.hasOwn(packet,key))result[key]=packet[key];
     if(packet.upstream_usage&&Object.hasOwn(packet.upstream_usage,"input_tokens"))result.upstream_usage={input_tokens:packet.upstream_usage.input_tokens};
+    if(packet.request_token_estimate)result.request_token_estimate=packet.request_token_estimate;
     return result;
   }
   static size(packet) {return compressedBytes(packet);}
@@ -2436,7 +2449,7 @@ class TokenTrendView {
   hydrate() {
     if(!this.active||document.hidden||this.hydrating)return;
     const now=Date.now(),jobs=[...this.packets.values()].filter(packet=>{
-      if(!packet.thread_id||!this.services.isGeneration(packet)||packet.usage_override_applied||packet.status!==200||!["streaming","complete"].includes(packet.state)||this.input(packet)!==null)return false;
+      if(!packet.thread_id||!this.services.isGeneration(packet)||packet.usage_override_applied&&!overflowApplied(packet)||packet.status!==200||!["streaming","complete"].includes(packet.state)||this.input(packet)!==null)return false;
       const cached=this.native.get(packet.id);return !cached||cached.version!==tokenVersion(packet)||cached.expires<=now;
     }).sort((a,b)=>b.created-a.created).slice(0,8);
     if(!jobs.length)return;
@@ -2653,7 +2666,8 @@ class TokenTrendView {
       if(point?.node){chart.hoverNode=point.node;point.node.classList.toggle("trend-hover-node",true);}
       else if(point)chart.focusLayer.append(this.svgNode("circle",{cx:point.x,cy:point.y,r:3.6,fill:point.series.color,class:"trend-sample trend-hover-node"}));
       chart.tooltip.hidden=false;
-      chart.tooltip.replaceChildren(el("span","",t(chart.key==="size"?"处理后包":"输入 Token")),el("strong","",point?(chart.key==="size"?TokenTrendView.sizeLabel(point.value):nf.format(point.value)):"—"));
+      const estimated=chart.key!=="size"&&requestTokenUsage(anchor.packet,this.tokenData(anchor.packet))?.estimated===true;
+      chart.tooltip.replaceChildren(el("span","",t(chart.key==="size"?"处理后包":estimated?"输入 Token（估算）":"输入 Token")),el("strong","",point?(chart.key==="size"?TokenTrendView.sizeLabel(point.value):(estimated?"≈ ":"")+nf.format(point.value)):"—"));
       const rect=chart.svg.getBoundingClientRect(),panelTop=rect.top-originY;
       const px=rect.left-originX+chart.bounds.x(anchor.packet.created)*rect.width/chart.bounds.width;
       const py=panelTop+(point?point.y:(chart.bounds.top+chart.bounds.height-chart.bounds.bottom)/2)*rect.height/chart.bounds.height;

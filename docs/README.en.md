@@ -24,6 +24,8 @@ Browse requests by session to understand what was sent, how much space it used, 
 
 Use a shared timeline for request size and input tokens to follow session growth and protection events.
 
+The request list and token chart show input tokens before overflow summarization: authentic usage when no summary was applied, or an estimate marked `≈` when it was. Estimates follow Codex's content-based heuristics. When the model, request settings, and input prefix match, authentic usage from an unreplaced request anchors the estimate of appended content. The details pane retains actual upstream usage after summarization; unavailable estimates show “—”.
+
 - Start with a **one-hour** span after idle periods are shortened, and zoom between **1 and 12 hours**; points retain their actual timestamps.
 - Pan with the mouse wheel, zoom around the cursor with Ctrl + wheel, or drag the time slider to browse history.
 - Keep your position while browsing history; return to the right edge to follow new requests.
