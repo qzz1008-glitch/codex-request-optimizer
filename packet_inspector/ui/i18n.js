@@ -249,7 +249,7 @@ const uiI18n = (() => {
     "当前后台暂不支持禁用模式，升级后可用。":"Upgrade the backend to use disabled mode.",
     "图片保存路径":"Image save folder",
     "保存目录":"Save folder",
-    "使用默认目录":"Use default folder",
+    "默认目录":"Default folder",
     "图片保存路径已保存，立即用于新保存的图片。":"Image folder saved. Newly saved images use it immediately.",
     "当前中转暂不支持图片隔离，请升级中转后启用。":"Upgrade the forwarding service to enable image isolation.",
     "图片工具设置已保存，请重新加载 Codex 后继续使用。":"Image tool settings saved. Reload Codex before continuing.",
