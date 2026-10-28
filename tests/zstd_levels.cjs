@@ -85,7 +85,7 @@ const html=fs.readFileSync('packet_inspector/ui/index.html','utf8');
 assert(html.includes('scope="colgroup" colspan="2"'));
 const translations=fs.readFileSync('packet_inspector/ui/i18n.js','utf8');
 const dictionary=vm.runInNewContext(translations.slice(translations.indexOf('const english = {'),translations.indexOf('\n  };')+5)+'\nenglish;');
-for(const label of ['原始包＜1.5 MB','原始包≥1.5 MB']) {
+for(const label of ['原始请求＜1.5 MB','原始请求≥1.5 MB']) {
   assert(html.includes(label));
   assert(dictionary[label]);
 }
