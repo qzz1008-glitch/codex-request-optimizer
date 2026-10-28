@@ -164,11 +164,23 @@
         <p id="image-isolation-hint" class="muted help runtime-inline-hint" aria-live="polite">卸载优化工具，恢复原生图片解析</p>
       </div>
       <p id="image-isolation-message" class="help" role="status" hidden></p>
+    </section>
+    <section id="storage-location-settings" aria-labelledby="storage-location-title">
+      <h3 id="storage-location-title">存储位置</h3>
+      <div class="image-directory-settings" data-settings-field="log_dir">
+        <label for="log-dir">日志目录</label>
+        <div class="image-directory-row"><input id="log-dir" type="text" spellcheck="false" autocomplete="off"><button id="log-dir-reset" type="button">使用默认目录</button></div>
+      </div>
+      <div class="image-directory-settings" data-settings-field="cache_dir">
+        <label for="cache-dir">缓存目录</label>
+        <div class="image-directory-row"><input id="cache-dir" type="text" spellcheck="false" autocomplete="off"><button id="cache-dir-reset" type="button">使用默认目录</button></div>
+      </div>
       <div class="image-directory-settings" data-settings-field="image_save_dir">
         <label for="image-save-dir">图片保存路径</label>
         <div class="image-directory-row"><input id="image-save-dir" type="text" spellcheck="false" autocomplete="off"><button id="image-save-dir-reset">使用默认目录</button></div>
         <p id="image-save-dir-message" class="help" role="status" hidden></p>
       </div>
+      <p id="storage-paths-hint" class="help muted">日志与缓存目录下次启动生效，原目录数据保留。</p>
     </section>
     <section><h3>运行设置</h3>
       <div class="runtime-setting-row"><div class="runtime-toggle" data-settings-field="start_on_login"><input id="start-on-login" type="checkbox" aria-labelledby="start-on-login-label" aria-describedby="startup-hint"><span id="start-on-login-label">开机启动</span></div><p id="startup-hint" class="muted help runtime-inline-hint">登录 Windows 后在后台启动，可从托盘打开窗口。</p></div>
@@ -190,6 +202,7 @@
     <div class="settings-footer">
       <div class="settings-feedback"><p id="settings-message" class="help muted" role="status" aria-live="polite"></p><ol id="settings-save-log" class="settings-save-log" aria-label="保存进度" hidden></ol></div>
       <button id="settings-restore" type="button" disabled>恢复</button>
+      <button id="diagnostics-export" type="button" hidden>导出诊断日志</button>
       <button id="settings-save" class="primary" type="button" aria-busy="false" disabled><span class="settings-save-spinner" aria-hidden="true"></span><span id="settings-save-label">保存</span></button>
     </div>
   </dialog>

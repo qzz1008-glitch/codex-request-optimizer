@@ -1178,11 +1178,21 @@ function imageDefaultDirectory() {
   return s.image_save_dir_default||(dataDir?dataDir.replace(/[\\/]+$/,"")+separator+"image-attachments":"");
 }
 function fillImageDirectory() {
+  fillStorageDirectories();
   const s=state.status,input=$("image-save-dir"),supported=!!s.image_save_dir_supported;
   const defaultPath=imageDefaultDirectory();
   if(!settingsEditing)input.value=s.image_save_dir||defaultPath;
   input.placeholder=defaultPath;
   for(const id of ["image-save-dir","image-save-dir-reset"])$(id).disabled=settingsSaving||!supported||selectedImageAnalysisMode()!=="optimized";
+}
+function fillStorageDirectories() {
+  const s=state.status,supported=!!s.storage_paths_supported;
+  for(const [id,key] of [["log-dir","log_dir"],["cache-dir","cache_dir"]]) {
+    if(!settingsEditing)$(id).value=s[key]||s.data_dir||"";
+    $(id).placeholder=s.data_dir||"";
+    $(id).disabled=settingsSaving||!supported;$(id+"-reset").disabled=settingsSaving||!supported;
+  }
+  $("storage-paths-hint").textContent=t(s.storage_paths_pending?"目录已保存，重启本软件后生效，原目录数据保留。":"日志与缓存目录下次启动生效，原目录数据保留。");
 }
 function fillEntryPort() {
   const s=state.status,port=s.entry_port,supported=!!s.entry_port_supported&&!!port;
@@ -1268,6 +1278,8 @@ function readSettingsDraft() {
     capacity_retry_delay_seconds:$("capacity-retry-delay").value,
     image_analysis_mode:selectedImageAnalysisMode(),
     image_save_dir:$("image-save-dir").value,
+    log_dir:$("log-dir").value,
+    cache_dir:$("cache-dir").value,
     max_storage_mb:$("storage-limit").value,
     max_packets:$("packet-limit").value,
     language:settingsLanguage??uiI18n.language
@@ -1352,6 +1364,8 @@ async function saveSettings() {
       "image_analysis_mode" in s?draft.image_analysis_mode:draft.image_analysis_mode==="optimized",
       s.image_isolation_supported||["native","disabled","optimized"].includes(s.image_analysis_mode)],
     ["image_save_dir","image_save_dir",draft.image_save_dir===imageDefaultDirectory()?"":draft.image_save_dir,s.image_save_dir_supported],
+    ["log_dir","log_dir",draft.log_dir===s.data_dir?"":draft.log_dir,s.storage_paths_supported],
+    ["cache_dir","cache_dir",draft.cache_dir===s.data_dir?"":draft.cache_dir,s.storage_paths_supported],
     ["max_storage_mb",storage.key,storage.toBackend(draft.max_storage_mb),true],
     ["max_packets","max_packets",Number(draft.max_packets),true]
   ].filter(([field,,,supported])=>supported&&changed.has(field));
@@ -1365,7 +1379,8 @@ async function saveSettings() {
   $("settings-dialog").setAttribute("aria-busy","true");renderSettingsSaveProgress();
   try {
     if(entries.length) {
-      const label=entries.some(([field])=>["image_analysis_mode","image_save_dir"].includes(field))?"图片与运行设置":
+      const label=entries.some(([field])=>["log_dir","cache_dir","image_save_dir"].includes(field))?"存储位置":
+        entries.some(([field])=>field==="image_analysis_mode")?"图片与运行设置":
         entries.some(([field])=>field==="start_on_login")?"开机启动与运行设置":"运行设置";
       await runSettingsSaveStep(label,async()=>{
         const values=Object.fromEntries(entries.map(([,key,value])=>[key,value]));
@@ -1471,6 +1486,7 @@ async function openSettings() {
     settingsBaseline=readSettingsDraft();settingsEditing=true;
     resetSettingsSaveProgress();
     renderLanguageSelection();renderConnectionActions();renderUpdates();updateSettingsSaveState();
+    $("diagnostics-export").hidden=!state.status?.network_diagnostics_supported;
     $("settings-dialog").showModal();
   } finally {settingsOpening=false;}
 }
@@ -1965,6 +1981,16 @@ action("settings-restart-confirm",()=>{
 });
 $("settings-restart-dialog").addEventListener("cancel",event=>event.preventDefault());
 action("settings-close",closeSettings);action("settings-restore",restoreSettings);
+for(const id of ["log-dir","cache-dir"])action(id+"-reset",()=>{
+  if(settingsSaving||!state.status.storage_paths_supported)return;
+  $(id).value=state.status.data_dir||"";updateSettingsSaveState();
+});
+action("diagnostics-export",async()=>{
+  const report=await api("/api/network-diagnostics");
+  const url=URL.createObjectURL(new Blob([JSON.stringify(report,null,2)+"\n"],{type:"application/json;charset=utf-8"}));
+  const link=document.createElement("a");link.href=url;link.download="codex-network-diagnostics.json";link.click();
+  setTimeout(()=>URL.revokeObjectURL(url),1000);
+});
 $("settings-dialog").addEventListener("cancel",event=>{event.preventDefault();closeSettings();});
 $("settings-dialog").addEventListener("close",()=>{
   if(!$("settings-dialog").open){closeZstdLevelPicker(false);discardSettingsDraft();}
