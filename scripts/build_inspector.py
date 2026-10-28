@@ -10,7 +10,7 @@ import subprocess
 import sys
 import uuid
 from datetime import datetime, timezone
-from scripts.build_source import Workspace, Snapshot, SourceError
+from scripts.build_source import Workspace, Snapshot, SourceError, local_development_path
 
 from packet_inspector import VERSION
 from packet_inspector.app_icon import APP_ICON
@@ -23,7 +23,7 @@ PUBLIC_FILES = ("CodexPacketInspector.exe", "README.md", "LICENSE", "THIRD_PARTY
 def source_files(root=None):
     """Collect redistributable sources while excluding local runtime data."""
     root = Path(root or ROOT).resolve()
-    files = [root / name for name in ("README.md", "LICENSE", "AGENTS.md", ".gitignore", ".gitattributes", "requirements-dev.txt",
+    files = [root / name for name in ("README.md", "LICENSE", ".gitignore", ".gitattributes", "requirements-dev.txt",
              ".github/RELEASE_NOTES.md", ".github/workflows/windows-build.yml", ".githooks/pre-push")
              if (root / name).is_file()]
     suffixes = {".py", ".txt", ".md", ".html", ".js", ".cjs", ".css", ".ps1", ".json", ".ico", ".png", ".svg",
@@ -32,7 +32,8 @@ def source_files(root=None):
     excluded = {"__pycache__", "data", ".local", ".venv", "build", "release", "node_modules"}
     for folder in ("packet_inspector", "scripts", "tests", "docs", ".github"):
         for path in (root / folder).rglob("*"):
-            if not path.is_file() or excluded.intersection(path.relative_to(root).parts):
+            relative = path.relative_to(root)
+            if not path.is_file() or excluded.intersection(relative.parts) or local_development_path(relative):
                 continue
             if path.is_symlink() or path.suffix not in suffixes:
                 raise SourceError("Unsupported source input; include it explicitly before building: "

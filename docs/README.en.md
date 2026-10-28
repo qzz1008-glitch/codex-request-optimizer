@@ -140,8 +140,6 @@ The local service uses **Python**, transport compression uses **zstd**, and requ
 
 Token usage comes from actual upstream responses when available, with read-only fallback to existing local Codex records. Unconfirmed data remains marked as unavailable.
 
-See **[development and builds](https://github.com/qzz1008-glitch/codex-request-optimizer/blob/main/docs/development.md)** for environment setup, live reload, tests, and the build workflow.
-
 ---
 
 ## 📄 License
