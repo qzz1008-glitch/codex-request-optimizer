@@ -30,9 +30,9 @@ def tray_status_lines(status):
                and type(average) in (int, float) and math.isfinite(average) and average >= 0 else "—")
     if english:
         return (header, "Recorded requests: " + count("recorded_requests"),
-                "Protection triggers: " + count("protected_requests"), "Average context window: " + average + " Token")
+                "Protection triggers: " + count("protected_requests"), "Average context: " + average + " Token")
     return (header, "记录请求：" + count("recorded_requests") + " 个",
-            "触发保护：" + count("protected_requests") + " 次", "平均上下文窗口：" + average + " Token")
+            "触发保护：" + count("protected_requests") + " 次", "平均上下文：" + average + " Token")
 
 
 def close_entry_tray(pid, executable):

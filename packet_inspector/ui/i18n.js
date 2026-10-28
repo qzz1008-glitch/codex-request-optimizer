@@ -13,7 +13,7 @@ const uiI18n = (() => {
     "个会话":"sessions",
     "记录时间范围":"Record time range",
     "触发保护":"Protection triggers",
-    "平均上下文窗口":"Average context window",
+    "平均上下文":"Average context",
     "个":"requests",
     "次":"times",
     "打开主窗口":"Open main window",
