@@ -288,7 +288,8 @@ class NativeTray:
                     invoke(self.open_window)
                 elif lparam == 0x205:  # right button up
                     if self.show_panel is not None:
-                        user.SetForegroundWindow(hwnd)
+                        # A WebView popup opened from overflow must leave Explorer
+                        # active; activating this invisible owner closes its flyout.
                         user.AllowSetForegroundWindow(0xFFFFFFFF)
                         invoke(self._launch_panel)
                     else:
