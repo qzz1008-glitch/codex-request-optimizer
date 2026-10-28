@@ -41,7 +41,7 @@ Reduce request upload size while preserving the original content and meaning.
 - View separate estimates for original requests below 1.5 MB and those at or above 1.5 MB, with colors showing relative results within each group.
 - Further optimize existing zstd requests, replacing them only when the compressed body is smaller.
 - With request size protection enabled, use **automatic compression by request size**: keep small requests unchanged, select fast or high compression for larger requests, and leave high compression when requests return to the small-body range.
-- Inspect original and processed sizes, reduction, encoding, and compression level. See the user guide for measurement definitions and automatic selection rules.
+- Inspect original and forwarded request sizes, reduction, encoding, and compression level. See the user guide for measurement definitions and automatic selection rules.
 
 ### 🧠 Context settings
 

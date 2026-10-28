@@ -810,9 +810,9 @@ function renderList() {
     const type=requestKind(p);
     const original=originalBytes(p), upload=compressedBytes(p);
     const before=el("span","packet-size",compact(original));
-    before.title=original===null?t("原始请求大小未记录"):t("原始包：")+bytes(original);
+    before.title=original===null?t("原始请求大小未记录"):t("原始请求：")+bytes(original);
     const after=el("span","packet-size",compact(upload));
-    after.title=upload===null?t("处理后请求大小未记录"):t("处理后包：")+bytes(upload);
+    after.title=upload===null?t("转发请求大小未记录"):t("转发请求：")+bytes(upload);
     row.dataset.packetId=p.id;row.dataset.session=p.thread_id||"";row.title=(states[p.state]||p.state)+(p.status?" · HTTP "+p.status:"")+"\n"+(p.thread_id?"session_id: "+p.thread_id:t("会话未识别"));
     if(flags.retry)row.title+="\n"+(p.native_retry_advised===true?t("已向 Codex 发送重试提示"):t("自动重试：{count} 次").replace("{count}",nf.format(capacityRetryCount(p))));
     if(protection.length)after.title+=t("\n已触发请求保护：")+protection.join(" · ");
@@ -1559,8 +1559,8 @@ function renderProtectionPanelState() {
 function renderCompression(m) {
   const root=document.createDocumentFragment();
   const sizes=panel(t("请求大小")), original=originalBytes(m), compressed=compressedBytes(m);
-  fact(sizes,t("原始包"),bytes(original)).title=t("原始请求大小（图片处理、传输压缩前）");
-  fact(sizes,t("处理后包"),bytes(compressed)).title=t("处理后请求大小（图片处理、传输压缩后，超限摘要处理前）");
+  fact(sizes,t("原始请求"),bytes(original)).title=t("原始请求大小（图片处理、传输压缩前）");
+  fact(sizes,t("转发请求"),bytes(compressed)).title=t("转发请求大小（图片处理、传输压缩后，超限摘要处理前）");
   const summaryTriggered=m.overflow_compaction_calls>0||m.overflow_cache_hit===true;
   const hasTransport=typeof m.transport_content_encoding==="string";
   // Older summary records only retain the final body's encoding and grade.
@@ -1839,7 +1839,7 @@ async function loadDiff() {
   const delta=data?await compressedDelta(data,current):null;if(!active())return;
   const root=document.createDocumentFragment();
   if(!data){reconcileContent($("diff-content"),el("p","muted",t("没有可比较的上条请求。")));return;}
-  const p=panel(t("相对上条请求"));fact(p,t("处理后包变化"),signed(delta));fact(p,t("原始包变化"),signed(data.decoded_delta));root.append(p);
+  const p=panel(t("相对上条请求"));fact(p,t("转发请求变化"),signed(delta));fact(p,t("原始请求变化"),signed(data.decoded_delta));root.append(p);
   if(data.state==="summary_only")root.append(el("small","muted",t("输入条目详情已回收，以下显示统计变化。")));
   const changes=panel(t("变化明细")),rows=packetDiffRows(data,state.detail);
   const labels={added:t("新增"),removed:t("移除"),changed:t("内容改变")};
@@ -2679,7 +2679,7 @@ class TokenTrendView {
       else if(point)chart.focusLayer.append(this.svgNode("circle",{cx:point.x,cy:point.y,r:3.6,fill:point.series.color,class:"trend-sample trend-hover-node"}));
       chart.tooltip.hidden=false;
       const estimated=chart.key!=="size"&&requestTokenUsage(anchor.packet,this.tokenData(anchor.packet))?.estimated===true;
-      chart.tooltip.replaceChildren(el("span","",t(chart.key==="size"?"处理后包":estimated?"输入 Token（估算）":"输入 Token")),el("strong","",point?(chart.key==="size"?TokenTrendView.sizeLabel(point.value):(estimated?"≈ ":"")+nf.format(point.value)):"—"));
+      chart.tooltip.replaceChildren(el("span","",t(chart.key==="size"?"转发请求":estimated?"输入 Token（估算）":"输入 Token")),el("strong","",point?(chart.key==="size"?TokenTrendView.sizeLabel(point.value):(estimated?"≈ ":"")+nf.format(point.value)):"—"));
       const rect=chart.svg.getBoundingClientRect(),panelTop=rect.top-originY;
       const px=rect.left-originX+chart.bounds.x(anchor.packet.created)*rect.width/chart.bounds.width;
       const py=panelTop+(point?point.y:(chart.bounds.top+chart.bounds.height-chart.bounds.bottom)/2)*rect.height/chart.bounds.height;

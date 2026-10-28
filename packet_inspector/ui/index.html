@@ -39,8 +39,8 @@
           <thead><tr>
             <th scope="col" aria-sort="descending"><button data-sort="created"><span>时间</span><span class="sort-arrow" aria-hidden="true"> ↓</span></button></th>
             <th scope="col"><label class="column-filter"><span class="column-filter-label" aria-hidden="true">类型</span><select id="filter-kind" data-filter="kind" aria-label="筛选类型" title="筛选类型"><option value="">全部类型</option></select></label></th>
-            <th scope="col" aria-sort="none"><button data-sort="decoded_bytes" title="原始请求大小（图片处理、传输压缩前）"><span>原始包</span><span class="sort-arrow" aria-hidden="true"></span></button></th>
-            <th scope="col" aria-sort="none"><button data-sort="compressed_bytes" title="处理后请求大小（图片处理、传输压缩后，超限摘要处理前）"><span>处理后包</span><span class="sort-arrow" aria-hidden="true"></span></button></th>
+            <th scope="col" aria-sort="none"><button data-sort="decoded_bytes" title="原始请求大小（图片处理、传输压缩前）"><span>原始请求</span><span class="sort-arrow" aria-hidden="true"></span></button></th>
+            <th scope="col" aria-sort="none"><button data-sort="compressed_bytes" title="转发请求大小（图片处理、传输压缩后，超限摘要处理前）"><span>转发请求</span><span class="sort-arrow" aria-hidden="true"></span></button></th>
           <th scope="col" aria-sort="none" title="本次请求的真实输入 Token"><button data-sort="input_tokens"><span>Token</span><span class="sort-arrow" aria-hidden="true"></span></button></th>
           </tr></thead>
           <tbody id="packet-rows"></tbody>
@@ -81,7 +81,7 @@
         <div id="trend-range" class="trend-range-control"><input id="trend-range-slider" type="range" min="0" max="1" step="any" value="1" disabled aria-label="时间位置" title="拖动浏览时间；滚轮前后移动，Ctrl + 滚轮缩放，最短 1 小时，最长 12 小时"></div>
       </div>
       <div id="trend-charts" class="trend-charts">
-        <div id="trend-size-plot" class="trend-plot"><svg id="trend-size-chart" role="img" focusable="false" aria-label="处理后请求大小随时间变化；悬停查看请求"></svg><div id="trend-size-empty" class="trend-empty" hidden></div></div>
+        <div id="trend-size-plot" class="trend-plot"><svg id="trend-size-chart" role="img" focusable="false" aria-label="转发请求大小随时间变化；悬停查看请求"></svg><div id="trend-size-empty" class="trend-empty" hidden></div></div>
         <div id="trend-plot" class="trend-plot"><svg id="trend-chart" role="img" focusable="false" aria-label="输入 Token 随时间变化；悬停查看请求"></svg><div id="trend-empty" class="trend-empty" hidden></div></div>
         <svg id="trend-time-axis" class="trend-time-axis" role="img" focusable="false" aria-label="时间轴"></svg>
         <svg id="trend-focus" class="trend-focus" aria-hidden="true" focusable="false"></svg>
@@ -208,7 +208,7 @@
   <dialog id="zstd-level-dialog" aria-labelledby="zstd-level-title" aria-describedby="zstd-level-note">
     <div class="dialog-heading"><h2 id="zstd-level-title">选择压缩等级</h2><button id="zstd-level-close" type="button" aria-label="关闭等级选择">✕</button></div>
     <p id="zstd-level-note" class="help muted">基于120条请求、每级3轮测试估算，大小相对原始未压缩包，耗时相对历史成功请求耗时中位数。</p>
-    <div class="zstd-level-scroll"><table class="zstd-level-table"><colgroup><col class="zstd-level-col"><col><col><col class="zstd-time-col"></colgroup><thead><tr><th scope="col" rowspan="2">等级</th><th scope="colgroup" colspan="2" class="zstd-size-heading">请求大小变化</th><th scope="col" rowspan="2" class="num">任务耗时变化</th></tr><tr><th scope="col" class="num">原始包＜1.5 MB</th><th scope="col" class="num">原始包≥1.5 MB</th></tr></thead><tbody id="zstd-level-options"></tbody></table></div>
+    <div class="zstd-level-scroll"><table class="zstd-level-table"><colgroup><col class="zstd-level-col"><col><col><col class="zstd-time-col"></colgroup><thead><tr><th scope="col" rowspan="2">等级</th><th scope="colgroup" colspan="2" class="zstd-size-heading">请求大小变化</th><th scope="col" rowspan="2" class="num">任务耗时变化</th></tr><tr><th scope="col" class="num">原始请求＜1.5 MB</th><th scope="col" class="num">原始请求≥1.5 MB</th></tr></thead><tbody id="zstd-level-options"></tbody></table></div>
   </dialog>
   <dialog id="settings-restart-dialog" aria-labelledby="settings-restart-title" aria-describedby="settings-restart-description">
     <h2 id="settings-restart-title">重启 ChatGPT App 后生效</h2>
