@@ -13,6 +13,7 @@ from unittest.mock import patch
 from packet_inspector import VERSION
 from packet_inspector.router import RouterServer, atomic_json, ensure_entry
 from packet_inspector.server import InspectorServer
+from tests.relay_fixture import HTTP_TIMEOUT, wait_for_idle
 
 
 class RouterTests(unittest.TestCase):
@@ -51,7 +52,7 @@ class RouterTests(unittest.TestCase):
                 handler.wfile.flush()
                 if streaming:
                     test.started.set()
-                    test.release.wait(5)
+                    test.release.wait(60)
                 handler.wfile.write(result[1:])
         self.upstream = ThreadingHTTPServer(("127.0.0.1", 0), Upstream)
         self.run_server(self.upstream)
@@ -73,9 +74,7 @@ class RouterTests(unittest.TestCase):
         self.release.set()
         self.router.shutdown()
         self.router.server_close()
-        deadline = time.monotonic() + 10
-        while any(worker.active_requests for worker in self.workers) and time.monotonic() < deadline:
-            time.sleep(.01)
+        wait_for_idle(*self.workers)
         for server in [*self.workers, self.upstream]:
             server.shutdown()
             server.server_close()
@@ -93,7 +92,7 @@ class RouterTests(unittest.TestCase):
         return worker
 
     def api(self, path, data=None, headers=None):
-        client = http.client.HTTPConnection("127.0.0.1", self.router.port, timeout=5)
+        client = http.client.HTTPConnection("127.0.0.1", self.router.port, timeout=HTTP_TIMEOUT)
         try:
             client.request("GET" if data is None else "POST", path, None if data is None else json.dumps(data),
                            {"X-Inspector-Control": "router-test", **(headers or {})})
@@ -120,7 +119,7 @@ class RouterTests(unittest.TestCase):
                  for headers in handshake_headers]
         for suffix, headers in cases:
             with self.subTest(suffix=suffix, headers=headers):
-                client = http.client.HTTPConnection("127.0.0.1", self.router.port, timeout=5)
+                client = http.client.HTTPConnection("127.0.0.1", self.router.port, timeout=HTTP_TIMEOUT)
                 self.addCleanup(client.close)
                 before = len(self.seen)
                 client.request("GET", prefix + suffix, headers=headers)
@@ -132,11 +131,12 @@ class RouterTests(unittest.TestCase):
                                {"Content-Type": "application/json", "Authorization": "Bearer fixture"})
                 response = client.getresponse()
                 self.assertEqual((response.status, response.read()), (200, b"ok"))
+                wait_for_idle(self.first)
                 self.assertEqual(len(self.seen), before + 1)
                 self.assertEqual(self.seen[-1][1:], (b'{"input":[]}', "Bearer fixture"))
 
     def test_retrieving_an_existing_response_still_uses_http_get(self):
-        client = http.client.HTTPConnection("127.0.0.1", self.router.port, timeout=5)
+        client = http.client.HTTPConnection("127.0.0.1", self.router.port, timeout=HTTP_TIMEOUT)
         self.addCleanup(client.close)
         prefix = "/relay/" + self.first.settings["relay_token"]
         client.request("GET", prefix + "/responses/resp_fixture?include=usage", headers={"Authorization": "Bearer fixture"})
@@ -148,7 +148,7 @@ class RouterTests(unittest.TestCase):
         prefix = "/relay/" + self.first.settings["relay_token"]
         for path in [prefix + "/p/missing/responses", "/relay/wrong-token/responses"]:
             with self.subTest(path=path):
-                client = http.client.HTTPConnection("127.0.0.1", self.router.port, timeout=5)
+                client = http.client.HTTPConnection("127.0.0.1", self.router.port, timeout=HTTP_TIMEOUT)
                 self.addCleanup(client.close)
                 client.request("GET", path, headers={"Upgrade": "websocket", "Sec-WebSocket-Key": "fixture"})
                 response = client.getresponse()
@@ -157,7 +157,7 @@ class RouterTests(unittest.TestCase):
         self.assertEqual(self.seen, [])
 
     def test_cutover_preserves_stream_and_active_records_and_sends_new_requests_to_new_worker(self):
-        client = http.client.HTTPConnection("127.0.0.1", self.router.port, timeout=5)
+        client = http.client.HTTPConnection("127.0.0.1", self.router.port, timeout=HTTP_TIMEOUT)
         path = "/relay/" + self.first.settings["relay_token"] + "/responses?api-version=test"
         client.request("POST", path, b'{"input":[]}', {"X-Test-Stream": "1", "Authorization": "Bearer fixture"})
         response = client.getresponse()
@@ -173,7 +173,7 @@ class RouterTests(unittest.TestCase):
         self.assertEqual(status["relay_active_requests"], 1)
         self.assertEqual(self.first.active_requests, 1)
         self.assertFalse(self.first.maintenance_enabled)
-        fallback = http.client.HTTPConnection("127.0.0.1", self.router.port, timeout=5)
+        fallback = http.client.HTTPConnection("127.0.0.1", self.router.port, timeout=HTTP_TIMEOUT)
         self.addCleanup(fallback.close)
         fallback.request("GET", "/relay/" + second.settings["relay_token"] + "/responses")
         response_fallback = fallback.getresponse()
@@ -270,7 +270,7 @@ class RouterTests(unittest.TestCase):
         self.assertEqual(self.api("/api/status", headers={"Origin": "https://example.invalid"})[0], 403)
 
     def test_inference_failure_is_never_replayed_on_another_worker(self):
-        client = http.client.HTTPConnection("127.0.0.1", self.router.port, timeout=5)
+        client = http.client.HTTPConnection("127.0.0.1", self.router.port, timeout=HTTP_TIMEOUT)
         client.request("POST", "/relay/" + self.first.settings["relay_token"] + "/responses", b"{}", {"X-Test-Drop": "1"})
         response = client.getresponse()
         self.assertEqual(response.status, 502)
@@ -280,7 +280,7 @@ class RouterTests(unittest.TestCase):
 
     def test_chunked_compressed_body_and_query_are_preserved(self):
         body = gzip.compress(b'{"input":[{"role":"user","content":"fixture"}]}')
-        client = http.client.HTTPConnection("127.0.0.1", self.router.port, timeout=5)
+        client = http.client.HTTPConnection("127.0.0.1", self.router.port, timeout=HTTP_TIMEOUT)
         client.request("POST", "/relay/" + self.first.settings["relay_token"] + "/responses?version=1",
                        [body[:9], body[9:]], {"Content-Encoding": "gzip", "Authorization": "Bearer fixture"},
                        encode_chunked=True)
@@ -291,7 +291,7 @@ class RouterTests(unittest.TestCase):
 
     def test_upload_started_before_switch_remains_pinned_to_old_worker(self):
         body = b'{"input":[]}'
-        client = http.client.HTTPConnection("127.0.0.1", self.router.port, timeout=5)
+        client = http.client.HTTPConnection("127.0.0.1", self.router.port, timeout=HTTP_TIMEOUT)
         client.putrequest("POST", "/relay/" + self.first.settings["relay_token"] + "/responses")
         client.putheader("Content-Length", str(len(body)))
         client.endheaders()

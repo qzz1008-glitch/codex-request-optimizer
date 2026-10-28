@@ -74,7 +74,7 @@ class ResponseTimeoutTests(unittest.TestCase):
                     item.shutdown()
                     item.server_close()
 
-    def request(self, server):
+    def request(self, server, *, on_first=None):
         client = http.client.HTTPConnection("127.0.0.1", server.port, timeout=5)
         try:
             client.request("POST", "/relay/" + server.settings["relay_token"] + "/responses",
@@ -82,6 +82,10 @@ class ResponseTimeoutTests(unittest.TestCase):
                            {"Content-Type": "application/json"})
             response = client.getresponse()
             self.assertEqual(response.status, 200)
+            if on_first is not None:
+                first = response.read(len(FIRST))
+                on_first()
+                return first + response.read()
             return response.read()
         finally:
             client.close()
@@ -94,9 +98,10 @@ class ResponseTimeoutTests(unittest.TestCase):
 
     def test_silent_generation_closes_without_a_fabricated_completion(self):
         with self.relay(silent=True) as server:
-            started = time.monotonic()
-            self.assertEqual(self.request(server), FIRST)
-            self.assertLess(time.monotonic() - started, 2)
+            first_received = []
+            self.assertEqual(self.request(server, on_first=lambda: first_received.append(time.monotonic())), FIRST)
+            # Measure the silent interval, excluding request preparation and DB writes.
+            self.assertLess(time.monotonic() - first_received[0], 2)
 
     def test_overflow_summary_uses_the_same_idle_interval(self):
         with self.relay() as server:
