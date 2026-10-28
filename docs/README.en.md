@@ -24,10 +24,10 @@ Browse requests by session to understand what was sent, how much space it used, 
 
 Use a shared timeline for request size and input tokens to follow session growth and protection events.
 
-- Start with the last **hour** and zoom to a **1–12-hour** viewing range.
+- Start with a **one-hour** span after idle periods are shortened, and zoom between **1 and 12 hours**; points retain their actual timestamps.
 - Pan with the mouse wheel, zoom around the cursor with Ctrl + wheel, or drag the time slider to browse history.
 - Keep your position while browsing history; return to the right edge to follow new requests.
-- Automatically fold long idle intervals into marked breaks; hover to see their actual start and end times, with both charts aligned.
+- Skip most of each long idle interval while keeping curves connected; timeline markers show the skipped periods and their actual start and end times on hover, with both charts aligned.
 - Distinguish sessions by color and identify predictive protection, overflow protection, retry protection, and native context compaction with event markers.
 - Search for sessions, locate their series, inspect requests on hover, and highlight matching nodes through the mechanism legend.
 

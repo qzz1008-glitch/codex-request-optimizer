@@ -13,4 +13,4 @@ class TokenTrendContracts(unittest.TestCase):
         result = subprocess.run([shutil.which("node"), "tests/token_trends.cjs"], cwd=root,
                                 capture_output=True, text=True, encoding="utf8", timeout=30)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(json.loads(result.stdout)["passed"], 64)
+        self.assertEqual(json.loads(result.stdout)["passed"], 67)

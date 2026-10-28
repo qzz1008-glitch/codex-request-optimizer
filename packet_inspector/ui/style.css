@@ -175,7 +175,7 @@ code.session-id{font-family:Consolas,"Cascadia Mono",monospace;font-size:11px;wo
 .trend-event-node.highlighted .trend-event{stroke-width:2.8}
 .trend-event-count{fill:var(--series-color,currentColor);font:9px "Segoe UI",sans-serif;paint-order:stroke;stroke:white;stroke-width:3px}
 .trend-focus-line{stroke:#9baabd;stroke-dasharray:4 4;stroke-width:1;pointer-events:none}.trend-focus-dot{fill:none;stroke:var(--series-color,currentColor);stroke-width:1.5;pointer-events:none}
-.trend-idle-gap{fill:#eff2f7;fill-opacity:.8}.trend-time-break rect{fill:var(--panel)}.trend-time-break path{fill:none;stroke:#8b99ad;stroke-width:1.4;vector-effect:non-scaling-stroke}
+.trend-time-break rect{fill:var(--panel)}.trend-time-break path{fill:none;stroke:#8b99ad;stroke-width:1.4;vector-effect:non-scaling-stroke}
 .trend-empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:13px;pointer-events:none;padding:30px;text-align:center;background:#ffffffd9}
 .trend-tooltip,.trend-time-tooltip{position:absolute;z-index:2;width:max-content;max-width:calc(100% - 16px);pointer-events:none;white-space:nowrap;font-variant-numeric:tabular-nums}
 .trend-tooltip{display:flex;align-items:baseline;gap:7px;background:#fffffffa;border:1px solid #cdd7e4;border-radius:7px;box-shadow:0 3px 12px #16284214;padding:5px 9px;font-size:11px;line-height:18px;color:var(--muted)}
