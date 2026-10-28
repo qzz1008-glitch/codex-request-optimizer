@@ -109,7 +109,7 @@ Each click on **Connect** records configuration changes, runtime information, an
 
 Failed requests record the actual connection destination, proxy CONNECT/TLS/upload/response-wait phases, byte counts, status, related request ID, necessary response headers, and redacted error details. HTML gateway errors retain readable text, with long content truncated to a limit. Stream errors and local request-protection failures are also recorded. Diagnostics do not save normal conversation output or request bodies, replay inference requests, change proxy selection, or broaden retry handling.
 
-Use **Export diagnostics** at the bottom of Settings. Diagnostic records are limited to 14 days, 500 entries, and 16 MiB of record content, with cleanup on connection or new error records. Missing historical information cannot be reconstructed. Diagnostic write failures do not interrupt forwarding.
+Diagnostics are saved as `network-diagnostics.sqlite` in the selected log folder. View the file with a SQLite tool, or retrieve it directly for troubleshooting. Diagnostic records are limited to 14 days, 500 entries, and 16 MiB of record content, with cleanup on connection or new error records. Missing historical information cannot be reconstructed. Diagnostic write failures do not interrupt forwarding.
 
 ### Online updates
 

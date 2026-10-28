@@ -1491,7 +1491,6 @@ async function openSettings() {
     settingsBaseline=readSettingsDraft();settingsEditing=true;
     resetSettingsSaveProgress();
     renderLanguageSelection();renderConnectionActions();renderUpdates();updateSettingsSaveState();
-    $("diagnostics-export").hidden=!state.status?.network_diagnostics_supported;
     $("settings-dialog").showModal();
   } finally {settingsOpening=false;}
 }
@@ -1989,12 +1988,6 @@ action("settings-close",closeSettings);action("settings-restore",restoreSettings
 for(const id of ["log-dir","cache-dir"])action(id+"-reset",()=>{
   if(settingsSaving||!state.status.storage_paths_supported)return;
   $(id).value=state.status.data_dir||"";updateSettingsSaveState();
-});
-action("diagnostics-export",async()=>{
-  const report=await api("/api/network-diagnostics");
-  const url=URL.createObjectURL(new Blob([JSON.stringify(report,null,2)+"\n"],{type:"application/json;charset=utf-8"}));
-  const link=document.createElement("a");link.href=url;link.download="codex-network-diagnostics.json";link.click();
-  setTimeout(()=>URL.revokeObjectURL(url),1000);
 });
 $("settings-dialog").addEventListener("cancel",event=>{event.preventDefault();closeSettings();});
 $("settings-dialog").addEventListener("close",()=>{
