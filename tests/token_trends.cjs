@@ -398,9 +398,9 @@ function eventRows(){return [
   assert.equal(result.timeTooltip.hidden,false);assert.equal(result.timeTooltip.textContent,result.time(missing.packet.created,true));
   assert.equal(focusLines(result).length,1);
   assert.equal(chartNodes(token,'trend-hover-node').length,0);assert.equal(size.tooltip.children.length,2);
-  assert.ok(nodeText(size.tooltip).includes('处理后包'));assert.ok(nodeText(size.tooltip).includes('250 KB'));
+  assert.ok(nodeText(size.tooltip).includes('转发请求'));assert.ok(nodeText(size.tooltip).includes('250 KB'));
   assert.equal(token.tooltip.children[1].textContent,'—');assert.ok(nodeText(token.tooltip).includes('输入 Token'));
-  for(const text of ['输入 Token','实际上传','原始包',missing.packet.id,':'])assert.ok(!nodeText(size.tooltip).includes(text));
+  for(const text of ['输入 Token','实际上传','原始请求',missing.packet.id,':'])assert.ok(!nodeText(size.tooltip).includes(text));
   for(const chart of result.charts){assert.equal(chart.svg.onclick,undefined);assert.equal(chart.svg.onkeydown,undefined);}
   assert.equal('pinned' in result,false);
   const next=token.points.at(-1);token.svg.onpointermove({clientX:next.x,clientY:next.y});
