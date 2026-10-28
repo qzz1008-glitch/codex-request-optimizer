@@ -82,7 +82,9 @@ def show_panel_window(window, inactive=False):
     user.GetWindowLongPtrW.argtypes, user.GetWindowLongPtrW.restype = [wintypes.HWND, ctypes.c_int], ctypes.c_ssize_t
     user.SetWindowLongPtrW.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_ssize_t]
     user.SetWindowLongPtrW.restype = ctypes.c_ssize_t
-    user.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
+    user.SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int,
+                                  ctypes.c_int, ctypes.c_int, wintypes.UINT]
+    user.SetWindowPos.restype = wintypes.BOOL
     from System import Action
     form = window.native
 
@@ -95,11 +97,15 @@ def show_panel_window(window, inactive=False):
             ctypes.set_last_error(0)
             if not user.SetWindowLongPtrW(handle, -20, desired) and ctypes.get_last_error():
                 raise ctypes.WinError(ctypes.get_last_error())
-        if inactive:
-            user.ShowWindow(handle, 4)  # SW_SHOWNOACTIVATE; do not call Form.Activate.
-        else:
+        if not inactive:
             form.Show()
             form.Activate()
+        # A preloaded topmost window can still be behind Explorer's topmost
+        # overflow panel. Reinsert our menu at the top each time it is shown,
+        # without activating it or changing its owner's order.
+        flags = 0x01 | 0x02 | 0x10 | 0x40 | 0x0200  # NOSIZE/NOMOVE/NOACTIVATE/SHOWWINDOW/NOOWNERZORDER
+        if not user.SetWindowPos(handle, -1, 0, 0, 0, 0, flags):  # HWND_TOPMOST
+            raise ctypes.WinError(ctypes.get_last_error())
 
     if form.InvokeRequired:
         form.Invoke(Action(show))
