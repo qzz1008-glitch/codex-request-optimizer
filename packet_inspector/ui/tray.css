@@ -18,7 +18,10 @@ dt{margin:0;color:#687282;white-space:nowrap}
 dd{margin:0;white-space:nowrap;color:#29313d;font-variant-numeric:tabular-nums}
 dd>span:first-child{font-weight:500}
 dd>span:not(:first-child){color:#7a8493;font-size:11px}
-.record-scope>span:not(:first-child){font-size:10px}
+.record-totals{display:flex;align-items:baseline;gap:5px}
+.record-totals>span{font-size:11px;font-weight:400;color:#29313d}
+.record-totals [data-stat]{font-weight:500}
+.record-totals .record-unit,.record-totals>span[aria-hidden]{color:#7a8493}
 button{display:flex;align-items:center;gap:10px;width:100%;min-height:36px;border:0;border-radius:7px;padding:0 12px;background:transparent;color:#29313d;font:inherit;text-align:left;cursor:default}
 button:hover{background:#f2f4f7}
 button:active{background:#e9edf2}

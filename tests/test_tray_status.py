@@ -112,7 +112,7 @@ class TrayMenuTests(unittest.TestCase):
         tray.update_status(self.snapshot())
         items = tray.menu_items()
         self.assertEqual([item[1] for item in items], ["已接入 · 中转正常", None,
-            "记录请求：1,234 个", "触发保护：12 次", "平均上下文窗口：234,567 Token", None,
+            "记录请求：1,234 个", "触发保护：12 次", "平均上下文：234,567 Token", None,
             "打开主窗口", None, "退出程序"])
         self.assertEqual([identity for identity, text, flags in items if not flags], [1, 2])
         self.assertTrue(all(flags == 0x3 for identity, text, flags in items if identity >= 100))
@@ -120,9 +120,9 @@ class TrayMenuTests(unittest.TestCase):
     def test_language_connection_and_missing_values_are_independent_of_the_average(self):
         lines = tray_status_lines(self.snapshot(language="en", connection_state="disconnected", compaction_samples=0))
         self.assertEqual(lines[0], "Disconnected · Relay running")
-        self.assertEqual(lines[3], "Average context window: — Token")
-        self.assertEqual(tray_status_lines({})[1:], ("记录请求：— 个", "触发保护：— 次", "平均上下文窗口：— Token"))
-        self.assertEqual(tray_status_lines(self.snapshot(average_compact_input_tokens=0))[3], "平均上下文窗口：0 Token")
+        self.assertEqual(lines[3], "Average context: — Token")
+        self.assertEqual(tray_status_lines({})[1:], ("记录请求：— 个", "触发保护：— 次", "平均上下文：— Token"))
+        self.assertEqual(tray_status_lines(self.snapshot(average_compact_input_tokens=0))[3], "平均上下文：0 Token")
 
     def test_open_native_menu_updates_only_changed_rows_and_preserves_actions(self):
         class Icon(ctypes.Structure):
@@ -190,7 +190,7 @@ class TrayMenuTests(unittest.TestCase):
                 time.sleep(.01)
             self.assertEqual(text(100), "已接入 · 中转正常")
             self.assertEqual(text(101), "记录请求：1,234 个")
-            self.assertEqual(text(103), "平均上下文窗口：234,567 Token")
+            self.assertEqual(text(103), "平均上下文：234,567 Token")
             self.assertEqual(user.GetMenuState(menu, 101, 0) & 3, 3)
             self.assertEqual(user.GetMenuState(menu, 1, 0) & 3, 0)
             self.assertEqual(text(1), "打开主窗口")

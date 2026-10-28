@@ -13,11 +13,11 @@
     <div class="tray-heading" role="status"><span class="status-dot" id="tray-dot" aria-hidden="true"></span><span id="tray-status">正在读取状态…</span></div>
     <hr>
     <dl class="tray-statistics" aria-live="polite">
-      <div class="record-stat"><dt>记录请求</dt><dd><span data-stat="recorded_requests">—</span> <span>条</span></dd>
-        <dd class="record-scope"><span><span data-stat="recorded_sessions">—</span> <span>个会话</span></span><span id="tray-record-range" title="记录时间范围">—</span></dd>
+      <div class="record-stat"><dt>记录请求</dt><dd class="record-totals"><span><span data-stat="recorded_sessions">—</span> <span class="record-unit">个会话</span></span><span aria-hidden="true">·</span><span><span data-stat="recorded_requests">—</span> <span class="record-unit">条</span></span></dd>
+        <dd class="record-scope"><span id="tray-record-range" title="记录时间范围">—</span></dd>
       </div>
       <div><dt>触发保护</dt><dd><span data-stat="protected_requests">—</span> <span>次</span></dd></div>
-      <div><dt>平均上下文窗口</dt><dd><span data-stat="average_compact_input_tokens">—</span> <span>Token</span></dd></div>
+      <div><dt>平均上下文</dt><dd><span data-stat="average_compact_input_tokens">—</span> <span>Token</span></dd></div>
     </dl>
     <hr>
     <button id="tray-open" type="button"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><rect x="3" y="3.5" width="14" height="13" rx="2"/><path d="M3 7h14M7 7v9.5"/></svg><span>打开主窗口</span></button>
