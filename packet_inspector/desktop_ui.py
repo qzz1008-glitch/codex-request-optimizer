@@ -207,7 +207,7 @@ class UIHandler(BaseHTTPRequestHandler):
             if status != 200 or not isinstance(data.get("data_dir"), str):
                 self._json(200, {"state": "unavailable", "sessions": []})
                 return
-            self._json(200, self.server.session_summaries.read(data["data_dir"]))
+            self._json(200, self.server.session_summaries.read(data.get("active_cache_dir", data["data_dir"])))
         except (OSError, http.client.HTTPException, ValueError, TypeError, AttributeError, sqlite3.Error):
             self._json(200, {"state": "unavailable", "sessions": []})
 

@@ -15,6 +15,9 @@ from packet_inspector.server import InspectorServer
 
 class ConnectionPolicyTests(unittest.TestCase):
     def setUp(self):
+        probe = patch("packet_inspector.network_diagnostics.NetworkDiagnostics._probe")
+        probe.start()
+        self.addCleanup(probe.stop)
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
