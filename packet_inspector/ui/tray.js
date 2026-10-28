@@ -20,7 +20,8 @@
     measure();
   }
   function measure() {
-    if(api()?.resize_panel)api().resize_panel(Math.ceil(document.body.getBoundingClientRect().width),Math.ceil(document.body.scrollHeight)).catch(()=>{});
+    const bounds=document.body.getBoundingClientRect();
+    if(api()?.resize_panel)api().resize_panel(Math.ceil(bounds.width),Math.ceil(bounds.height)).catch(()=>{});
   }
   function cancel() {clearTimeout(timer);timer=null;sequence++;controller?.abort();controller=null;}
   async function refresh() {
