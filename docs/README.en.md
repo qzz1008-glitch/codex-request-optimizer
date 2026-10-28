@@ -27,6 +27,7 @@ Use a shared timeline for request size and input tokens to follow session growth
 - Start with the last **hour** and zoom to a **1–12-hour** viewing range.
 - Pan with the mouse wheel, zoom around the cursor with Ctrl + wheel, or drag the time slider to browse history.
 - Keep your position while browsing history; return to the right edge to follow new requests.
+- Automatically fold long idle intervals into marked breaks; hover to see their actual start and end times, with both charts aligned.
 - Distinguish sessions by color and identify predictive protection, overflow protection, retry protection, and native context compaction with event markers.
 - Search for sessions, locate their series, inspect requests on hover, and highlight matching nodes through the mechanism legend.
 
@@ -139,8 +140,6 @@ flowchart LR
 The local service uses **Python**, transport compression uses **zstd**, and request records are stored in **SQLite**. HTML / CSS / JavaScript provide the interface, with **pywebview / WebView2** supplying the Windows desktop window. Image analysis runs through a separate tool and session.
 
 Token usage comes from actual upstream responses when available, with read-only fallback to existing local Codex records. Unconfirmed data remains marked as unavailable.
-
-See **[development and builds](https://github.com/qzz1008-glitch/codex-request-optimizer/blob/main/docs/development.md)** for environment setup, live reload, tests, and the build workflow.
 
 ---
 

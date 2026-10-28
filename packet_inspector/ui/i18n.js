@@ -428,6 +428,7 @@ const uiI18n = (() => {
     "趋势":"Trends",
     "会话请求趋势":"Session request trends",
     "请求大小":"Request size",
+    "已压缩无请求时段：{start} – {end}":"Idle interval compressed: {start} – {end}",
     "阈值 {size}":"Limit {size}",
     "实际上传":"Uploaded size",
     "时间范围":"Time range",

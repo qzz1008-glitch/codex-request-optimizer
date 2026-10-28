@@ -22,10 +22,17 @@ def git(root, *arguments, check=True):
     return result.stdout.rstrip("\r\n") if check else result
 
 
+def local_development_path(name):
+    path = Path(name)
+    return path.name == "AGENTS.md" or path.as_posix() == "docs/development.md"
+
+
 def product_path(name):
     path = Path(name)
+    if local_development_path(name):
+        return False
     return (bool(path.parts) and path.parts[0] in {"packet_inspector", "scripts", "tests", "docs", ".githooks", ".github"}
-            or name in {"README.md", "LICENSE", "AGENTS.md", ".gitignore", ".gitattributes", "requirements-dev.txt",
+            or name in {"README.md", "LICENSE", ".gitignore", ".gitattributes", "requirements-dev.txt",
                         ".github/RELEASE_NOTES.md", ".github/workflows/windows-build.yml",
                         "build_inspector.py", "build_app_icon.ps1"}
             or (len(path.parts) == 1 and (name.startswith(("test_", "verify_"))
