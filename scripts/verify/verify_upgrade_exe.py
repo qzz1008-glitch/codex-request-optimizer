@@ -15,6 +15,7 @@ import time
 
 from packet_inspector.router import control_worker, local_json, process_alive, worker_info
 from packet_inspector.upgrade import Upgrade, digest, free_port
+from packet_inspector.window_lifecycle import request_window_exit, tray_panel_host_running
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -30,6 +31,15 @@ def wait_for(function, seconds=45):
             pass
         time.sleep(.1)
     raise RuntimeError("Packaged upgrade verification timed out")
+
+
+def close_test_desktop(data):
+    if os.name != "nt":
+        return
+    if not data.resolve().is_relative_to((ROOT / ".local").resolve()):
+        raise ValueError("Only disposable verification desktops may be closed")
+    request_window_exit(data)
+    wait_for(lambda: not tray_panel_host_running(data), seconds=30)
 
 
 def verify_presentation(data, status):
@@ -48,6 +58,7 @@ def verify_presentation(data, status):
     entry = json.loads((data / "runtime.json").read_text(encoding="utf8"))
     assert user.FindWindowW("CodexPacketInspectorTray-" + str(runtime["pid"]), None)
     wait_for(lambda: not user.FindWindowW("CodexPacketInspectorTray-" + str(entry["pid"]), None), seconds=5)
+    wait_for(lambda: tray_panel_host_running(data), seconds=30)
 
 
 def verify_fresh_install(release, directory):
@@ -67,6 +78,7 @@ def verify_fresh_install(release, directory):
         assert digest(canonical) == digest(release / "CodexPacketInspector.exe")
         print(json.dumps({"phase": "fresh_install_with_shared_application", "result": "ok"}), flush=True)
     finally:
+        close_test_desktop(data)
         state_path = data / "router-state.json"
         if state_path.exists():
             state = json.loads(state_path.read_text(encoding="utf8"))
@@ -184,6 +196,9 @@ def main():
         root_pid = json.loads((data / "runtime.json").read_text(encoding="utf8"))["pid"]
         first_worker = first["worker_id"]
         if options.desktop:
+            # The worker has already preloaded a tray host for this data directory.
+            # Release its single-window mutex before starting the checking window.
+            close_test_desktop(data)
             report = data / "desktop-upgrade-check.json"
             report.with_suffix(".hold").write_text("hold", encoding="ascii")
             desktop_process = subprocess.Popen([worker_info(data, first_worker)["executable"],
@@ -276,6 +291,7 @@ def main():
             marker = data / "desktop-upgrade-check.hold"
             marker.unlink(missing_ok=True)
             observer._close_windows(observer._application_windows())
+        close_test_desktop(data)
         if held:
             held.close()
         if updater and updater.poll() is None:
