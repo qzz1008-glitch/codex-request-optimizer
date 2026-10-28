@@ -67,7 +67,9 @@ class DesktopUITests(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory()
         self.folder = Path(self.temporary.name)
         for name, text in {"index.html": "<html><head></head><body>new UI</body></html>",
-                           "app.js": "'use strict';", "i18n.js": "'use strict';", "style.css": "body { color: black; }"}.items():
+                           "app.js": "'use strict';", "i18n.js": "'use strict';", "style.css": "body { color: black; }",
+                           "tray.html": "<html><head></head><body>tray</body></html>",
+                           "tray.js": "'use strict';", "tray.css": "body { background: white; }"}.items():
             (self.folder / name).write_text(text, encoding="utf8")
         self.backend = ThreadingHTTPServer(("127.0.0.1", 0), LegacyHandler)
         self.backend.daemon_threads = True

@@ -1,0 +1,130 @@
+"""The tray reuses the desktop process, owns no service, and keeps a small bridge."""
+import tempfile
+import threading
+from pathlib import Path
+from types import SimpleNamespace
+import unittest
+from unittest.mock import Mock, patch
+
+from packet_inspector.tray import NativeTray, NATIVE_MENU_MESSAGE
+from packet_inspector.tray_panel import PanelAPI, TrayPanel, popup_position
+from tests.test_window_lifecycle import Callbacks
+
+
+class TrayPanelTests(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.window = Mock()
+        self.window.events = SimpleNamespace(loaded=Callbacks(), closing=Callbacks(), closed=Callbacks())
+        self.factory, self.open_main = Mock(return_value=self.window), Mock()
+        self.panel = TrayPanel(self.factory, "http://127.0.0.1:12345/", self.root, self.open_main)
+        for name in ("popup_anchor", "place_panel", "configure_panel"):
+            patcher = patch("packet_inspector.tray_panel." + name)
+            setattr(self, name, patcher.start())
+            self.addCleanup(patcher.stop)
+        self.popup_anchor.return_value = (1900, 1040), (0, 0, 1920, 1040)
+
+    def load(self):
+        self.panel.show()
+        self.window.events.loaded[0]()
+
+    def test_repeated_right_clicks_reuse_one_frameless_window_and_no_service(self):
+        self.load()
+        self.panel.dismiss()
+        self.panel.show()
+        self.assertEqual(self.factory.call_count, 1)
+        self.assertEqual(self.factory.call_args.args[1], "http://127.0.0.1:12345/tray.html")
+        self.assertTrue(self.factory.call_args.kwargs["frameless"])
+        self.assertTrue(self.factory.call_args.kwargs["hidden"])
+        self.assertIsInstance(self.factory.call_args.kwargs["js_api"], PanelAPI)
+        self.assertTrue(self.panel.panel_state()["visible"])
+        self.open_main.assert_not_called()
+        self.assertEqual(self.configure_panel.call_count, 1)
+
+    def test_hot_page_reload_preserves_visibility_and_does_not_reconfigure_native_hooks(self):
+        self.load()
+        self.panel.panel_ready()
+        self.assertTrue(self.panel.panel_state()["visible"])
+        self.assertEqual(self.configure_panel.call_count, 1)
+        self.panel.dismiss()
+        self.window.show.reset_mock()
+        self.window.events.loaded[0]()
+        self.assertFalse(self.panel.panel_state()["visible"])
+        self.window.show.assert_not_called()
+
+    def test_close_during_creation_or_loading_never_resurrects_an_upgrade_window(self):
+        self.panel.show()
+        self.panel.destroy()
+        self.window.events.loaded[0]()
+        self.panel.show()
+        self.window.show.assert_not_called()
+        self.window.destroy.assert_called_once()
+        self.panel.destroy()
+        self.window.destroy.assert_called_once()
+
+    def test_upgrade_during_the_native_window_factory_closes_the_late_window(self):
+        def create(*args, **kwargs):
+            self.panel.destroy()
+            return self.window
+        self.factory.side_effect = create
+        self.panel.show()
+        self.window.destroy.assert_called_once()
+        self.window.show.assert_not_called()
+        self.assertFalse(self.panel.panel_state()["visible"])
+
+    def test_focus_loss_and_alt_f4_hide_the_panel_without_running_javascript_on_the_ui_thread(self):
+        self.load()
+        hidden = threading.Event()
+        self.window.hide.side_effect = hidden.set
+        self.assertFalse(self.window.events.closing[0]())
+        self.assertTrue(hidden.wait(2))
+        self.assertFalse(self.panel.panel_state()["visible"])
+        self.window.destroy.assert_not_called()
+        self.panel.show()
+        hidden.clear()
+        self.panel._deactivate()
+        self.assertTrue(hidden.wait(2))
+        self.panel.destroy()
+        self.assertTrue(self.window.events.closing[0]())
+
+    def test_open_and_exit_use_existing_main_window_and_confirmation_flow(self):
+        self.load()
+        self.assertEqual(self.panel.open_main(), {"ok": True})
+        self.open_main.assert_called_once()
+        self.window.hide.assert_called_once()
+        self.panel.show()
+        with patch("packet_inspector.exit_flow.request_exit") as request:
+            self.assertEqual(self.panel.exit_app(), {"ok": True})
+        request.assert_called_once_with(self.root, self.open_main)
+        self.assertFalse(self.panel.panel_state()["visible"])
+
+    def test_failed_confirmation_restores_panel_instead_of_leaving_an_invisible_error(self):
+        self.load()
+        with patch("packet_inspector.exit_flow.request_exit", side_effect=OSError("unavailable")):
+            self.assertEqual(self.panel.exit_app(), {"ok": False})
+        self.assertTrue(self.panel.panel_state()["visible"])
+
+    def test_only_fixed_bridge_actions_are_public_and_resize_is_bounded(self):
+        self.load()
+        methods = {name for name in dir(PanelAPI) if not name.startswith("_")}
+        self.assertEqual(methods, {"panel_ready", "panel_state", "resize_panel", "dismiss", "open_main", "exit_app"})
+        for values in ((True, 200), (400, float("nan")), ("400", 200)):
+            self.assertFalse(self.panel.resize_panel(*values))
+        self.assertTrue(self.panel.resize_panel(9999, 9999))
+        self.window.resize.assert_called_with(600, 800)
+        self.panel.resize_panel(9999, 9999)
+        self.assertEqual(self.window.resize.call_count, 1)
+
+    def test_missing_panel_host_keeps_the_native_menu_as_a_fallback(self):
+        tray = NativeTray(Mock(), Mock(), show_panel=Mock(side_effect=OSError("launch failed")))
+        tray.user, tray.hwnd = Mock(), 123
+        tray._launch_panel()
+        tray.user.PostMessageW.assert_called_once_with(123, NATIVE_MENU_MESSAGE, 0, 0)
+        self.assertEqual(popup_position((1910, 1050), (0, 0, 1920, 1040), (344, 264)), (1566, 770))
+        self.assertEqual(popup_position((-1910, 20), (-1920, 0, 0, 1040), (344, 264)), (-1914, 6))
+
+
+if __name__ == "__main__":
+    unittest.main()

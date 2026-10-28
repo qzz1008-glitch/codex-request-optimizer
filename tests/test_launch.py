@@ -74,14 +74,15 @@ class LaunchRoutingTests(unittest.TestCase):
         callbacks = {}
         tray = SimpleNamespace(start=lambda: tray, stop=lambda: None)
 
-        def native_tray(open_window, exit_app, *, status_reader=None):
-            callbacks.update(open=open_window, exit=exit_app, status_reader=status_reader)
+        def native_tray(open_window, exit_app, *, status_reader=None, show_panel=None):
+            callbacks.update(open=open_window, exit=exit_app, status_reader=status_reader, show_panel=show_panel)
             return tray
 
         def service(arguments, on_started):
             server = SimpleNamespace(port=47844, tray_status=Mock(return_value={}))
             on_started(server)
             callbacks["exit"]()
+            callbacks["show_panel"]()
             self.assertIs(callbacks["status_reader"], server.tray_status)
             self.assertTrue(server.desktop_tray)
             return 0
@@ -89,10 +90,13 @@ class LaunchRoutingTests(unittest.TestCase):
         with patch.object(launch.sys, "frozen", False, create=True), \
                 patch.object(launch, "service_main", side_effect=service), \
                 patch("packet_inspector.tray.NativeTray", side_effect=native_tray), \
+                patch("packet_inspector.desktop.start_process") as start, \
                 patch("packet_inspector.exit_flow.request_exit") as request, \
                 patch("packet_inspector.desktop.local_api") as api:
             self.assertEqual(launch.main(["--background", "--tray", *self.arguments]), 0)
         request.assert_called_once_with(self.data, callbacks["open"])
+        self.assertIn("--tray-panel", start.call_args.args[0])
+        self.assertNotIn("--background", start.call_args.args[0])
         api.assert_not_called()
 
 

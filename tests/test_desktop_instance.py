@@ -10,7 +10,7 @@ import threading
 import unittest
 
 from packet_inspector.desktop import SingleWindow
-from packet_inspector.window_lifecycle import request_window_exit
+from packet_inspector.window_lifecycle import request_window_exit, request_tray_panel
 
 
 @unittest.skipUnless(os.name == "nt", "Windows named window handles")
@@ -58,6 +58,17 @@ raise SystemExit(desktop.run(sys.argv[2:]))
         self.addCleanup(reopened.close)
         self.assertFalse(reopened.existing)
 
+    def test_tray_panel_signal_does_not_show_main_window_or_start_another_service(self):
+        owner = SingleWindow(self.folder)
+        self.addCleanup(owner.close)
+        script = "from packet_inspector.desktop import run; import sys; raise SystemExit(run(sys.argv[1:]))"
+        result = subprocess.run([sys.executable, "-c", script, "--tray-panel", "--data-dir", str(self.folder),
+                                 "--config", str(self.folder / "config.toml")],
+                                cwd=Path(__file__).resolve().parents[1], capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr[-1000:])
+        self.assertEqual(owner.kernel.WaitForSingleObject(owner.panel_event, 1000), 0)
+        self.assertNotEqual(owner.kernel.WaitForSingleObject(owner.event, 0), 0)
+
     def test_upgrade_exit_signal_targets_only_the_same_profile(self):
         owner = SingleWindow(self.folder)
         self.addCleanup(owner.close)
@@ -69,6 +80,22 @@ raise SystemExit(desktop.run(sys.argv[2:]))
         self.assertTrue(request_window_exit(self.folder))
         self.assertTrue(closed.wait(2))
         watcher.join(2)
+
+    def test_live_tray_panel_opens_by_event_without_launching_a_process_or_showing_main(self):
+        owner = SingleWindow(self.folder)
+        self.addCleanup(owner.close)
+        opened, main = threading.Event(), threading.Event()
+        watcher = threading.Thread(target=owner.watch, args=(main.set, None, opened.set), daemon=True)
+        watcher.start()
+        try:
+            self.assertFalse(request_tray_panel(self.folder / "other"))
+            self.assertTrue(request_tray_panel(self.folder))
+            self.assertTrue(opened.wait(2))
+            self.assertFalse(main.is_set())
+            self.assertEqual(owner.activations, 0)
+        finally:
+            owner.stop.set()
+            watcher.join(2)
 
 
 if __name__ == "__main__":

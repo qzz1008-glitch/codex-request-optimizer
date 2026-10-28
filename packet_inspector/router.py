@@ -578,10 +578,16 @@ def main(argv=None):
         elif args.tray and os.name == "nt":
             from packet_inspector.tray import NativeTray
             from packet_inspector.exit_flow import request_exit
-            def open_window():
+            def open_window(panel=False):
+                from packet_inspector.window_lifecycle import request_tray_panel
+                if panel and request_tray_panel(args.data_dir):
+                    return
                 worker = worker_info(args.data_dir, server.state["active"])
-                subprocess.Popen([worker["executable"], "--port", str(server.port), "--data-dir", str(args.data_dir),
-                                  "--config", str(args.config)], env={**os.environ, "PYINSTALLER_RESET_ENVIRONMENT": "1"},
+                arguments = [worker["executable"], "--port", str(server.port), "--data-dir", str(args.data_dir),
+                             "--config", str(args.config)]
+                if panel:
+                    arguments.append("--tray-panel")
+                subprocess.Popen(arguments, env={**os.environ, "PYINSTALLER_RESET_ENVIRONMENT": "1"},
                                  creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
             def exit_app():
                 try:
@@ -590,7 +596,8 @@ def main(argv=None):
                     import ctypes
                     ctypes.windll.user32.MessageBoxW(0, "无法打开退出确认，中转服务继续运行。请稍后重试。", "Codex 请求优化器", 0x40)
             tray = NativeTray(open_window, exit_app,
-                              status_reader=lambda: local_json(server.port, "/api/tray-status", timeout=2)).start()
+                              status_reader=lambda: local_json(server.port, "/api/tray-status", timeout=2),
+                              show_panel=lambda: open_window(True)).start()
         server.serve_forever(poll_interval=.1)
     finally:
         if tray:

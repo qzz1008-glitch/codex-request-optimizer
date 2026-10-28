@@ -22,6 +22,15 @@ def window_control_prefix(data_dir):
 
 def request_window_exit(data_dir):
     """Signal only this optimizer frontend; the forwarding process stays alive."""
+    return _signal_window(data_dir, "-exit")
+
+
+def request_tray_panel(data_dir):
+    """Raise an existing panel without launching or extracting another EXE."""
+    return _signal_window(data_dir, "-tray-panel")
+
+
+def _signal_window(data_dir, suffix):
     if os.name != "nt":
         return False
     kernel = ctypes.WinDLL("kernel32", use_last_error=True)
@@ -29,7 +38,7 @@ def request_window_exit(data_dir):
     kernel.OpenEventW.restype = wintypes.HANDLE
     kernel.SetEvent.argtypes = [wintypes.HANDLE]
     kernel.CloseHandle.argtypes = [wintypes.HANDLE]
-    handle = kernel.OpenEventW(0x0002, False, window_control_prefix(data_dir) + "-exit")
+    handle = kernel.OpenEventW(0x0002, False, window_control_prefix(data_dir) + suffix)
     if not handle:
         return False
     try:

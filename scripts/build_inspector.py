@@ -118,7 +118,8 @@ def compile_executable(snapshot, mode, portable_dev, work, stage, licenses):
     embedded=json.loads(archive.extract(entries['packet_inspector/_source_manifest.json']))
     if embedded!={**snapshot.manifest,"mode":mode}:
         raise SourceError("EXE source manifest does not match this build")
-    for asset in ('index.html','style.css','app.js','i18n.js'):
+    from packet_inspector.frontend_dev import RESOURCES
+    for asset in RESOURCES:
         key='packet_inspector/ui/'+asset
         if hashlib.sha256(archive.extract(entries[key])).hexdigest()!=snapshot.files[key]:
             raise SourceError("EXE contains an older frontend: "+asset)
