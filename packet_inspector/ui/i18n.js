@@ -306,7 +306,7 @@ const uiI18n = (() => {
     " · 保存后自动刷新":" · Auto refresh on save",
     "运行设置":"Runtime settings",
     "开机启动":"Start with Windows",
-    "登录 Windows 后在后台启动，可从托盘打开窗口。":"Start in the background when you sign in to Windows. Open the window from the tray.",
+    "登录 Windows 后自动启动。":"Start automatically when you sign in to Windows.",
     "开机启动仅支持已安装的 Windows 版本。":"Start with Windows requires the installed Windows version.",
     "无法读取开机启动状态，请重新保存设置。":"The startup state could not be read. Save the settings again.",
     "模型容量不足时自动重试":"Automatically retry when the model is at capacity",
