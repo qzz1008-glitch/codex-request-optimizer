@@ -2491,6 +2491,19 @@ class TokenTrendView {
       const px=x(stamp);
       root.append(this.svgNode("line",{x1:px,y1:top,x2:px,y2:height-bottom,class:"trend-grid trend-time-grid","data-time":stamp}));
     }
+    if(axis.gaps.length) {
+      const id=chart.prefix+"-idle-hatch",defs=this.svgNode("defs"),pattern=this.svgNode("pattern",{id,width:7,height:7,patternUnits:"userSpaceOnUse"});
+      pattern.append(this.svgNode("path",{d:"M-1,1L1,-1M0,7L7,0M6,8L8,6",class:"trend-fold-hatch"}));defs.append(pattern);root.append(defs);
+      for(const gap of axis.gaps) {
+        const a=x(Math.max(start,gap.start)),b=x(Math.min(end,gap.end)),center=(a+b)/2,span=Math.max(12,b-a);
+        const from=Math.max(left,center-span/2),to=Math.min(width-right,center+span/2);
+        const band=this.svgNode("g",{class:"trend-time-fold","data-start":gap.start,"data-end":gap.end});
+        band.append(this.svgNode("title",{},t("已跳过无请求时段：{start} – {end}").replace("{start}",this.time(gap.start,true)).replace("{end}",this.time(gap.end,true))),
+          this.svgNode("rect",{x:from,y:top,width:to-from,height:plotHeight,class:"trend-fold-shade"}),
+          this.svgNode("rect",{x:from,y:top,width:to-from,height:plotHeight,fill:`url(#${id})`}),
+          this.svgNode("path",{d:`M${from},${top}V${height-bottom}M${to},${top}V${height-bottom}`,class:"trend-fold-edge"}));root.append(band);
+      }
+    }
     chart.points=[];
     for(const group of model.visible) {
       // Set brightness before attachment: layout reads can otherwise start a fade from full opacity.
@@ -2533,7 +2546,7 @@ class TokenTrendView {
         const a=x(Math.max(bounds.start,gap.start)),b=x(Math.min(bounds.end,gap.end)),center=(a+b)/2,offset=3;
         const mark=this.svgNode("g",{class:"trend-time-break","data-start":gap.start,"data-end":gap.end});
         mark.append(this.svgNode("title",{},t("已跳过无请求时段：{start} – {end}").replace("{start}",this.time(gap.start,true)).replace("{end}",this.time(gap.end,true))),
-          this.svgNode("rect",{x:center-6,y:0,width:12,height:8}),this.svgNode("path",{d:`M${center-offset+1},-2l-2,8M${center+offset+1},-2l-2,8`}));root.append(mark);
+          this.svgNode("rect",{x:center-11,y:0,width:22,height:13,rx:3}),this.svgNode("path",{d:`M${center-offset+1},2l-2,7M${center+offset+1},2l-2,7`}));root.append(mark);
       }
     }
     this.timeAxis.replaceChildren(root);
