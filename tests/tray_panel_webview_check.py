@@ -2,7 +2,10 @@
 from __future__ import annotations
 
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import ctypes
+from ctypes import wintypes
 import json
+import math
 from pathlib import Path
 import shutil
 import tempfile
@@ -38,6 +41,26 @@ def wait_until(check, timeout=12):
     raise AssertionError("WebView condition timed out")
 
 
+def is_visible(window):
+    user = ctypes.WinDLL("user32")
+    user.IsWindowVisible.argtypes = [wintypes.HWND]
+    return bool(user.IsWindowVisible(int(window.native.Handle.ToInt64())))
+
+
+def sized_for_content(panel):
+    # WebView defers its viewport layout while hidden; check the measured page
+    # and native client area without showing it or stealing the user's focus.
+    bounds = panel.window.evaluate_js("({width:document.body.getBoundingClientRect().width,height:document.body.getBoundingClientRect().height})")
+    expected = tuple(math.ceil(bounds[key]) for key in ("width", "height"))
+    user = ctypes.WinDLL("user32")
+    user.GetDpiForWindow.argtypes = [wintypes.HWND]
+    user.GetDpiForWindow.restype = wintypes.UINT
+    form = panel.window.native
+    scale = (user.GetDpiForWindow(int(form.Handle.ToInt64())) or 96) / 96
+    actual = form.ClientSize.Width, form.ClientSize.Height
+    return panel._size == expected and actual == tuple(int(value * scale) for value in expected)
+
+
 def run():
     import webview
 
@@ -55,28 +78,40 @@ def run():
         ui = DesktopUI(backend.server_port, ui_dir=root, live_reload=True).start()
         master = webview.create_window("Isolated tray check", "about:blank", hidden=True)
         actions, result = [], {}
-        panel = TrayPanel(webview.create_window, ui.ui_url, root, lambda: actions.append("main"))
+        def create_hidden(*args, **kwargs):
+            panel.visible = False  # Keep the runtime-created test window hidden even if its page loads immediately.
+            return webview.create_window(*args, **kwargs)
+        panel = TrayPanel(create_hidden, ui.ui_url, root, lambda: actions.append("main"))
         master.events.closed += panel.destroy
-        panel.show()
-        panel.visible = False  # Test its WebView and bridge without opening a user-facing popup.
 
         def check():
             try:
-                assert panel._loaded.wait(15), "panel did not load"
+                panel.show()
+                assert panel._loaded.wait(25), "panel did not load"
                 evaluate = panel.window.evaluate_js
                 wait_until(lambda: evaluate("!!window.trayPanel && !!window.pywebview?.api?.panel_ready"))
+                result["stage"] = "initial sizing"
+                wait_until(lambda: sized_for_content(panel))
                 style = evaluate("({background:getComputedStyle(document.body).backgroundColor,"
                                  "width:document.body.getBoundingClientRect().width,"
-                                 "overflow:document.body.scrollWidth>innerWidth,buttons:document.querySelectorAll('button').length})")
+                                 "overflow:document.body.scrollWidth>document.body.getBoundingClientRect().width,buttons:document.querySelectorAll('button').length})")
                 assert style == {"background": "rgb(255, 255, 255)", "width": 344, "overflow": False, "buttons": 2}, style
-                assert not panel.window.native.Visible, "check must keep the popup hidden"
+                height = panel._size[1]
+                evaluate("const error=document.getElementById('tray-error');error.textContent='Test message';error.hidden=false;window.trayPanel.render({});true")
+                result["stage"] = "growing content"
+                wait_until(lambda: panel._size[1] > height and sized_for_content(panel))
+                assert not is_visible(panel.window), "resizing exposed a hidden popup"
+                evaluate("document.getElementById('tray-error').hidden=true;window.trayPanel.render({});true")
+                result["stage"] = "shrinking content"
+                wait_until(lambda: panel._size[1] == height and sized_for_content(panel))
+                assert not is_visible(panel.window), "check must keep the popup hidden"
                 evaluate("Object.defineProperty(document,'hidden',{configurable:true,get:()=>false});window.trayPanel.setVisible(true);true")
                 wait_until(lambda: evaluate("document.querySelector('[data-stat=recorded_requests]').textContent==='5,000'"))
                 assert evaluate("document.querySelector('[data-stat=average_compact_input_tokens]').textContent") == "254,081"
                 backend.snapshot = {**backend.snapshot, "language": "en", "recorded_requests": 5001}
                 wait_until(lambda: evaluate("document.documentElement.lang==='en'&&document.querySelector('[data-stat=recorded_requests]').textContent==='5,001'"))
                 assert evaluate("document.getElementById('tray-open').textContent.trim()") == "Open main window"
-                assert not evaluate("document.body.scrollWidth>innerWidth"), "English menu overflows"
+                assert not evaluate("document.body.scrollWidth>document.body.getBoundingClientRect().width"), "English menu overflows"
                 evaluate("window.trayPanel.setVisible(false);true")
                 time.sleep(.2)
                 requests = len(backend.requests)
@@ -86,8 +121,9 @@ def run():
                 with (root / "tray.css").open("a", encoding="utf8") as stylesheet:
                     stylesheet.write("\n:root{--tray-width:360px}\n")
                 wait_until(lambda: evaluate("document.body.getBoundingClientRect().width===360"))
+                wait_until(lambda: sized_for_content(panel))
                 assert ui_build_id(root) == original, "tray edit invalidated the main window"
-                assert not panel.window.native.Visible, "hot reload exposed a hidden popup"
+                assert not is_visible(panel.window), "hot reload exposed a hidden popup"
                 assert not panel.panel_state()["visible"]
                 panel.visible = True
                 panel.window.destroy()  # Alt+F4 closes a form through the same cancellable event.
@@ -98,10 +134,18 @@ def run():
                 evaluate("document.getElementById('tray-exit').click();true")
                 wait_until(lambda: len(actions) == 2 and (root / REQUEST_FILE).is_file())
                 assert set(backend.requests) == {"/api/tray-status"}, "panel called a business or stop endpoint"
-                result.update(passed=True, checks=["hidden WebView", "white layout", "Chinese/English", "authentic value formatting",
+                result.update(passed=True, checks=["hidden WebView", "white layout", "content sizing", "Chinese/English", "authentic value formatting",
                                                   "visible polling", "hidden idle", "independent hot reload", "Alt+F4 dismissal", "Open/Exit bridge"])
+                result.pop("stage", None)
             except Exception as exc:
                 result.update(passed=False, error=f"{type(exc).__name__}: {exc}")
+                if panel.window and panel.window.native:
+                    form = panel.window.native
+                    result["native"] = {"requested": panel._size, "size": [form.Size.Width, form.Size.Height],
+                                        "client": [form.ClientSize.Width, form.ClientSize.Height], "border": str(form.FormBorderStyle),
+                                        "configured": panel._configured}
+                if panel._loaded.is_set():
+                    result["geometry"] = panel.window.evaluate_js("({width:innerWidth,height:innerHeight,bodyWidth:document.body.getBoundingClientRect().width,bodyHeight:document.body.getBoundingClientRect().height})")
             finally:
                 master.destroy()
 

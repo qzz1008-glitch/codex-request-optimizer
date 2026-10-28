@@ -48,6 +48,30 @@ def place_panel(window, anchor):
         user.SetWindowPos(handle, None, x, y, 0, 0, 0x01 | 0x04 | 0x10)
 
 
+def resize_panel_window(window, width, height):
+    if os.name != "nt":
+        window.resize(width, height)
+        return
+    user = ctypes.WinDLL("user32", use_last_error=True)
+    user.GetDpiForWindow.argtypes = [wintypes.HWND]
+    user.GetDpiForWindow.restype = wintypes.UINT
+    user.SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int,
+                                  ctypes.c_int, ctypes.c_int, wintypes.UINT]
+    from System import Action
+    form = window.native
+    def resize():
+        handle = int(form.Handle.ToInt64())
+        scale = (user.GetDpiForWindow(handle) or 96) / 96
+        # pywebview's resize uses SWP_SHOWWINDOW, which would expose a hidden panel.
+        if not user.SetWindowPos(handle, None, 0, 0, int(width * scale), int(height * scale), 0x02 | 0x04 | 0x10):
+            raise ctypes.WinError(ctypes.get_last_error())
+        form.PerformLayout()
+    if form.InvokeRequired:
+        form.Invoke(Action(resize))
+    else:
+        resize()
+
+
 def configure_panel(window, deactivate):
     if os.name != "nt":
         return
@@ -161,6 +185,7 @@ class TrayPanel:
         with self._guard:
             if not self._configured:
                 configure_panel(window, self._deactivate)
+                resize_panel_window(window, *self._size)
                 self._configured = True
         self._loaded.set()
         if self.visible:
@@ -198,12 +223,14 @@ class TrayPanel:
         if not all(type(value) in (int, float) and math.isfinite(value) for value in (width, height)):
             return False
         size = max(240, min(600, math.ceil(width))), max(120, min(800, math.ceil(height)))
-        if size != self._size:
-            self._size = size
-            if self.window and not self._closed.is_set():
-                self.window.resize(*size)
+        with self._guard:
+            if size == self._size:
+                return True
+            if self.window and self._configured and not self._closed.is_set():
+                resize_panel_window(self.window, *size)
                 if self.visible:
                     place_panel(self.window, self._anchor)
+            self._size = size
         return True
 
     def dismiss(self):

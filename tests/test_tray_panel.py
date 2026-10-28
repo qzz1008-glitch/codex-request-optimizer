@@ -1,14 +1,32 @@
 """The tray reuses the desktop process, owns no service, and keeps a small bridge."""
 import tempfile
 import threading
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
 from packet_inspector.tray import NativeTray, NATIVE_MENU_MESSAGE
-from packet_inspector.tray_panel import PanelAPI, TrayPanel, popup_position
+from packet_inspector.tray_panel import PanelAPI, TrayPanel, popup_position, resize_panel_window
 from tests.test_window_lifecycle import Callbacks
+
+
+class NativePanelResizeTests(unittest.TestCase):
+    def test_resize_uses_dpi_and_native_ui_thread_without_showing_or_activating_the_window(self):
+        user, window = Mock(), Mock()
+        user.GetDpiForWindow.return_value = 144
+        window.native.Handle.ToInt64.return_value = 123
+        window.native.InvokeRequired = True
+        window.native.Invoke.side_effect = lambda callback: callback()
+        with patch("packet_inspector.tray_panel.os.name", "nt"), \
+                patch("packet_inspector.tray_panel.ctypes.WinDLL", return_value=user), \
+                patch.dict(sys.modules, {"System": SimpleNamespace(Action=lambda callback: callback)}):
+            resize_panel_window(window, 344, 258)
+        user.SetWindowPos.assert_called_once_with(123, None, 0, 0, 516, 387, 0x02 | 0x04 | 0x10)
+        window.native.Invoke.assert_called_once()
+        window.native.PerformLayout.assert_called_once()
+        window.resize.assert_not_called()
 
 
 class TrayPanelTests(unittest.TestCase):
@@ -20,7 +38,7 @@ class TrayPanelTests(unittest.TestCase):
         self.window.events = SimpleNamespace(loaded=Callbacks(), closing=Callbacks(), closed=Callbacks())
         self.factory, self.open_main = Mock(return_value=self.window), Mock()
         self.panel = TrayPanel(self.factory, "http://127.0.0.1:12345/", self.root, self.open_main)
-        for name in ("popup_anchor", "place_panel", "configure_panel"):
+        for name in ("popup_anchor", "place_panel", "configure_panel", "resize_panel_window"):
             patcher = patch("packet_inspector.tray_panel." + name)
             setattr(self, name, patcher.start())
             self.addCleanup(patcher.stop)
@@ -108,14 +126,15 @@ class TrayPanelTests(unittest.TestCase):
 
     def test_only_fixed_bridge_actions_are_public_and_resize_is_bounded(self):
         self.load()
+        self.resize_panel_window.reset_mock()
         methods = {name for name in dir(PanelAPI) if not name.startswith("_")}
         self.assertEqual(methods, {"panel_ready", "panel_state", "resize_panel", "dismiss", "open_main", "exit_app"})
         for values in ((True, 200), (400, float("nan")), ("400", 200)):
             self.assertFalse(self.panel.resize_panel(*values))
         self.assertTrue(self.panel.resize_panel(9999, 9999))
-        self.window.resize.assert_called_with(600, 800)
+        self.resize_panel_window.assert_called_with(self.window, 600, 800)
         self.panel.resize_panel(9999, 9999)
-        self.assertEqual(self.window.resize.call_count, 1)
+        self.assertEqual(self.resize_panel_window.call_count, 1)
 
     def test_missing_panel_host_keeps_the_native_menu_as_a_fallback(self):
         tray = NativeTray(Mock(), Mock(), show_panel=Mock(side_effect=OSError("launch failed")))
