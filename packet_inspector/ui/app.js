@@ -2454,9 +2454,9 @@ class TokenTrendView {
     const key=["overflow","compact","predictive","retry"].find(value=>events.includes(value)),shape=TokenTrendView.markerShape(key);
     if(!shape)return;
     const {tag,...attrs}=shape,x=point.x,y=point.y;
-    const selected=this.eventKey(),node=this.svgNode("g",{class:"trend-event-node"+(selected?(events.includes(selected)?" highlighted":" dimmed"):""),"data-events":events.join(" "),"data-packet":point.packet.id,style:"--series-color:"+point.series.color});
-    node.append(this.svgNode(tag,{...attrs,class:"trend-event trend-event-"+key,transform:`translate(${x} ${y})`}));
-    if(key!=="overflow"&&events.length>1)node.append(this.svgNode("text",{x:x+6,y:y-6,class:"trend-event-count"},"+"+(events.length-1)));
+    const selected=this.eventKey(),node=this.svgNode("g",{class:"trend-event-node"+(selected?(events.includes(selected)?" highlighted":" dimmed"):""),"data-events":events.join(" "),"data-packet":point.packet.id,style:"--series-color:"+point.series.color,transform:`translate(${x} ${y})`});
+    node.append(this.svgNode(tag,{...attrs,class:"trend-event trend-event-"+key}));
+    if(key!=="overflow"&&events.length>1)node.append(this.svgNode("text",{x:6,y:-6,class:"trend-event-count"},"+"+(events.length-1)));
     layer.append(node);return node;
   }
   render() {
@@ -2491,6 +2491,19 @@ class TokenTrendView {
       const px=x(stamp);
       root.append(this.svgNode("line",{x1:px,y1:top,x2:px,y2:height-bottom,class:"trend-grid trend-time-grid","data-time":stamp}));
     }
+    if(axis.gaps.length) {
+      const id=chart.prefix+"-idle-hatch",defs=this.svgNode("defs"),pattern=this.svgNode("pattern",{id,width:7,height:7,patternUnits:"userSpaceOnUse"});
+      pattern.append(this.svgNode("path",{d:"M-1,1L1,-1M0,7L7,0M6,8L8,6",class:"trend-fold-hatch"}));defs.append(pattern);root.append(defs);
+      for(const gap of axis.gaps) {
+        const a=x(Math.max(start,gap.start)),b=x(Math.min(end,gap.end)),center=(a+b)/2,span=Math.max(12,b-a);
+        const from=Math.max(left,center-span/2),to=Math.min(width-right,center+span/2);
+        const band=this.svgNode("g",{class:"trend-time-fold","data-start":gap.start,"data-end":gap.end});
+        band.append(this.svgNode("title",{},t("已跳过无请求时段：{start} – {end}").replace("{start}",this.time(gap.start,true)).replace("{end}",this.time(gap.end,true))),
+          this.svgNode("rect",{x:from,y:top,width:to-from,height:plotHeight,class:"trend-fold-shade"}),
+          this.svgNode("rect",{x:from,y:top,width:to-from,height:plotHeight,fill:`url(#${id})`}),
+          this.svgNode("path",{d:`M${from},${top}V${height-bottom}M${to},${top}V${height-bottom}`,class:"trend-fold-edge"}));root.append(band);
+      }
+    }
     chart.points=[];
     for(const group of model.visible) {
       // Set brightness before attachment: layout reads can otherwise start a fade from full opacity.
@@ -2499,11 +2512,11 @@ class TokenTrendView {
         const value=source[chart.field];if(value===null)continue;
         const point={...source,value,series:group,x:x(source.packet.created),y:y(value)};
         path+=(pen?"L":"M")+point.x.toFixed(2)+","+point.y.toFixed(2);pen=true;chart.points.push(point);
-        if(point.events.some(event=>["predictive","overflow","retry","compact"].includes(event)))chart.eventNodes.push(this.marker(point,events));
-        else if(!lastDot||Math.hypot(point.x-lastDot.x,point.y-lastDot.y)>=4){layer.append(this.svgNode("circle",{cx:point.x,cy:point.y,r:2.1,fill:group.color,class:"trend-sample"}));lastDot=point;}
+        if(point.events.some(event=>["predictive","overflow","retry","compact"].includes(event))){point.node=this.marker(point,events);chart.eventNodes.push(point.node);}
+        else if(!lastDot||Math.hypot(point.x-lastDot.x,point.y-lastDot.y)>=4){point.node=this.svgNode("circle",{cx:point.x,cy:point.y,r:2.1,fill:group.color,class:"trend-sample"});layer.append(point.node);lastDot=point;}
         lastPoint=point;
       }
-      if(lastPoint&&lastDot!==lastPoint&&!lastPoint.events.length)layer.append(this.svgNode("circle",{cx:lastPoint.x,cy:lastPoint.y,r:2.1,fill:group.color,class:"trend-sample"}));
+      if(lastPoint&&lastDot!==lastPoint&&!lastPoint.events.length){lastPoint.node=this.svgNode("circle",{cx:lastPoint.x,cy:lastPoint.y,r:2.1,fill:group.color,class:"trend-sample"});layer.append(lastPoint.node);}
       layer.prepend(this.svgNode("path",{d:path,class:"trend-curve",stroke:group.color}));layer.append(events);root.append(layer);
     }
     if(limit!==null) {
@@ -2533,7 +2546,7 @@ class TokenTrendView {
         const a=x(Math.max(bounds.start,gap.start)),b=x(Math.min(bounds.end,gap.end)),center=(a+b)/2,offset=3;
         const mark=this.svgNode("g",{class:"trend-time-break","data-start":gap.start,"data-end":gap.end});
         mark.append(this.svgNode("title",{},t("已跳过无请求时段：{start} – {end}").replace("{start}",this.time(gap.start,true)).replace("{end}",this.time(gap.end,true))),
-          this.svgNode("rect",{x:center-6,y:0,width:12,height:8}),this.svgNode("path",{d:`M${center-offset+1},-2l-2,8M${center+offset+1},-2l-2,8`}));root.append(mark);
+          this.svgNode("rect",{x:center-11,y:0,width:22,height:13,rx:3}),this.svgNode("path",{d:`M${center-offset+1},2l-2,7M${center+offset+1},2l-2,7`}));root.append(mark);
       }
     }
     this.timeAxis.replaceChildren(root);
@@ -2595,9 +2608,11 @@ class TokenTrendView {
         chart.eventKey=event;
       }
       for(const line of chart.svg.querySelectorAll("[data-series]"))line.classList.toggle("dimmed",!!emphasis&&line.dataset.series!==emphasis);
+      chart.hoverNode?.classList.toggle("trend-hover-node",false);chart.hoverNode=null;
       chart.focusLayer.replaceChildren();if(!anchor)continue;
       const point=chart.points.find(value=>value.packet.id===this.hover);
-      if(point)chart.focusLayer.append(this.svgNode("circle",{cx:point.x,cy:point.y,r:5.5,class:"trend-focus-dot",style:"--series-color:"+point.series.color}));
+      if(point?.node){chart.hoverNode=point.node;point.node.classList.toggle("trend-hover-node",true);}
+      else if(point)chart.focusLayer.append(this.svgNode("circle",{cx:point.x,cy:point.y,r:3.6,fill:point.series.color,class:"trend-sample trend-hover-node"}));
       chart.tooltip.hidden=false;
       chart.tooltip.replaceChildren(el("span","",t(chart.key==="size"?"处理后包":"输入 Token")),el("strong","",point?(chart.key==="size"?TokenTrendView.sizeLabel(point.value):nf.format(point.value)):"—"));
       const rect=chart.svg.getBoundingClientRect(),panelTop=rect.top-originY;
