@@ -18,7 +18,7 @@ import time
 from urllib import request as urllib_request
 from urllib.error import HTTPError
 from urllib.parse import parse_qs, urlsplit
-from urllib.request import Request, build_opener, HTTPSHandler, HTTPRedirectHandler, ProxyHandler
+from urllib.request import Request, build_opener, HTTPRedirectHandler, ProxyHandler
 import webbrowser
 
 from . import VERSION
@@ -33,6 +33,7 @@ from .response_usage import packet_usage
 from .response_summary import ResponseSummary
 from .session_summary import SessionSummaries
 from .storage import DEFAULT_STORAGE_BYTES, Store
+from .storage_paths import resolve_directory, path_settings
 from .transport import DEFAULT_ZSTD_LEVEL, prepare_request_info, validate_zstd_level
 from .compression_policy import CompressionPolicy, INITIAL_HIGH_BYTES, is_main_request
 from .request_context import request_session_context, temporary_request_kind, trend_packet_metadata
@@ -43,6 +44,7 @@ from .native_retry import (DEFAULT_RETRIES, MAX_RETRIES, DEFAULT_DELAY_SECONDS, 
 from .response_events import notify
 from .http_io import UPSTREAM_READ_TIMEOUT_SECONDS
 from .retry_diagnostics import RetryJournal, ResponseObservation
+from .network_diagnostics import NetworkDiagnostics, DiagnosticHTTPHandler, DiagnosticHTTPSHandler
 from .usage_trigger import (raw_chunks, request_size as usage_trigger_size,
                             trigger_threshold, DEFAULT_BUDGET_BYTES, MIN_BUDGET_BYTES)
 from .overflow import CheckpointStream, OverflowCompactor, OverflowFailure
@@ -144,6 +146,7 @@ class InspectorServer(ThreadingHTTPServer):
                          "capacity_retry_delay_seconds": DEFAULT_DELAY_SECONDS,
                          "image_isolation_enabled": False, "image_analysis_mode": "native", "image_save_dir": "",
                          "auto_detect_providers": True, "provider_routes": {},
+                          "log_dir": "", "cache_dir": "",
                          **protection_settings(saved)}
         self.settings.pop("ui_token", None)
         self.settings["image_analysis_mode"] = image_mode(saved)
@@ -184,15 +187,22 @@ class InspectorServer(ThreadingHTTPServer):
         self.upgrade_draining = False
         self.token_windows = TokenWindows()
         self.session_summaries = SessionSummaries(self.token_windows)
-        self.store = Store(self.data_dir, self.settings["max_storage_bytes"],
+        self.cache_dir = resolve_directory(self.data_dir, self.settings["cache_dir"])
+        self.log_dir = resolve_directory(self.data_dir, self.settings["log_dir"])
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        self.log_dir.mkdir(parents=True, exist_ok=True)
+        self.store = Store(self.cache_dir, self.settings["max_storage_bytes"],
                            self.settings["max_packets"], capture_owner="relay:" + worker_id if worker_id else "relay")
-        self.retry_journal = RetryJournal(self.data_dir)
+        self.retry_journal = RetryJournal(self.log_dir)
         if not worker_id:
             self.save_settings()
         ssl_context = ssl.create_default_context()
-        self.opener = build_opener(ProxyHandler(outbound_proxies()), HTTPSHandler(context=ssl_context), NoRedirect())
-        self.local_opener = build_opener(ProxyHandler({}), NoRedirect())
-        self.overflow = OverflowCompactor(self.data_dir)
+        proxies = outbound_proxies()
+        self.network_diagnostics = NetworkDiagnostics(self.log_dir, proxies)
+        self.opener = build_opener(ProxyHandler(proxies), DiagnosticHTTPHandler(),
+                                  DiagnosticHTTPSHandler(context=ssl_context), NoRedirect())
+        self.local_opener = build_opener(ProxyHandler({}), DiagnosticHTTPHandler(), DiagnosticHTTPSHandler(), NoRedirect())
+        self.overflow = OverflowCompactor(self.cache_dir)
         self.compression_policy = CompressionPolicy(self.store)
         self.image_config = ImageToolConfig(self.link, self.data_dir, lambda: self.endpoint)
         self.image_isolation = ImageIsolation(self.data_dir, self.settings["image_save_dir"])
@@ -330,10 +340,14 @@ class InspectorServer(ThreadingHTTPServer):
     def set_connection(self, connected):
         with self.provider_guard:
             previous = self.settings["auto_detect_providers"]
+            before = self._diagnostic_profile() if connected else {}
             try:
                 if connected:
                     self.save_settings({**self.settings, "auto_detect_providers": True})
-                    return self.sync_providers()
+                    result = self.sync_providers()
+                    self.network_diagnostics.connection(before, self._diagnostic_profile(),
+                        self.settings["provider_routes"], self.settings, result=result)
+                    return result
                 state = self.link._state()
                 if not state:
                     result = {"active": False, "reload_required": False}
@@ -347,13 +361,32 @@ class InspectorServer(ThreadingHTTPServer):
                 self.save_settings({**self.settings, "auto_detect_providers": False})
                 self.connection_reload_required |= result.get("reload_required", False)
                 return result
-            except Exception:
+            except Exception as exc:
+                if connected:
+                    self.network_diagnostics.connection(before, self._diagnostic_profile(),
+                        self.settings["provider_routes"], self.settings, error=exc)
                 try:
                     keep_active = previous or self.connection_profile()["active"]
                 except (OSError, ValueError):
                     keep_active = previous
                 self.save_settings({**self.settings, "auto_detect_providers": keep_active})
                 raise
+
+    def _diagnostic_profile(self):
+        try:
+            profile = self.link.profile()
+            _, data = self.link._read()
+            provider = data.get("model_providers", {}).get(profile.get("provider"), {})
+            profile["connection_settings"] = {
+                "wire_api": provider.get("wire_api", "responses"),
+                "supports_websockets": provider.get("supports_websockets"),
+                "requires_openai_auth": provider.get("requires_openai_auth"),
+                "http_header_names": [str(k)[:160] for k in list(provider.get("http_headers", {}))[:32]],
+                "env_header_names": [str(k)[:160] for k in list(provider.get("env_http_headers", {}))[:32]],
+                "native_request_compression": data.get("features", {}).get("enable_request_compression")}
+            return profile
+        except Exception as exc:
+            return {"read_error": type(exc).__name__}
 
     def server_close(self):
         # TCPServer also calls this when binding fails, before worker setup.
@@ -436,6 +469,14 @@ class InspectorServer(ThreadingHTTPServer):
                 "capacity_retry_diagnostics_supported": True,
                 "capacity_retry_diagnostics_errors": self.retry_journal.errors,
                 "capacity_retry_diagnostics_last_error": self.retry_journal.last_error,
+                "network_diagnostics_supported": True,
+                "network_diagnostics_errors": self.network_diagnostics.errors,
+                "storage_paths_supported": True,
+                "log_dir": str(resolve_directory(self.data_dir, self.settings["log_dir"])),
+                "cache_dir": str(resolve_directory(self.data_dir, self.settings["cache_dir"])),
+                "active_log_dir": str(self.log_dir), "active_cache_dir": str(self.cache_dir),
+                "storage_paths_pending": (resolve_directory(self.data_dir, self.settings["log_dir"]) != self.log_dir
+                                          or resolve_directory(self.data_dir, self.settings["cache_dir"]) != self.cache_dir),
                 "image_isolation_enabled": self.settings["image_isolation_enabled"],
                 "image_analysis_mode": self.settings["image_analysis_mode"],
                 "image_isolation_supported": True, "image_tool": self.image_config.status(),
@@ -599,6 +640,10 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, self.server.status())
         elif path == "/api/tray-status" and self.command == "GET":
             self._json(200, self.server.tray_status())
+        elif path == "/api/network-diagnostics" and self.command == "GET":
+            headers = ({"Content-Disposition": 'attachment; filename="codex-network-diagnostics.json"'}
+                       if one("download") == "1" else None)
+            self._json(200, self.server.network_diagnostics.export(), headers)
         elif path == "/api/retry-diagnostics" and self.command == "GET":
             self._json(200, {"records": self.server.retry_journal.list(
                 session_id=one("session_id"), packet_id=one("packet_id"), limit=int(one("limit", "50")),
@@ -620,7 +665,7 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, result)
         elif path == "/api/session-summaries" and self.command == "GET":
             try:
-                self._json(200, self.server.session_summaries.read(self.server.data_dir))
+                self._json(200, self.server.session_summaries.read(self.server.cache_dir))
             except (OSError, ValueError, TypeError, AttributeError, sqlite3.Error):
                 self._json(200, {"state": "unavailable", "sessions": []})
         elif path == "/api/installation" and self.command in {"GET", "POST"}:
@@ -662,8 +707,10 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, result)
         elif path == "/api/settings" and self.command == "POST":
             data = json.loads(self._body(8192))
+            checked_paths = path_settings(self.server.data_dir, data)
             with self.server.provider_guard, self.server.guard:
                 candidate = dict(self.server.settings)
+                candidate.update(checked_paths)
                 image_isolation = self.server.image_isolation
                 if "image_save_dir" in data:
                     directory = resolve_image_directory(self.server.data_dir, data["image_save_dir"])
@@ -863,22 +910,37 @@ class Handler(BaseHTTPRequestHandler):
             with self.server.guard:
                 self.server.active_requests -= 1
 
-    def _checkpoint(self, upstream, suffix, headers, body, encoding):
-        # This is a separate, tool-free summary call. The original turn has not
-        # been uploaded. Never follow redirects or retry either request.
+    def _checkpoint(self, upstream, suffix, headers, body, encoding, *, packet_id=None, session_id=None):
         remove = {"content-encoding", "accept", "accept-encoding", "content-md5", "digest",
                   "x-request-id", "x-codex-turn-metadata"}
         compact_headers = {k: v for k, v in headers.items() if k.lower() not in remove}
         compact_headers.update({"Content-Encoding": encoding, "Accept": "text/event-stream", "Accept-Encoding": "identity"})
+        trace = self.server.network_diagnostics.request(upstream + suffix, "POST", compact_headers, body,
+            packet_id=packet_id, session_id=session_id, kind="relay_compaction", outgoing_encoding=encoding)
+        try:
+            with trace.active():
+                return self._checkpoint_request(upstream, suffix, compact_headers, body, trace)
+        except Exception as exc:
+            trace.finish(exc)
+            raise
+        finally:
+            trace.finish()
+
+    def _checkpoint_request(self, upstream, suffix, compact_headers, body, network_trace):
+        # This is a separate, tool-free summary call. The original turn has not
+        # been uploaded. Never follow redirects or retry either request.
         local = urlsplit(upstream).hostname in {"localhost", "127.0.0.1", "::1"}
         opener = self.server.local_opener if local else self.server.opener
         try:
             response = opener.open(Request(upstream + suffix, data=body, headers=compact_headers, method="POST"),
                                    timeout=UPSTREAM_READ_TIMEOUT_SECONDS)
         except HTTPError as exc:
+            network_trace.response(exc)
             detail = ""
             try:
-                error = json.loads(exc.read(8192))
+                error_bytes = exc.read(128 * 1024)
+                network_trace.feed(error_bytes)
+                error = json.loads(error_bytes)
                 if isinstance(error, dict):
                     error = error.get("error", error)
                 if isinstance(error, dict) and isinstance(error.get("message"), str):
@@ -889,8 +951,9 @@ class Handler(BaseHTTPRequestHandler):
                 exc.close()
             raise OverflowFailure("overflow_compaction_upstream_error", "上游压缩请求返回 HTTP " + str(exc.code)
                                   + ("：" + detail if detail else "") + "；原请求未发送。", 502) from None
-        parser = CheckpointStream()
+        parser = CheckpointStream(on_error=network_trace.stream_error)
         with response:
+            network_trace.response(response)
             if response.status != 200:
                 raise OverflowFailure("overflow_compaction_upstream_error", "上游没有接受压缩请求；原请求未发送。", 502)
             reader = getattr(response, "read1", response.read)
@@ -898,6 +961,7 @@ class Handler(BaseHTTPRequestHandler):
                 chunk = reader(65536)
                 if not chunk:
                     break
+                network_trace.feed(chunk)
                 parser.feed(chunk)
         return parser.finish()
 
@@ -1056,19 +1120,23 @@ class Handler(BaseHTTPRequestHandler):
             if protection_enabled and not image_worker and self.command == "POST" and urlsplit(suffix).path.rstrip("/").endswith("/responses"):
                 outbound_body, outbound_encoding, overflow_meta = self.server.overflow.prepare(
                     outbound_body, outbound_encoding, source_body, headers, suffix, upstream, compression, budget,
-                    lambda compact_body, encoding: self._checkpoint(upstream, suffix, headers, compact_body, encoding),
+                    lambda compact_body, encoding: self._checkpoint(upstream, suffix, headers, compact_body, encoding,
+                        packet_id=packet_id, session_id=capture_meta.get("thread_id")),
                     request_scope=scope, zstd_level=zstd_level, auto_zstd_level=auto_zstd_level)
                 applied_zstd_level = overflow_meta.get("relay_zstd_level", applied_zstd_level)
                 update(**overflow_meta)
         except ImageIsolationFailure as exc:
+            self.server.network_diagnostics.local_error(upstream + suffix, self.command, headers, body, exc, exc.status, packet_id)
             update(state="relay_error", relay_error=exc.code, status=exc.status)
             self._json(exc.status, {"error": {"code": exc.code, "message": exc.message}})
             return
-        except ImportError:
+        except ImportError as exc:
+            self.server.network_diagnostics.local_error(upstream + suffix, self.command, headers, body, exc, 503, packet_id)
             update(state="relay_error", relay_error="zstd_unavailable", status=503)
             self._json(503, {"error": {"code": "zstd_unavailable", "message": "缺少 zstd 依赖，请重新安装完整程序或关闭传输压缩。"}})
             return
         except OverflowFailure as exc:
+            self.server.network_diagnostics.local_error(upstream + suffix, self.command, headers, body, exc, exc.status, packet_id)
             update(state="relay_error", relay_error=exc.code, status=exc.status,
                    overflow_original_wire_bytes=len(outbound_body),
                    duration_ms=round((time.monotonic() - started) * 1000, 1))
@@ -1076,6 +1144,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         except Exception as exc:
             update(state="relay_error", relay_error="overflow_" + type(exc).__name__, status=503)
+            self.server.network_diagnostics.local_error(upstream + suffix, self.command, headers, body, exc, 503, packet_id)
             self._json(503, {"error": {"code": "overflow_preparation_failed", "message": "本地上传包准备失败；原请求未发送。"}})
             return
         if outbound_body is not body:
@@ -1113,10 +1182,17 @@ class Handler(BaseHTTPRequestHandler):
         request = Request(upstream + suffix,
                           data=outbound_body if body or self.command in {"POST", "PUT", "PATCH"} else None,
                           headers=headers, method=self.command)
+        network_trace = self.server.network_diagnostics.request(upstream + suffix, self.command, headers, outbound_body,
+            packet_id=packet_id, session_id=capture_meta.get("thread_id"),
+            kind="compact" if response_path.endswith("/compact") else "responses",
+            ingress_bytes=len(body), ingress_encoding=self.headers.get("Content-Encoding", "identity"),
+            outgoing_encoding=outbound_encoding, zstd_level=applied_zstd_level,
+            preparation_ms=round((time.monotonic() - started) * 1000, 1))
         sent_headers = False
         received = 0
         observation = None
         response_summary = None
+        network_error = None
         relay_state, relay_error, diagnostic_error = "relay_error", "", ""
         relay_phase = "upstream_open"
         try:
@@ -1128,16 +1204,18 @@ class Handler(BaseHTTPRequestHandler):
                            outbound_content_encoding=outbound_encoding)
                 opener = self.server.local_opener if local_upstream else self.server.opener
                 notify(diagnostic.record if diagnostic else None, "attempt_started", attempt=1)
-                response = opener.open(request, timeout=UPSTREAM_READ_TIMEOUT_SECONDS)
+                with network_trace.active():
+                    response = opener.open(request, timeout=UPSTREAM_READ_TIMEOUT_SECONDS)
             except HTTPError as exc:
                 response = exc
+            network_trace.response(response)
             notify(diagnostic.record if diagnostic else None, "response_headers", status=response.status)
             response = prepare_http_error(response, native_policy, update, diagnostic.record if diagnostic else None)
             with response:
                 status = response.status
                 if diagnostic:
                     try:
-                        observation = ResponseObservation(diagnostic, response.headers)
+                        observation = ResponseObservation(diagnostic, response.headers, on_error=network_trace.stream_error)
                     except Exception as exc:
                         self.server.retry_journal._error(exc)
                 observe_usage = self.command == "POST" and urlsplit(suffix).path.rstrip("/").endswith("/responses")
@@ -1165,6 +1243,7 @@ class Handler(BaseHTTPRequestHandler):
                 if self.command != "HEAD":
                     relay_phase = "upstream_read"
                     for chunk in usage_stream.chunks() if usage_stream is not None else raw_chunks(response):
+                        network_trace.feed(chunk)
                         if observation:
                             observation.feed(chunk)
                         if response_summary:
@@ -1172,15 +1251,18 @@ class Handler(BaseHTTPRequestHandler):
                         relay_phase = "downstream_write"
                         self.wfile.write(chunk)
                         self.wfile.flush()
+                        network_trace.forwarded_bytes += len(chunk)
                         if not received:
                             notify(diagnostic.record if diagnostic else None, "downstream_first_bytes_sent")
                         received += len(chunk)
                         relay_phase = "upstream_read"
                 relay_state = "complete"
         except (BrokenPipeError, ConnectionResetError) as exc:
+            network_error = exc
             relay_state = "client_disconnected"
             diagnostic_error = type(exc).__name__
         except Exception as exc:
+            network_error = exc
             relay_error = diagnostic_error = type(exc).__name__
             if not sent_headers:
                 self._json(502, {"error": {"code": "inspector_upstream_unreachable",
@@ -1198,6 +1280,8 @@ class Handler(BaseHTTPRequestHandler):
                                       sent_headers=sent_headers, response_bytes=received)
             except Exception as exc:
                 self.server.retry_journal._error(exc)
+            network_trace.record.update(downstream_headers_sent=sent_headers, relay_state=relay_state)
+            network_trace.finish(network_error, phase=relay_phase)
             fields = {"relay_error": relay_error} if relay_error else {}
             if response_summary:
                 fields["response_summary"] = response_summary.finish(relay_state)
