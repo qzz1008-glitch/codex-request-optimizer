@@ -212,7 +212,8 @@ function eventRows(){return [
   assert.equal(chartNodes(token,'trend-axis-title')[0].textContent,'输入 Token');
  });
  await test('one adaptive bottom time axis aligns ticks with both equal-height metric panels',()=>{
-  const {result}=rendered(dualRows()),labels=chartNodes({svg:result.timeAxis},'trend-axis-label');
+  const {result}=rendered(dualRows());result.loadedBounds=null;result.render();
+  const labels=chartNodes({svg:result.timeAxis},'trend-axis-label');
   assert.ok(labels.length>=3&&labels.length<=9);assert.ok(labels.every(label=>/^\d{2}:[0-5]0$/.test(label.textContent)));assert.equal(result.timeAxis.attrs.viewBox,'0 0 640 32');
   const [size,token]=result.charts;
   assert.equal(size.bounds.height-size.bounds.top-size.bounds.bottom,token.bounds.height-token.bounds.top-token.bounds.bottom);
@@ -229,6 +230,90 @@ function eventRows(){return [
   assert.ok(fine.some(stamp=>new Date(stamp*1000).getMinutes()!==0));
   for(const ticks of [narrow,distant]){assert.ok(ticks.length>=2&&ticks.length<=9);assert.ok(ticks.slice(1).every((stamp,index)=>stamp-ticks[index]>600));}
  });
+ await test('idle gaps have bounded width and preserve reversible chronological coordinates',()=>{
+  const axis=View.compactTimeScale(0,7200,[[100,200],[3500,3600],[7000,7100]],500);
+  assert.equal(axis.gaps.length,2);
+  for(const gap of axis.gaps)assert.ok(Math.abs((axis.fraction(gap.end)-axis.fraction(gap.start))*500-18)<1e-6);
+  let last=-1;
+  for(let stamp=0;stamp<=7200;stamp+=25){const fraction=axis.fraction(stamp);assert.ok(fraction>last);assert.ok(Math.abs(axis.timeAt(fraction)-stamp)<1e-6);last=fraction;}
+  const narrow=View.compactTimeScale(0,7200,[[100,200],[3500,3600],[7000,7100]],60);
+  assert.ok(narrow.gaps.reduce((sum,gap)=>sum+narrow.fraction(gap.end)-narrow.fraction(gap.start),0)<=.200001);
+  assert.equal(axis.timeAt(-1),0);assert.equal(axis.timeAt(2),7200);
+ });
+ await test('short gaps and empty windows keep their real linear scale',()=>{
+  for(const activity of [[],[[100,200],[600,700],[1100,1800]],[[0,1800]]]){
+   const axis=View.compactTimeScale(0,1800,activity,500);assert.equal(axis.gaps.length,0);
+   assert.equal(axis.fraction(900),.5);assert.equal(axis.timeAt(.25),450);
+  }
+ });
+ await test('clipped idle gaps enter the viewport smoothly and empty windows stay linear',()=>{
+  const activity=[[1000,1100],[5000,5100]],coverage={start:0,end:7200};
+  const first=View.compactTimeScale(600,4960,activity,500,coverage),second=View.compactTimeScale(601,4961,activity,500,coverage);
+  assert.ok(Math.abs(first.fraction(1000)-second.fraction(1000))*500<1);
+  const idle=View.compactTimeScale(2000,3000,activity,500,coverage);assert.equal(idle.gaps.length,0);assert.equal(idle.timeAt(.5),2500);
+ });
+ await test('overlapping request durations merge before detecting idle intervals',()=>{
+  const axis=View.compactTimeScale(0,3600,[[0,1000],[300,500],[900,2600],[2500,3600]],500);
+  assert.equal(axis.gaps.length,0);assert.equal(axis.timeAt(.5),1800);
+ });
+ await test('both charts share folded gaps, honest tick labels, and exact point times',()=>{
+  const rows=[3500,3400,800,700,100].map((age,index)=>packet(800+index,{created:now-age,upstream_usage:{input_tokens:100+index*100},outbound_wire_bytes:100000+index*100000}));
+  const {result}=rendered(rows),[size,token]=result.charts,axis=size.bounds.axis;
+  assert.ok(axis.gaps.length>0);assert.equal(axis,token.bounds.axis);
+  const breaks=chartNodes({svg:result.timeAxis},'trend-time-break');assert.equal(breaks.length,axis.gaps.length);
+  for(const chart of result.charts){
+   const bands=chartNodes(chart,'trend-idle-gap');assert.equal(bands.length,breaks.length);
+   for(let i=0;i<bands.length;i++){
+    assert.equal(bands[i].dataset.start,breaks[i].dataset.start);assert.equal(bands[i].dataset.end,breaks[i].dataset.end);
+    assert.ok(Number(bands[i].attrs.width)>0&&Number(bands[i].attrs.width)<=18.000001);assert.ok(nodeText(breaks[i]).includes(result.time(Number(bands[i].dataset.start),true)));
+   }
+   for(const point of chart.points){assert.equal(point.packet.created,rows.find(row=>row.id===point.packet.id).created);assert.equal(point.x,size.bounds.x(point.packet.created));}
+  }
+  const ticks=chartNodes({svg:result.timeAxis},'trend-axis-label');assert.ok(ticks.length>=3&&ticks.length<=8);
+  for(const tick of ticks){const stamp=Number(tick.dataset.time);assert.equal(axis.isGap(stamp),false);assert.equal(Number(tick.attrs.x),size.bounds.x(stamp));}
+ });
+ await test('request duration and in-flight requests never become idle gaps',()=>{
+  for(const extra of [{duration_ms:3300000},{state:'streaming'},{state:'captured'}]){
+   const {result}=rendered([packet(820,{created:now-3550,...extra}),packet(821,{created:now-100})]);
+   assert.equal(result.charts[0].bounds.axis.gaps.length,0);
+  }
+ });
+ await test('hidden sessions and requests without graph metrics still establish activity',()=>{
+  const rows=[packet(830,{created:now-3550,thread_id:'session-a',upstream_usage:{input_tokens:100}}),packet(831,{created:now-100,thread_id:'session-a',upstream_usage:{input_tokens:200}}),
+   packet(832,{created:now-3400,thread_id:null,duration_ms:3200000}),packet(833,{created:now-200,thread_id:'session-b'})];
+  const {result}=rendered(rows);assert.equal(result.charts[0].bounds.axis.gaps.length,0);
+  result.query='session-a';result.render();assert.equal(result.charts[0].bounds.axis.gaps.length,0);assert.equal(result.model().visible.length,1);
+ });
+ await test('unloaded, failed, and truncated history cannot create false idle gaps',()=>{
+  const {result}=rendered(dualRows());assert.ok(result.charts[0].bounds.axis.gaps.length>0);
+  const bounds=result.loadedBounds;
+  for(const state of [{loadedBounds:null},{error:true},{limited:true},{loadedBounds:{since:now-100,before:null}}]){
+   Object.assign(result,{loadedBounds:bounds,error:false,limited:false},state);result.render();assert.equal(result.charts[0].bounds.axis.gaps.length,0);
+  }
+ });
+ await test('curves and hover do not bridge compressed idle intervals',()=>{
+  const {result}=rendered([packet(840,{created:now-3500,upstream_usage:{input_tokens:100},outbound_wire_bytes:100000}),packet(841,{created:now-100,upstream_usage:{input_tokens:300},outbound_wire_bytes:300000})]);
+  for(const chart of result.charts){
+   assert.equal((chartNodes(chart,'trend-curve')[0].attrs.d.match(/M/g)||[]).length,2);
+   const gap=chart.bounds.axis.gaps.find(gap=>gap.start>chart.points[0].packet.created),x=(chart.bounds.x(gap.start)+chart.bounds.x(gap.end))/2,y=(chart.points[0].y+chart.points[1].y)/2;
+   result.hover=chart.points[0].packet.id;result.hoverSeries='session-a';chart.svg.onpointermove({clientX:x,clientY:y});
+   assert.equal(result.hover,null);assert.equal(result.hoverSeries,null);assert.equal(focusLines(result).length,0);
+   const point=chart.points[1];chart.svg.onpointermove({clientX:point.x,clientY:point.y});assert.equal(result.hover,point.packet.id);assert.equal(result.timeTooltip.hidden,false);
+  }
+ });
+ await test('Ctrl wheel keeps the real cursor time anchored on a folded axis',()=>clocked(()=>{
+  const rows=[8000,7900,5000,4900,2000,1900,500].map((age,index)=>packet(850+index,{created:now-age,upstream_usage:{input_tokens:100+index*100},outbound_wire_bytes:100000+index*100000}));
+  const {result,ids,frames}=rendered(rows);result.hours=2;result.windowEnd=now-1200;result.render();
+  const wheel=ids.get('trend-charts').events.get('wheel');
+  for(const chart of result.charts)for(const deltaY of [120,-120]){
+   const bounds=chart.bounds,point=chart.points.find(point=>point.packet.id===id(852)),width=bounds.width-bounds.left-bounds.right,fraction=(point.x-bounds.left)/width;
+   assert.ok(bounds.axis.gaps.length>0);const anchor=bounds.axis.timeAt(fraction),rect=chart.svg.getBoundingClientRect();
+   const clientX=rect.left+point.x*rect.width/bounds.width;wheel.callback({deltaY,ctrlKey:true,clientX,preventDefault(){}});while(frames.length)frames.shift()();
+   assert.ok(Math.abs(chart.bounds.axis.fraction(anchor)-fraction)*width<.2,JSON.stringify({chart:chart.key,deltaY,fraction,projected:chart.bounds.axis.fraction(anchor),end:chart.bounds.end-now,hours:result.hours}));
+   assert.ok(Math.abs(chart.bounds.end-chart.bounds.start-result.hours*3600)<1e-5);
+  }
+  result.cancelPending();
+ }));
  await test('clock-aligned ticks and vertical grids move with panning and remain aligned after zooming',()=>clocked(()=>{
   const {result}=rendered(dualRows());result.setRange(3);result.seek(.5);result.render();
   const labels=()=>chartNodes({svg:result.timeAxis},'trend-axis-label'),before=new Map(labels().map(node=>[node.dataset.time,{x:Number(node.attrs.x),text:node.textContent}]));
@@ -467,7 +552,7 @@ function eventRows(){return [
  });
  await test('line hits use screen distance, choose the closest series and never bridge sessions',()=>{
   let {result}=rendered([
-   packet(501,{created:now-3599,upstream_usage:{input_tokens:100},outbound_wire_bytes:100000}),
+   packet(501,{created:now-3599,duration_ms:3598000,upstream_usage:{input_tokens:100},outbound_wire_bytes:100000}),
    packet(502,{created:now-1,upstream_usage:{input_tokens:100},outbound_wire_bytes:100000}),
    packet(503,{thread_id:'session-b',created:now-3599,upstream_usage:{input_tokens:105},outbound_wire_bytes:105000}),
    packet(504,{thread_id:'session-b',created:now-1,upstream_usage:{input_tokens:105},outbound_wire_bytes:105000})
@@ -475,7 +560,7 @@ function eventRows(){return [
   let token=result.charts[1];
   for(const id of ['session-a','session-b']){const [a,b]=token.points.filter(p=>p.series.id===id);token.svg.onpointermove({clientX:(a.x+b.x)/2,clientY:a.y});assert.equal(result.hoverSeries,id);assert.equal(result.hover,null);}
   ({result}=rendered([
-   packet(505,{created:now-3599,upstream_usage:{input_tokens:100}}),
+   packet(505,{created:now-3599,duration_ms:3598000,upstream_usage:{input_tokens:100}}),
    packet(506,{created:now-1,upstream_usage:{input_tokens:100}})
   ]));
   token=result.charts[1];token.svg.clientWidth/=2;token.svg.clientHeight/=2;
@@ -483,7 +568,7 @@ function eventRows(){return [
   token.svg.onpointermove({clientX:x,clientY:y+6});assert.equal(result.hoverSeries,'session-a');
   token.svg.onpointermove({clientX:x,clientY:y+10});assert.equal(result.hoverSeries,null);
   ({result}=rendered([
-   packet(507,{created:now-3599,upstream_usage:{input_tokens:100}}),
+   packet(507,{created:now-3599,duration_ms:3598000,upstream_usage:{input_tokens:100}}),
    packet(508,{thread_id:'session-b',created:now-1,upstream_usage:{input_tokens:300}})
   ]));
   token=result.charts[1];[a,b]=token.points;token.svg.onpointermove({clientX:(a.x+b.x)/2,clientY:(a.y+b.y)/2});

@@ -213,6 +213,20 @@ class BuildSourceTests(unittest.TestCase):
         self.assertNotIn("packet_inspector/data/requests.json", files)
         self.assertNotIn(".local/secret.json", files)
 
+    def test_local_development_notes_do_not_enter_or_invalidate_builds(self):
+        self.write(".gitignore", "build/\n.local/\nAGENTS.md\n/docs/development.md\n")
+        self.commit()
+        public_sources = source_files(self.root)
+        for name in ("AGENTS.md", "docs/AGENTS.md", "packet_inspector/AGENTS.md", "docs/development.md"):
+            self.write(name, "Local development instructions")
+        self.assertEqual(source_files(self.root), public_sources)
+        self.assertEqual(dirty_paths(self.root), [])
+        Workspace(self.root).validate("release")
+        snapshot = self.snapshot()
+        self.write("docs/development.md", "Updated internal workflow")
+        self.write("AGENTS.md", "Updated local instructions")
+        snapshot.assert_unchanged()
+
     def test_new_asset_types_cannot_be_silently_omitted(self):
         self.write("packet_inspector/ui/font.woff2", "fixture font")
         self.assertIn("packet_inspector/ui/font.woff2", self.snapshot().files)
