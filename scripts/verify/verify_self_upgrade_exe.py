@@ -16,7 +16,7 @@ from packet_inspector.frontend_dev import DESKTOP_PROFILE, RESOURCES
 from packet_inspector.router import control_worker, local_json, process_alive, worker_info
 from packet_inspector.updates import ASSET
 from packet_inspector.upgrade import Upgrade, free_port
-from scripts.verify.verify_upgrade_exe import wait_for
+from scripts.verify.verify_upgrade_exe import close_test_desktop, verify_presentation, wait_for
 from scripts.build_inspector import PUBLIC_FILES
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -79,6 +79,11 @@ def verify_mode(release, directory, mode):
         assert process.wait(timeout=120) == 0
         profile_path = data / DESKTOP_PROFILE
         assert json.loads(profile_path.read_text())["mode"] == mode
+        before = local_json(port, "/api/status")
+        verify_presentation(data, before)
+        # The tray preloads the single desktop host. The probe needs to own it,
+        # and the editable profile must not race with that host's startup write.
+        close_test_desktop(data)
         external = None
         if mode == "dev":
             external = data / "editable-ui"
@@ -86,7 +91,7 @@ def verify_mode(release, directory, mode):
             for name in RESOURCES:
                 shutil.copy2(ROOT / "packet_inspector/ui" / name, external / name)
             profile_path.write_text(json.dumps({"mode":"dev", "ui_dir":str(external), "managed_ui":False}), encoding="utf8")
-        old = local_json(port, "/api/status")["worker_id"]
+        old = before["worker_id"]
         active = worker_info(data, old)
         report = data / "old-window.json"
         report.with_suffix(".hold").write_text("hold", encoding="ascii")
