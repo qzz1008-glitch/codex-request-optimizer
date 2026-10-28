@@ -2,6 +2,9 @@
 
 const uiI18n = (() => {
   const english = {
+    "超限摘要前输入 Token（估算）":"Estimated input tokens before overflow summarization",
+    "输入 Token（估算）":"Input tokens (estimated)",
+    "上游实际输入 Token":"Actual upstream input tokens",
     "存储位置":"Storage locations",
     "日志目录":"Log folder",
     "缓存目录":"Cache folder",

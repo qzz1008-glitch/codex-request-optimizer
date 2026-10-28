@@ -3,15 +3,18 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('nod
 const source=fs.readFileSync('packet_inspector/ui/app.js','utf8');
 const classSource=source.slice(source.indexOf('function isTrendGeneration('),source.indexOf('tokenTrendView=new TokenTrendView('));
 const helpers=source.split(/\r?\n/).filter(line=>/^function (tokenVersion|compressedBytes|originalBytes|uploadBytes|compact)\(/.test(line)).join('\n');
+const usageHelpers=source.slice(source.indexOf('function overflowApplied('),source.indexOf('function listTokens('))+
+  source.slice(source.indexOf('function sortInputTokens('),source.indexOf('function sortedTokenPackets('));
 // Keep samples and viewports on one clock, including on slower CI runners.
 const fixtureNow=Date.now();
 class FixtureDate extends Date{static now(){return fixtureNow;}}
 const context={Date:FixtureDate,Map,Set,AbortController,setTimeout,clearTimeout,URLSearchParams,document:{hidden:false},
   purposeFromMetadata:p=>p.session_kind||null,hasModelTokenUsage:p=>p.method==='POST'&&!p.is_compaction&&p.request_kind!=='tool_search',
   tokenVersion:null};
-vm.createContext(context);vm.runInContext(helpers+'\n'+classSource+'\nglobalThis.View=TokenTrendView;globalThis.isGeneration=isTrendGeneration;',context);
+vm.createContext(context);vm.runInContext(helpers+'\n'+usageHelpers+'\n'+classSource+'\nglobalThis.View=TokenTrendView;globalThis.isGeneration=isTrendGeneration;',context);
 const View=context.View,now=fixtureNow/1000,id=n=>n.toString(16).padStart(32,'0');
 const packet=(n,extra={})=>({id:id(n),created:now-n,thread_id:'session-a',method:'POST',path:'/responses',state:'complete',status:200,...extra});
+const estimate=input_tokens=>({state:'available',source:'codex_estimate',estimated:true,input_tokens});
 let checks=0;
 function test(name,fn){return Promise.resolve().then(fn).then(()=>{checks++;}).catch(error=>{error.message=name+': '+error.message;throw error;});}
 function view(services={}) {
@@ -64,7 +67,7 @@ async function clocked(fn){
 function dualRows(){return [
  packet(101,{created:now-300,upstream_usage:{input_tokens:100},outbound_wire_bytes:100000}),
  packet(102,{created:now-200,usage_override_applied:true,usage_override_request_bytes:250000,outbound_wire_bytes:200000}),
- packet(103,{created:now-100,upstream_usage:{input_tokens:300},overflow_cache_hit:true,overflow_original_wire_bytes:400000,outbound_wire_bytes:300000}),
+ packet(103,{created:now-100,upstream_usage:{input_tokens:300},request_token_estimate:estimate(300),overflow_cache_hit:true,overflow_original_wire_bytes:400000,outbound_wire_bytes:300000}),
  packet(104,{created:now-50,is_compaction:true,outbound_wire_bytes:150000})];}
 function idleRows(){return [12,1].flatMap((hours,chunk)=>Array.from({length:13},(_,index)=>packet(800+chunk*20+index,{
  created:now-hours*3600+index*300,upstream_usage:{input_tokens:100+index*100},outbound_wire_bytes:100000+index*10000
@@ -73,7 +76,7 @@ function eventRows(){return [
  packet(701,{usage_override_applied:true}),packet(702,{overflow_cache_hit:true,native_retry_advised:true}),
  packet(703,{thread_id:'session-b',native_retry_advised:true}),packet(704,{thread_id:'session-b',is_compaction:true}),
  packet(705),packet(706,{thread_id:'session-b',usage_override_applied:true,native_retry_advised:true})
-].map((row,index)=>({...row,upstream_usage:{input_tokens:100+index*100},outbound_wire_bytes:100000+index*100000}));}
+].map((row,index)=>({...row,upstream_usage:{input_tokens:100+index*100},...(row.overflow_cache_hit?{request_token_estimate:estimate(100+index*100)}:{}),outbound_wire_bytes:100000+index*100000}));}
 (async()=>{
  await test('size axis steps use decimal bytes and match the configured limit units',()=>{
   const scale=View.sizeScale(1000000);
@@ -113,14 +116,32 @@ function eventRows(){return [
   assert.equal(View.input(packet(1,{upstream_usage:{input_tokens:12345},usage_override_applied:true,reported_usage:{input_tokens:500000}}),{state:'available',input_tokens:500000}),12345);
   assert.equal(View.input(packet(1,{usage_override_applied:true}),{state:'available',input_tokens:500000}),null);
  });
+ await test('list sorting and token chart only show the input before summary replacement',()=>{
+  const row=packet(51,{overflow_compaction_calls:1,usage_override_applied:true,upstream_usage:{input_tokens:81292},request_token_estimate:estimate(248652),outbound_wire_bytes:525140});
+  vm.runInContext(source.slice(source.indexOf('function listTokens('),source.indexOf('function tokenDataLifetime(')),context);
+  context.listTokenCells=new Map([[row.id,{textContent:'',title:''}]]);context.setText=(node,text)=>{node.textContent=text;};
+  context.renderListTokens(row);
+  assert.equal(context.listTokenCells.get(row.id).textContent,'≈ 248,652');
+  assert.equal(context.sortInputTokens(context.listTokens(row)),248652);
+  const {result}=rendered([row]);
+  assert.equal(result.charts[1].points[0].value,248652);
+  result.hover=row.id;result.renderFocus();
+  assert.equal(result.charts[1].tooltip.children[1].textContent,'≈ 248,652');
+  assert.equal(row.upstream_usage.input_tokens,81292);
+ });
+ await test('missing pre-summary estimates cannot fall back to short or synthetic usage',()=>{
+  const row=packet(52,{overflow_cache_hit:true,usage_override_applied:true,upstream_usage:{input_tokens:81292}});
+  assert.equal(View.input(row,{state:'available',input_tokens:500000,source:'codex_history'}),null);
+  assert.equal(View.input(row,estimate(248652)),248652);
+ });
  await test('metadata-only records retain both charts and protection markers',()=>{
   const rows=[packet(601,{details_evicted:true,upstream_usage:{input_tokens:12345},outbound_wire_bytes:345678,
-    usage_override_applied:true,overflow_cache_hit:true}),
+    usage_override_applied:true,overflow_cache_hit:true,request_token_estimate:estimate(23456)}),
     packet(602,{details_evicted:true,upstream_usage:{input_tokens:22345},outbound_wire_bytes:445678})];
   const {result}=rendered(rows);
   assert.equal(result.charts[0].points.length,2);
   assert.equal(result.charts[1].points.length,2);
-  assert.equal(View.input(rows[0],null),12345);
+  assert.equal(View.input(rows[0],null),23456);
   assert.deepEqual(Array.from(View.events(rows[0])),['predictive','overflow']);
  });
  await test('invalid and missing usage never becomes zero',()=>{
@@ -384,7 +405,7 @@ function eventRows(){return [
   assert.equal('pinned' in result,false);
   const next=token.points.at(-1);token.svg.onpointermove({clientX:next.x,clientY:next.y});
   assert.equal(result.hover,id(103));assert.equal(token.tooltip.hidden,false);assert.equal(size.tooltip.hidden,false);
-  assert.equal(token.tooltip.children.length,2);assert.ok(nodeText(token.tooltip).replace(/\s+/g,' ').includes('输入 Token 300'));
+  assert.equal(token.tooltip.children.length,2);assert.match(nodeText(token.tooltip),/输入 Token（估算）\s*≈\s*300/);
   assert.equal(result.timeTooltip.textContent,result.time(next.packet.created,true));assert.ok(nodeText(size.tooltip).includes('400 KB'));
   assert.equal(chartNodes(size,'trend-hover-node').length,1);
   for(const chart of result.charts){const node=chartNodes(chart,'trend-hover-node')[0];assert.equal(node.dataset.packet,id(103));assert.equal(node.children[0].tag,'path');assert.equal(chart.focusLayer.children.length,0);}

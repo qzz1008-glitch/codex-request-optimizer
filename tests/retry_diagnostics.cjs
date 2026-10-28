@@ -8,6 +8,7 @@ let english = false;
 const context = {nf:new Intl.NumberFormat('en-US'), t:key=>english?(dictionary[key]||key):key};
 vm.createContext(context);
 vm.runInContext(source.slice(source.indexOf('function capacityRetryCount('), source.indexOf('function listTokens(')), context);
+vm.runInContext(source.slice(source.indexOf('function sortInputTokens('),source.indexOf('function sortedTokenPackets(')),context);
 vm.runInContext('class Trends {\n' + source.slice(source.indexOf('  static events(packet)'), source.indexOf('  static markerShape(')) + '\n}\nthis.events=Trends.events;', context);
 function packet(fields={}, count=0) {
   return {source:'live',capacity_retry_count:count, capacity_retry_diagnostic:{id:'request-1', journal_saved:true, journal_available:true,

@@ -14,6 +14,7 @@ import threading
 import time
 from urllib.parse import urlsplit
 from .response_usage import packet_usage
+from .token_estimate import estimate_usage, overflow_applied, unavailable
 
 READ_BUDGET = 8 * 1024 * 1024
 LINE_LIMIT = 2 * 1024 * 1024
@@ -254,6 +255,9 @@ class TokenWindows:
         """Read consecutive bounded chunks without waiting for the browser's next poll."""
         if not is_token_request(packet):
             return {"state": "unavailable"}
+        if overflow_applied(packet):
+            estimate = estimate_usage(packet) or unavailable("request_estimate_unavailable")
+            return {**estimate, "recorded_at": packet.get("created"), "upstream_usage": packet_usage(packet)}
         usage = packet_usage(packet)
         if usage is not None:
             return {"state": "available", "source": "upstream_response",

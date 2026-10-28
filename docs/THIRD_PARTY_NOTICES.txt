@@ -6,6 +6,11 @@ https://github.com/openai/codex/tree/e18a20d6eb6f5ede32a69fb56e3fe276d5e9d914
 The corresponding Codex-LICENSE.txt is embedded in the EXE and appended below
 in the distributed THIRD_PARTY_NOTICES.txt.
 
+Model-visible token estimation heuristics adapted from OpenAI Codex.
+Copyright OpenAI. Apache License 2.0.
+https://github.com/openai/codex
+The same embedded Codex-LICENSE.txt applies to these heuristics.
+
 Python: Python Software Foundation License and included component licenses.
 https://docs.python.org/3/license.html
 
