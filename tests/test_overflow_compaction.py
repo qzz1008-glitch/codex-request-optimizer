@@ -13,6 +13,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / ".local" / "builddeps"))
 
@@ -40,6 +41,17 @@ def delegation_notice(number=1):
 def make_body(items, **extra):
     value = {"model": "test", "stream": True, "input": items, "store": False, **extra}
     return json.dumps(value, ensure_ascii=True, indent=1).encode()
+
+
+def native_body(items, **extra):
+    prompt = {"role": "user", "content": [{"type": "input_text", "text": CHECKPOINT_PROMPT}]}
+    return make_body([*items, prompt], client_metadata={"x-codex-turn-metadata": json.dumps({
+        "request_kind": "compaction", "compaction": {"trigger": "auto"}})}, **extra)
+
+
+def checkpoint_text(items):
+    return next(part["text"] for item in items for part in item.get("content", [])
+                if isinstance(part, dict) and part.get("text", "").startswith(CHECKPOINT_PREFIX + "\n"))
 
 
 def complete(summary="Checkpoint: preserve reference 7319."):
@@ -87,6 +99,155 @@ class OverflowTests(unittest.TestCase):
         self.assertFalse(self.calls)
         self.assertFalse(self.compactor.path.exists())
         self.assertFalse(meta["overflow_cache_reset"])
+
+    def test_native_slight_overflow_keeps_most_original_history_in_both_encodings(self):
+        history = [message(i, 700) for i in range(140)]
+        for mode in ("off", "zstd"):
+            with self.subTest(mode=mode):
+                compactor = OverflowCompactor(self.root / mode)
+                raw = native_body(history, future_protocol={"preserve": True})
+                original, _ = prepare_request(raw, self.headers, "POST", "/responses", mode)
+                budget = len(original) * 99 // 100
+                self.calls.clear()
+                wire, encoding, meta = self.run_prepare(raw, budget=budget, mode=mode, compactor=compactor)
+                self.assertEqual(meta["overflow_strategy"], "native_minimal_prefix")
+                self.assertEqual(meta["overflow_compaction_calls"], 1)
+                self.assertLess(meta["overflow_covered_items"], len(history) // 4)
+                self.assertLessEqual(len(wire), budget)
+                self.assertLessEqual(len(wire), meta["overflow_target_wire_bytes"])
+                decoded = decode_body(wire, encoding)
+                original_span, changed_span = JsonBytes(raw).spans["/input"], JsonBytes(decoded).spans["/input"]
+                self.assertEqual(raw[:original_span[0]], decoded[:changed_span[0]])
+                self.assertEqual(raw[original_span[1]:], decoded[changed_span[1]:])
+                tail = json.loads(raw)["input"][meta["overflow_covered_items"]:]
+                self.assertEqual(json.loads(decoded)["input"][-len(tail):], tail)
+
+    def test_native_under_budget_is_forwarded_byte_for_byte(self):
+        raw = native_body([message(1, 30)])
+        wire, _, meta = self.run_prepare(raw)
+        self.assertIs(wire, raw)
+        self.assertFalse(self.calls)
+        self.assertEqual(meta["overflow_compaction_calls"], 0)
+        self.assertFalse(self.compactor.path.exists())
+
+    def test_native_chunks_are_independent_and_keep_protected_context(self):
+        instruction = message("protected", 80, "developer")
+        history = [instruction, *self.items]
+        wire, encoding, meta = self.run_prepare(native_body(history))
+        self.assertGreater(meta["overflow_compaction_calls"], 1)
+        self.assertLessEqual(len(wire), self.budget)
+        seen = []
+        for request in self.calls:
+            self.assertIn(instruction, request["input"])
+            text = json.dumps(request["input"], ensure_ascii=False)
+            self.assertNotIn(CHECKPOINT_PREFIX, text)
+            originals = [item for item in request["input"] if item in self.items]
+            seen.extend(json.dumps(item, sort_keys=True) for item in originals)
+        self.assertEqual(len(seen), len(set(seen)))
+        final = json.loads(decode_body(wire, encoding))["input"]
+        summary = checkpoint_text(final)
+        for number in range(1, len(self.calls) + 1):
+            self.assertIn("Checkpoint #" + str(number) + ":", summary)
+        self.assertEqual(summary.count(CHECKPOINT_PREFIX), 1)
+        self.assertEqual(final[-1], json.loads(native_body(history))["input"][-1])
+
+    def test_native_unexpected_large_summary_is_measured_and_never_resummarized(self):
+        history = [message(i, 700) for i in range(140)]
+        raw = native_body(history)
+        budget = len(raw) * 99 // 100
+        responses = []
+        large = "Unexpected first fragment " + message("long-summary", budget // 3)["content"][0]["text"]
+
+        def compact(body, encoding):
+            self.compact(body, encoding)
+            summary = large if not responses else "Additional original fragment."
+            responses.append(summary)
+            return summary
+
+        wire, encoding, meta = self.run_prepare(raw, budget=budget, compact=compact)
+        self.assertEqual(meta["overflow_compaction_calls"], 2)
+        self.assertLessEqual(len(wire), budget)
+        self.assertGreater(meta["overflow_summary_estimate_bytes"], budget // 4)
+        self.assertNotIn(large, json.dumps(self.calls[1]))
+        self.assertNotIn(CHECKPOINT_PREFIX, json.dumps(self.calls[1]))
+        final = checkpoint_text(json.loads(decode_body(wire, encoding))["input"])
+        self.assertTrue(large in final, "The first independent fragment was lost")
+        self.assertIn(responses[1], final)
+
+    def test_native_fitting_result_does_not_repeat_only_to_meet_soft_margin(self):
+        history = [message(i, 700) for i in range(140)]
+        raw = native_body(history)
+        budget = len(raw) * 99 // 100
+        span = JsonBytes(raw).spans["/input"]
+        _, headroom = self.compactor._native_allowance("cold-scope", budget)
+        wanted = budget - headroom // 2
+
+        def compact(body, encoding):
+            self.compact(body, encoding)
+            cut = len(self.calls[-1]["input"]) - 1
+            items = json.loads(raw)["input"]
+            candidate = rebuild_prefix(items[:cut], "") + items[cut:]
+            empty = raw[:span[0]] + encode(candidate) + raw[span[1]:]
+            return "s" * (wanted - len(empty))
+
+        wire, _, meta = self.run_prepare(raw, budget=budget, compact=compact)
+        self.assertEqual(len(wire), wanted)
+        self.assertGreater(len(wire), meta["overflow_target_wire_bytes"])
+        self.assertLess(len(wire), budget)
+        self.assertEqual(len(self.calls), 1)
+
+    def test_native_cache_growth_only_summarizes_new_original_chunks(self):
+        history = [message(i, 700) for i in range(140)]
+        raw = native_body(history)
+        budget = len(raw) * 99 // 100
+        self.run_prepare(raw, budget=budget)
+        previous_summary = "Checkpoint #1: preserve reference 7319."
+        self.calls.clear()
+        larger = native_body([*history, message("growth", 12_000)])
+        wire, encoding, meta = self.run_prepare(larger, budget=budget)
+        self.assertTrue(meta["overflow_cache_hit"])
+        self.assertEqual(len(self.calls), 1)
+        self.assertNotIn(CHECKPOINT_PREFIX, json.dumps(self.calls[0]))
+        final = checkpoint_text(json.loads(decode_body(wire, encoding))["input"])
+        self.assertTrue(previous_summary in final, "The cached summary was lost")
+        self.assertLessEqual(len(wire), budget)
+        self.calls.clear()
+        _, _, reused = self.run_prepare(larger, budget=budget, compactor=OverflowCompactor(self.root))
+        self.assertTrue(reused["overflow_cache_hit"])
+        self.assertFalse(self.calls)
+
+    def test_native_safe_cuts_never_separate_a_tool_call_and_its_result(self):
+        call = {"type": "custom_tool_call", "call_id": "paired", "name": "exec", "input": "synthetic"}
+        output = {"type": "custom_tool_call_output", "call_id": "paired", "output": "x" * 1000}
+        history = [call, *[message(i, 700) for i in range(12)], output,
+                   *[message(i, 700) for i in range(12, 140)]]
+        raw = native_body(history)
+        wire, _, meta = self.run_prepare(raw, budget=len(raw) * 99 // 100)
+        self.assertGreaterEqual(meta["overflow_covered_items"], history.index(output) + 1)
+        self.assertLess(meta["overflow_covered_items"], len(history) // 2)
+        self.assertIn(call, self.calls[0]["input"])
+        self.assertIn(output, self.calls[0]["input"])
+        self.assertLessEqual(len(wire), self.budget)
+
+    def test_native_failure_never_commits_an_oversized_mapping(self):
+        raw = native_body([message(i) for i in range(100)])
+        with patch("packet_inspector.overflow.MAX_COMPACTIONS", 2), self.assertRaises(OverflowFailure) as failure:
+            self.run_prepare(raw)
+        self.assertEqual(failure.exception.code, "overflow_compaction_limit")
+        self.assertEqual(len(self.calls), 2)
+        self.assertFalse(self.compactor.path.exists())
+
+    def test_native_size_experience_is_small_bounded_and_does_not_reserve_15_percent(self):
+        estimate, headroom = self.compactor._native_allowance("cold", 1_000_000)
+        self.assertLess(estimate + headroom, 50_000)
+        for scope in range(70):
+            for size in range(12):
+                self.compactor._remember_native_size(str(scope), size * 100)
+        self.assertEqual(len(self.compactor.native_summary_sizes), 64)
+        self.assertTrue(all(len(samples) == 8 for samples in self.compactor.native_summary_sizes.values()))
+        learned, headroom = self.compactor._native_allowance("69", 1_000_000)
+        self.assertEqual(learned, 1100)
+        self.assertLess(headroom, 20_000)
 
     def test_lite_reasoning_context_survives_every_checkpoint(self):
         reasoning = {"effort": "max", "summary": "detailed", "context": "all_turns"}
@@ -600,6 +761,23 @@ class OverflowRelayTests(unittest.TestCase):
         self.assertEqual(self.config.read_bytes(), self.original_config)
         with closing(sqlite3.connect(self.server.overflow.path)) as db:
             self.assertEqual(db.execute("SELECT count(*) FROM mappings").fetchone()[0], 0)
+
+    def test_http_native_compaction_uses_small_pre_summary_and_validates_both_uploads(self):
+        history = [message(i, 700) for i in range(140)]
+        value = json.loads(native_body(history))
+        raw = make_body(value["input"], client_metadata=value["client_metadata"])
+        original, _ = prepare_request(raw, {}, "POST", "/responses", "zstd")
+        budget = len(original) * 99 // 100
+        self.server.settings.update(budget_bytes=budget, auto_detect_providers=True)
+        status, body = self.post(value["input"], client_metadata=value["client_metadata"])
+        self.assertEqual((status, body), (200, complete()))
+        self.assertEqual(len(self.up.requests), 2)
+        self.assertTrue(all(size <= budget for size, _, _ in self.up.requests))
+        summary_request, native_request = [request[2] for request in self.up.requests]
+        self.assertLess(len(summary_request["input"]), len(history) // 4)
+        self.assertEqual(native_request["client_metadata"], value["client_metadata"])
+        self.assertEqual(native_request["input"][-1], value["input"][-1])
+        self.assertGreater(len(native_request["input"]), len(history) * 3 // 4)
 
     def test_http_overflow_and_cache_reuse_preserve_standalone_delegations(self):
         self.server.settings["budget_bytes"] = 6000
