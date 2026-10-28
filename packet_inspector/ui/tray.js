@@ -61,7 +61,16 @@
   }
   function measure() {
     const bounds=document.body.getBoundingClientRect();
-    if(api()?.resize_panel)api().resize_panel(Math.ceil(bounds.width),Math.ceil(bounds.height)).catch(()=>{});
+    if(api()?.resize_panel)return api().resize_panel(Math.ceil(bounds.width),Math.ceil(bounds.height)).catch(()=>{});
+  }
+  function hostOptions() {
+    const style=getComputedStyle(document.documentElement),read=(name,fallback)=>style.getPropertyValue("--tray-"+name).trim()||fallback;
+    return {horizontal:read("placement-x","auto"),vertical:read("placement-y","auto"),
+      offset_x:parseFloat(read("offset-x","0")),offset_y:parseFloat(read("offset-y","0")),
+      topmost:read("topmost","1")==="1",activate:read("activate","1")==="1",
+      preserve_overflow_focus:read("preserve-overflow-focus","1")==="1",
+      dismiss_outside:read("dismiss-outside","1")==="1",dismiss_escape:read("dismiss-escape","1")==="1",
+      dismiss_switch:read("dismiss-switch","1")==="1"};
   }
   function cancel() {clearTimeout(timer);timer=null;sequence++;controller?.abort();controller=null;}
   async function refresh() {
@@ -99,7 +108,7 @@
   }
   buttons[0].addEventListener("click",()=>action("open_main"));buttons[1].addEventListener("click",()=>action("exit_app"));
   document.addEventListener("keydown",event=>{
-    if(event.key==="Escape"){event.preventDefault();api()?.dismiss();}
+    if(event.key==="Escape"&&hostOptions().dismiss_escape){event.preventDefault();api()?.dismiss();}
     if(event.key==="ArrowDown"||event.key==="ArrowUp"){
       event.preventDefault();const current=buttons.indexOf(document.activeElement),delta=event.key==="ArrowDown"?1:-1;
       buttons[(current+delta+buttons.length)%buttons.length].focus();
@@ -108,7 +117,16 @@
   document.addEventListener("contextmenu",event=>event.preventDefault());
   document.addEventListener("visibilitychange",()=>{cancel();if(visible&&!document.hidden)refresh();});
   window.addEventListener("beforeunload",cancel);
-  window.addEventListener("pywebviewready",async()=>{measure();try{await api().panel_ready();sync();}catch(_) {}});
+  window.addEventListener("pywebviewready",async()=>{
+    try {
+      await document.fonts?.ready;
+      await measure();
+      if(api().configure_window)await api().configure_window(hostOptions());
+      // Do not wait for requestAnimationFrame: a preloaded, hidden WebView may
+      // suspend it. Layout readiness is independent of visibility and stats.
+      await api().panel_ready();sync();
+    } catch(_) {}
+  });
   if(typeof ResizeObserver!=="undefined")new ResizeObserver(measure).observe(document.body);
   window.trayPanel={setVisible,render,sync};
 })();

@@ -59,22 +59,35 @@ def main(argv=None):
                 except OSError:
                     ctypes.windll.user32.MessageBoxW(0, "无法打开退出确认，中转服务继续运行。请稍后重试。", "Codex 请求优化器", 0x40)
 
+            panel_launch_guard = threading.Lock()
+            panel_process = None
+            def prepare_panel():
+                nonlocal panel_process
+                from packet_inspector.window_lifecycle import tray_panel_host_running
+                with panel_launch_guard:
+                    if tray_panel_host_running(options.data_dir):
+                        return
+                    if panel_process is None or panel_process.poll() is not None:
+                        panel_process = start_process(["--tray-preload"] + service_arguments(options))
+
             def show_panel():
-                from packet_inspector.window_lifecycle import request_tray_panel
-                if not request_tray_panel(options.data_dir):
-                    start_process(["--tray-panel"] + service_arguments(options))
+                from packet_inspector.window_lifecycle import request_tray_panel, tray_panel_ready
+                if tray_panel_ready(options.data_dir) and request_tray_panel(options.data_dir):
+                    return True
+                prepare_panel()
+                # The existing native menu remains usable during cold startup.
+                # Do not queue a late popup over that menu once WebView is ready.
+                return False
 
             tray = NativeTray(open_window, exit_app, status_reader=server.tray_status,
                               show_panel=show_panel).start()
             server.desktop_tray = True
-            def prepare_panel():
-                from packet_inspector.window_lifecycle import tray_panel_host_running
+            def warm_panel():
                 try:
-                    if not tray_panel_host_running(options.data_dir):
-                        start_process(["--tray-preload"] + service_arguments(options))
+                    prepare_panel()
                 except OSError:
                     pass
-            preload = threading.Thread(target=prepare_panel, name="tray-panel-warmup", daemon=True)
+            preload = threading.Thread(target=warm_panel, name="tray-panel-warmup", daemon=True)
             preload.start()
 
         return service_main(arguments, on_started=started if use_tray else None)

@@ -579,16 +579,20 @@ def main(argv=None):
             from packet_inspector.tray import NativeTray
             from packet_inspector.exit_flow import request_exit
             def open_window(panel=False):
-                from packet_inspector.window_lifecycle import request_tray_panel
-                if panel and request_tray_panel(args.data_dir):
-                    return
+                from packet_inspector.window_lifecycle import request_tray_panel, tray_panel_ready, tray_panel_host_running
+                if panel:
+                    if tray_panel_ready(args.data_dir) and request_tray_panel(args.data_dir):
+                        return True
+                    if tray_panel_host_running(args.data_dir):
+                        return False
                 worker = worker_info(args.data_dir, server.state["active"])
                 arguments = [worker["executable"], "--port", str(server.port), "--data-dir", str(args.data_dir),
                              "--config", str(args.config)]
                 if panel:
-                    arguments.append("--tray-panel")
+                    arguments.append("--tray-preload")
                 subprocess.Popen(arguments, env={**os.environ, "PYINSTALLER_RESET_ENVIRONMENT": "1"},
                                  creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                return False if panel else None
             def exit_app():
                 try:
                     request_exit(args.data_dir, open_window)

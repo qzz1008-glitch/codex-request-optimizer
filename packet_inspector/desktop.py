@@ -102,6 +102,7 @@ class SingleWindow:
         self.kernel.CreateMutexW.argtypes = [ctypes.c_void_p, wintypes.BOOL, wintypes.LPCWSTR]
         self.kernel.CreateMutexW.restype = wintypes.HANDLE
         self.kernel.SetEvent.argtypes = [wintypes.HANDLE]
+        self.kernel.ResetEvent.argtypes = [wintypes.HANDLE]
         self.kernel.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
         self.kernel.WaitForMultipleObjects.argtypes = [wintypes.DWORD, ctypes.POINTER(wintypes.HANDLE), wintypes.BOOL, wintypes.DWORD]
         self.kernel.WaitForMultipleObjects.restype = wintypes.DWORD
@@ -111,14 +112,17 @@ class SingleWindow:
         prefix = window_control_prefix(data_dir)
         self.event = self.kernel.CreateEventW(None, False, False, prefix + "-show")
         self.panel_event = self.kernel.CreateEventW(None, False, False, prefix + "-tray-panel")
+        self.panel_ready_event = self.kernel.CreateEventW(None, True, False, prefix + "-tray-ready")
         self.exit_event = self.kernel.CreateEventW(None, False, False, prefix + "-exit")
         ctypes.set_last_error(0)
         self.mutex = self.kernel.CreateMutexW(None, False, prefix + "-window")
         error = ctypes.get_last_error()
-        if not self.event or not self.panel_event or not self.exit_event or not self.mutex:
+        if not self.event or not self.panel_event or not self.panel_ready_event or not self.exit_event or not self.mutex:
             self.close()
             raise OSError("无法创建桌面窗口标识。")
         self.existing = error == 183  # ERROR_ALREADY_EXISTS
+        if not self.existing:
+            self.kernel.ResetEvent(self.panel_ready_event)
         self.activations = 0
         self.stop = threading.Event()
 
@@ -127,6 +131,10 @@ class SingleWindow:
 
     def signal_panel(self):
         self.kernel.SetEvent(self.panel_event)
+
+    def set_panel_ready(self, ready):
+        if self.panel_ready_event:
+            (self.kernel.SetEvent if ready else self.kernel.ResetEvent)(self.panel_ready_event)
 
     def watch(self, show, exit_window=None, show_panel=None):
         handles = (wintypes.HANDLE * 3)(self.exit_event, self.panel_event, self.event)
@@ -144,7 +152,7 @@ class SingleWindow:
     def close(self):
         if hasattr(self, "stop"):
             self.stop.set()
-        for name in ("event", "panel_event", "exit_event", "mutex"):
+        for name in ("event", "panel_event", "panel_ready_event", "exit_event", "mutex"):
             handle = getattr(self, name, None)
             if handle:
                 self.kernel.CloseHandle(handle)
@@ -217,7 +225,7 @@ def run(arguments):
                 pass
 
         from .tray_panel import TrayPanel
-        panel = TrayPanel(webview.create_window, ui.ui_url, options.data_dir, show)
+        panel = TrayPanel(webview.create_window, ui.ui_url, options.data_dir, show, ready_changed=instance.set_panel_ready)
         window.events.closed += panel.destroy
 
         def workers():
