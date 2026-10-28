@@ -444,8 +444,12 @@ function eventRows(){return [
    const curves=chart.svg.querySelectorAll('[data-series]');assert.equal(chart.eventNodes.length,chart.key==='size'?5:4);
    for(const node of chart.eventNodes) {
     const point=chart.points.find(point=>point.packet.id===node.dataset.packet),curve=curves.find(curve=>curve.dataset.series===point.series.id);
-    assert.equal(node.attrs.style,'--series-color:'+chartNodes({svg:curve},'trend-curve')[0].attrs.stroke);
+     const color=chartNodes({svg:curve},'trend-curve')[0].attrs.stroke;
+     assert.equal(chartNodes({svg:node},'trend-event')[0].attrs.stroke,color);
+     for(const counter of chartNodes({svg:node},'trend-event-count'))assert.equal(counter.attrs.fill,color);
     assert.equal(chartNodes({svg:node},'trend-event').length,1);assert.equal(node.attrs.class,'trend-event-node');
+     result.hover=point.packet.id;result.renderFocus();assert.equal(chartNodes({svg:node},'trend-event')[0].attrs.stroke,color);
+     result.hover=null;result.renderFocus();
    }
    const overlap=chart.eventNodes.find(node=>node.dataset.packet===id(702));
    assert.equal(chartNodes({svg:overlap},'trend-event-overflow').length,1);assert.equal(chartNodes({svg:overlap},'trend-event-count').length,0);
@@ -465,6 +469,7 @@ function eventRows(){return [
     assert.equal(chart.eventNodes.filter(node=>node.attrs.class.includes('dimmed')).length,chart.eventNodes.length-present.length);
     assert.equal(chart.svg.querySelectorAll('[data-series]').filter(node=>node.attrs.class.includes('dimmed')).length,0);
     assert.equal(chart.tooltip.hidden,true);
+     for(const node of chart.eventNodes){const point=chart.points.find(point=>point.packet.id===node.dataset.packet);assert.equal(chartNodes({svg:node},'trend-event')[0].attrs.stroke,point.series.color);}
    }
    assert.equal(result.timeTooltip.hidden,true);button.onpointerleave();
    for(const chart of result.charts){assert.ok(!chart.svg.attrs.class.includes('trend-event-filtering'));assert.ok(chart.eventNodes.every(node=>node.attrs.class==='trend-event-node'));}
