@@ -196,10 +196,11 @@ def encode_changed(decoded, headers, path, compression, zstd_level=DEFAULT_ZSTD_
 
 class CheckpointStream:
     """A bounded SSE consumer; a 200 without response.completed is a failure."""
-    def __init__(self):
+    def __init__(self, on_error=None):
         self.pending = b""
         self.received = 0
         self.completed = None
+        self.on_error = on_error
 
     def feed(self, chunk):
         self.received += len(chunk)
@@ -222,6 +223,11 @@ class CheckpointStream:
             raise OverflowFailure("overflow_compaction_invalid_response", "压缩响应不是有效的 Responses 事件。", 502) from None
         kind = event.get("type") if isinstance(event, dict) else None
         if kind in {"error", "response.failed", "response.incomplete"}:
+            if self.on_error:
+                try:
+                    self.on_error(event)
+                except Exception:
+                    pass
             raise OverflowFailure("overflow_compaction_failed", "上游未完成上下文压缩；原请求未发送。", 502)
         if kind == "response.completed":
             self.completed = event.get("response")

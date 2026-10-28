@@ -262,8 +262,9 @@ class RetryTrace:
 
 class ResponseObservation:
     """Observe only structural events in the final response; never change bytes."""
-    def __init__(self, trace, headers):
+    def __init__(self, trace, headers, on_error=None):
         self.trace = trace
+        self.on_error = on_error
         kind = headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
         self.mode = "sse" if kind == "text/event-stream" else "json" if kind == "application/json" else None
         self.buffer, self.dropping, self.output_seen = bytearray(), False, False
@@ -300,10 +301,13 @@ class ResponseObservation:
             response = payload.get("response")
             error = (response.get("error") if isinstance(response, dict) else None) or payload.get("error")
             error = error or (payload if event_type == "error" else {})
+            if event_type in {"error", "response.failed", "response.incomplete"}:
+                self._error(payload)
             self.trace.record("terminal", event_type=event_type,
                               capacity=capacity_error(payload, include_output=True),
                               error_code=error.get("code") if isinstance(error, dict) else None)
         elif not event_type and isinstance(payload.get("error"), dict):
+            self._error(payload)
             self.trace.record("terminal", event_type="error", capacity=capacity_error(payload, include_output=True),
                               error_code=payload["error"].get("code"))
         event_class = stream_event_class(payload)
@@ -313,6 +317,13 @@ class ResponseObservation:
         elif event_class == "unknown" and not self.unknown_seen:
             self.unknown_seen = True
             self.trace.record("unclassified_event", event_type=event_type, event_class=event_class)
+
+    def _error(self, payload):
+        if self.on_error:
+            try:
+                self.on_error(payload)
+            except Exception:
+                pass  # Diagnostic failure must not change a response.
 
     def feed(self, chunk):
         if self.stopped:
