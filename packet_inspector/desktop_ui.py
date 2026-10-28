@@ -5,6 +5,7 @@ import hashlib
 import http.client
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+import os
 from pathlib import Path
 import re
 import sqlite3
@@ -20,6 +21,7 @@ from .entry_port import port_status, save_port
 from .updates import Updates
 from .http_io import discard_small_body
 from .exit_flow import ExitError, ExitRequests, perform_exit
+from .storage_paths import resolve_directory
 
 UI_DIR = Path(__file__).with_name("ui")
 UI_FILES = {"/": ("index.html", "text/html; charset=utf-8"),
@@ -31,6 +33,19 @@ UI_FILES = {"/": ("index.html", "text/html; charset=utf-8"),
             "/tray.css": ("tray.css", "text/css; charset=utf-8")}
 POST_PATHS = {"/api/settings", "/api/context-settings", "/api/link"}
 GET_PATHS = {"/api/status", "/api/tray-status", "/api/context-settings", "/api/packet-filters", "/api/packets"}
+
+
+def open_directory(value):
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("请选择需要打开的目录。")
+    directory = resolve_directory(Path.home(), value)
+    if not directory.is_dir():
+        raise ValueError("目录不存在。")
+    opener = getattr(os, "startfile", None)
+    if not callable(opener):
+        raise ValueError("当前系统不支持打开目录。")
+    opener(str(directory), "explore")
+    return str(directory)
 
 
 def window_geometry(ui_dir=None):
@@ -239,6 +254,24 @@ class UIHandler(BaseHTTPRequestHandler):
         except (OSError, http.client.HTTPException):
             self._json(503, {"error": "入口端口配置暂不可用。"})
 
+    def _open_directory(self):
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            if self.headers.get("Transfer-Encoding") or not 0 < length <= 8192:
+                raise ValueError("invalid_ui_request_body")
+            raw = self.rfile.read(length)
+            if len(raw) != length:
+                raise ValueError("invalid_ui_request_body")
+            data = json.loads(raw)
+            if not isinstance(data, dict):
+                raise ValueError("invalid_ui_request_body")
+            directory = open_directory(data.get("path"))
+            self._json(200, {"opened": True, "path": directory})
+        except (ValueError, TypeError) as exc:
+            self._json(400, {"error": str(exc)})
+        except OSError:
+            self._json(503, {"error": "无法打开目录，请检查路径和权限。"})
+
     def _updates(self):
         try:
             data = None
@@ -291,6 +324,9 @@ class UIHandler(BaseHTTPRequestHandler):
         path = target.path
         if path == "/api/exit" and self.command == "POST":
             self._exit()
+            return
+        if path == "/api/open-directory" and self.command == "POST":
+            self._open_directory()
             return
         if path == "/api/updates" and self.command in {"GET", "POST"}:
             self._updates()
@@ -391,6 +427,7 @@ class UIHandler(BaseHTTPRequestHandler):
                 status["ui_version"] = VERSION
                 status["ui_build"] = build_info()
                 status["ui_live_reload"] = self.server.live_reload
+                status["open_directory_supported"] = callable(getattr(os, "startfile", None))
                 status["ui_desktop"] = self.server.exit_requests is not None
                 status["ui_window_opened"] = self.server.window_opened
                 if self.server.exit_requests is not None:

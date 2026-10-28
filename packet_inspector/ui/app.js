@@ -38,6 +38,7 @@ let linkSaving = "", linkRevision = 0;
 let settingsBaseline = null, settingsLanguage = null;
 let settingsSaveProgress = {total:0,steps:[]};
 const settingsRestartChanges = new Map();
+const directoryOpening = new Set();
 // 120 retained JSON requests: 60 below 1,500,000 B and 60 at or above it.
 // zstd 1.5.7; 61 exact originals and 59 text-sanitized copies, no media
 // substitutes. Three randomized passes per level. Columns: level, small /
@@ -1188,6 +1189,7 @@ function fillImageDirectory() {
   if(!settingsEditing)input.value=s.image_save_dir||defaultPath;
   input.placeholder=defaultPath;
   for(const id of ["image-save-dir","image-save-dir-reset"])$(id).disabled=settingsSaving||!supported||selectedImageAnalysisMode()!=="optimized";
+  fillDirectoryOpenButtons();
 }
 function fillStorageDirectories() {
   const s=state.status,supported=!!s.storage_paths_supported;
@@ -1198,6 +1200,18 @@ function fillStorageDirectories() {
   }
   $("storage-paths-hint").hidden=!s.storage_paths_pending;
   $("storage-paths-hint").textContent=s.storage_paths_pending?t("目录已保存，重启本软件后生效，原目录数据保留。"):"";
+}
+function fillDirectoryOpenButtons() {
+  for(const id of ["log-dir","cache-dir","image-save-dir"])
+    $(id+"-open").disabled=settingsSaving||!state.status.open_directory_supported||directoryOpening.has(id);
+}
+async function openSettingsDirectory(id) {
+  if(settingsSaving||!state.status.open_directory_supported||directoryOpening.has(id))return;
+  const input=$(id),path=input.value.trim()||input.placeholder;
+  directoryOpening.add(id);fillDirectoryOpenButtons();setSettingsMessage("");
+  try {await api("/api/open-directory",{path});}
+  catch(error) {setSettingsMessage(t(error.message),true);}
+  finally {directoryOpening.delete(id);fillDirectoryOpenButtons();}
 }
 function fillEntryPort() {
   const s=state.status,port=s.entry_port,supported=!!s.entry_port_supported&&!!port;
@@ -1985,6 +1999,7 @@ action("settings-restart-confirm",()=>{
 });
 $("settings-restart-dialog").addEventListener("cancel",event=>event.preventDefault());
 action("settings-close",closeSettings);action("settings-restore",restoreSettings);
+for(const id of ["log-dir","cache-dir","image-save-dir"])action(id+"-open",()=>openSettingsDirectory(id));
 for(const id of ["log-dir","cache-dir"])action(id+"-reset",()=>{
   if(settingsSaving||!state.status.storage_paths_supported)return;
   $(id).value=state.status.data_dir||"";updateSettingsSaveState();

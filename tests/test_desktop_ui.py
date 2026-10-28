@@ -198,6 +198,63 @@ class DesktopUITests(unittest.TestCase):
         self.assertEqual(self.request("/api/settings", "POST", b"x" * 8193)[0], 400)
         self.assertEqual(self.backend.requests, [])
 
+    def test_directory_open_uses_the_desktop_without_forwarding_or_saving(self):
+        directory = self.folder / "日志 & cache"
+        directory.mkdir()
+        with patch("packet_inspector.desktop_ui.os.startfile", create=True) as opener:
+            status, body, _ = self.request("/api/open-directory", "POST",
+                                           json.dumps({"path": str(directory)}).encode())
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body), {"opened": True, "path": str(directory.resolve())})
+        opener.assert_called_once_with(str(directory.resolve()), "explore")
+        self.assertEqual(self.backend.requests, [])
+        self.assertFalse((self.folder / "settings.json").exists())
+
+    def test_directory_open_rejects_files_missing_paths_and_invalid_input(self):
+        missing = self.folder / "missing"
+        values = [str(self.folder / "app.js"), str(missing), "relative/folder", "", None, 42]
+        with patch("packet_inspector.desktop_ui.os.startfile", create=True) as opener:
+            for value in values:
+                with self.subTest(value=value):
+                    status, body, _ = self.request("/api/open-directory", "POST",
+                                                   json.dumps({"path": value}).encode())
+                    self.assertEqual(status, 400)
+                    self.assertIn("error", json.loads(body))
+            opener.assert_not_called()
+        self.assertFalse(missing.exists())
+        self.assertEqual(self.backend.requests, [])
+
+    def test_directory_open_validates_origin_method_and_body_before_opening(self):
+        body = json.dumps({"path": str(self.folder)}).encode()
+        with patch("packet_inspector.desktop_ui.os.startfile", create=True) as opener:
+            self.assertEqual(self.request("/api/open-directory", "POST", body,
+                                          {"Origin": "http://outside.invalid"})[0], 403)
+            self.assertEqual(self.request("/api/open-directory")[0], 404)
+            for invalid in [b"[]", b"{", b"", b"x" * 8193]:
+                self.assertEqual(self.request("/api/open-directory", "POST", invalid)[0], 400)
+            opener.assert_not_called()
+        self.assertEqual(self.backend.requests, [])
+
+    def test_directory_open_failure_is_reported_without_forwarding(self):
+        with patch("packet_inspector.desktop_ui.os.startfile", side_effect=OSError("unavailable"), create=True):
+            status, body, _ = self.request("/api/open-directory", "POST",
+                                           json.dumps({"path": str(self.folder)}).encode())
+        self.assertEqual(status, 503)
+        self.assertEqual(json.loads(body), {"error": "无法打开目录，请检查路径和权限。"})
+        self.assertEqual(self.backend.requests, [])
+
+    def test_directory_open_capability_comes_from_the_desktop_and_supports_legacy_relays(self):
+        with patch("packet_inspector.desktop_ui.os.startfile", create=True):
+            status, body, _ = self.request("/api/status")
+        self.assertEqual(status, 200)
+        self.assertTrue(json.loads(body)["open_directory_supported"])
+        self.assertEqual(json.loads(body)["version"], "0.2.0")
+        with patch("packet_inspector.desktop_ui.os.startfile", None, create=True):
+            self.assertFalse(json.loads(self.request("/api/status")[1])["open_directory_supported"])
+            status, _, _ = self.request("/api/open-directory", "POST",
+                                        json.dumps({"path": str(self.folder)}).encode())
+        self.assertEqual(status, 400)
+
     def test_backend_error_status_is_preserved(self):
         self.assertEqual(self.request("/api/packets/missing")[0], 404)
 

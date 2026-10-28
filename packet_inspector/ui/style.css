@@ -384,6 +384,7 @@ code.session-id{font-family:Consolas,"Cascadia Mono",monospace;font-size:11px;wo
 #settings-dialog .image-directory-settings{display:grid;grid-template-columns:var(--settings-label-width) minmax(0,1fr);align-items:center;gap:8px 16px;margin:16px 0 0}
 #settings-dialog .image-directory-row{display:grid;grid-template-columns:minmax(0,var(--settings-path-width)) auto;justify-content:start;align-items:center;gap:8px;min-width:0}
 #settings-dialog .image-directory-row input{width:100%;min-width:0;text-align:left}
+#settings-dialog .image-directory-actions{display:flex;align-items:center;gap:8px}
 #settings-dialog .image-directory-settings .help{grid-column:2;margin:0}
 #settings-dialog .context-heading{margin:0}
 #settings-dialog .context-grid{display:grid;grid-template-columns:minmax(0,1fr);gap:12px}
