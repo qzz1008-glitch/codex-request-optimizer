@@ -64,7 +64,7 @@ class PresentationTests(unittest.TestCase):
         self.server.worker_state = "active"
         self.presentation.reconcile()
         self.factory.assert_called_once_with(self.presentation._open_window, self.presentation._exit,
-                                             status_reader=self.server.tray_status)
+                                             status_reader=self.server.tray_status, show_panel=self.presentation._show_panel)
         self.retire.assert_called_once()
 
     def test_old_tray_stays_until_the_next_tray_commits_and_survives_rollback(self):
@@ -108,6 +108,24 @@ class PresentationTests(unittest.TestCase):
             self.presentation._open_window()
         self.assertEqual(launch.call_args.args[0][0], str(target.resolve()))
         self.assertIn(str(self.config), launch.call_args.args[0])
+        self.assertNotIn("--tray-panel", launch.call_args.args[0])
+
+    def test_panel_uses_the_current_worker_and_keeps_the_main_window_hidden(self):
+        self.active(self.other)
+        target = self.worker(self.other)
+        with patch("packet_inspector.presentation.subprocess.Popen") as launch:
+            self.presentation._show_panel()
+        self.assertEqual(launch.call_args.args[0][0], str(target.resolve()))
+        self.assertIn("--tray-panel", launch.call_args.args[0])
+        self.assertIn(str(self.data), launch.call_args.args[0])
+        self.assertEqual(launch.call_args.kwargs["env"]["PYINSTALLER_RESET_ENVIRONMENT"], "1")
+
+    def test_ready_panel_is_signaled_directly_without_starting_another_exe(self):
+        with patch("packet_inspector.window_lifecycle.request_tray_panel", return_value=True) as signal, \
+                patch("packet_inspector.presentation.subprocess.Popen") as launch:
+            self.presentation._show_panel()
+        signal.assert_called_once_with(self.data)
+        launch.assert_not_called()
 
     def test_foreign_executable_and_profile_cannot_be_launched_or_retired(self):
         path = self.data / "router-workers" / (self.identity + ".json")

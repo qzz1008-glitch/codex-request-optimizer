@@ -103,16 +103,19 @@ class SingleWindow:
         self.kernel.CreateMutexW.restype = wintypes.HANDLE
         self.kernel.SetEvent.argtypes = [wintypes.HANDLE]
         self.kernel.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+        self.kernel.WaitForMultipleObjects.argtypes = [wintypes.DWORD, ctypes.POINTER(wintypes.HANDLE), wintypes.BOOL, wintypes.DWORD]
+        self.kernel.WaitForMultipleObjects.restype = wintypes.DWORD
         self.kernel.CloseHandle.argtypes = [wintypes.HANDLE]
         # Editing the entry port or switching EXEs must not open another UI for
         # the same settings and records. A repeated launch only raises its window.
         prefix = window_control_prefix(data_dir)
         self.event = self.kernel.CreateEventW(None, False, False, prefix + "-show")
+        self.panel_event = self.kernel.CreateEventW(None, False, False, prefix + "-tray-panel")
         self.exit_event = self.kernel.CreateEventW(None, False, False, prefix + "-exit")
         ctypes.set_last_error(0)
         self.mutex = self.kernel.CreateMutexW(None, False, prefix + "-window")
         error = ctypes.get_last_error()
-        if not self.event or not self.exit_event or not self.mutex:
+        if not self.event or not self.panel_event or not self.exit_event or not self.mutex:
             self.close()
             raise OSError("无法创建桌面窗口标识。")
         self.existing = error == 183  # ERROR_ALREADY_EXISTS
@@ -122,19 +125,26 @@ class SingleWindow:
     def signal(self):
         self.kernel.SetEvent(self.event)
 
-    def watch(self, show, exit_window=None):
+    def signal_panel(self):
+        self.kernel.SetEvent(self.panel_event)
+
+    def watch(self, show, exit_window=None, show_panel=None):
+        handles = (wintypes.HANDLE * 3)(self.exit_event, self.panel_event, self.event)
         while not self.stop.is_set():
-            if exit_window and self.kernel.WaitForSingleObject(self.exit_event, 0) == 0:
+            signaled = self.kernel.WaitForMultipleObjects(3, handles, False, 250)
+            if signaled == 0 and exit_window:
                 exit_window()
                 return
-            if self.kernel.WaitForSingleObject(self.event, 250) == 0:
+            if signaled == 1 and show_panel:
+                show_panel()
+            if signaled == 2:
                 self.activations += 1
                 show()
 
     def close(self):
         if hasattr(self, "stop"):
             self.stop.set()
-        for name in ("event", "exit_event", "mutex"):
+        for name in ("event", "panel_event", "exit_event", "mutex"):
             handle = getattr(self, name, None)
             if handle:
                 self.kernel.CloseHandle(handle)
@@ -147,6 +157,7 @@ def run(arguments):
     parser = argument_parser()
     parser.add_argument("--desktop-check", type=Path, help="isolated packaged UI verification report")
     parser.add_argument("--desktop-check-ui", type=Path, help=argparse.SUPPRESS)
+    parser.add_argument("--tray-panel", action="store_true", help=argparse.SUPPRESS)
     options = parser.parse_args(arguments)
     profile = load_profile()
     ui_dir = profile.ui_dir
@@ -164,7 +175,7 @@ def run(arguments):
     ui = None
     try:
         if instance.existing:
-            instance.signal()
+            instance.signal_panel() if options.tray_panel else instance.signal()
             return 0
         profile = resolve_profile(profile, options.data_dir)
         if not options.desktop_check_ui:
@@ -181,23 +192,34 @@ def run(arguments):
         # Explicitly require Chromium. Do not fall back to an external browser or IE.
         title = "Codex 请求优化器 · 开发版" if profile.development else "Codex 请求优化器"
         chrome = WindowChrome()
-        window = webview.create_window(title, ui.ui_url,
+        main_loaded = not options.tray_panel
+        window = webview.create_window(title, ui.ui_url if main_loaded else "about:blank",
                                        **window_geometry(ui_dir), maximized=False,
-                                       js_api=chrome, text_select=True, background_color="#f5f7fb", hidden=bool(options.desktop_check))
+                                       js_api=chrome, text_select=True, background_color="#f5f7fb", hidden=bool(options.desktop_check or options.tray_panel))
         chrome._bind(window)
         loaded = threading.Event()
         lifecycle = WindowLifecycle(window, lambda: tray_available(options.data_dir, status))
         window.events.loaded += loaded.set
 
         def show():
+            nonlocal main_loaded
             try:
+                if not main_loaded:
+                    main_loaded = True
+                    window.load_url(ui.ui_url)
                 ui.window_opened += 1
                 lifecycle.show()
             except Exception:
                 pass
 
+        from .tray_panel import TrayPanel
+        panel = TrayPanel(webview.create_window, ui.ui_url, options.data_dir, show)
+        window.events.closed += panel.destroy
+
         def workers():
-            threading.Thread(target=instance.watch, args=(show, lifecycle.exit), daemon=True).start()
+            threading.Thread(target=instance.watch, args=(show, lifecycle.exit, panel.show), daemon=True).start()
+            if options.tray_panel:
+                panel.show()
             if not lifecycle.wait_loaded(loaded):
                 if options.desktop_check and not lifecycle.exiting.is_set() and not lifecycle.closed.is_set():
                     options.desktop_check.write_text(json.dumps({"passed": False, "error": "page_load_timeout"}), encoding="utf-8")

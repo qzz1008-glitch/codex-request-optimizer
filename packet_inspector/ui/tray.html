@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Codex 请求优化器</title>
+  <link rel="stylesheet" href="/tray.css">
+  <script src="/i18n.js" defer></script>
+  <script src="/tray.js" defer></script>
+</head>
+<body>
+  <main class="tray-panel" aria-label="托盘菜单">
+    <div class="tray-heading" role="status"><span class="status-dot" id="tray-dot" aria-hidden="true"></span><span id="tray-status">正在读取状态…</span></div>
+    <hr>
+    <dl class="tray-statistics" aria-live="polite">
+      <div><dt>记录请求</dt><dd><span data-stat="recorded_requests">—</span> <span>个</span></dd></div>
+      <div><dt>触发保护</dt><dd><span data-stat="protected_requests">—</span> <span>次</span></dd></div>
+      <div><dt>平均上下文窗口</dt><dd><span data-stat="average_compact_input_tokens">—</span> <span>Token</span></dd></div>
+    </dl>
+    <hr>
+    <button id="tray-open" type="button"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><rect x="3" y="3.5" width="14" height="13" rx="2"/><path d="M3 7h14M7 7v9.5"/></svg><span>打开主窗口</span></button>
+    <hr>
+    <button id="tray-exit" type="button"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" aria-hidden="true"><path d="M10 2.8v6.5M5.4 5.2a6.5 6.5 0 1 0 9.2 0"/></svg><span>退出程序</span></button>
+    <p id="tray-error" role="alert" hidden></p>
+  </main>
+</body>
+</html>

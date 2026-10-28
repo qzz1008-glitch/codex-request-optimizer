@@ -139,6 +139,18 @@ class FixedFrontendHTTPTests(unittest.TestCase):
         self.assertEqual(self.request("/__dev__/state", headers={"Origin": "https://example.com"})[0], 403)
         self.assertEqual(self.fixture.backend.requests, [])
 
+    def test_tray_resources_hot_reload_independently_of_main_window(self):
+        folder = self.developer_ui()
+        self.assertIn(b'/__dev__/reload.js?view=tray', self.request("/tray.html")[1])
+        main = json.loads(self.request("/__dev__/state")[1])["build"]
+        tray = json.loads(self.request("/__dev__/state?view=tray")[1])["build"]
+        (folder / "tray.css").write_text("body{background:white}", encoding="utf8")
+        self.assertEqual(self.request("/tray.css")[1], b"body{background:white}")
+        self.assertEqual(json.loads(self.request("/__dev__/state")[1])["build"], main)
+        self.assertNotEqual(json.loads(self.request("/__dev__/state?view=tray")[1])["build"], tray)
+        self.assertIn(b'/__dev__/state?view=tray', self.request("/__dev__/reload.js?view=tray")[1])
+        self.assertEqual(self.fixture.backend.requests, [])
+
     def test_missing_developer_file_reports_temporarily_unavailable(self):
         folder = self.developer_ui()
         (folder / "app.js").unlink()

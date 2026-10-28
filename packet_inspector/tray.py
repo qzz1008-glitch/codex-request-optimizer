@@ -10,6 +10,7 @@ import threading
 from .app_icon import APP_ICON
 
 STATUS_MESSAGE = 0x8002
+NATIVE_MENU_MESSAGE = 0x8003
 
 
 def tray_status_lines(status):
@@ -25,7 +26,7 @@ def tray_status_lines(status):
         value = status.get(key)
         return f"{value:,}" if type(value) is int and value >= 0 else "—"
     average, samples = status.get("average_compact_input_tokens"), status.get("compaction_samples")
-    average = (f"{average:,.0f}" if type(samples) is int and samples > 0
+    average = (f"{math.floor(average + .5):,}" if type(samples) is int and samples > 0
                and type(average) in (int, float) and math.isfinite(average) and average >= 0 else "—")
     if english:
         return (header, "Recorded requests: " + count("recorded_requests"),
@@ -73,9 +74,10 @@ def close_entry_tray(pid, executable):
 
 
 class NativeTray:
-    def __init__(self, open_window, exit_app, *, status_reader=None):
+    def __init__(self, open_window, exit_app, *, status_reader=None, show_panel=None):
         self.open_window, self.exit_app = open_window, exit_app
         self.status_reader = status_reader
+        self.show_panel = show_panel
         self.ready = threading.Event()
         self.error = None
         self.hwnd = None
@@ -162,6 +164,38 @@ class NativeTray:
             self.icon.szTip = tip[:127]
             self.shell.Shell_NotifyIconW(1, ctypes.byref(self.icon))
 
+    def _launch_panel(self):
+        try:
+            if self.show_panel() is not False:
+                return
+        except Exception:
+            pass
+        if self.hwnd:
+            self.user.PostMessageW(self.hwnd, NATIVE_MENU_MESSAGE, 0, 0)
+
+    def _show_native_menu(self):
+        user, hwnd, point = self.user, self.hwnd, wintypes.POINT()
+        user.GetCursorPos(ctypes.byref(point))
+        menu = user.CreatePopupMenu()
+        self._menu, self._menu_text = menu, {}
+        for identity, text, flags in self.menu_items():
+            user.AppendMenuW(menu, flags, identity, text)
+            if identity:
+                self._menu_text[identity] = text
+        user.SetForegroundWindow(hwnd)
+        self._menu_open = True
+        if self.status_reader is not None:
+            self._status_requested.set()
+        try:
+            selection = user.TrackPopupMenu(menu, 0x102, point.x, point.y, 0, hwnd, None)
+        finally:
+            self._menu_open, self._menu, self._menu_text = False, None, {}
+            user.DestroyMenu(menu)
+        user.PostMessageW(hwnd, 0, 0, 0)
+        if selection in (1, 2):
+            callback = self.open_window if selection == 1 else self.exit_app
+            threading.Thread(target=callback, daemon=True).start()
+
     def _run(self):
         try:
             self._message_loop()
@@ -235,6 +269,7 @@ class NativeTray:
         user.TrackPopupMenu.restype = wintypes.UINT
         user.DestroyMenu.argtypes = [wintypes.HMENU]
         user.SetForegroundWindow.argtypes = [wintypes.HWND]
+        user.AllowSetForegroundWindow.argtypes = [wintypes.DWORD]
         user.GetCursorPos.argtypes = [ctypes.POINTER(wintypes.POINT)]
         user.RegisterWindowMessageW.argtypes = [wintypes.LPCWSTR]
         user.UnregisterClassW.argtypes = [wintypes.LPCWSTR, wintypes.HINSTANCE]
@@ -252,34 +287,18 @@ class NativeTray:
                 if lparam in (0x202, 0x203):  # left button up/double click
                     invoke(self.open_window)
                 elif lparam == 0x205:  # right button up
-                    point = wintypes.POINT()
-                    user.GetCursorPos(ctypes.byref(point))
-                    menu = user.CreatePopupMenu()
-                    self._menu = menu
-                    self._menu_text = {}
-                    for identity, text, flags in self.menu_items():
-                        user.AppendMenuW(menu, flags, identity, text)
-                        if identity:
-                            self._menu_text[identity] = text
-                    user.SetForegroundWindow(hwnd)
-                    self._menu_open = True
-                    if self.status_reader is not None:
-                        self._status_requested.set()
-                    try:
-                        selection = user.TrackPopupMenu(menu, 0x102, point.x, point.y, 0, hwnd, None)
-                    finally:
-                        self._menu_open = False
-                        self._menu = None
-                        self._menu_text = {}
-                        user.DestroyMenu(menu)
-                    user.PostMessageW(hwnd, 0, 0, 0)
-                    if selection == 1:
-                        invoke(self.open_window)
-                    elif selection == 2:
-                        invoke(self.exit_app)
+                    if self.show_panel is not None:
+                        user.SetForegroundWindow(hwnd)
+                        user.AllowSetForegroundWindow(0xFFFFFFFF)
+                        invoke(self._launch_panel)
+                    else:
+                        self._show_native_menu()
                 return 0
             if message == STATUS_MESSAGE:
                 self._refresh_menu()
+                return 0
+            if message == NATIVE_MENU_MESSAGE:
+                self._show_native_menu()
                 return 0
             if message == taskbar_created:
                 shell.Shell_NotifyIconW(0, ctypes.byref(self.icon))

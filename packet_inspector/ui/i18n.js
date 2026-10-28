@@ -2,6 +2,19 @@
 
 const uiI18n = (() => {
   const english = {
+    "托盘菜单":"Tray menu",
+    "正在读取状态…":"Reading status…",
+    "接入状态未知":"Connection unknown",
+    "中转正常":"Relay running",
+    "中转切换中":"Relay switching",
+    "状态暂不可用":"Status unavailable",
+    "记录请求":"Recorded requests",
+    "触发保护":"Protection triggers",
+    "平均上下文窗口":"Average context window",
+    "个":"requests",
+    "次":"times",
+    "打开主窗口":"Open main window",
+    "无法完成操作，请稍后重试。":"Unable to complete the action. Please try again.",
     "窗口操作":"Window controls",
     "开发版":"Dev",
     "最小化":"Minimize",

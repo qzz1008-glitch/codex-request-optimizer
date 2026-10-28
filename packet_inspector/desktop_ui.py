@@ -9,7 +9,7 @@ from pathlib import Path
 import re
 import sqlite3
 import threading
-from urllib.parse import urlencode, urlsplit
+from urllib.parse import parse_qs, urlencode, urlsplit
 
 from . import VERSION
 from .build_info import build_info
@@ -25,7 +25,10 @@ UI_DIR = Path(__file__).with_name("ui")
 UI_FILES = {"/": ("index.html", "text/html; charset=utf-8"),
             "/i18n.js": ("i18n.js", "text/javascript; charset=utf-8"),
             "/app.js": ("app.js", "text/javascript; charset=utf-8"),
-            "/style.css": ("style.css", "text/css; charset=utf-8")}
+            "/style.css": ("style.css", "text/css; charset=utf-8"),
+            "/tray.html": ("tray.html", "text/html; charset=utf-8"),
+            "/tray.js": ("tray.js", "text/javascript; charset=utf-8"),
+            "/tray.css": ("tray.css", "text/css; charset=utf-8")}
 POST_PATHS = {"/api/settings", "/api/context-settings", "/api/link"}
 GET_PATHS = {"/api/status", "/api/tray-status", "/api/context-settings", "/api/packet-filters", "/api/packets"}
 
@@ -46,9 +49,10 @@ def window_geometry(ui_dir=None):
             "min_size": (values["min-width"], values["min-height"])}
 
 
-def ui_build_id(ui_dir=None):
+def ui_build_id(ui_dir=None, *, tray=False):
     digest = hashlib.sha256(VERSION.encode())
-    for name, _kind in UI_FILES.values():
+    names = ("tray.html", "tray.js", "tray.css", "i18n.js") if tray else ("index.html", "app.js", "style.css", "i18n.js")
+    for name in names:
         digest.update((Path(ui_dir or UI_DIR) / name).read_bytes())
     return digest.hexdigest()[:20]
 
@@ -303,14 +307,16 @@ class UIHandler(BaseHTTPRequestHandler):
             return
         if self.command == "GET" and self.server.live_reload and path == "/__dev__/state":
             try:
-                self._json(200, {"app": "codex-packet-inspector-desktop-ui", "build": ui_build_id(self.server.ui_dir),
+                tray = parse_qs(target.query).get("view") == ["tray"]
+                self._json(200, {"app": "codex-packet-inspector-desktop-ui", "build": ui_build_id(self.server.ui_dir, tray=tray),
                                  "ui_version": VERSION, "relay_port": self.server.relay_port})
             except OSError:
                 self._json(503, {"error": "ui_files_updating"})
             return
         if self.command == "GET" and self.server.live_reload and path == "/__dev__/reload.js":
             try:
-                initial = json.dumps(ui_build_id(self.server.ui_dir))
+                tray = parse_qs(target.query).get("view") == ["tray"]
+                initial = json.dumps(ui_build_id(self.server.ui_dir, tray=tray))
             except OSError:
                 self._json(503, {"error": "ui_files_updating"})
                 return
@@ -328,7 +334,7 @@ class UIHandler(BaseHTTPRequestHandler):
     if (checking || document.hidden) return;
     checking = true;
     try {
-      const response = await fetch('/__dev__/state', {cache: 'no-store'});
+      const response = await fetch(STATE_URL, {cache: 'no-store'});
       if (!response.ok) return;
       const {build} = await response.json();
       if (build !== initial && build === pending) location.reload();
@@ -336,7 +342,7 @@ class UIHandler(BaseHTTPRequestHandler):
     } catch (_) {} finally { checking = false; }
   }, 1000);
 })();
-""".replace("INITIAL", initial)
+""".replace("INITIAL", initial).replace("STATE_URL", json.dumps("/__dev__/state?view=tray" if tray else "/__dev__/state"))
             self._bytes(200, script.encode(), "text/javascript; charset=utf-8")
             return
         if self.command == "GET" and path in UI_FILES:
@@ -347,8 +353,9 @@ class UIHandler(BaseHTTPRequestHandler):
             except OSError:
                 self._json(503, {"error": "ui_files_updating"})
                 return
-            if path == "/" and reload_page:
-                data = data.replace(b"</head>", b'<script src="/__dev__/reload.js" defer></script></head>', 1)
+            if path in {"/", "/tray.html"} and reload_page:
+                script = b"/__dev__/reload.js?view=tray" if path == "/tray.html" else b"/__dev__/reload.js"
+                data = data.replace(b"</head>", b'<script src="' + script + b'" defer></script></head>', 1)
             self._bytes(200, data, kind)
             return
         allowed = (self.command == "GET" and (path in GET_PATHS or path.startswith("/api/packets/"))) or (self.command == "POST" and path in POST_PATHS)

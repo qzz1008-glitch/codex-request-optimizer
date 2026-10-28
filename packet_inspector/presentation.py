@@ -34,13 +34,24 @@ class WorkerPresentation:
         return value
 
     def _open_window(self):
+        self._launch_window()
+
+    def _show_panel(self):
+        from .window_lifecycle import request_tray_panel
+        if not request_tray_panel(self.server.data_dir):
+            self._launch_window(panel=True)
+
+    def _launch_window(self, *, panel=False):
         state = self._state()
         worker = worker_info(self.server.data_dir, state["active"])
         executable = Path(worker["executable"]).resolve()
         if not executable.is_relative_to((self.server.data_dir / "bin" / "versions").resolve()) or not executable.is_file():
             raise ValueError("desktop executable is outside managed versions")
-        subprocess.Popen([str(executable), "--port", str(self.server.public_port), "--data-dir", str(self.server.data_dir),
-                          "--config", str(self.server.link.config)],
+        arguments = [str(executable), "--port", str(self.server.public_port), "--data-dir", str(self.server.data_dir),
+                     "--config", str(self.server.link.config)]
+        if panel:
+            arguments.append("--tray-panel")
+        subprocess.Popen(arguments,
                          env={**os.environ, "PYINSTALLER_RESET_ENVIRONMENT": "1"},
                          creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
 
@@ -64,7 +75,7 @@ class WorkerPresentation:
         if factory is None:
             from .tray import NativeTray
             factory = NativeTray
-        self.tray = factory(self._open_window, self._exit, status_reader=self.server.tray_status).start()
+        self.tray = factory(self._open_window, self._exit, status_reader=self.server.tray_status, show_panel=self._show_panel).start()
         self.server.desktop_tray = True
 
     def _stop_tray(self):
