@@ -51,7 +51,9 @@ def place_panel(window, anchor):
     handle, rect = int(window.native.Handle.ToInt64()), wintypes.RECT()
     if user.GetWindowRect(handle, ctypes.byref(rect)):
         x, y = popup_position(*anchor, (rect.right - rect.left, rect.bottom - rect.top))
-        user.SetWindowPos(handle, None, x, y, 0, 0, 0x01 | 0x04 | 0x10)
+        # Keep the visible popup above the overflow panel when layout changes.
+        # No SHOWWINDOW flag: positioning a preloaded popup must keep it hidden.
+        user.SetWindowPos(handle, -1, x, y, 0, 0, 0x01 | 0x10 | 0x0200)
 
 
 def resize_panel_window(window, width, height):
