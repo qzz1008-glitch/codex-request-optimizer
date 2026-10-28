@@ -1196,7 +1196,8 @@ function fillStorageDirectories() {
     $(id).placeholder=s.data_dir||"";
     $(id).disabled=settingsSaving||!supported;$(id+"-reset").disabled=settingsSaving||!supported;
   }
-  $("storage-paths-hint").textContent=t(s.storage_paths_pending?"目录已保存，重启本软件后生效，原目录数据保留。":"日志与缓存目录下次启动生效，原目录数据保留。");
+  $("storage-paths-hint").hidden=!s.storage_paths_pending;
+  $("storage-paths-hint").textContent=s.storage_paths_pending?t("目录已保存，重启本软件后生效，原目录数据保留。"):"";
 }
 function fillEntryPort() {
   const s=state.status,port=s.entry_port,supported=!!s.entry_port_supported&&!!port;

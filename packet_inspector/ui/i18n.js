@@ -6,7 +6,6 @@ const uiI18n = (() => {
     "日志目录":"Log folder",
     "缓存目录":"Cache folder",
     "导出诊断日志":"Export diagnostics",
-    "日志与缓存目录下次启动生效，原目录数据保留。":"Log and cache folders take effect on next launch; existing data stays in its original folder.",
     "目录已保存，重启本软件后生效，原目录数据保留。":"Folders saved. Restart this app to apply; existing data stays in its original folder.",
     "托盘菜单":"Tray menu",
     "正在读取状态…":"Reading status…",
