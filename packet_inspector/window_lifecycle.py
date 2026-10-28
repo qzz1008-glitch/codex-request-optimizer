@@ -35,6 +35,25 @@ def tray_panel_host_running(data_dir):
     return _signal_window(data_dir, "-tray-panel", notify=False)
 
 
+def tray_panel_ready(data_dir):
+    """A running host may still be extracting/loading its first WebView page."""
+    if os.name != "nt":
+        return False
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.OpenEventW.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.LPCWSTR]
+    kernel.OpenEventW.restype = wintypes.HANDLE
+    kernel.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+    kernel.WaitForSingleObject.restype = wintypes.DWORD
+    kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+    handle = kernel.OpenEventW(0x00100000, False, window_control_prefix(data_dir) + "-tray-ready")  # SYNCHRONIZE
+    if not handle:
+        return False
+    try:
+        return kernel.WaitForSingleObject(handle, 0) == 0
+    finally:
+        kernel.CloseHandle(handle)
+
+
 def _signal_window(data_dir, suffix, *, notify=True):
     if os.name != "nt":
         return False

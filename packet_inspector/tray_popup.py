@@ -3,10 +3,40 @@ from __future__ import annotations
 
 import ctypes
 from ctypes import wintypes
+from dataclasses import dataclass, fields, replace
 import os
 
 
 OVERFLOW_CLASSES = {"NotifyIconOverflowWindow", "TopLevelWindowForOverflowXamlIsland"}
+
+
+@dataclass(frozen=True)
+class PopupPolicy:
+    """The hot-loaded page can select these bounded native behaviors only."""
+    horizontal: str = "auto"
+    vertical: str = "auto"
+    offset_x: int = 0
+    offset_y: int = 0
+    topmost: bool = True
+    activate: bool = True
+    preserve_overflow_focus: bool = True
+    dismiss_outside: bool = True
+    dismiss_escape: bool = True
+    dismiss_switch: bool = True
+
+    def updated(self, options):
+        if not isinstance(options, dict) or options.keys() - {field.name for field in fields(self)}:
+            raise ValueError("invalid tray window options")
+        for key, value in options.items():
+            if key in {"horizontal", "vertical"}:
+                valid = type(value) is str and value in {"auto", "before", "after"}
+            elif key in {"offset_x", "offset_y"}:
+                valid = type(value) is int and -64 <= value <= 64
+            else:
+                valid = type(value) is bool
+            if not valid:
+                raise ValueError("invalid tray window option: " + key)
+        return replace(self, **options)
 
 
 def _user32():
@@ -33,22 +63,23 @@ class PopupInteraction:
         return sum(1 << index for index, key in enumerate((0x01, 0x02, 0x04))
                    if self.user.GetAsyncKeyState(key) & 0x8000)
 
-    def _cancel_key(self):
+    def _cancel_key(self, *, escape=True, switch=True):
         def down(key):
             return bool(self.user.GetAsyncKeyState(key) & 0x8000)
 
-        return (any(down(key) for key in (0x1B, 0x5B, 0x5C))  # Escape or Windows key
-                or down(0x12) and (down(0x09) or down(0x73)))  # Alt+Tab / Alt+F4
+        return (escape and down(0x1B)  # Escape
+                or switch and (down(0x5B) or down(0x5C)
+                               or down(0x12) and (down(0x09) or down(0x73))))  # Windows / Alt+Tab / Alt+F4
 
-    def should_dismiss(self, window):
+    def should_dismiss(self, window, *, outside=True, escape=True, switch=True):
         user = self.user
         handle = int(window.native.Handle.ToInt64())
-        cancel_key = self._cancel_key()
+        cancel_key = self._cancel_key(escape=escape, switch=switch)
         pressed = self._buttons()
         new_press = pressed & ~self.buttons
         cancel = cancel_key and not self.cancel_key
         self.buttons, self.cancel_key = pressed, cancel_key
-        if new_press:
+        if new_press and outside:
             point, rect = wintypes.POINT(), wintypes.RECT()
             if not user.GetCursorPos(ctypes.byref(point)) or not user.GetWindowRect(handle, ctypes.byref(rect)):
                 return bool(cancel)
@@ -74,7 +105,7 @@ def popup_interaction_at(anchor):
     return PopupInteraction(user)
 
 
-def show_panel_window(window, inactive=False):
+def show_panel_window(window, inactive=False, *, topmost=True):
     if os.name != "nt":
         window.show()
         return
@@ -97,14 +128,18 @@ def show_panel_window(window, inactive=False):
             ctypes.set_last_error(0)
             if not user.SetWindowLongPtrW(handle, -20, desired) and ctypes.get_last_error():
                 raise ctypes.WinError(ctypes.get_last_error())
+        form.TopMost = topmost
+        # Win32 SHOWWINDOW alone leaves WinForms' Visible state false. Its
+        # WebView2 child then stays effectively hidden and cannot paint.
+        # WS_EX_NOACTIVATE above preserves Explorer's focus during managed Show.
+        form.Show()
         if not inactive:
-            form.Show()
             form.Activate()
         # A preloaded topmost window can still be behind Explorer's topmost
         # overflow panel. Reinsert our menu at the top each time it is shown,
         # without activating it or changing its owner's order.
         flags = 0x01 | 0x02 | 0x10 | 0x40 | 0x0200  # NOSIZE/NOMOVE/NOACTIVATE/SHOWWINDOW/NOOWNERZORDER
-        if not user.SetWindowPos(handle, -1, 0, 0, 0, 0, flags):  # HWND_TOPMOST
+        if not user.SetWindowPos(handle, -1 if topmost else -2, 0, 0, 0, 0, flags):
             raise ctypes.WinError(ctypes.get_last_error())
 
     if form.InvokeRequired:
