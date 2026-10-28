@@ -2454,9 +2454,9 @@ class TokenTrendView {
     const key=["overflow","compact","predictive","retry"].find(value=>events.includes(value)),shape=TokenTrendView.markerShape(key);
     if(!shape)return;
     const {tag,...attrs}=shape,x=point.x,y=point.y;
-    const selected=this.eventKey(),node=this.svgNode("g",{class:"trend-event-node"+(selected?(events.includes(selected)?" highlighted":" dimmed"):""),"data-events":events.join(" "),"data-packet":point.packet.id,style:"--series-color:"+point.series.color});
-    node.append(this.svgNode(tag,{...attrs,class:"trend-event trend-event-"+key,transform:`translate(${x} ${y})`}));
-    if(key!=="overflow"&&events.length>1)node.append(this.svgNode("text",{x:x+6,y:y-6,class:"trend-event-count"},"+"+(events.length-1)));
+    const selected=this.eventKey(),node=this.svgNode("g",{class:"trend-event-node"+(selected?(events.includes(selected)?" highlighted":" dimmed"):""),"data-events":events.join(" "),"data-packet":point.packet.id,style:"--series-color:"+point.series.color,transform:`translate(${x} ${y})`});
+    node.append(this.svgNode(tag,{...attrs,class:"trend-event trend-event-"+key}));
+    if(key!=="overflow"&&events.length>1)node.append(this.svgNode("text",{x:6,y:-6,class:"trend-event-count"},"+"+(events.length-1)));
     layer.append(node);return node;
   }
   render() {
@@ -2512,11 +2512,11 @@ class TokenTrendView {
         const value=source[chart.field];if(value===null)continue;
         const point={...source,value,series:group,x:x(source.packet.created),y:y(value)};
         path+=(pen?"L":"M")+point.x.toFixed(2)+","+point.y.toFixed(2);pen=true;chart.points.push(point);
-        if(point.events.some(event=>["predictive","overflow","retry","compact"].includes(event)))chart.eventNodes.push(this.marker(point,events));
-        else if(!lastDot||Math.hypot(point.x-lastDot.x,point.y-lastDot.y)>=4){layer.append(this.svgNode("circle",{cx:point.x,cy:point.y,r:2.1,fill:group.color,class:"trend-sample"}));lastDot=point;}
+        if(point.events.some(event=>["predictive","overflow","retry","compact"].includes(event))){point.node=this.marker(point,events);chart.eventNodes.push(point.node);}
+        else if(!lastDot||Math.hypot(point.x-lastDot.x,point.y-lastDot.y)>=4){point.node=this.svgNode("circle",{cx:point.x,cy:point.y,r:2.1,fill:group.color,class:"trend-sample"});layer.append(point.node);lastDot=point;}
         lastPoint=point;
       }
-      if(lastPoint&&lastDot!==lastPoint&&!lastPoint.events.length)layer.append(this.svgNode("circle",{cx:lastPoint.x,cy:lastPoint.y,r:2.1,fill:group.color,class:"trend-sample"}));
+      if(lastPoint&&lastDot!==lastPoint&&!lastPoint.events.length){lastPoint.node=this.svgNode("circle",{cx:lastPoint.x,cy:lastPoint.y,r:2.1,fill:group.color,class:"trend-sample"});layer.append(lastPoint.node);}
       layer.prepend(this.svgNode("path",{d:path,class:"trend-curve",stroke:group.color}));layer.append(events);root.append(layer);
     }
     if(limit!==null) {
@@ -2608,9 +2608,11 @@ class TokenTrendView {
         chart.eventKey=event;
       }
       for(const line of chart.svg.querySelectorAll("[data-series]"))line.classList.toggle("dimmed",!!emphasis&&line.dataset.series!==emphasis);
+      chart.hoverNode?.classList.toggle("trend-hover-node",false);chart.hoverNode=null;
       chart.focusLayer.replaceChildren();if(!anchor)continue;
       const point=chart.points.find(value=>value.packet.id===this.hover);
-      if(point)chart.focusLayer.append(this.svgNode("circle",{cx:point.x,cy:point.y,r:5.5,class:"trend-focus-dot",style:"--series-color:"+point.series.color}));
+      if(point?.node){chart.hoverNode=point.node;point.node.classList.toggle("trend-hover-node",true);}
+      else if(point)chart.focusLayer.append(this.svgNode("circle",{cx:point.x,cy:point.y,r:3.6,fill:point.series.color,class:"trend-sample trend-hover-node"}));
       chart.tooltip.hidden=false;
       chart.tooltip.replaceChildren(el("span","",t(chart.key==="size"?"处理后包":"输入 Token")),el("strong","",point?(chart.key==="size"?TokenTrendView.sizeLabel(point.value):nf.format(point.value)):"—"));
       const rect=chart.svg.getBoundingClientRect(),panelTop=rect.top-originY;
