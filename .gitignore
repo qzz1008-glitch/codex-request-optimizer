@@ -13,3 +13,7 @@ PAYLOAD_NOTES.txt
 *.backup-*
 native_patch/
 repair_thread_history.py
+
+# Local agent instructions and internal development notes
+AGENTS.md
+/docs/development.md

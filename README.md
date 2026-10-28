@@ -140,8 +140,6 @@ flowchart LR
 
 Token 用量优先采集真实上游响应，缺失时只读已有 Codex 本机记录；无法确认的数据保留缺失状态。
 
-开发环境、热更新、测试和构建流程见 **[开发与构建](https://github.com/qzz1008-glitch/codex-request-optimizer/blob/main/docs/development.md)**。
-
 ---
 
 ## 📄 许可证

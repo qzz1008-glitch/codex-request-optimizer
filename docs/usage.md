@@ -152,5 +152,3 @@ SQLite 文件可能暂时保留可复用空间，空闲时再回收。独立诊�
 4. 退出后可删除 EXE；如需彻底移除，再删除开始菜单快捷方式和仍保留的 `Codex Packet Inspector` 登录任务。配置备份、采集记录和附件保留在用户目录的 `.codex-packet-inspector` 下，可自行删除。
 
 工具配置默认保存在 `~/.codex-packet-inspector`，Codex 配置默认使用 `~/.codex/config.toml`；支持 `CODEX_HOME`。不会在安装目录写入凭据或修改 Codex App 文件。
-
-开发版热更新、测试、构建和发布命令见[开发与构建](development.md)。
