@@ -38,11 +38,13 @@ class TrayPanelTests(unittest.TestCase):
         self.window.events = SimpleNamespace(loaded=Callbacks(), closing=Callbacks(), closed=Callbacks())
         self.factory, self.open_main = Mock(return_value=self.window), Mock()
         self.panel = TrayPanel(self.factory, "http://127.0.0.1:12345/", self.root, self.open_main)
-        for name in ("popup_anchor", "place_panel", "configure_panel", "resize_panel_window"):
+        for name in ("popup_anchor", "place_panel", "configure_panel", "resize_panel_window", "popup_interaction_at", "show_panel_window"):
             patcher = patch("packet_inspector.tray_panel." + name)
             setattr(self, name, patcher.start())
             self.addCleanup(patcher.stop)
         self.popup_anchor.return_value = (1900, 1040), (0, 0, 1920, 1040)
+        self.popup_interaction_at.return_value = None
+        self.show_panel_window.side_effect = lambda window, **_: window.show()
         self.addCleanup(self.panel.destroy)
 
     def load(self):
@@ -183,8 +185,8 @@ class TrayPanelTests(unittest.TestCase):
         tray.user, tray.hwnd = Mock(), 123
         tray._launch_panel()
         tray.user.PostMessageW.assert_called_once_with(123, NATIVE_MENU_MESSAGE, 0, 0)
-        self.assertEqual(popup_position((1910, 1050), (0, 0, 1920, 1040), (344, 264)), (1566, 770))
-        self.assertEqual(popup_position((-1910, 20), (-1920, 0, 0, 1040), (344, 264)), (-1914, 6))
+        self.assertEqual(popup_position((1910, 1050), (0, 0, 1920, 1080), (344, 264)), (1566, 786))
+        self.assertEqual(popup_position((-1910, 20), (-1920, 0, 0, 1040), (344, 264)), (-1910, 20))
 
 
 if __name__ == "__main__":

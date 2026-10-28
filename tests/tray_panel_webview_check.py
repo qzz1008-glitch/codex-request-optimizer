@@ -105,7 +105,7 @@ def run(*, legacy_host=False):
             panel.MIN_WIDTH = 240
             panel._size = (288, 280)
             panel.panel_state = lambda: {"visible": panel.visible and not panel._closed.is_set()}
-        expected_width = 240 if legacy_host else 216
+        expected_width = 240
         master.events.closed += panel.destroy
 
         def check():

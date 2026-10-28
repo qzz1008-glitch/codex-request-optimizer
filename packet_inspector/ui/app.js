@@ -93,6 +93,9 @@ function auxiliarySessionKind(row) {return Object.hasOwn(auxiliaryLabels,row?.se
 function sessionGroups() {
   const rows=new Map(sessionSummaries.map(row=>[row.thread_id,row]));
   for(const id of state.sessions)if(!rows.has(id))rows.set(id,{thread_id:id});
+  const imageParents=new Set([...rows.values()].filter(row=>auxiliarySessionKind(row)==="image_analysis"&&
+    typeof row.parent_thread_id==="string"&&row.parent_thread_id&&row.parent_thread_id!==row.thread_id).map(row=>row.parent_thread_id));
+  for(const id of imageParents)if(!rows.has(id))rows.set(id,{thread_id:id,packet_count:0});
   const groups=new Map();
   for(const member of rows.values()) {
     if(member.packet_count===0&&!state.sessions.includes(member.thread_id))continue;
@@ -101,12 +104,13 @@ function sessionGroups() {
       if(visited.has(current.thread_id))break;
       visited.add(current.thread_id);
       const kind=auxiliarySessionKind(current);
-      if(kind==="subagent"||!kind&&typeof current.title==="string"&&current.title.trim()) {owner=current;break;}
+      if(kind==="subagent"||!kind&&(imageParents.has(current.thread_id)||typeof current.title==="string"&&current.title.trim())) {owner=current;break;}
       current=rows.get(current.parent_thread_id);
     }
     const id=owner?.thread_id||OTHER_SESSION_GROUP;
     if(!groups.has(id)) {
-      const title=typeof owner?.title==="string"&&owner.title.trim()?owner.title:t(owner?"子任务":"其他");
+      const title=typeof owner?.title==="string"&&owner.title.trim()?owner.title:owner?
+        auxiliarySessionKind(owner)==="subagent"?t("子任务"):owner.thread_id:t("其他");
       groups.set(id,{...(owner||{}),thread_id:id,title,members:[],packet_count:0,updated_at:owner?.updated_at||0});
     }
     const group=groups.get(id);group.members.push(member);

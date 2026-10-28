@@ -1,9 +1,9 @@
-:root{color-scheme:light;--tray-width:216px;--tray-text:#29313d;--tray-muted:#687282;font-family:"Segoe UI","Microsoft YaHei UI",sans-serif;font-size:12px;font-weight:400;line-height:18px;color:var(--tray-text);background:#fff}
+:root{color-scheme:light;--tray-width:240px;--tray-text:#29313d;--tray-muted:#687282;font-family:"Segoe UI","Microsoft YaHei UI",sans-serif;font-size:12px;font-weight:400;line-height:18px;color:var(--tray-text);background:#fff}
 *{box-sizing:border-box}
 html,body{margin:0;padding:0;overflow:hidden}
 body{width:max(var(--tray-width),var(--tray-min-width,0px));background:#fff}
 .tray-panel{padding:8px;border:1px solid #e8ebef;border-radius:12px;background:#fff;user-select:none}
-.tray-heading{display:flex;align-items:center;gap:8px;min-height:36px;padding:4px 12px;font-size:12px;font-weight:600;line-height:18px}
+.tray-heading{display:flex;align-items:center;gap:8px;min-height:28px;padding:2px 12px;font-size:12px;font-weight:600;line-height:18px}
 .status-dot{width:7px;height:7px;flex:none;border-radius:50%;background:#a6aeb9}
 .status-dot[data-state=connected]{background:#38966e;box-shadow:0 0 0 3px #38966e10}
 .status-dot[data-state=disconnected]{background:#a6aeb9}
@@ -20,11 +20,12 @@ dd [data-stat]+span{font-size:11px;font-weight:400;color:var(--tray-muted)}
 .record-totals{display:flex;align-items:baseline;gap:5px}
 .record-totals>span[aria-hidden]{color:#a4acb8;font-size:11px}
 :lang(en) .record-request-unit{display:none}
-button{display:flex;align-items:center;gap:10px;width:100%;min-height:36px;border:0;border-radius:7px;padding:0 12px;background:transparent;color:var(--tray-text);font:inherit;font-size:13px;font-weight:400;line-height:18px;text-align:left;cursor:default}
+button{display:flex;align-items:center;gap:10px;width:100%;min-height:28px;border:0;border-radius:7px;padding:0 12px;background:transparent;color:var(--tray-text);font:inherit;font-size:11px;font-weight:400;line-height:16px;text-align:left;cursor:default}
+button+hr{margin:3px 6px}
 button:hover{background:#f2f4f7}
 button:active{background:#e9edf2}
 button:focus-visible{outline:2px solid #738dd3;outline-offset:-2px;background:#f2f4f7}
 button:disabled{opacity:.6}
-button svg{height:16px;width:16px;flex:none;color:#657083}
+button svg{height:14px;width:14px;flex:none;color:#657083}
 #tray-error{margin:5px 12px;color:#b44f4f;font-size:11px;line-height:1.5}
 [hidden]{display:none!important}

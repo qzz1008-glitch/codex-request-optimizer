@@ -9,7 +9,9 @@ import zlib
 
 from packet_inspector.session_summary import IMAGE_ANALYST_PREFIXES, INDEX_TASK_PREFIX, SessionSummaries, image_analysis_request
 from packet_inspector.token_window import TokenWindows
+from packet_inspector.analyzer import inspect_request
 from packet_inspector.request_context import NEXT_MESSAGE_PREFIX, TITLE_REQUEST_PREFIX
+from packet_inspector.storage import Store
 from tests.test_token_window import THREAD, event
 
 
@@ -292,6 +294,26 @@ class SessionSummaryTests(unittest.TestCase):
         row = self.reader.read(self.capture)["sessions"][0]
         self.assertEqual(row["title"], "会话名称")
         self.assertNotIn("session_kind", row)
+
+    def test_image_parent_survives_metadata_only_retention_without_native_child_history(self):
+        child = "00000000-0000-0000-0000-000000000001"
+        capture = self.root / "image-capture"
+        store = Store(capture, max_count=10, max_detail_count=0)
+        body = {"input": [{"role": "user", "content": IMAGE_ANALYST_PREFIXES[0]}],
+                "client_metadata": {"x-codex-turn-metadata": json.dumps({
+                    "codex_inspector_request_kind": "image_analysis", "codex_inspector_parent_thread_id": THREAD})}}
+        meta, content = inspect_request(json.dumps(body).encode(), {"x-codex-thread-id": child}, "/responses")
+        packet_id = store.add({**meta, "method": "POST"}, content)
+        saved, content = store.get(packet_id, content=True)
+        self.assertTrue(saved["details_evicted"])
+        self.assertIsNone(content)
+        self.assertEqual(saved["parent_thread_id"], THREAD)
+        sessions = {row["thread_id"]: row for row in self.reader.read(capture)["sessions"]}
+        self.assertEqual(sessions[child]["parent_thread_id"], THREAD)
+        self.assertEqual(sessions[child]["session_kind"], "image_analysis")
+        self.assertIsNone(sessions[child]["title"])
+        self.assertEqual(sessions[THREAD]["title"], "会话名称")
+        self.assertEqual(sessions[THREAD]["packet_count"], 0)
 
     def test_ordinary_image_request_keeps_missing_name_state(self):
         self.image_request(text='<image name=[Image #1] path="C:\\example.png">\n</image>\n帮我看看这张图')

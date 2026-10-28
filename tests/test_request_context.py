@@ -106,6 +106,30 @@ class RequestContextTests(unittest.TestCase):
                 body["input"][-1]["content"] = "A quote: " + prefix
                 self.assertIsNone(temporary_request_kind(body))
 
+    def test_image_parent_is_read_from_explicit_tool_metadata(self):
+        parent = "01a15d9a-f5e3-73c1-b4e7-87b3c5db9a3c"
+        marker = {"codex_inspector_request_kind": "image_analysis", "codex_inspector_parent_thread_id": parent.upper()}
+        for container in (marker, {"x-codex-turn-metadata": json.dumps(marker)}):
+            for field in ("client_metadata", "metadata"):
+                with self.subTest(field=field, container=container):
+                    self.assertEqual(request_session_context({field: container}), {
+                        "session_kind": "image_analysis", "parent_thread_id": parent})
+        self.assertEqual(request_session_context({}, {"X-Codex-Turn-Metadata": json.dumps(marker)}), {
+            "session_kind": "image_analysis", "parent_thread_id": parent})
+        for value in (None, [], "invalid", 42):
+            self.assertNotIn("parent_thread_id", request_session_context({"client_metadata": {
+                **marker, "codex_inspector_parent_thread_id": value}}))
+        self.assertEqual(request_session_context({"client_metadata": {"codex_inspector_parent_thread_id": parent}}), {})
+        self.assertNotIn("parent_thread_id", request_session_context({"client_metadata": {
+            **marker, "parent_thread_id": "00000000-0000-0000-0000-000000000001"}}))
+
+    def test_native_parent_header_is_unambiguous_and_case_insensitive(self):
+        parent = "01a15d9a-f5e3-73c1-b4e7-87b3c5db9a3c"
+        self.assertEqual(request_session_context({}, {"X-Codex-Parent-Thread-Id": parent.upper()}), {
+            "parent_thread_id": parent})
+        self.assertNotIn("parent_thread_id", request_session_context({"metadata": {
+            "parent_thread_id": "00000000-0000-0000-0000-000000000001"}}, {"x-codex-parent-thread-id": parent}))
+
     def test_saved_metadata_recognizes_helpers_without_body(self):
         for prefix, kind in ((NEXT_MESSAGE_PREFIX, "next_message_suggestion"),
                              (TITLE_REQUEST_PREFIX, "title_generation")):
