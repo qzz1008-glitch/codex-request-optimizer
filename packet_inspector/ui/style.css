@@ -174,7 +174,7 @@ code.session-id{font-family:Consolas,"Cascadia Mono",monospace;font-size:11px;wo
 .trend-event-filtering .trend-curve,.trend-event-filtering .trend-sample,.trend-event-node.dimmed{opacity:.13}
 .trend-event-node.highlighted .trend-event{stroke-width:2.8}
 .trend-event-count{fill:var(--series-color,currentColor);font:9px "Segoe UI",sans-serif;paint-order:stroke;stroke:white;stroke-width:3px}
-.trend-focus-line{stroke:#9baabd;stroke-dasharray:4 4;stroke-width:1;pointer-events:none}.trend-focus-dot{fill:none;stroke:var(--series-color,currentColor);stroke-width:1.5;pointer-events:none}
+.trend-focus-line{stroke:#9baabd;stroke-dasharray:4 4;stroke-width:1;pointer-events:none}.trend-sample.trend-hover-node{r:3.6px}.trend-event-node.trend-hover-node .trend-event{transform:scale(1.3);transform-origin:0 0;stroke-width:1.8}
 .trend-time-fold{cursor:help}.trend-fold-shade{fill:#e9eef5;fill-opacity:.65}.trend-fold-hatch{fill:none;stroke:#a8b5c7;stroke-opacity:.5;stroke-width:1;vector-effect:non-scaling-stroke}.trend-fold-edge{fill:none;stroke:#98a6ba;stroke-width:1;stroke-dasharray:2 3;vector-effect:non-scaling-stroke}
 .trend-time-break rect{fill:#edf1f6;stroke:#b5c1d1;stroke-width:1}.trend-time-break path{fill:none;stroke:#60738d;stroke-width:1.8;vector-effect:non-scaling-stroke}
 .trend-empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:13px;pointer-events:none;padding:30px;text-align:center;background:#ffffffd9}
