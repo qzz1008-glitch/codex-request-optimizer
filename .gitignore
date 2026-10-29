@@ -9,7 +9,7 @@ build/
 *.spec
 .venv/
 evidence/
-CodexNetworkTest-*/
+/scripts/windows/CodexNetworkTest-*/
 PAYLOAD_NOTES.txt
 *.backup-*
 native_patch/
