@@ -115,6 +115,8 @@ Failed requests record the actual connection destination, proxy CONNECT/TLS/uplo
 
 Diagnostics are saved as `network-diagnostics.sqlite` in the selected log folder. View the file with a SQLite tool, or retrieve it directly for troubleshooting. Diagnostic records are limited to 14 days, 500 entries, and 16 MiB of record content, with cleanup on connection or new error records. Missing historical information cannot be reconstructed. Diagnostic write failures do not interrupt forwarding.
 
+To check proxies and the 1 MB upload limit on another PC, copy the standalone [Test-CodexNetwork.cmd](../scripts/windows/Test-CodexNetwork.cmd) and double-click it. Python and administrator privileges are not required. It checks direct and proxied access to the local entry, then sends synthetic 64 kB, 950 kB, and 1,100 kB samples upstream (1 kB = 1,000 bytes). It does not change configuration, send Codex login credentials, or invoke a model. Results and redacted error bodies are saved in a timestamped folder beside the script. An API rejection is only evidence that this sample showed no gateway block; it does not replace formal upload-permission approval.
+
 ### Online updates
 
 Check for updates in Settings, or download and run the new EXE. Upgrades preserve records, settings, and the installed development or release mode. The new service handles new requests while the previous service finishes requests already in progress.

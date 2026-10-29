@@ -54,6 +54,10 @@ Windows x64（64 位）上的 Codex 请求分析与无损传输压缩工具。�
 
 复现故障后，可从所选日志目录直接取得 `network-diagnostics.sqlite` 用于排查；该文件为 SQLite 数据库，可用 SQLite 工具查看。网络诊断最多保留 14 天、500 条和 16 MiB 记录内容，在接入或新增错误时清理。没有记录的历史信息无法补录，诊断失败不会影响转发。
 
+也可单独复制 [Test-CodexNetwork.cmd](../scripts/windows/Test-CodexNetwork.cmd) 到同事电脑，双击运行。它使用 Windows PowerShell，无需 Python 或管理员权限；不修改代理、Codex 配置或正在运行的中转。默认检查 `127.0.0.1:47844`，能读取当前中转配置时使用其上游，否则测试 `https://chatgpt.com/backend-api/codex/responses`。代理选路按当前中转的环境变量／Windows 手动代理规则执行，不执行 PAC，也不发送代理 URL 中的凭据；检测到 PAC 会提示。
+
+脚本先对比本机入口的直连与代理访问，再以 identity 编码发送 64,000、950,000、1,100,000 字节的合成无效 JSON，不携带 Codex 认证，不会触发模型推理，不进入正常请求记录。结果目录在脚本旁，包含 `summary.txt`、`report.json` 和各项 `*-response.txt`；将整个目录发回即可比较代理来源、例外、DNS/TCP、HTTP 状态、实际上传量、连接阶段及错误正文。脚本使用 Windows 自带的 `curl.exe`，单项响应最多保存 64 KiB，临时请求与响应文件在每项结束后删除；连接或代理认证失败后跳过后续上传，不自动重试。API 的 400/401 等拒绝只有在本次实际上传量达到指定大小时才标为“本次未见上传拦截”，仍不能代替正式权限审批；ChatGPT 自身的网络栈还需结合实际请求记录核对。
+
 ## 两种升级方式
 
 - **本地代码升级**：运行 `python -m scripts.build_inspector --output-dir release/<新的目录名>`，将生成的 `CodexPacketInspector.exe` 交给用户。EXE 内置这一次构建的代码，双击后同时升级已经运行的后台和优化器桌面窗口。
