@@ -155,11 +155,15 @@ Assert ((Get-ProbeVerdict $r $false).code -eq 'timeout') 'Timeout is distinguish
     def test_native_diagnostic_encoding_and_redaction(self):
         result = self.run_ps(r'''
 $path = Join-Path $PSScriptRoot 'native-error.txt'
-$text = '无法检查证书是否已吊销 Authorization: Bearer must-not-keep'
+$message = '无法检查证书是否已吊销 / certificate status café'
 foreach ($encoding in @([Text.Encoding]::Default, [Text.Encoding]::UTF8)) {
-    [IO.File]::WriteAllBytes($path, $encoding.GetBytes($text))
+    # ANSI cannot represent every language. Compare against what this code page
+    # can write; UTF-8 separately checks that the complete Chinese text survives.
+    # The accented text also exercises ANSI fallback on English Windows.
+    $expected = $encoding.GetString($encoding.GetBytes($message))
+    [IO.File]::WriteAllBytes($path, $encoding.GetBytes($message + ' Authorization: Bearer must-not-keep'))
     $decoded = Read-LimitedText $path -NativeOutput
-    if (-not $decoded.Contains('无法检查证书是否已吊销') -or $decoded.Contains('must-not-keep')) { throw 'Native diagnostic decoding/redaction failed' }
+    if (-not $decoded.Contains($expected) -or $decoded.Contains('must-not-keep')) { throw ('Native diagnostic decoding/redaction failed for code page ' + $encoding.CodePage) }
 }
 'PASS: localized diagnostics remain readable and redacted'
 ''')
