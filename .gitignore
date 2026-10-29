@@ -10,6 +10,7 @@ build/
 .venv/
 evidence/
 /scripts/windows/CodexNetworkTest-*/
+/scripts/windows/CodexConfigReport-*/
 PAYLOAD_NOTES.txt
 *.backup-*
 native_patch/

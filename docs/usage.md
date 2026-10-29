@@ -54,6 +54,10 @@ Windows x64（64 位）上的 Codex 请求分析与无损传输压缩工具。�
 
 点击“接入”会先检查本机代理例外，缺失时补齐 `127.0.0.1`、`localhost`、`[::1]`，保留 `127.0.0.1*`、`<local>` 等全部原有条目。已使用环境变量代理或 `NO_PROXY` 时，分别在适用的用户配置和当前进程中追加本机例外；IPv6 同时兼容 `::1` 和 `[::1]`。用户、系统和当前进程的其他例外遵循原来的覆盖关系，不互相拼回过期规则。代理地址、端口、启用状态、PAC 和自动检测设置保持原样，断开时保留这些本机例外。组织策略禁止修改、并发修改或写入校验失败时停止本次接入，并在网络诊断的 `loopback_proxy` 字段记录已完成和失败的修改，不把失败显示为已修复。修复成功后按提示重启 ChatGPT App。
 
+对话请求未进入中转时，可单独复制 [Collect-CodexRouting.cmd](../scripts/windows/Collect-CodexRouting.cmd) 到同事电脑，保持 ChatGPT 和中转运行后双击。无需 Python 或管理员权限；完成后发送脚本旁 `CodexConfigReport-*` 目录中的 `report.json` 和 `summary.txt`。可在命令行给脚本追加会话 ID 或 `codex://threads/<ID>`，只取目标会话的元数据；默认取最近 10 个会话。脚本读取 `thread/list` 或 `thread/read` 的 provider，以及 `config/read` 的 `config`、`origins`、`layers`，并记录可见进程的 provider/profile 启动覆盖。只导出路由相关字段，隐藏中转令牌和 URL 凭据，不导出消息正文、指令内容、认证头或 MCP 环境。
+
+该报告来自独立的原生诊断进程。会话 provider 是已保存元数据，分层配置是当前磁盘解析结果；既有会话内存、RPC 覆盖和 ChatGPT 进程环境仍需结合实际请求日志核对，不能仅凭报告认定实际出口。现有进程参数只记录、不重放，诊断进程可能生成自身原生日志或缓存；脚本不发送消息、不调用模型、不修改接入或会话历史、不结束现有程序。即使接口读取失败，也会保存已完成部分及错误阶段。
+
 复现故障后，可从所选日志目录直接取得 `network-diagnostics.sqlite` 用于排查；该文件为 SQLite 数据库，可用 SQLite 工具查看。网络诊断最多保留 14 天、500 条和 16 MiB 记录内容，在接入或新增错误时清理。没有记录的历史信息无法补录，诊断失败不会影响转发。
 
 也可单独复制 [Test-CodexNetwork.cmd](../scripts/windows/Test-CodexNetwork.cmd) 到同事电脑，双击运行。它使用 Windows PowerShell，无需 Python 或管理员权限；不修改代理、Codex 配置或正在运行的中转。默认检查 `127.0.0.1:47844`，能读取当前中转配置时使用其上游，否则测试 `https://chatgpt.com/backend-api/codex/responses`。代理选路按当前中转的环境变量／Windows 手动代理规则执行，不执行 PAC，也不发送代理 URL 中的凭据；检测到 PAC 会提示。
