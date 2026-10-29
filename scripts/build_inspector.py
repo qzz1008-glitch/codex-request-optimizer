@@ -33,7 +33,10 @@ def source_files(root=None):
     for folder in ("packet_inspector", "scripts", "tests", "docs", ".github"):
         for path in (root / folder).rglob("*"):
             relative = path.relative_to(root)
-            if not path.is_file() or excluded.intersection(relative.parts) or local_development_path(relative):
+            diagnostic_report = (len(relative.parts) > 3 and relative.parts[:2] == ("scripts", "windows")
+                                 and relative.parts[2].startswith(("CodexNetworkTest-", "CodexConfigReport-")))
+            if (not path.is_file() or excluded.intersection(relative.parts)
+                    or local_development_path(relative) or diagnostic_report):
                 continue
             if path.is_symlink() or path.suffix not in suffixes:
                 raise SourceError("Unsupported source input; include it explicitly before building: "

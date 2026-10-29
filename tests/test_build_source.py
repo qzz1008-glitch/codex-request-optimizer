@@ -227,6 +227,26 @@ class BuildSourceTests(unittest.TestCase):
         self.write("AGENTS.md", "Updated local instructions")
         snapshot.assert_unchanged()
 
+    def test_standalone_diagnostic_reports_do_not_enter_or_invalidate_builds(self):
+        self.write(".gitignore", "build/\n.local/\n/scripts/windows/CodexNetworkTest-*/\n"
+                   "/scripts/windows/CodexConfigReport-*/\n")
+        for name in ("Test-CodexNetwork.cmd", "Collect-CodexRouting.cmd", "CodexNetworkTest-helper.cmd"):
+            self.write("scripts/windows/" + name, "echo diagnostic source\n")
+        self.commit()
+        snapshot = self.snapshot()
+        for prefix in ("CodexNetworkTest-", "CodexConfigReport-"):
+            directory = "scripts/windows/" + prefix + "20261029-fixture/"
+            self.write(directory + "report.json", '{"private":true}')
+            self.write(directory + "nested/response.txt", "private gateway response")
+            self.write(directory + "credentials.private", "private fixture")
+        self.assertEqual(source_files(self.root), [self.root / name for name in sorted(snapshot.files)])
+        self.assertIn("scripts/windows/Test-CodexNetwork.cmd", snapshot.files)
+        self.assertIn("scripts/windows/Collect-CodexRouting.cmd", snapshot.files)
+        self.assertIn("scripts/windows/CodexNetworkTest-helper.cmd", snapshot.files)
+        self.assertEqual(dirty_paths(self.root), [])
+        Workspace(self.root).validate("release")
+        snapshot.assert_unchanged()
+
     def test_new_asset_types_cannot_be_silently_omitted(self):
         self.write("packet_inspector/ui/font.woff2", "fixture font")
         self.assertIn("packet_inspector/ui/font.woff2", self.snapshot().files)
