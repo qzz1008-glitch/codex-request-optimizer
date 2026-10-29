@@ -126,6 +126,9 @@ class NativeRetryTests(unittest.TestCase):
 
 class NativeRetryConfigurationTests(unittest.TestCase):
     def setUp(self):
+        repair = patch("packet_inspector.server.repair_loopback_proxy", return_value={"state": "ok", "changed": False})
+        repair.start()
+        self.addCleanup(repair.stop)
         from packet_inspector.server import InspectorServer
         temp = tempfile.TemporaryDirectory()
         self.addCleanup(temp.cleanup)

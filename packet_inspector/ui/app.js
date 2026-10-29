@@ -1118,7 +1118,7 @@ async function requestConnection(source="header") {
   if(current.profile?.active||current.profile?.config_error||current.ui_exit_request||exitSaving||exitFinished||$("exit-confirm-dialog").open)return;
   connectSource=source;
   $("connect-confirm-cancel").textContent=t(source==="startup"?"暂不接入":"取消");
-  $("connect-confirm-hint").textContent=t("接入后关闭原生压缩，由本软件管理 zstd。配置变更后需重启 ChatGPT App。");
+  $("connect-confirm-hint").textContent=(current.loopback_proxy_repair_supported?t("接入时自动检查并补齐本机代理例外。"):"")+t("接入后关闭原生压缩，由本软件管理 zstd。配置变更后需重启 ChatGPT App。");
   $("connect-confirm-message").hidden=true;renderConnectPrompt();dialog.showModal();
 }
 function cancelConnectPrompt() {
@@ -1136,7 +1136,9 @@ async function confirmConnection() {
     $("connect-confirm-dialog").close();connectSource=null;
     if(result?.reload_required) {
       connectionRestartNotified=true;
-      $("settings-restart-items").replaceChildren(el("li","",t("Codex 接入与原生压缩")));
+      const items=[el("li","",t("Codex 接入与原生压缩"))];
+      if(result.loopback_proxy?.changed)items.push(el("li","",t("本机代理例外")));
+      $("settings-restart-items").replaceChildren(...items);
       $("settings-restart-dialog").showModal();
     }
   } catch(error) {
@@ -2118,7 +2120,7 @@ async function linkAction(which) {
   linkSaving=which;renderConnectionActions();updateSettingsSaveState(false);
   try {
     const result=await applyLinkAction(which);renderStatus(true);
-    message(()=>(which==="activate"?t("已接入。"):t("已恢复原配置。"))+(result.reload_required?t("重启 ChatGPT App 生效。"):t("配置无需更改，无需重启。")));
+    message(()=>(which==="activate"?t("已接入。"):t("已恢复原配置。"))+(result.loopback_proxy?.changed?t("已修复本机代理例外。"):"")+(result.reload_required?t("重启 ChatGPT App 生效。"):t("配置无需更改，无需重启。")));
     return result;
   } finally {linkSaving="";renderConnectionActions();updateSettingsSaveState(false);}
 }

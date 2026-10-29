@@ -15,6 +15,9 @@ from packet_inspector.server import InspectorServer
 
 class ConnectionPolicyTests(unittest.TestCase):
     def setUp(self):
+        repair = patch("packet_inspector.server.repair_loopback_proxy", return_value={"state": "ok", "changed": False})
+        repair.start()
+        self.addCleanup(repair.stop)
         probe = patch("packet_inspector.network_diagnostics.NetworkDiagnostics._probe")
         probe.start()
         self.addCleanup(probe.stop)

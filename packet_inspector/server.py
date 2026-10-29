@@ -45,6 +45,7 @@ from .response_events import notify
 from .http_io import UPSTREAM_READ_TIMEOUT_SECONDS
 from .retry_diagnostics import RetryJournal, ResponseObservation
 from .network_diagnostics import NetworkDiagnostics, DiagnosticHTTPHandler, DiagnosticHTTPSHandler
+from .loopback_proxy import repair_loopback_proxy
 from .usage_trigger import (raw_chunks, request_size as usage_trigger_size,
                             trigger_threshold, DEFAULT_BUDGET_BYTES, MIN_BUDGET_BYTES)
 from .overflow import CheckpointStream, OverflowCompactor, OverflowFailure
@@ -341,10 +342,15 @@ class InspectorServer(ThreadingHTTPServer):
         with self.provider_guard:
             previous = self.settings["auto_detect_providers"]
             before = self._diagnostic_profile() if connected else {}
+            proxy_repair = None
             try:
                 if connected:
+                    proxy_repair = repair_loopback_proxy()
                     self.save_settings({**self.settings, "auto_detect_providers": True})
                     result = self.sync_providers()
+                    result["loopback_proxy"] = proxy_repair
+                    result["reload_required"] = bool(result.get("reload_required") or proxy_repair["changed"])
+                    self.connection_reload_required |= result["reload_required"]
                     self.network_diagnostics.connection(before, self._diagnostic_profile(),
                         self.settings["provider_routes"], self.settings, result=result)
                     return result
@@ -364,11 +370,14 @@ class InspectorServer(ThreadingHTTPServer):
             except Exception as exc:
                 if connected:
                     self.network_diagnostics.connection(before, self._diagnostic_profile(),
-                        self.settings["provider_routes"], self.settings, error=exc)
+                        self.settings["provider_routes"], self.settings,
+                        result={"loopback_proxy": proxy_repair}, error=exc)
                 try:
-                    keep_active = previous or self.connection_profile()["active"]
+                    keep_active = self.connection_profile()["active"]
+                    if not connected or proxy_repair is not None:
+                        keep_active |= previous
                 except (OSError, ValueError):
-                    keep_active = previous
+                    keep_active = previous if not connected or proxy_repair is not None else False
                 self.save_settings({**self.settings, "auto_detect_providers": keep_active})
                 raise
 
@@ -470,6 +479,7 @@ class InspectorServer(ThreadingHTTPServer):
                 "capacity_retry_diagnostics_errors": self.retry_journal.errors,
                 "capacity_retry_diagnostics_last_error": self.retry_journal.last_error,
                 "network_diagnostics_supported": True,
+                "loopback_proxy_repair_supported": True,
                 "network_diagnostics_errors": self.network_diagnostics.errors,
                 "storage_paths_supported": True,
                 "log_dir": str(resolve_directory(self.data_dir, self.settings["log_dir"])),
