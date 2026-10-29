@@ -225,7 +225,9 @@ class UsageRelayTests(unittest.TestCase):
         self.temp.cleanup()
 
     def post(self, body, headers=None):
-        client = http.client.HTTPConnection("127.0.0.1", self.server.port, timeout=15)
+        # High compression on shared Windows runners can exceed 15 seconds.
+        # These fixtures verify usage semantics rather than request latency.
+        client = http.client.HTTPConnection("127.0.0.1", self.server.port, timeout=60)
         client.request("POST", "/relay/" + self.server.settings["relay_token"] + "/responses", body,
                        {"Content-Type": "application/json", "session_id": "usage-test", **(headers or {})})
         return client, client.getresponse()

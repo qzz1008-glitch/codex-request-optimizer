@@ -57,9 +57,18 @@ def check_window(executable, data, config, port, development, label, ui_dir=None
                  "--config", str(config), "--desktop-check", str(report)]
     if ui_dir:
         arguments.extend(["--desktop-check-ui", str(ui_dir)])
-    process = subprocess.Popen(arguments,
-                               creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-    assert process.wait(timeout=60) == 0
+    # A tray preload can still be unpacking before its desktop PID is visible.
+    # If it claims the singleton first, the probe exits successfully without a
+    # report. Close only this disposable host and retry that ownership handoff;
+    # process failures and negative verification reports still fail immediately.
+    for _attempt in range(3):
+        close_test_desktop(data)
+        process = subprocess.Popen(arguments,
+                                   creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        assert process.wait(timeout=60) == 0
+        if report.is_file():
+            break
+    assert report.is_file(), "Isolated desktop probe could not acquire the single window"
     result = json.loads(report.read_text(encoding="utf8"))
     assert result.get("passed"), result
     assert result["development"] is development, result
@@ -139,8 +148,6 @@ def verify_mode(release, directory, mode):
             value = json.loads(profile_path.read_text())
             return value.get("pid") not in {None, old_pid} and process_alive(value["pid"])
         wait_for(reopened, seconds=40)
-        observer = Upgrade(data, data, config, port)
-        observer._close_windows(wait_for(observer._application_windows, seconds=30))
         worker = worker_info(data, after["worker_id"])
         check_window(Path(worker["executable"]), data, config, port, mode == "dev", "after-update", external)
         assert list((data / "updates/staging").iterdir()) == []
