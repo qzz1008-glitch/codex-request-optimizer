@@ -50,6 +50,15 @@ function fixture(connected) {
   assert.equal(element('settings-restart-dialog').open,true);
   assert.equal(context.connectionRestartNotified,true);
 
+  ({context,element}=fixture(false));
+  context.linkAction=async()=>{
+    context.state.status.profile={active:true,can_restore:true};
+    return {reload_required:true,loopback_proxy:{state:'repaired',changed:true}};
+  };
+  await context.confirmConnection();
+  assert.equal(element('settings-restart-dialog').open,true);
+  assert.deepEqual(element('settings-restart-items').children.map(item=>item.text),['Codex 接入与原生压缩','本机代理例外']);
+
   ({context,element,buttons,calls}=fixture(true));
   context.renderCompressionMode();
   assert.equal(buttons[1].attrs['aria-pressed'],'true');

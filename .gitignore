@@ -9,6 +9,7 @@ build/
 *.spec
 .venv/
 evidence/
+CodexNetworkTest-*/
 PAYLOAD_NOTES.txt
 *.backup-*
 native_patch/

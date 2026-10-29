@@ -745,6 +745,9 @@ class Upstream(BaseHTTPRequestHandler):
 class RelayTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        repair = patch("packet_inspector.server.repair_loopback_proxy", return_value={"state": "ok", "changed": False})
+        repair.start()
+        cls.addClassCleanup(repair.stop)
         cls.temp=tempfile.TemporaryDirectory();root=Path(cls.temp.name)
         cls.up=ThreadingHTTPServer(("127.0.0.1",0),Upstream);cls.up.daemon_threads=False
         cls.up.requests=[];cls.up.first=threading.Event();cls.up.release=threading.Event()

@@ -306,6 +306,10 @@ class NetworkDiagnostics:
                                  for k in ("provider", "active", "base_url", "upstream", "read_error", "connection_settings") if k in p}
             destinations = [{"provider": str(route.get("provider", ""))[:160], "upstream": safe_url(route.get("upstream", ""))}
                             for route in list(routes.values())[:32]]
+            repair = (result or {}).get("loopback_proxy") or getattr(error, "report", None)
+            if isinstance(repair, dict) and "changes" in repair:
+                repair = {**repair, "changes": [{k: safe_text(v, limit=4000) if isinstance(v, str) else v
+                                                 for k, v in item.items()} for item in repair["changes"]]}
             record = {"id": identifier, "created": time.time(), "kind": "connection", "trigger": "user_connect",
                       "process_id": os.getpid(),
                       "outcome": "failed" if error else "connected", "before": profile(before), "after": profile(after),
@@ -314,6 +318,7 @@ class NetworkDiagnostics:
                       "settings": {k: settings.get(k) for k in ("zstd_level", "packet_size_protection_enabled", "budget_bytes",
                                     "capacity_retry_enabled", "image_analysis_mode")},
                       "configuration_changed": bool((result or {}).get("changed")),
+                      "loopback_proxy": repair,
                       "probe_status": "not_started" if error else "running"}
             if error:
                 record["exception"] = exception_detail(error)
