@@ -126,6 +126,45 @@ if ($result.status -ne 504 -or $result.verdict -ne 'gateway_error') {{ throw ($r
         self.assertIn("PASS:", result)
         self.assertEqual([r["method"] for r in proxy.calls], ["GET"])
 
+    def test_schannel_compatibility_and_precise_tls_diagnosis(self):
+        result = self.run_ps(r'''
+function Assert($Value, $Message) { if (-not $Value) { throw $Message } }
+$https = [uri]'https://chatgpt.com/backend-api/codex/responses'
+$options = @(Get-CurlTlsArguments 'curl 8.16.0 (Windows) libcurl/8.16.0 Schannel zlib/1.3.1' $https)
+Assert ($options.Count -eq 1 -and $options[0] -eq '--ssl-revoke-best-effort') 'Only unavailable revocation checks may be tolerated'
+Assert (@(Get-CurlTlsArguments 'curl 7.70.0 Schannel' $https).Count -eq 1) 'First supported curl version'
+Assert (@(Get-CurlTlsArguments 'curl 7.69.0 Schannel' $https).Count -eq 0) 'Older curl must not receive an unsupported option'
+Assert (@(Get-CurlTlsArguments 'curl 8.16.0 OpenSSL/3.0.0' $https).Count -eq 0) 'Other TLS backends keep their defaults'
+Assert (@(Get-CurlTlsArguments 'curl 8.16.0 Schannel' ([uri]'http://127.0.0.1/health')).Count -eq 0) 'Plain HTTP needs no TLS options'
+$r = @{ status = 0; body = ''; headers = @{}; bytes = 64000; written_bytes = 0; curl_exit = 35; exceptions = @(@{type='curl'}); transport_detail = 'schannel: CRYPT_E_NO_REVOCATION_CHECK (0x80092012)' }
+Assert ((Get-ProbeVerdict $r $false).code -eq 'tls_revocation_error') 'Classify the real failure separately from local connectivity'
+$r.transport_detail = 'schannel: 0x80092013'
+Assert ((Get-ProbeVerdict $r $false).code -eq 'tls_revocation_error') 'Offline revocation check'
+$r.transport_detail = 'schannel: CERT_E_REVOKED (0x800B010C)'; $r.curl_exit = 60
+Assert ((Get-ProbeVerdict $r $false).code -eq 'tls_error') 'A revoked certificate is a certificate error, not missing revocation data'
+$r.transport_detail = 'schannel: CERT_E_UNTRUSTEDROOT (0x800B0109)'
+Assert ((Get-ProbeVerdict $r $false).code -eq 'tls_error') 'Untrusted certificate errors remain visible'
+$r.transport_detail = ''; $r.curl_exit = 6
+Assert ((Get-ProbeVerdict $r $false).code -eq 'dns_error') 'DNS failure is distinguishable'
+$r.curl_exit = 28
+Assert ((Get-ProbeVerdict $r $false).code -eq 'timeout') 'Timeout is distinguishable'
+'PASS: TLS settings preserve verification and failures identify their stage'
+''')
+        self.assertIn("PASS:", result)
+
+    def test_native_diagnostic_encoding_and_redaction(self):
+        result = self.run_ps(r'''
+$path = Join-Path $PSScriptRoot 'native-error.txt'
+$text = '无法检查证书是否已吊销 Authorization: Bearer must-not-keep'
+foreach ($encoding in @([Text.Encoding]::Default, [Text.Encoding]::UTF8)) {
+    [IO.File]::WriteAllBytes($path, $encoding.GetBytes($text))
+    $decoded = Read-LimitedText $path -NativeOutput
+    if (-not $decoded.Contains('无法检查证书是否已吊销') -or $decoded.Contains('must-not-keep')) { throw 'Native diagnostic decoding/redaction failed' }
+}
+'PASS: localized diagnostics remain readable and redacted'
+''')
+        self.assertIn("PASS:", result)
+
     def test_double_click_launcher_exact_sizes_reports_and_no_inference(self):
         upstream, relay = self.gateway(), self.gateway()
         relay.upstream = f"http://127.0.0.1:{upstream.server_port}"
@@ -156,7 +195,11 @@ if ($result.status -ne 504 -or $result.verdict -ne 'gateway_error') {{ throw ($r
             self.assertNotIn("authorization", headers)
             self.assertNotIn("cookie", headers)
         summary = (report_dir / "summary.txt").read_text(encoding="utf8")
+        self.assertIn("本机中转：直连与当前代理规则均正常。", summary)
         self.assertIn("1,100 kB 样本被网关限制", summary)
+        first_upload = result.stdout.index("[3/5]")
+        self.assertEqual(result.stdout[:first_upload].count("HTTP 200 · 本机入口正常"), 2,
+                         "Both local checks must report success before upload probing")
         full_error = (report_dir / "upload_1100000-response.txt").read_text(encoding="utf8")
         self.assertIn("该网站上传文件受限", full_error)
         self.assertIn("netentsec_page_push", full_error)

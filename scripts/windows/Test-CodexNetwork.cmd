@@ -141,14 +141,40 @@ function Quote-NativeArgument([string]$Value) {
     return '"' + $value + '"'
 }
 
-function Read-LimitedText([string]$Path) {
+function Read-LimitedText([string]$Path, [switch]$NativeOutput) {
     if (-not (Test-Path -LiteralPath $Path)) { return '' }
     $file = [IO.File]::OpenRead($Path)
     try {
         $buffer = New-Object byte[] ($script:ResponseLimit + 1)
         $length = $file.Read($buffer, 0, $buffer.Length)
-        return Protect-Text ([Text.Encoding]::UTF8.GetString($buffer, 0, [Math]::Min($length, $script:ResponseLimit)))
+        $length = [Math]::Min($length, $script:ResponseLimit)
+        if ($NativeOutput) {
+            # Windows curl's localized Schannel errors can use the ANSI code
+            # page even when this PowerShell process writes UTF-8 reports.
+            try {
+                $strictUtf8 = New-Object Text.UTF8Encoding($false, $true)
+                $text = $strictUtf8.GetString($buffer, 0, $length)
+            } catch [Text.DecoderFallbackException] {
+                $text = [Text.Encoding]::Default.GetString($buffer, 0, $length)
+            }
+        } else { $text = [Text.Encoding]::UTF8.GetString($buffer, 0, $length) }
+        return Protect-Text $text
     } finally { $file.Dispose() }
+}
+
+function Get-CurlTlsArguments([string]$Version, [uri]$Uri) {
+    $number = [regex]::Match($Version, '(?i)\bcurl\s+(\d+\.\d+\.\d+)')
+    if ($Uri.Scheme -eq 'https' -and $Version -match '(?i)\bSchannel\b' -and
+        $number.Success -and [version]$number.Groups[1].Value -ge [version]'7.70.0') {
+        # Only tolerate unavailable revocation lists. CA/hostname/expiry
+        # checks and rejection of certificates known to be revoked remain.
+        return '--ssl-revoke-best-effort'
+    }
+}
+
+function Write-ProbeResult([hashtable]$Result) {
+    $label = $(if ($Result.status) { 'HTTP ' + $Result.status } else { '无 HTTP 响应' })
+    Write-Host ('  ' + $label + ' · ' + $Result.message)
 }
 
 function Invoke-Probe([string]$Key, [uri]$Uri, [hashtable]$Route, [int]$Bytes, [int]$Seconds) {
@@ -159,6 +185,9 @@ function Invoke-Probe([string]$Key, [uri]$Uri, [hashtable]$Route, [int]$Bytes, [
     $process = $null; $files = @()
     try {
         $curl = (Get-Command curl.exe -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
+        $version = [string](& $curl --disable --version | Select-Object -First 1)
+        $tlsArguments = @(Get-CurlTlsArguments $version $Uri)
+        $result['tls_revocation'] = $(if ($tlsArguments.Count) { 'best_effort' } else { 'default' })
         $prefix = Join-Path ([IO.Path]::GetTempPath()) ('codex-network-test-' + [guid]::NewGuid().ToString('N'))
         $headerPath = $prefix + '.headers'; $bodyPath = $prefix + '.response'; $tracePath = $prefix + '.trace'; $requestPath = $prefix + '.request'
         $files = @($headerPath, $bodyPath, $tracePath, $requestPath)
@@ -171,6 +200,7 @@ function Invoke-Probe([string]$Key, [uri]$Uri, [hashtable]$Route, [int]$Bytes, [
             '--user-agent', 'CodexRequestOptimizer/StandaloneNetworkTest', '--header', 'Accept: application/json',
             '--header', 'Accept-Encoding: identity', '--header', 'Connection: close', '--header', 'Expect:',
             '--dump-header', $headerPath, '--output', $bodyPath, '--stderr', $tracePath, '--write-out', $format)
+        $arguments += $tlsArguments
         if ($Bytes -gt 0) {
             # Malformed JSON cannot start inference, even if an upstream
             # injects authentication or supplies a default model.
@@ -214,7 +244,7 @@ function Invoke-Probe([string]$Key, [uri]$Uri, [hashtable]$Route, [int]$Bytes, [
         }
         $result.body = Read-LimitedText $bodyPath
         $result['response_truncated'] = $process.ExitCode -eq 63 -or ((Test-Path -LiteralPath $bodyPath) -and (Get-Item -LiteralPath $bodyPath).Length -gt $script:ResponseLimit)
-        $result['transport_detail'] = Protect-Text ((Read-LimitedText $tracePath) + $stderr.Result)
+        $result['transport_detail'] = Protect-Text ((Read-LimitedText $tracePath -NativeOutput) + $stderr.Result)
         if ($process.ExitCode -ne 0) {
             $result['exceptions'] = @(@{ type = 'curl'; message = ('curl exit ' + $process.ExitCode) })
         }
@@ -238,7 +268,15 @@ function Get-ProbeVerdict([hashtable]$Result, [bool]$Local) {
     if ($gateway -and $body -match '该网站上传文件受限|申请上传|upload.{0,80}(restrict|block|permission)') { return @{ code = 'upload_blocked'; message = '企业网关限制上传' } }
     if ($Result.status -eq 413) { return @{ code = 'size_blocked'; message = '请求大小被限制（413）' } }
     if ($gateway) { return @{ code = 'gateway_error'; message = '企业网关报错' } }
-    if ($Result.exceptions) { return @{ code = 'network_error'; message = '连接或读取失败' } }
+    if ($Result.exceptions) {
+        if ($Result.transport_detail -match 'CRYPT_E_(NO_REVOCATION_CHECK|REVOCATION_OFFLINE)|0x8009201[23]') {
+            return @{ code = 'tls_revocation_error'; message = 'TLS 证书吊销状态无法查询，HTTPS 握手失败' }
+        }
+        if ($Result.curl_exit -in @(35, 60)) { return @{ code = 'tls_error'; message = 'TLS 握手或证书校验失败' } }
+        if ($Result.curl_exit -in @(5, 6)) { return @{ code = 'dns_error'; message = '代理或目标地址解析失败' } }
+        if ($Result.curl_exit -eq 28) { return @{ code = 'timeout'; message = '连接或响应超时' } }
+        return @{ code = 'network_error'; message = '连接或读取失败' }
+    }
     $json = $null
     try { $json = $body | ConvertFrom-Json -ErrorAction Stop } catch { }
     if ($Local) {
@@ -290,6 +328,7 @@ function Start-NetworkTest {
     $results = @()
     Write-Host '[1/5] 检查本机入口（直连）…'
     $results += Invoke-Probe 'local_direct' $local $direct 0 3
+    Write-ProbeResult $results[-1]
     if (-not $Target -and $results[0].verdict -eq 'local_ok') {
         $settings = Invoke-Probe 'saved_upstream' ([uri]('http://127.0.0.1:' + $RelayPort + '/api/status')) $direct 0 3
         try {
@@ -315,6 +354,7 @@ function Start-NetworkTest {
     if ($context.pac_configured) { Write-Host '检测到 PAC；本测试按中转的环境变量/手动代理规则选路，不执行 PAC。' -ForegroundColor Yellow }
     Write-Host '[2/5] 检查本机入口（当前代理规则）…'
     $results += Invoke-Probe 'local_proxy' $local (Get-Route $local $context) 0 5
+    Write-ProbeResult $results[-1]
     $peer = $(if ($route.endpoint) { [uri]$route.endpoint } else { $destination })
     $report['address_probe'] = Get-AddressProbe $peer.DnsSafeHost $peer.Port
     $sizes = @(64000, 950000, 1100000)
@@ -327,9 +367,9 @@ function Start-NetworkTest {
         } else {
             $probe = Invoke-Probe ('upload_' + $size) $destination $route $size $TimeoutSeconds
             $results += $probe
-            Write-Host ('  HTTP ' + $probe.status + ' · ' + $probe.message)
-            $stopUploads = $probe.verdict -in @('network_error', 'proxy_auth', 'gateway_error')
+            $stopUploads = $probe.verdict -in @('network_error', 'tls_revocation_error', 'tls_error', 'dns_error', 'timeout', 'proxy_auth', 'gateway_error')
         }
+        Write-ProbeResult $results[-1]
         $report.results = $results; Write-Utf8 (Join-Path $OutputDirectory 'report.json') ($report | ConvertTo-Json -Depth 14)
     }
     $lines = @('Codex 代理与上传测试', ('时间：' + $report.started), ('电脑：' + $report.hostname), ('上游：' + $report.target), ('代理来源：' + $route.source), ('本次代理：' + $route.endpoint), '')
@@ -343,7 +383,9 @@ function Start-NetworkTest {
         if ($result.exceptions) { $details += ($result.exceptions | ConvertTo-Json -Depth 8) }
         Write-Utf8 (Join-Path $OutputDirectory ($result.key + '-response.txt')) ($details -join "`r`n")
     }
-    if ($results[0].verdict -eq 'local_ok' -and $results[1].verdict -ne 'local_ok') {
+    if ($results[0].verdict -eq 'local_ok' -and $results[1].verdict -eq 'local_ok') {
+        $lines += ''; $lines += '本机中转：直连与当前代理规则均正常。'
+    } elseif ($results[0].verdict -eq 'local_ok' -and $results[1].verdict -ne 'local_ok') {
         $lines += ''; $lines += '本机直连正常，按当前代理规则访问失败。请核对 127.0.0.1、localhost、[::1] 的代理例外。'
     }
     $uploads = @($results | Where-Object { $_.bytes -gt 0 })
