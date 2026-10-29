@@ -307,6 +307,69 @@ function Get-AddressProbe([string]$Name, [int]$Port) {
     return $result
 }
 
+function Get-UploadConclusion([object[]]$Results, [int[]]$Sizes) {
+    $samples = @(foreach ($size in $Sizes) {
+        $Results | Where-Object { $_.key -eq ('upload_' + $size) } | Select-Object -First 1
+    })
+    $names = ($Sizes | ForEach-Object { ([int]($_ / 1000)).ToString('N0', [Globalization.CultureInfo]::InvariantCulture) + ' kB' }) -join '、'
+    $passed = @($samples | Where-Object { $_.verdict -eq 'api_response' -and $_.written_bytes -eq $_.bytes })
+    if ($passed.Count -eq $Sizes.Count) {
+        return @{ status = 'allowed'; result = '具备'; detail = $names + ' 样本完整上传并收到上游 API 响应' }
+    }
+    $blocked = @($samples | Where-Object { $_.verdict -in @('upload_blocked', 'size_blocked') })
+    if ($blocked.Count) {
+        $sample = $blocked[0]
+        $name = ([int]($sample.bytes / 1000)).ToString('N0', [Globalization.CultureInfo]::InvariantCulture) + ' kB'
+        return @{ status = 'blocked'; result = '不具备'; detail = $name + ' 样本被限制（HTTP ' + $sample.status + '）：' + $sample.message }
+    }
+    $failed = @($samples | Where-Object { $_ -notin $passed })
+    $reason = $(if ($failed.Count) { $failed[0].message } else { '未取得全部样本结果' })
+    return @{ status = 'unknown'; result = '无法判定'; detail = $names + ' 未全部完成有效验证：' + $reason }
+}
+
+function Get-NetworkConclusions([object[]]$Results, [hashtable]$Route, [hashtable]$AddressProbe) {
+    $direct = $Results | Where-Object { $_.key -eq 'local_direct' } | Select-Object -First 1
+    $configured = $Results | Where-Object { $_.key -eq 'local_proxy' } | Select-Object -First 1
+    if ($direct.verdict -eq 'local_ok' -and $configured.verdict -eq 'local_ok') {
+        $local = @{ status = 'ok'; result = '正常'; detail = '直连及当前代理规则下均收到本机健康响应' }
+    } elseif ($direct.verdict -eq 'local_ok') {
+        $local = @{ status = 'failed'; result = '异常'; detail = '直连正常，当前代理规则访问失败；请核对本机地址的代理例外' }
+    } else {
+        $local = @{ status = 'failed'; result = '异常'; detail = '本机直连未通过：' + $direct.message }
+    }
+    $uploads = @($Results | Where-Object { $_.bytes -gt 0 })
+    if ($Route.mode -ne 'proxy') {
+        $proxy = @{ status = 'not_used'; result = '未使用'; detail = '本次按直连路径测试，未验证代理' }
+    } else {
+        $https = @($uploads | Where-Object {
+            $_.route.mode -eq 'proxy' -and $_.flow.http_code -match '^[1-5]\d\d$' -and
+            $_.flow.time_appconnect -match '[1-9]'
+        })
+        $auth = @($uploads | Where-Object { $_.verdict -eq 'proxy_auth' })
+        if ($https.Count) {
+            $proxy = @{ status = 'ok'; result = '正常'; detail = '已连接代理，并通过代理完成 TLS 握手、收到 HTTPS 响应' }
+        } elseif ($auth.Count) {
+            $proxy = @{ status = 'failed'; result = '异常'; detail = '代理要求认证（HTTP 407）' }
+        } elseif ($AddressProbe.tcp -ne 'connected') {
+            $proxy = @{ status = 'failed'; result = '异常'; detail = '代理地址解析或 TCP 连接失败' }
+        } else {
+            $failure = $uploads | Where-Object { $_.verdict -ne 'skipped' } | Select-Object -First 1
+            $proxy = @{ status = 'unknown'; result = '未完成验证'; detail = '代理 DNS/TCP 正常，但 HTTPS 通路未通过：' + $failure.message }
+        }
+    }
+    $small = Get-UploadConclusion $Results @(64000, 950000)
+    $large = Get-UploadConclusion $Results @(1100000)
+    foreach ($entry in @(
+        @{ key = 'local'; label = '本机中转'; value = $local },
+        @{ key = 'proxy'; label = '代理'; value = $proxy },
+        @{ key = 'below_1mb'; label = '1 MB 以下上传权限'; value = $small },
+        @{ key = 'above_1mb'; label = '1 MB 以上上传权限'; value = $large }
+    )) {
+        $entry.value['key'] = $entry.key; $entry.value['label'] = $entry.label
+        $entry.value
+    }
+}
+
 function Start-NetworkTest {
     if ($RelayPort -lt 1 -or $RelayPort -gt 65535 -or $TimeoutSeconds -lt 1 -or $TimeoutSeconds -gt 60) { throw 'Invalid port or timeout' }
     $scriptPath = $env:CODEX_NETWORK_TEST_SCRIPT
@@ -326,7 +389,7 @@ function Start-NetworkTest {
     $local = [uri]('http://127.0.0.1:' + $RelayPort + '/health')
     $direct = Get-Route $local $context -Direct
     $results = @()
-    Write-Host '[1/5] 检查本机入口（直连）…'
+    Write-Host '[1/6] 检查本机入口（直连）…'
     $results += Invoke-Probe 'local_direct' $local $direct 0 3
     Write-ProbeResult $results[-1]
     if (-not $Target -and $results[0].verdict -eq 'local_ok') {
@@ -352,16 +415,20 @@ function Start-NetworkTest {
     Write-Host ('上游：' + $report.target)
     Write-Host ('代理来源：' + $route.source + '；本次路径：' + $(if ($route.endpoint) { $route.endpoint } else { 'direct' }))
     if ($context.pac_configured) { Write-Host '检测到 PAC；本测试按中转的环境变量/手动代理规则选路，不执行 PAC。' -ForegroundColor Yellow }
-    Write-Host '[2/5] 检查本机入口（当前代理规则）…'
+    Write-Host '[2/6] 检查本机入口（当前代理规则）…'
     $results += Invoke-Probe 'local_proxy' $local (Get-Route $local $context) 0 5
     Write-ProbeResult $results[-1]
+    Write-Host ('[3/6] 检查' + $(if ($route.mode -eq 'proxy') { '代理' } else { '上游直连' }) + '连通性（DNS / TCP）…')
     $peer = $(if ($route.endpoint) { [uri]$route.endpoint } else { $destination })
     $report['address_probe'] = Get-AddressProbe $peer.DnsSafeHost $peer.Port
+    if ($report.address_probe.tcp -eq 'connected') {
+        Write-Host '  DNS / TCP 正常；HTTPS 通路将在上传测试中验证。'
+    } else { Write-Host '  DNS / TCP 检测失败，详情已写入报告。' }
     $sizes = @(64000, 950000, 1100000)
     $stopUploads = $false
     for ($index = 0; $index -lt $sizes.Count; $index++) {
         $size = $sizes[$index]
-        Write-Host ('[' + ($index + 3) + '/5] 测试上传 ' + ($size / 1000) + ' kB…')
+        Write-Host ('[' + ($index + 4) + '/6] 测试上传 ' + ($size / 1000) + ' kB…')
         if ($stopUploads) {
             $results += @{ key = 'upload_' + $size; bytes = $size; status = 0; verdict = 'skipped'; message = '上一项连接失败，已跳过'; body = ''; headers = @{} }
         } else {
@@ -383,20 +450,12 @@ function Start-NetworkTest {
         if ($result.exceptions) { $details += ($result.exceptions | ConvertTo-Json -Depth 8) }
         Write-Utf8 (Join-Path $OutputDirectory ($result.key + '-response.txt')) ($details -join "`r`n")
     }
-    if ($results[0].verdict -eq 'local_ok' -and $results[1].verdict -eq 'local_ok') {
-        $lines += ''; $lines += '本机中转：直连与当前代理规则均正常。'
-    } elseif ($results[0].verdict -eq 'local_ok' -and $results[1].verdict -ne 'local_ok') {
-        $lines += ''; $lines += '本机直连正常，按当前代理规则访问失败。请核对 127.0.0.1、localhost、[::1] 的代理例外。'
+    $report['conclusions'] = @(Get-NetworkConclusions $results $route $report.address_probe)
+    $lines += ''; $lines += '本次检测结论（1 MB = 1,000,000 字节）'
+    foreach ($conclusion in $report.conclusions) {
+        $lines += $conclusion.label + '：' + $conclusion.result + '（' + $conclusion.detail + '）'
     }
-    $uploads = @($results | Where-Object { $_.bytes -gt 0 })
-    if (@($uploads | Where-Object { $_.verdict -eq 'api_response' }).Count -eq 3) {
-        $lines += ''; $lines += '三种大小均收到 API 响应，本次未见上传拦截。'
-    } elseif ($uploads[0].verdict -eq 'upload_blocked') {
-        $lines += ''; $lines += '64 kB 小包已被企业网关限制；请核对小于 1 MB 的上传权限。'
-    } elseif ($uploads[1].verdict -eq 'api_response' -and $uploads[2].verdict -eq 'upload_blocked') {
-        $lines += ''; $lines += '950 kB 样本未见拦截，1,100 kB 样本被网关限制；请核对大于 1 MB 的上传权限。'
-    } else { $lines += ''; $lines += '无法完整判断 1 MB 上传权限，请结合各档响应正文排查。' }
-    $lines += '400/401 等 API 拒绝响应只说明本次合成样本的路径结果，不能替代正式上传权限审批。'
+    $lines += '上传权限为本次目标、路径及样本的实测判断；未携带登录凭据导致的 401 属于预期响应，不代表企业审批记录。'
     $lines += '本机探测使用本脚本的网络栈；ChatGPT 实际接入以中转收到请求为准。'
     $report['finished'] = (Get-Date).ToUniversalTime().ToString('o'); $report.results = $results
     Write-Utf8 (Join-Path $OutputDirectory 'report.json') ($report | ConvertTo-Json -Depth 14)

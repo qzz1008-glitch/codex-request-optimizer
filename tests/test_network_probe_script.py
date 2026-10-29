@@ -165,6 +165,53 @@ foreach ($encoding in @([Text.Encoding]::Default, [Text.Encoding]::UTF8)) {
 ''')
         self.assertIn("PASS:", result)
 
+    def test_permission_and_proxy_conclusions_identify_actual_outcomes(self):
+        result = self.run_ps(r'''
+function Assert($Value, $Message) { if (-not $Value) { throw $Message } }
+function Sample([int]$Size) {
+    return @{ key = 'upload_' + $Size; bytes = $Size; written_bytes = $Size; verdict = 'api_response'; status = 401; message = 'API response';
+        route = @{ mode = 'proxy' }; flow = @{ http_connect = '200'; http_code = '401'; time_appconnect = '0.125000' } }
+}
+$rows = @(@{key='local_direct';verdict='local_ok'}, @{key='local_proxy';verdict='local_ok'}, (Sample 64000), (Sample 950000), (Sample 1100000))
+$rows[-1].verdict = 'upload_blocked'; $rows[-1].status = 403; $rows[-1].message = '企业网关限制上传'
+$conclusions = @(Get-NetworkConclusions $rows @{mode='proxy'} @{tcp='connected'})
+Assert ($conclusions.Count -eq 4) 'Always report local, proxy, below-limit and above-limit conclusions'
+Assert ($conclusions[0].status -eq 'ok') 'Both local checks passed'
+Assert ($conclusions[1].status -eq 'ok') 'A proxied HTTPS response verifies the proxy, independently of upload permissions'
+Assert ($conclusions[2].status -eq 'allowed' -and $conclusions[2].result -eq '具备') 'Both small samples passed'
+Assert ($conclusions[3].status -eq 'blocked' -and $conclusions[3].result -eq '不具备') 'Large upload was explicitly blocked'
+$rows[-1].verdict = 'api_response'; $rows[-1].status = 401
+Assert ((Get-UploadConclusion $rows @(1100000)).status -eq 'allowed') 'A completed large sample can pass'
+Assert (@(Get-NetworkConclusions $rows @{mode='direct'} @{tcp='connected'})[1].status -eq 'not_used') 'Direct access does not certify a proxy'
+$rows[2].verdict = 'tls_error'; $rows[2].message = 'TLS 握手失败'; $rows[2].written_bytes = 0; $rows[2].flow = @{http_connect='200';http_code='000';time_appconnect='0.000000'}
+$rows[3].verdict = 'skipped'; $rows[3].flow = @{}; $rows[4].verdict = 'skipped'; $rows[4].flow = @{}
+$conclusions = @(Get-NetworkConclusions $rows @{mode='proxy'} @{tcp='connected'})
+Assert ($conclusions[1].status -eq 'unknown' -and $conclusions[1].detail.Contains('DNS/TCP 正常')) 'TCP success alone does not prove HTTPS access'
+Assert ($conclusions[2].status -eq 'unknown' -and $conclusions[3].status -eq 'unknown') 'TLS failures cannot be reported as denied permissions'
+$conclusions = @(Get-NetworkConclusions $rows @{mode='proxy'} @{})
+Assert ($conclusions[1].status -eq 'failed') 'An unreachable proxy is clearly abnormal'
+$rows[2].verdict = 'proxy_auth'
+Assert (@(Get-NetworkConclusions $rows @{mode='proxy'} @{tcp='connected'})[1].status -eq 'failed') 'Proxy authentication failure is not normal connectivity'
+'PASS: conclusions distinguish proxy transport from upload permissions'
+''')
+        self.assertIn("PASS:", result)
+
+    def test_permission_conclusions_require_complete_relevant_samples(self):
+        result = self.run_ps(r'''
+function Assert($Value, $Message) { if (-not $Value) { throw $Message } }
+$small = @{key='upload_64000';bytes=64000;written_bytes=64000;verdict='api_response';status=401}
+$near = @{key='upload_950000';bytes=950000;written_bytes=950000;verdict='api_response';status=401}
+Assert ((Get-UploadConclusion @($small) @(64000,950000)).status -eq 'unknown') 'Missing the near-limit sample must not certify below-limit access'
+$near.written_bytes = 0
+Assert ((Get-UploadConclusion @($small,$near) @(64000,950000)).status -eq 'unknown') 'Early rejection without a full upload is inconclusive'
+$near.written_bytes = 950000; $near.verdict = 'unknown'; $near.status = 403; $near.message = 'Unknown API rejection'
+Assert ((Get-UploadConclusion @($small,$near) @(64000,950000)).status -eq 'unknown') 'A generic 403 does not prove upload permission denial'
+$near.verdict = 'size_blocked'; $near.status = 413; $near.message = '请求大小被限制'
+Assert ((Get-UploadConclusion @($small,$near) @(64000,950000)).status -eq 'blocked') 'An explicit near-limit size rejection means below-limit access is restricted'
+'PASS: incomplete samples and unrelated errors remain inconclusive'
+''')
+        self.assertIn("PASS:", result)
+
     def test_double_click_launcher_exact_sizes_reports_and_no_inference(self):
         upstream, relay = self.gateway(), self.gateway()
         relay.upstream = f"http://127.0.0.1:{upstream.server_port}"
@@ -195,9 +242,14 @@ foreach ($encoding in @([Text.Encoding]::Default, [Text.Encoding]::UTF8)) {
             self.assertNotIn("authorization", headers)
             self.assertNotIn("cookie", headers)
         summary = (report_dir / "summary.txt").read_text(encoding="utf8")
-        self.assertIn("本机中转：直连与当前代理规则均正常。", summary)
-        self.assertIn("1,100 kB 样本被网关限制", summary)
-        first_upload = result.stdout.index("[3/5]")
+        self.assertIn("本机中转：正常", summary)
+        self.assertIn("代理：未使用", summary)
+        self.assertIn("1 MB 以下上传权限：具备", summary)
+        self.assertIn("1 MB 以上上传权限：不具备", summary)
+        self.assertIn("1,100 kB 样本被限制（HTTP 403）", summary)
+        self.assertEqual([c["status"] for c in report["conclusions"]], ["ok", "not_used", "allowed", "blocked"])
+        self.assertIn("[3/6] 检查上游直连连通性（DNS / TCP）", result.stdout)
+        first_upload = result.stdout.index("[4/6]")
         self.assertEqual(result.stdout[:first_upload].count("HTTP 200 · 本机入口正常"), 2,
                          "Both local checks must report success before upload probing")
         full_error = (report_dir / "upload_1100000-response.txt").read_text(encoding="utf8")
@@ -218,6 +270,7 @@ foreach ($encoding in @([Text.Encoding]::Default, [Text.Encoding]::UTF8)) {
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         report = json.loads((report_dir / "report.json").read_text(encoding="utf8"))
         self.assertEqual([r["verdict"] for r in report["results"][-3:]], ["network_error", "skipped", "skipped"])
+        self.assertEqual([c["status"] for c in report["conclusions"]][-2:], ["unknown", "unknown"])
         self.assertEqual(len(upstream.calls), 1, "No automatic retry of a failed test")
 
 
