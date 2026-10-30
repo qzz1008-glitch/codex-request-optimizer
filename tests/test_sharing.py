@@ -411,18 +411,21 @@ class LANSharingTests(unittest.TestCase):
         link = self.start()
         second = self.extra_relay("another-borrower")
         self.guest.sharing.connect(link)
-        second.sharing.connect(self.owner.sharing.issue(label="second borrower")["link"])
+        second.sharing.connect(link)
         self.consume(content="private-first-borrower")
         self.consume(guest=second, content="private-second-borrower")
         wait_for_idle(self.owner, self.guest, second)
         host = self.owner.sharing.status()["host"]
         self.assertEqual(host["requests"], 2)
         self.assertEqual(host["usage"]["total_tokens"], 78)
+        outgoing = [row for row in self.owner.sharing.status()["credentials"] if row["direction"] == "out"]
+        self.assertEqual(len(outgoing), 1)
+        self.assertEqual(outgoing[0]["totals"]["total_tokens"], 78)
         self.assertEqual(self.owner.store.list(), [])
         self.assertTrue(self.guest.sharing.status()["client"]["active"])
         self.assertTrue(second.sharing.status()["client"]["active"])
 
-    def test_credential_api_live_edits_history_selection_and_one_colleague_binding(self):
+    def test_credential_api_live_edits_history_selection_and_shared_machine_usage(self):
         self.owner.settings["sharing_port"] = free_port()
         with patch("packet_inspector.sharing.automatic_address", return_value="127.0.0.1"), patch.object(
                 self.owner.sharing, "_host_upstream", return_value=self.target):
@@ -431,20 +434,19 @@ class LANSharingTests(unittest.TestCase):
         self.assertEqual(status, 200)
         identifier, link = issued["issued_id"], issued["link"]
         self.guest.sharing.connect(link, label="provider history")
-        second = self.extra_relay("denied-colleague")
-        before = second.link.config.read_bytes()
-        with self.assertRaises(SharingError):
-            second.sharing.connect(link)
-        self.assertEqual(second.link.config.read_bytes(), before)
+        second = self.extra_relay("second-colleague")
+        second.sharing.connect(link)
         self.consume()
-        wait_for_idle(self.owner, self.guest)
+        self.consume(guest=second)
+        wait_for_idle(self.owner, self.guest, second)
         status, edited = self.local_api("/api/sharing", {"action": "credential_edit", "id": identifier,
             "budget": "25", "weekly_reset": False, "expires_at": time.time() + 7 * 86400})
         self.assertEqual(status, 200)
         row = next(row for row in edited["credentials"] if row["id"] == identifier)
         self.assertEqual(row["budget_nanos"], 25_000_000_000)
         self.assertFalse(row["weekly_reset"])
-        self.assertEqual(row["totals"]["unpriced_responses"], 1)  # Dummy model has no published rate.
+        self.assertEqual(row["totals"]["unpriced_responses"], 2)  # Dummy model has no published rate.
+        self.assertEqual(row["totals"]["requests"], 2)
         self.guest.sharing.disconnect()
         saved = next(row for row in self.guest.sharing.status()["credentials"] if row["direction"] == "in")
         self.assertEqual(saved["label"], "provider history")

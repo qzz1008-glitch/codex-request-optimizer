@@ -227,25 +227,23 @@ class SharedEgressTests(unittest.TestCase):
         self.assertEqual(len(self.requests), 2)
         self.assertEqual(self.relay.egress.status()['host']['connections'], 2)
 
-    def test_exit_grants_bind_to_one_client_and_support_separate_colleagues(self):
+    def test_exit_grants_support_multiple_clients_and_delegated_use(self):
         link = self.start()
         first = ExitOpener(link, client_id='a' * 64, target_context=self.trust)
         self.openers.append(first)
-        with self.assertRaises(SharingError):
-            ExitOpener(link, client_id='b' * 64, target_context=self.trust)
-        separate = self.relay.egress.issue(label='second colleague')['link']
-        second = ExitOpener(separate, client_id='b' * 64, target_context=self.trust)
+        second = ExitOpener(link, client_id='b' * 64, target_context=self.trust)
         self.openers.append(second)
+        self.assertEqual(first.snapshot['id'], second.snapshot['id'])
         for opener in (first, second):
             with opener.open(self.request(), timeout=HTTP_TIMEOUT) as response:
                 self.assertIn(b'response.completed', response.read())
-        # The quota holder delegates using the borrower's ID, not its own ID.
         self.relay.egress.opener_factory = lambda value, **kwargs: ExitOpener(value, target_context=self.trust, **kwargs)
-        delegated = self.relay.egress.outgoing(link, client_id='a' * 64)
+        delegated = self.relay.egress.outgoing(link, client_id='c' * 64)
         self.openers.append(delegated)
         with delegated.open(self.request(), timeout=HTTP_TIMEOUT) as response:
             self.assertEqual(response.status, 200)
             response.read()
+        self.assertEqual(len(self.requests), 3)
 
     def test_tunnel_does_not_add_a_one_megabyte_upload_limit(self):
         body = b'synthetic-local-upload' * 55000

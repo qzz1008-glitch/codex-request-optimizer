@@ -6,7 +6,6 @@ import hashlib
 import json
 import os
 from pathlib import Path
-import re
 import secrets
 import sqlite3
 import time
@@ -43,7 +42,7 @@ def expiration(value):
     if value is None or value == "":
         return None
     if type(value) not in {int, float} or not time.time() < value <= 253402214400:
-        raise SharingError("请选择未来的到期时间，或选择永久。")
+        raise SharingError("请选择未来的到期时间，或选择无期限。")
     return float(value)
 
 
@@ -65,6 +64,14 @@ class CredentialVault:
                 CREATE TABLE IF NOT EXISTS credentials (id TEXT PRIMARY KEY, kind TEXT NOT NULL,
                 direction TEXT NOT NULL, digest TEXT, secret BLOB NOT NULL, data TEXT NOT NULL);
                 CREATE UNIQUE INDEX IF NOT EXISTS grants ON credentials(digest) WHERE digest IS NOT NULL;""")
+            for row in db.execute("SELECT id,data FROM credentials"):
+                data = json.loads(row["data"])
+                records = [data] + ([data["snapshot"]] if isinstance(data.get("snapshot"), dict) else [])
+                if any(key in record for record in records for key in ("bound", "client_hash")):
+                    for record in records:
+                        for key in ("bound", "client_hash"):
+                            record.pop(key, None)
+                    self._save(db, row["id"], data)
         if os.name != "nt":
             self.path.chmod(0o600)
         self.client_id = self.secret("client-id", lambda: secrets.token_hex(32).encode()).decode()
@@ -110,7 +117,7 @@ class CredentialVault:
         expiry = expiration(expires_at)
         identifier, token = secrets.token_hex(12), secrets.token_urlsafe(32)
         data = {"id": identifier, "kind": kind, "direction": "out", "label": str(label or "同事")[:80],
-                "created_at": time.time(), "expires_at": expiry, "enabled": True, "bound": False, "internal": internal,
+                "created_at": time.time(), "expires_at": expiry, "enabled": True, "internal": internal,
                 "budget_nanos": limit if kind == "quota" else 0, "weekly_reset": weekly_reset if kind == "quota" else False,
                 "period_id": secrets.token_hex(8), "period_started_at": time.time(), "period_cost_nanos": 0,
                 "totals": {key: 0 for key in COUNTERS}, "daily": {}}
@@ -142,11 +149,12 @@ class CredentialVault:
                 raise SharingError("凭据不存在。")
             return protect(row["secret"], True).decode()
 
-    def authenticate(self, kind, value, client, *, spend=False):
-        if not isinstance(client, str) or not re.fullmatch(r"[a-f0-9]{64}", client) or not value.startswith("Bearer "):
-            raise SharingError("凭据或客户端标识无效，请双方更新软件。")
+    def authenticate(self, kind, value, client="", *, spend=False):
+        # Client headers remain compatible with existing peers; grants are shared
+        # bearer credentials and are neither bound to nor counted by client ID.
+        if not isinstance(value, str) or not value.startswith("Bearer "):
+            raise SharingError("凭据无效或已撤销。")
         digest = hashlib.sha256(value[7:].encode()).hexdigest()
-        binding = hashlib.sha256(client.encode()).hexdigest()
         with self.connection() as db:
             row = db.execute("SELECT id,data FROM credentials WHERE kind=? AND direction='out' AND digest=?", (kind, digest)).fetchone()
             if row is None:
@@ -155,11 +163,9 @@ class CredentialVault:
             self._roll(data)
             if not data["enabled"] or (data["expires_at"] is not None and time.time() >= data["expires_at"]):
                 raise SharingError("凭据已停用或到期。")
-            if data.get("client_hash") and not secrets.compare_digest(data["client_hash"], binding):
-                raise SharingError("此凭据已绑定另一位同事，请申请独立凭据。")
             if spend and data["budget_nanos"] and data["period_cost_nanos"] >= data["budget_nanos"]:
                 raise SharingError("此凭据的本期额度已用完。")
-            data.update(bound=True, client_hash=binding, last_seen=time.time())
+            data.update(last_seen=time.time())
             if spend:
                 data["totals"]["requests"] += 1
             self._save(db, row["id"], data)
@@ -195,7 +201,7 @@ class CredentialVault:
 
     @staticmethod
     def public(data):
-        data = {key: value for key, value in data.items() if key not in {"client_hash", "period_id"}}
+        data = {key: value for key, value in data.items() if key not in {"bound", "client_hash", "period_id"}}
         if data.get("direction") == "out":
             start = day_key(week_start())
             data["week_cost_nanos"] = sum(v["cost_nanos"] for k, v in data["daily"].items() if k >= start)

@@ -24,7 +24,7 @@ globalThis.InspectorSharing=(()=>{
         ${kind==="quota"?`<label><span id="quota-budget-label">${label("额度")}</span><span class="sharing-amount-field"><input id="quota-budget" type="number" value="0" min="0" max="1000000" step="0.01" required aria-labelledby="quota-budget-label" aria-describedby="quota-budget-unit" title="${label("0 表示不限。")}"><span id="quota-budget-unit" class="sharing-amount-unit">${label("美元")}</span></span></label><label class="sharing-check"><input id="quota-weekly" type="checkbox">${label("每周刷新额度")}</label>`:""}
       </form>
       <form id="${kind}-borrow" class="sharing-form" hidden><label>${label("名称")}<input id="${kind}-borrow-label" maxlength="80" required autocomplete="off"></label><label>${label("对方的凭据")}<input id="${kind}-borrow-link" type="password" autocomplete="off" spellcheck="false" required placeholder="${kind==="quota"?"codex-share":"codex-exit"}://…"></label></form>
-      <div class="sharing-actions"><div id="${kind}-generate-action" class="sharing-generate-action"><button class="primary" type="submit" form="${kind}-issue" id="${kind}-generate" aria-describedby="${kind}-binding-note">${label("生成凭据")}</button><span id="${kind}-binding-note" class="sharing-binding-note">${label("一张凭据仅供一台机器使用。")}</span></div><button class="primary" type="submit" form="${kind}-borrow" id="${kind}-activate" hidden>${label("保存并借入")}</button><button type="button" class="sharing-service" id="${kind}-service" data-action="service" data-kind="${kind}" hidden>${label("暂停借出")}</button></div>
+      <div class="sharing-actions"><button class="primary" type="submit" form="${kind}-issue" id="${kind}-generate">${label("生成凭据")}</button><button class="primary" type="submit" form="${kind}-borrow" id="${kind}-activate" hidden>${label("保存并借入")}</button><button type="button" class="sharing-service" id="${kind}-service" data-action="service" data-kind="${kind}" hidden>${label("暂停借出")}</button></div>
       ${kind==="quota"?`<button id="quota-local" class="sharing-local" type="button" data-action="local" data-kind="quota">${label("使用本机额度")}</button>`:`<div id="exit-local" class="sharing-exit-source"><button type="button" data-action="provider" data-kind="exit">${label("额度方出口")}</button><button type="button" data-action="local" data-kind="exit">${label("本机出口")}</button></div>`}
       ${kind==="exit"?`<p class="sharing-card-note">${label("借出的出口始终使用本机网络。")}</p>`:""}
     </section>`;
@@ -60,7 +60,7 @@ globalThis.InspectorSharing=(()=>{
   const partial=row=>(data(row).totals?.missing_responses||0)+(data(row).totals?.unpriced_responses||0)>0;
   const money=(value,rows)=>(rows.some(partial)?"≥ ":"")+dollars(value);
   function isActive(row){return row.direction==="in"&&row.id===(row.kind==="quota"?current.client?.active_id:current.egress?.selection?.active_id);}
-  function status(row){const d=data(row);return isActive(row)?row.online===false?"连接不可用":"使用中":d.expired?"已到期":d.enabled===false?"已停用":d.exhausted?"额度已用完":row.direction==="in"?"未使用":d.bound?"已绑定":"待绑定";}
+  function status(row){const d=data(row);return isActive(row)?row.online===false?"连接不可用":"使用中":d.expired?"已到期":d.enabled===false?"已停用":d.exhausted?"额度已用完":row.direction==="in"?"未使用":"已启用";}
   function draw(rows){
     const today=new Date();today.setHours(0,0,0,0);
     const keys=Array.from({length:14},(_,i)=>{const d=new Date(today);d.setDate(d.getDate()-13+i);return localDate(d.getTime()).slice(0,10);});
@@ -91,7 +91,6 @@ globalThis.InspectorSharing=(()=>{
     const hosting=value.host?.running===true,borrowing=value.client?.active===true,exitHosting=value.egress?.host?.active===true;
     for(const kind of ["quota","exit"]){const out=views[kind]==="out";get(kind+"-issue").hidden=!out;get(kind+"-borrow").hidden=out;
       get(kind+"-generate").hidden=!out;get(kind+"-activate").hidden=out;
-      get(kind+"-generate-action").hidden=!out;
       for(const button of get("sharing-config").querySelectorAll(`[data-view][data-kind="${kind}"]`))button.setAttribute("aria-pressed",String(button.dataset.view===views[kind]));
       get(kind+"-generate").disabled=busy||(kind==="quota"&&borrowing);get(kind+"-activate").disabled=busy||(kind==="quota"&&hosting);
       const running=kind==="quota"?hosting:exitHosting;get(kind+"-service").hidden=!running&&!(value.credentials||[]).some(row=>row.kind===kind&&row.direction==="out");get(kind+"-service").textContent=tr(running?"暂停借出":"恢复借出");get(kind+"-service").disabled=busy||(kind==="quota"&&borrowing);
@@ -115,7 +114,7 @@ globalThis.InspectorSharing=(()=>{
     if(command==="local"||command==="provider")action(button,kind==="quota"?{action:"client_disconnect"}:{action:"egress_select",mode:command==="provider"?"provider":"local"});
   });
   for(const kind of ["quota","exit"]){
-    get(kind+"-issue").addEventListener("submit",async event=>{event.preventDefault();resource=kind;try{await action(get(kind+"-generate"),{action:"credential_issue",kind,label:get(kind+"-label").value.trim(),expires_at:expiry(kind+"-expiry"),...(kind==="quota"?{budget:get("quota-budget").value,weekly_reset:get("quota-weekly").checked}:{})},"凭据已生成，仅交给一位同事使用。");}catch(error){message(error.message,true);}});
+    get(kind+"-issue").addEventListener("submit",async event=>{event.preventDefault();resource=kind;try{await action(get(kind+"-generate"),{action:"credential_issue",kind,label:get(kind+"-label").value.trim(),expires_at:expiry(kind+"-expiry"),...(kind==="quota"?{budget:get("quota-budget").value,weekly_reset:get("quota-weekly").checked}:{})},"凭据已生成。");}catch(error){message(error.message,true);}});
     get(kind+"-borrow").addEventListener("submit",async event=>{event.preventDefault();resource=kind;const result=await action(get(kind+"-activate"),{action:"credential_use",kind,label:get(kind+"-borrow-label").value.trim(),link:get(kind+"-borrow-link").value.trim()});if(result)get(kind+"-borrow-link").value="";});
   }
   get("sharing-view").addEventListener("click",event=>{const button=event.target.closest("[data-expiry-target]");if(!button||busy)return;const {expiryTarget:id,expiryMode:mode,expiryAction:command}=button.dataset;
