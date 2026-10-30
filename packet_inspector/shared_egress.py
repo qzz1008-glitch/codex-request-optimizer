@@ -183,6 +183,8 @@ class SharedEgress:
         from .sharing_credentials import expiration
         issued_at = time.time() if issued_at is None else issued_at
         expiration(expires_at, since=issued_at)
+        if not internal:
+            label = self.vault.prepare_label("exit", label)
         self.ensure_service(address, port)
         with self.guard:
             identifier, _ = self.vault.issue("exit", "本机出口回接" if internal else label, expires_at, internal=internal, issued_at=issued_at)

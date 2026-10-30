@@ -39,9 +39,85 @@ class CredentialVaultTests(unittest.TestCase):
         self.root = Path(self.folder.name)
         self.vault = CredentialVault(self.root)
 
-    def grant(self, **kwargs):
-        identifier, token = self.vault.issue("quota", "colleague", **kwargs)
+    def grant(self, label="colleague", **kwargs):
+        identifier, token = self.vault.issue("quota", label, **kwargs)
         return identifier, "Bearer " + token
+
+    def test_names_are_unique_per_kind_across_directions_and_inactive_grants(self):
+        identifier, _ = self.vault.issue("quota", "  Colleague  ")
+        self.assertEqual(self.vault.rows()[0]["label"], "Colleague")
+        self.vault.update(identifier, {"enabled": False})
+        for name in ("Colleague", " colleague ", "COLLEAGUE"):
+            with self.subTest(name=name), self.assertRaisesRegex(SharingError, "同类型凭据名称已存在"):
+                self.vault.issue("quota", name)
+        with self.assertRaises(SharingError):
+            self.vault.import_link("quota", "codex-share://127.0.0.1:1/#different", "colleague")
+        self.vault.issue("exit", "Colleague")
+        first, _ = self.vault.issue("quota", "x" * 80 + "a")
+        with self.assertRaises(SharingError):
+            self.vault.issue("quota", "x" * 80 + "b")
+        self.assertNotEqual(first, identifier)
+
+    def test_import_and_rename_reject_collisions_without_changing_saved_data(self):
+        outgoing, _ = self.vault.issue("quota", "Owner", budget=2)
+        link = "codex-share://127.0.0.1:1/#grant.fingerprint"
+        incoming = self.vault.import_link("quota", link, "Borrowed", {"totals": {"cost_nanos": 3}})
+        before = self.vault.rows()
+        with self.assertRaises(SharingError):
+            self.vault.update(outgoing, {"label": " borrowed ", "budget": 5}, dry_run=True)
+        with self.assertRaises(SharingError):
+            self.vault.update(outgoing, {"label": " borrowed ", "budget": 5})
+        with self.assertRaises(SharingError):
+            self.vault.import_link("quota", link, "owner", {"totals": {"cost_nanos": 99}})
+        with self.assertRaises(SharingError):
+            self.vault.import_link("quota", link + "-other", "borrowed")
+        self.assertEqual(self.vault.rows(), before)
+        self.assertEqual(self.vault.get_secret(incoming), link)
+        self.vault.update(outgoing, {"label": " owner "})  # Exclude the edited credential itself.
+        moved = link.replace("127.0.0.1:1", "127.0.0.2:2")
+        self.assertEqual(self.vault.import_link("quota", moved, "borrowed"), incoming)
+        self.assertEqual(self.vault.get_secret(incoming), moved)
+        self.assertEqual(len(self.vault.rows()), 2)
+        with self.vault.connection() as db:
+            legacy = json.loads(db.execute("SELECT data FROM credentials WHERE id=?", (incoming,)).fetchone()[0])
+            legacy["label"] = "  owner  "
+            self.vault._save(db, incoming, legacy)
+        self.assertEqual(CredentialVault(self.root).import_link("quota", moved), incoming)
+        self.assertEqual(next(row for row in self.vault.rows() if row["id"] == incoming)["label"], "  owner  ")
+        with self.assertRaisesRegex(SharingError, "请输入凭据名称"):
+            self.vault.update(outgoing, {"label": "  "})
+
+    def test_duplicate_name_check_is_atomic_and_survives_restart(self):
+        def issue(_):
+            try:
+                return self.vault.issue("exit", "same name")[0]
+            except SharingError:
+                return None
+        with concurrent.futures.ThreadPoolExecutor(2) as pool:
+            results = list(pool.map(issue, range(2)))
+        self.assertEqual(sum(result is not None for result in results), 1)
+        upgraded = CredentialVault(self.root)
+        with self.assertRaises(SharingError):
+            upgraded.issue("exit", " SAME NAME ")
+        self.assertEqual(len(upgraded.rows()), 1)
+
+    def test_defaults_internal_callbacks_and_unchanged_legacy_names_keep_working(self):
+        first, _ = self.vault.issue("exit")
+        second, _ = self.vault.issue("exit")
+        self.assertEqual({row["label"] for row in self.vault.rows()}, {"同事", "同事 2"})
+        for _ in range(2):
+            self.vault.issue("exit", "本机出口回接", internal=True)
+        self.vault.issue("exit", "本机出口回接")
+        with self.vault.connection() as db:
+            data = json.loads(db.execute("SELECT data FROM credentials WHERE id=?", (second,)).fetchone()[0])
+            data["label"] = "同事"
+            self.vault._save(db, second, data)
+        upgraded = CredentialVault(self.root)
+        upgraded.update(first, {"label": "同事", "enabled": False})
+        upgraded.update(second, {"enabled": False})
+        with self.assertRaises(SharingError):
+            upgraded.issue("exit", "同事")
+        upgraded.update(second, {"label": "another name"})
 
     def test_multiple_clients_share_one_budget_and_atomic_usage_totals(self):
         identifier, token = self.grant(budget="1")
@@ -206,7 +282,7 @@ class CredentialVaultTests(unittest.TestCase):
 
     def test_multiple_distinct_grants_and_exit_stats(self):
         first, token1 = self.grant()
-        second, token2 = self.grant()
+        second, token2 = self.grant("another colleague")
         a = self.vault.authenticate("quota", token1, "a" * 64)
         b = self.vault.authenticate("quota", token2, "b" * 64)
         self.vault.record(a, dict(model="gpt-6.1-sol", input_tokens=10))

@@ -117,6 +117,31 @@ class CredentialVault:
             return True
         return False
 
+    @staticmethod
+    def _unique_label(db, kind, label, *, identifier=None, default="同事"):
+        used = set()
+        for row in db.execute("SELECT id,data FROM credentials WHERE kind=?", (kind,)):
+            data = json.loads(row["data"])
+            if row["id"] != identifier and not data.get("internal"):
+                used.add(str(data.get("label", "")).strip().casefold())
+        value = str(label or "").strip()[:80].strip()
+        if value:
+            if value.casefold() in used:
+                raise SharingError("同类型凭据名称已存在，请使用其他名称。")
+            return value
+        if default is None:
+            raise SharingError("请输入凭据名称。")
+        value, suffix = default, 1
+        while value.casefold() in used:
+            suffix += 1
+            value = f"{default} {suffix}"
+        return value
+
+    def prepare_label(self, kind, label):
+        # Preflight before starting services; issue() checks again atomically.
+        with self.connection() as db:
+            return self._unique_label(db, kind, label)
+
     def issue(self, kind, label="", expires_at=None, budget=MIN_BUDGET_USD, weekly_reset=False, *, internal=False, issued_at=None):
         if kind not in {"quota", "exit"} or type(weekly_reset) is not bool:
             raise SharingError("凭据类型或刷新设置无效。")
@@ -132,6 +157,8 @@ class CredentialVault:
         if kind == "exit" and internal:
             data["exit_client_hash"] = hashlib.sha256(self.client_id.encode()).hexdigest()
         with self.connection() as db:
+            if not internal:
+                data["label"] = self._unique_label(db, kind, label)
             db.execute("INSERT INTO credentials VALUES (?,?,?,?,?,?)", (identifier, kind, "out",
                        hashlib.sha256(token.encode()).hexdigest(), protect(token.encode()), json.dumps(data)))
         return identifier, token
@@ -144,7 +171,12 @@ class CredentialVault:
             row = db.execute("SELECT id,data FROM credentials WHERE direction='in' AND digest=?", (digest,)).fetchone()
             identifier = row["id"] if row else secrets.token_hex(12)
             data = json.loads(row["data"]) if row else {"id": identifier, "kind": kind, "direction": "in", "created_at": time.time()}
-            data.update(label=str(label or data.get("label") or "借入凭据")[:80], last_seen=time.time())
+            name = str(label or "").strip()[:80].strip()
+            if not name and row:
+                name = data.get("label", "")
+            if not row or name != data.get("label"):
+                name = self._unique_label(db, kind, name, identifier=identifier, default="借入凭据")
+            data.update(label=name, last_seen=time.time())
             if snapshot is not None:
                 data["snapshot"] = snapshot
                 data["online"] = True
@@ -258,7 +290,10 @@ class CredentialVault:
             data = json.loads(row[0])
             self._roll(data)
             if "label" in changes:
-                data["label"] = str(changes["label"])[:80]
+                name = str(changes["label"] or "").strip()[:80].strip()
+                if name != data.get("label") and not data.get("internal"):
+                    name = self._unique_label(db, data["kind"], name, identifier=identifier, default=None)
+                data["label"] = name
             if "expires_at" in changes and changes["expires_at"] != data["expires_at"]:
                 data["expires_at"] = expiration(changes["expires_at"])
             if "budget" in changes:
