@@ -438,6 +438,7 @@ class Sharing:
         budget_nanos(budget)
         if type(weekly_reset) is not bool:
             raise SharingError("凭据刷新设置无效。")
+        label = self.vault.prepare_label("quota", label)
         self.ensure_service(address, port)
         with self.guard:
             identifier, _ = self.vault.issue("quota", label, expires_at, budget, weekly_reset, issued_at=issued_at)
