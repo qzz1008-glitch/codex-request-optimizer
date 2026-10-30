@@ -1,5 +1,7 @@
 """Pinned HTTPS CONNECT, with independent end-to-end upstream TLS."""
+import json
 import ssl
+from urllib.error import HTTPError
 from urllib.parse import urlsplit
 from urllib.request import build_opener, HTTPSHandler, ProxyHandler, Request
 
@@ -71,7 +73,6 @@ class ExitOpener:
             probe = build_opener(ProxyHandler({}), HTTPSHandler(context=context), NoRedirect())
             with probe.open(Request(f"https://{host}:{port}/v1/status",
                                     headers={"Authorization": "Bearer " + token, CLIENT_HEADER: client_id}), timeout=8) as response:
-                import json
                 value = json.loads(response.read(256_000))
             if value.get("protocol") != EGRESS_PROTOCOL or value.get("kind") != "network_exit":
                 raise SharingError("共享出口协议不兼容，请双方更新软件。")
@@ -80,6 +81,15 @@ class ExitOpener:
                 proxy_assert_fingerprint=fingerprint, use_forwarding_for_https=False,
                 ssl_context=target_context or ssl.create_default_context(), retries=False,
                 maxsize=8, num_pools=2)
+        except HTTPError as exc:
+            with exc:
+                try:
+                    code = json.loads(exc.read(4096)).get("error") if exc.code == 403 else ""
+                except (ValueError, AttributeError, OSError):
+                    code = ""
+            if code == "exit_credential_machine_mismatch":
+                raise SharingError("此出口凭据已绑定其他机器，请使用独立凭据。") from None
+            raise SharingError("无法连接共享出口，请检查链接、网络和防火墙。") from None
         except SharingError:
             raise
         except Exception:

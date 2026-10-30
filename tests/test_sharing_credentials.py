@@ -9,7 +9,7 @@ import unittest
 from unittest.mock import patch
 
 from packet_inspector.sharing_auth import SharingError
-from packet_inspector.sharing_credentials import CredentialVault, expiration, week_start
+from packet_inspector.sharing_credentials import CredentialVault, ExitMachineMismatch, expiration, week_start
 from packet_inspector.sharing_pricing import budget_nanos, reference_cost
 
 
@@ -65,6 +65,45 @@ class CredentialVaultTests(unittest.TestCase):
         for invalid in (None, "", "Basic token", "Bearer unknown"):
             with self.assertRaises(SharingError):
                 self.vault.authenticate("quota", invalid)
+
+    def test_exit_binding_is_atomic_persistent_and_private(self):
+        identifier, token = self.vault.issue("exit", "one computer")
+        bearer = "Bearer " + token
+        for invalid in ("", "ip:192.168.1.2", "x" * 64):
+            with self.assertRaises(SharingError):
+                self.vault.authenticate("exit", bearer, invalid)
+        def claim(client):
+            try:
+                self.vault.authenticate("exit", bearer, client)
+                return client
+            except ExitMachineMismatch:
+                return None
+        with concurrent.futures.ThreadPoolExecutor(2) as pool:
+            accepted = list(pool.map(claim, ["a" * 64, "b" * 64]))
+        self.assertEqual(sum(client is not None for client in accepted), 1)
+        winner = next(client for client in accepted if client)
+        loser = "b" * 64 if winner == "a" * 64 else "a" * 64
+        upgraded = CredentialVault(self.root)
+        reservation = upgraded.authenticate("exit", bearer, winner, spend=True)
+        upgraded.record(reservation, sent=100, received=200)
+        upgraded.update(identifier, {"label": "renamed", "enabled": False})
+        with self.assertRaises(SharingError):
+            upgraded.authenticate("exit", bearer, winner)
+        upgraded.update(identifier, {"enabled": True})
+        with self.assertRaises(ExitMachineMismatch):
+            upgraded.authenticate("exit", bearer, loser)
+        self.assertEqual(upgraded.snapshot(reservation)["totals"]["sent_bytes"], 100)
+        self.assertNotIn("exit_client_hash", json.dumps(upgraded.rows()))
+        self.assertNotIn("exit_client_hash", upgraded.snapshot(reservation))
+        other_id, other_token = upgraded.issue("exit", "another computer")
+        self.assertNotEqual(other_id, identifier)
+        upgraded.authenticate("exit", "Bearer " + other_token, loser)
+
+    def test_internal_exit_callback_is_bound_to_the_borrowing_machine(self):
+        _, token = self.vault.issue("exit", internal=True)
+        with self.assertRaises(ExitMachineMismatch):
+            self.vault.authenticate("exit", "Bearer " + token, "a" * 64)
+        self.vault.authenticate("exit", "Bearer " + token, self.vault.client_id)
 
     def test_legacy_binding_is_removed_without_changing_grants_or_usage(self):
         identifier, token = self.grant(budget="10", expires_at=time.time() + 86401)

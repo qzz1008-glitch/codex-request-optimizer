@@ -213,12 +213,16 @@ class SharedEgressTests(unittest.TestCase):
         self.assertEqual(self.relay.egress.request_exit(peer),'')
         self.assertIsNone(self.relay.egress.listener)
 
-    def test_multiple_clients_use_one_physical_exit_at_the_same_time(self):
+    def test_distinct_credentials_allow_multiple_machines_to_share_one_physical_exit(self):
         self.gated = True
         link = self.start()
-        with self.opener(link).open(self.request(), timeout=HTTP_TIMEOUT) as first:
+        first_opener = ExitOpener(link, client_id='a' * 64, target_context=self.trust)
+        second_link = self.relay.egress.issue(label='second computer')['link']
+        second_opener = ExitOpener(second_link, client_id='b' * 64, target_context=self.trust)
+        self.openers.extend((first_opener, second_opener))
+        with first_opener.open(self.request(), timeout=HTTP_TIMEOUT) as first:
             self.assertIn(b'private-model-answer', first.read1())
-            with self.opener(link).open(self.request(), timeout=HTTP_TIMEOUT) as second:
+            with second_opener.open(self.request(), timeout=HTTP_TIMEOUT) as second:
                 self.assertIn(b'private-model-answer', second.read1())
                 self.assertEqual(self.relay.egress.status()['host']['in_flight'], 2)
                 self.release_stream.set()
@@ -227,23 +231,33 @@ class SharedEgressTests(unittest.TestCase):
         self.assertEqual(len(self.requests), 2)
         self.assertEqual(self.relay.egress.status()['host']['connections'], 2)
 
-    def test_exit_grants_support_multiple_clients_and_delegated_use(self):
+    def test_exit_grants_bind_one_machine_and_allow_its_delegated_use(self):
         link = self.start()
         first = ExitOpener(link, client_id='a' * 64, target_context=self.trust)
         self.openers.append(first)
-        second = ExitOpener(link, client_id='b' * 64, target_context=self.trust)
+        with self.assertRaisesRegex(SharingError, '已绑定其他机器'):
+            ExitOpener(link, client_id='b' * 64, target_context=self.trust)
+        second = ExitOpener(link, client_id='a' * 64, target_context=self.trust)
         self.openers.append(second)
         self.assertEqual(first.snapshot['id'], second.snapshot['id'])
         for opener in (first, second):
             with opener.open(self.request(), timeout=HTTP_TIMEOUT) as response:
                 self.assertIn(b'response.completed', response.read())
         self.relay.egress.opener_factory = lambda value, **kwargs: ExitOpener(value, target_context=self.trust, **kwargs)
-        delegated = self.relay.egress.outgoing(link, client_id='c' * 64)
+        delegated = self.relay.egress.outgoing(link, client_id='a' * 64)
         self.openers.append(delegated)
         with delegated.open(self.request(), timeout=HTTP_TIMEOUT) as response:
             self.assertEqual(response.status, 200)
             response.read()
-        self.assertEqual(len(self.requests), 3)
+        with self.assertRaisesRegex(SharingError, '已绑定其他机器'):
+            self.relay.egress.outgoing(link, client_id='b' * 64)
+        separate = self.relay.egress.issue(label='second computer')['link']
+        third = ExitOpener(separate, client_id='b' * 64, target_context=self.trust)
+        self.openers.append(third)
+        with third.open(self.request(), timeout=HTTP_TIMEOUT) as response:
+            self.assertEqual(response.status, 200)
+            response.read()
+        self.assertEqual(len(self.requests), 4)
 
     def test_tunnel_does_not_add_a_one_megabyte_upload_limit(self):
         body = b'synthetic-local-upload' * 55000
