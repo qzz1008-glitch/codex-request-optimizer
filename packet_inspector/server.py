@@ -648,11 +648,10 @@ class Handler(BaseHTTPRequestHandler):
             self._json(404, {"error": "image_tool_uses_stdio"})
             return
         if path.startswith(relay_prefix + "/"):
-            for endpoint in (self.server.sharing.client_endpoint, self.server.sharing.host_endpoint):
-                sharing_prefix = urlsplit(endpoint).path
-                if path.startswith(sharing_prefix + "/"):
-                    self._relay(sharing_prefix)
-                    return
+            sharing_prefix = urlsplit(self.server.sharing.client_endpoint).path
+            if path.startswith(sharing_prefix + "/"):
+                self._relay(sharing_prefix)
+                return
             if path.startswith(relay_prefix + "/sharing/"):
                 self._json(404, {"error": "unknown_sharing_route"})
                 return
@@ -691,7 +690,7 @@ class Handler(BaseHTTPRequestHandler):
                     action = data.get("action")
                     if action == "host_start":
                         result = self.server.sharing.start_host(data.get("address"), data.get("port", 47846),
-                            data.get("hours", 8), data.get("request_limit", 0))
+                            data.get("hours", 8), data.get("request_limit", 0), data.get("token_limit", 0))
                     elif action == "host_stop":
                         result = self.server.sharing.stop_host()
                     elif action == "host_rotate":
@@ -1048,9 +1047,8 @@ class Handler(BaseHTTPRequestHandler):
             self._json(400, {"error": "invalid_request_path"})
             return
         shared_client = prefix == urlsplit(self.server.sharing.client_endpoint).path
-        shared_host = prefix == urlsplit(self.server.sharing.host_endpoint).path
         remote = None
-        if shared_client or shared_host:
+        if shared_client:
             if not sharing_request_allowed(self.command, suffix):
                 if self.command == "GET" and suffix == "/responses":
                     self._json(426, {"error": {"code": "websocket_not_supported", "message": "Use HTTP POST."}})
@@ -1058,8 +1056,8 @@ class Handler(BaseHTTPRequestHandler):
                     self._json(404, {"error": "sharing_route_not_found"})
                 return
             try:
-                remote = self.server.sharing.client_route() if shared_client else None
-                sharing_upstream = remote["upstream"] if remote else self.server.sharing.host_route()
+                remote = self.server.sharing.client_route()
+                sharing_upstream = remote["upstream"]
             except SharingError as exc:
                 self._json(503, {"error": {"code": "sharing_unavailable", "message": str(exc)}})
                 return
@@ -1076,7 +1074,7 @@ class Handler(BaseHTTPRequestHandler):
                 if suffix.startswith("//"):
                     self._json(400, {"error": "invalid_request_path"})
                     return
-        if shared_client or shared_host:
+        if shared_client:
             upstream = sharing_upstream
         # GET on the Responses creation endpoint is a WebSocket transport probe.
         # Intermediaries may remove every Upgrade header. Return Codex's HTTP
@@ -1091,11 +1089,11 @@ class Handler(BaseHTTPRequestHandler):
         with self.server.guard:
             # Disconnected clients may briefly retain an old relay URL until
             # ChatGPT restarts. Keep forwarding them without extra zstd work.
-            compression = "zstd" if (self.server.settings["auto_detect_providers"] or shared_client) and not shared_host else "off"
+            compression = "zstd" if self.server.settings["auto_detect_providers"] or shared_client else "off"
             zstd_level = self.server.settings["zstd_level"]
-            protection_enabled = self.server.settings["packet_size_protection_enabled"] and not shared_host
+            protection_enabled = self.server.settings["packet_size_protection_enabled"]
             budget = self.server.settings["budget_bytes"]
-            image_enabled = self.server.settings["image_isolation_enabled"] and not shared_host
+            image_enabled = self.server.settings["image_isolation_enabled"]
             image_isolation = self.server.image_isolation
             image_configured = self.server.image_config.state.get("enabled", False)
             image_worker = self.server.image_config.is_worker(self.headers.get(WORKER_HEADER, ""))
@@ -1113,7 +1111,7 @@ class Handler(BaseHTTPRequestHandler):
             auto_zstd_level, auto_ticket = False, None
         packet_id = None
         capture_meta = {}
-        if self.server.settings["capture_enabled"] and not shared_host:
+        if self.server.settings["capture_enabled"]:
             try:
                 meta, content = inspect_request(body, dict(self.headers.items()), suffix)
                 capture_meta = meta
@@ -1252,7 +1250,7 @@ class Handler(BaseHTTPRequestHandler):
         local_upstream = urlsplit(upstream).hostname in {"localhost", "127.0.0.1", "::1"}
         update(native_retry_mode="native")
         retry_settings = self.server.settings
-        capacity_retry = (not shared_host and retry_settings["capacity_retry_enabled"] and self.command == "POST"
+        capacity_retry = (retry_settings["capacity_retry_enabled"] and self.command == "POST"
                           and urlsplit(suffix).path.rstrip("/").endswith("/responses"))
         def current_retry_policy():
             settings = self.server.settings

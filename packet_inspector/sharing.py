@@ -3,7 +3,6 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 import hashlib
-from http.client import HTTPConnection
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import ipaddress
 import json
@@ -16,6 +15,7 @@ import tempfile
 import threading
 import time
 from urllib.parse import urlsplit
+from urllib.error import HTTPError
 from urllib.request import build_opener, HTTPSHandler, HTTPRedirectHandler, ProxyHandler, Request
 
 from .analyzer import MAX_BODY
@@ -23,8 +23,11 @@ from .http_io import UPSTREAM_READ_TIMEOUT_SECONDS
 from .connection_policy import codex_auth
 from .sharing_auth import NativeAuthorization, SharingError
 from .sharing_config import SharedProvider
+from .sharing_usage import SharedUsageStream, empty_usage
+from .sharing_role import MachineSharingRole
+from .usage_trigger import raw_chunks
 
-PROTOCOL = 1
+PROTOCOL = 2  # Requires the owner's private forwarding path and aggregate-only accounting.
 POST_PATHS = {"/responses", "/responses/compact"}
 PRIVATE_NETWORKS = tuple(ipaddress.ip_network(n) for n in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"))
 DROP_HEADERS = {"authorization", "proxy-authorization", "cookie", "host", "content-length",
@@ -219,16 +222,25 @@ class LANHandler(BaseHTTPRequestHandler):
         reserved = False
         reservation = None
         sent_headers = False
-        connection = None
+        response = None
+        usage = None
         try:
             headers = forwarding_headers(self.headers)
             credentials, reservation = controller.reserve(self.headers.get("Authorization", ""), count=self.command == "POST")
             headers.update(credentials)
             reserved = True
-            target = urlsplit(controller.host_endpoint)
-            connection = HTTPConnection(target.hostname, target.port, timeout=UPSTREAM_READ_TIMEOUT_SECONDS)
-            connection.request(self.command, target.path + suffix, body=body if self.command == "POST" else None, headers=headers)
-            response = connection.getresponse()
+            # B has already prepared the body. A only substitutes authorization
+            # and forwards, outside A's capture, diagnostics and protection paths.
+            headers = {key: value for key, value in headers.items() if key.lower() != "accept-encoding"}
+            headers["Accept-Encoding"] = "identity"
+            request = Request(reservation["upstream"] + suffix,
+                              data=body if self.command == "POST" else None, headers=headers, method=self.command)
+            try:
+                response = controller.server.opener.open(request, timeout=UPSTREAM_READ_TIMEOUT_SECONDS)
+            except HTTPError as exc:
+                response = exc
+            if self.command == "POST":
+                usage = SharedUsageStream(response, lambda values: controller.add_usage(reservation, values))
             self.connection.settimeout(UPSTREAM_READ_TIMEOUT_SECONDS)
             self.send_response(response.status)
             for key, value in response.headers.items():
@@ -237,10 +249,7 @@ class LANHandler(BaseHTTPRequestHandler):
             self.send_header("Connection", "close")
             self.end_headers()
             sent_headers = True
-            while True:
-                chunk = response.read1(65536)
-                if not chunk:
-                    break
+            for chunk in usage.chunks() if usage else raw_chunks(response):
                 self.wfile.write(chunk)
                 self.wfile.flush()
         except SharingError as exc:
@@ -250,10 +259,11 @@ class LANHandler(BaseHTTPRequestHandler):
             if not sent_headers:
                 self.reply(502, {"error": "sharing_relay_unreachable", "message": "提供方中转连接失败。"})
         finally:
-            if connection:
-                connection.close()
+            if response:
+                response.close()
             if reserved:
-                controller.release(reservation)
+                controller.release(reservation, metered=(usage.metered if usage else False)
+                                   if self.command == "POST" else None)
             self.close_connection = True
 
     do_GET = handle_route
@@ -270,6 +280,7 @@ class Sharing:
         self.guard = threading.RLock()
         self.authorization_factory = authorization_factory or (lambda: NativeAuthorization(native_home=server.link.config.parent))
         self.authorization = None
+        self.role = MachineSharingRole()
         self.listener = None
         self.timer = None
         self.host = {}
@@ -277,7 +288,6 @@ class Sharing:
         self.closed = False
         self.addresses = []
         self.address_time = 0
-        self.host_capability = secrets.token_urlsafe(32)
         self.provider = SharedProvider(server.link, server.data_dir / "sharing-provider.json")
         self.recovery_error = ""
         self.recovered = False
@@ -289,10 +299,6 @@ class Sharing:
     @property
     def client_endpoint(self):
         return self.server.endpoint + "/sharing/client"
-
-    @property
-    def host_endpoint(self):
-        return self.server.endpoint + "/sharing/host/" + self.host_capability
 
     def _host_upstream(self, credentials):
         profile = self.server.link.profile()
@@ -313,17 +319,20 @@ class Sharing:
             raise SharingError("当前连接不是 Codex 原生登录出口，暂不支持共享此连接。")
         return expected
 
-    def start_host(self, address, port=47846, hours=8, request_limit=0):
+    def start_host(self, address, port=47846, hours=8, request_limit=0, token_limit=0):
         address = lan_address(address)
-        for value, minimum, maximum in ((port, 1, 65535), (hours, 1, 24), (request_limit, 0, 100000)):
+        for value, minimum, maximum in ((port, 1, 65535), (hours, 1, 24), (request_limit, 0, 100000),
+                                         (token_limit, 0, 1_000_000_000_000)):
             if type(value) is not int or not minimum <= value <= maximum:
-                raise SharingError("共享端口、时长或转发次数不在允许范围。")
+                raise SharingError("共享端口、时长、转发次数或 Token 上限不在允许范围。")
         with self.guard:
             if self.remote or self.listener:
                 raise SharingError("请先断开或停止当前共享连接。")
-            authorization = self.authorization_factory()
+            self.role.acquire()
+            authorization = None
             listener = None
             try:
+                authorization = self.authorization_factory()
                 credentials = authorization.credentials()
                 upstream = self._host_upstream(credentials)
                 context, fingerprint = tls_context(address)
@@ -331,7 +340,8 @@ class Sharing:
                 grant = secrets.token_urlsafe(32)
                 self.host = {"active": True, "address": address, "port": listener.server_address[1],
                              "expires_at": time.time() + hours * 3600, "requests": 0, "in_flight": 0,
-                             "request_limit": request_limit, "error": "", "upstream": upstream,
+                             "request_limit": request_limit, "token_limit": token_limit, "usage": empty_usage(),
+                             "started_at": time.time(), "error": "", "upstream": upstream,
                              "grant_hash": hashlib.sha256(grant.encode()).digest(),
                              "identity_hash": hashlib.sha256(credentials["identity"].encode()).digest(),
                              "fingerprint": fingerprint}
@@ -345,9 +355,13 @@ class Sharing:
                 return {"link": f"codex-share://{address}:{listener.server_address[1]}/#{grant}.{fingerprint}",
                         **self.status()}
             except Exception as exc:
-                if listener:
-                    listener.server_close()
-                authorization.close()
+                try:
+                    if listener:
+                        listener.server_close()
+                    if authorization:
+                        authorization.close()
+                finally:
+                    self.role.close()
                 if isinstance(exc, SharingError):
                     raise
                 raise SharingError("无法开启共享，请检查本机地址、端口及 Codex 登录状态。") from None
@@ -375,6 +389,8 @@ class Sharing:
             limit = self.host["request_limit"]
             if count and limit and self.host["requests"] >= limit:
                 raise SharingError("本次共享的转发次数已用完。")
+            if count and self.host["token_limit"] and self.host["usage"]["total_tokens"] >= self.host["token_limit"]:
+                raise SharingError("本次共享的 Token 上限已达到。")
             credentials = self.authorization.credentials()
             if not self.authorized(value):
                 raise SharingError("共享已停止、到期或链接已撤销。")
@@ -385,9 +401,19 @@ class Sharing:
             self.host["in_flight"] += 1
             return credentials["headers"], self.host
 
-    def release(self, reservation):
+    def add_usage(self, reservation, values):
+        with self.guard:
+            usage = reservation["usage"]
+            for key in ("input_tokens", "output_tokens", "total_tokens", "cached_input_tokens"):
+                usage[key] += values.get(key, 0)
+            usage["responses"] += 1
+            usage["cached_responses"] += int("cached_input_tokens" in values)
+
+    def release(self, reservation, *, metered=None):
         with self.guard:
             reservation["in_flight"] = max(0, reservation.get("in_flight", 0) - 1)
+            if metered is False:
+                reservation["usage"]["missing_responses"] += 1
 
     def stop_host(self, *, expected=None):
         with self.guard:
@@ -399,6 +425,8 @@ class Sharing:
             self.host["active"] = False
             self.host.pop("grant_hash", None)
             self.host.pop("identity_hash", None)
+            if listener:
+                self.role.close()
         if timer:
             timer.cancel()
         if listener:
@@ -413,6 +441,7 @@ class Sharing:
             if self.listener or self.remote:
                 raise SharingError("请先断开或停止当前共享连接。")
             host, port, token, fingerprint = parse_link(link)
+            self.role.acquire()
             try:
                 opener = pinned_opener(host, port, fingerprint)
                 upstream = f"https://{host}:{port}/v1"
@@ -432,13 +461,19 @@ class Sharing:
                 raise
             except (OSError, ValueError):
                 raise SharingError("无法连接共享，请检查链接是否有效、双方网络及提供方防火墙。") from None
+            finally:
+                if self.remote is None:
+                    self.role.close()
 
     def disconnect(self):
         with self.guard:
+            borrowing = self.remote is not None
             had_remote = self.remote is not None or self.provider.path.exists()
             self.provider.restore()
             self.remote = None
             self.recovered = False
+            if borrowing:
+                self.role.close()
             if had_remote:
                 self.server.connection_reload_required = True
             return {**self.status(), "reload_required": had_remote}
@@ -449,24 +484,20 @@ class Sharing:
                 raise SharingError("共享连接已断开，请重新连接。")
             return {**self.remote}
 
-    def host_route(self):
-        with self.guard:
-            if not self.listener:
-                raise SharingError("共享已停止。")
-            return self.host["upstream"]
-
     def status(self):
         with self.guard:
             if not self.closed and (not self.address_time or time.monotonic() - self.address_time > 30):
                 self.addresses, self.address_time = local_addresses(), time.monotonic()
-            keys = ("active", "address", "port", "expires_at", "requests", "in_flight", "request_limit", "error")
+            keys = ("active", "address", "port", "started_at", "expires_at", "requests", "in_flight",
+                    "request_limit", "token_limit", "error")
             host = {key: self.host[key] for key in keys if key in self.host}
+            host["usage"] = dict(self.host.get("usage", empty_usage()))
             host["active"] = bool(self.listener and self.host.get("active") and time.time() < self.host.get("expires_at", 0))
             host["running"] = bool(self.listener)
             client = {"active": bool(self.remote)}
             if self.remote:
                 client.update(address=self.remote["host"], port=self.remote["port"])
-            return {"supported": True, "host": host, "client": client, "addresses": self.addresses,
+            return {"supported": True, "protocol": PROTOCOL, "host": host, "client": client, "addresses": self.addresses,
                     "recovery_error": self.recovery_error, "recovered": self.recovered}
 
     def close(self):
@@ -474,4 +505,7 @@ class Sharing:
         try:
             self.stop_host()
         finally:
-            self.disconnect()
+            try:
+                self.disconnect()
+            finally:
+                self.role.close()

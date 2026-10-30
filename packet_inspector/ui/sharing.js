@@ -11,6 +11,8 @@ globalThis.InspectorSharing=(()=>{
     const result=await response.json();if(!response.ok)throw new Error(translate(result.error||"共享操作失败。"));return result;
   }
   function render(value){
+    if(!(value.protocol>=2)){current=null;get("sharing-cards").hidden=true;message("当前后台不支持共享用量与隐私隔离，请更新软件。",true);return;}
+    get("sharing-cards").hidden=false;
     current=value;const host=value.host||{},client=value.client||{},hosting=host.running===true||host.active===true,using=client.active===true;
     const address=get("sharing-address"),selected=address.value;
     const addresses=value.addresses||[];
@@ -21,7 +23,8 @@ globalThis.InspectorSharing=(()=>{
     if(hosting){address.value=host.address;get("sharing-port").value=host.port;}
     text("sharing-host-state",host.active?"共享中":hosting?"已暂停":"未开启");get("sharing-host-state").classList.toggle("active",host.active===true);
     text("sharing-client-state",using?"使用中":"未连接");get("sharing-client-state").classList.toggle("active",using);
-    for(const id of ["sharing-address","sharing-port","sharing-hours","sharing-limit"])get(id).disabled=busy||hosting||using;
+    for(const id of ["sharing-address","sharing-port","sharing-hours","sharing-limit","sharing-token-limit"])get(id).disabled=busy||hosting||using;
+    if(hosting&&host.token_limit!==undefined)get("sharing-token-limit").value=host.token_limit;
     get("sharing-start").hidden=hosting;get("sharing-start").disabled=busy||using||!addresses.length;
     for(const id of ["sharing-stop","sharing-rotate"]){get(id).hidden=!hosting;get(id).disabled=busy;}
     get("sharing-rotate").disabled=busy||!host.active;
@@ -34,6 +37,18 @@ globalThis.InspectorSharing=(()=>{
     get("sharing-copy").disabled=busy;
     get("sharing-host-detail").textContent=host.error?translate(host.error):hosting?`${host.address}:${host.port} · ${translate("已转发")} ${host.requests||0}${host.request_limit?" / "+host.request_limit:""} · ${translate("进行中")} ${host.in_flight||0} · ${translate("到期")} ${new Date(host.expires_at*1000).toLocaleString()}`:"";
     get("sharing-client-detail").textContent=using?`${translate("提供方")} ${client.address}:${client.port}`:"";
+    const usage=host.usage,format=value=>Number(value||0).toLocaleString();
+    get("sharing-usage").hidden=!usage||!host.started_at;
+    if(usage){
+      const unknown=!usage.responses&&usage.missing_responses>0;
+      text("sharing-total-tokens",unknown?"—":format(usage.total_tokens));
+      text("sharing-input-tokens",unknown?"—":format(usage.input_tokens));
+      text("sharing-output-tokens",unknown?"—":format(usage.output_tokens));
+      text("sharing-cached-tokens",usage.cached_responses?format(usage.cached_input_tokens):"—");
+      text("sharing-token-budget",host.token_limit?`${translate("上限")} ${format(host.token_limit)}`:"");
+      const coverage=`${translate("已有用量")} ${format(usage.responses)} · ${translate("未取得用量")} ${format(usage.missing_responses)}`;
+      text("sharing-usage-coverage",`${coverage} · ${translate(usage.missing_responses?"累计值可能不完整；缓存包含在输入内。":"含重复上下文；缓存包含在输入内。")}`);
+    }
     if(value.recovery_error)message(value.recovery_error,true);
     else if(value.recovered&&!recoveryShown){message("上次共享已结束，已恢复原连接配置。请重新加载 Codex 配置或重启 ChatGPT 应用。");recoveryShown=true;}
   }
@@ -48,7 +63,7 @@ globalThis.InspectorSharing=(()=>{
     catch(error){message(error.message,true);}
     finally{busy=false;button.setAttribute("aria-busy","false");if(current)render(current);else button.disabled=false;}
   }
-  get("sharing-host-form").addEventListener("submit",event=>{event.preventDefault();action(get("sharing-start"),{action:"host_start",address:get("sharing-address").value,port:Number(get("sharing-port").value),hours:Number(get("sharing-hours").value),request_limit:Number(get("sharing-limit").value)},"共享已开启。将链接发给同事即可连接。");});
+  get("sharing-host-form").addEventListener("submit",event=>{event.preventDefault();action(get("sharing-start"),{action:"host_start",address:get("sharing-address").value,port:Number(get("sharing-port").value),hours:Number(get("sharing-hours").value),request_limit:Number(get("sharing-limit").value),token_limit:Number(get("sharing-token-limit").value)},"共享已开启。将链接发给同事即可连接。");});
   get("sharing-stop").onclick=()=>action(get("sharing-stop"),{action:"host_stop"},"共享已停止，旧链接已失效。");
   get("sharing-rotate").onclick=()=>action(get("sharing-rotate"),{action:"host_rotate"},"已更换链接，旧链接已失效。");
   get("sharing-client-form").addEventListener("submit",event=>{event.preventDefault();action(get("sharing-connect"),{action:"client_connect",link:get("sharing-remote-link").value.trim()},"已连接。请重新加载 Codex 配置并新建会话；如未生效，请重启 ChatGPT 应用。");});
