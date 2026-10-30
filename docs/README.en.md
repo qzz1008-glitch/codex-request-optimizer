@@ -75,7 +75,7 @@ Choose **Native / Disabled / Optimized**, with Native as the default.
 
 - **Native**: use the native Codex image tool.
 - **Disabled**: turn off native image analysis and image-analysis tools managed by this app.
-- **Optimized**: replace image content in the main request with local paths. An image-analysis tool in a separate session returns text results, reducing the images' impact on the main session's context.
+- **Optimized**: replace inline images in user messages and tool results in the main request with local paths, preserving tool-call relationships and other content. An image-analysis tool in a separate session returns text results, reducing the images' impact on the main session's context.
 
 Choose a custom image folder if needed. After switching image tools, follow the prompt to reload the Codex client.
 
