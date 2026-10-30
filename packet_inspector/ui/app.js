@@ -40,35 +40,57 @@ let interfaceLanguageRevision = 0;
 let settingsSaveProgress = {total:0,steps:[]};
 const settingsRestartChanges = new Map();
 const directoryOpening = new Set();
-// 120 retained JSON requests: 60 below 1,500,000 B and 60 at or above it.
-// zstd 1.5.7; 61 exact originals and 59 text-sanitized copies, no media
-// substitutes. Three randomized passes per level. Columns: level, small /
-// large size reduction vs uncompressed JSON (%), estimated task overhead (%).
-// Overhead = compression median / historical successful request median
-// (27,047 ms); upload savings are outside this CPU estimate.
+// Offline benchmarks, three randomized passes per level. Columns: level,
+// size reduction below / at least 1,500,000 B (%), single-compression median (ms).
+// Conversation: 120 retained requests, 61 exact originals and 59 sanitized copies.
+// Images: seven generated PNG/JPEG/WebP fixtures; includes base64 JSON overhead.
 const zstdLevelEstimates = [
-  [1,48.3494,46.0992,0.01045],
-  [2,50.6355,48.0554,0.01287],
-  [3,51.8433,49.2755,0.01642],
-  [4,52.0046,49.4677,0.02094],
-  [5,52.5504,50.0394,0.03227],
-  [6,52.8725,50.3377,0.03778],
-  [7,52.9730,50.4553,0.04505],
-  [8,53.1289,50.5485,0.05132],
-  [9,53.1362,50.5589,0.06212],
-  [10,53.1779,50.6168,0.08774],
-  [11,53.1976,50.6434,0.10647],
-  [12,53.1976,50.6434,0.10474],
-  [13,53.2810,50.7022,0.21539],
-  [14,53.2976,50.7270,0.23014],
-  [15,53.3038,50.7386,0.23428],
-  [16,53.7208,51.1575,0.51764],
-  [17,53.6927,50.9378,0.57153],
-  [18,53.3808,50.4464,0.82761],
-  [19,53.4301,50.5424,1.14948],
-  [20,53.4301,50.5424,1.14216],
-  [21,53.4394,50.5626,1.18692],
-  [22,53.4337,50.5681,1.23714]
+  [1,48.3494,46.0992,2.827],
+  [2,50.6355,48.0554,3.482],
+  [3,51.8433,49.2755,4.441],
+  [4,52.0046,49.4677,5.665],
+  [5,52.5504,50.0394,8.728],
+  [6,52.8725,50.3377,10.219],
+  [7,52.973,50.4553,12.185],
+  [8,53.1289,50.5485,13.88],
+  [9,53.1362,50.5589,16.801],
+  [10,53.1779,50.6168,23.731],
+  [11,53.1976,50.6434,28.797],
+  [12,53.1976,50.6434,28.328],
+  [13,53.281,50.7022,58.257],
+  [14,53.2976,50.727,62.246],
+  [15,53.3038,50.7386,63.367],
+  [16,53.7208,51.1575,140.005],
+  [17,53.6927,50.9378,154.583],
+  [18,53.3808,50.4464,223.843],
+  [19,53.4301,50.5424,310.901],
+  [20,53.4301,50.5424,308.92],
+  [21,53.4394,50.5626,321.027],
+  [22,53.4337,50.5681,334.609]
+];
+const imageZstdLevelEstimates = [
+  [1,70.5345,25.0648,0.77],
+  [2,71.169,25.0651,1.118],
+  [3,71.5565,25.0535,1.182],
+  [4,71.6367,25.0535,1.799],
+  [5,71.8535,25.0543,1.783],
+  [6,71.9274,25.0544,1.871],
+  [7,71.9459,25.0543,2.016],
+  [8,71.9191,25.0543,2.284],
+  [9,71.9204,25.0551,2.438],
+  [10,71.9274,25.0551,3.214],
+  [11,71.9365,25.0551,3.162],
+  [12,71.9362,25.0551,3.167],
+  [13,71.9266,25.1097,7.071],
+  [14,71.9378,25.1091,8.894],
+  [15,71.9483,25.1081,12.744],
+  [16,72.0734,25.1071,12.137],
+  [17,72.0685,25.0963,13.561],
+  [18,72.0886,25.068,23.31],
+  [19,72.1214,25.0689,60.683],
+  [20,72.1214,25.0689,58.33],
+  [21,72.1235,25.0689,84.948],
+  [22,72.1248,25.0689,150.028]
 ];
 let compressionTarget = null, compressionSaving = false, compressionRevision = 0;
 let connectionRestartNotified = false;
@@ -981,27 +1003,32 @@ function fillZstdLevel() {
   $("zstd-level-value").textContent=t("{level}级").replace("{level}",selected);
   fillImageZstdLevel(automatic);
   if($("zstd-level-dialog").open) {
-    if(input.disabled)closeZstdLevelPicker();else renderZstdLevelRows();
+    if(zstdLevelPickerTarget().input.disabled)closeZstdLevelPicker();else renderZstdLevelRows();
   }
   const message="";
   $("zstd-level-message").textContent=message;$("zstd-level-message").hidden=!message;
 }
 function fillImageZstdLevel(automatic) {
-  const s=state.status,input=$("image-zstd-level"),fixed=$("image-zstd-level-fixed");
+  const s=state.status,input=$("image-zstd-level");
   const selected=settingsEditing&&input.value?Number(input.value):(s.image_zstd_level??6);
-  if(input.children.length!==22)input.replaceChildren(...Array.from({length:22},(_,index)=>{
-    const option=el("option");option.value=String(index+1);return option;
-  }));
-  for(const option of input.children)option.textContent=t("{level}级").replace("{level}",option.value);
   input.value=String(selected);
   input.disabled=settingsSaving||!Number.isInteger(s.image_zstd_level)||automatic;
-  input.hidden=automatic;fixed.hidden=!automatic;
-  fixed.value=t("{level}级").replace("{level}",s.auto_image_zstd_level??6);
+  $("image-zstd-level-open").disabled=input.disabled;
+  $("image-zstd-level-value").textContent=t("{level}级").replace("{level}",automatic?(s.auto_image_zstd_level??6):selected);
+}
+function zstdLevelPickerTarget() {
+  const image=$("zstd-level-dialog").dataset.target==="image";
+  return {image,input:$(image?"image-zstd-level":"zstd-level"),trigger:$(image?"image-zstd-level-open":"zstd-level-open"),
+    estimates:image?imageZstdLevelEstimates:zstdLevelEstimates};
 }
 function renderZstdLevelRows() {
-  const selected=Number($("zstd-level").value);
+  const {image,input,estimates}=zstdLevelPickerTarget(),selected=Number(input.value);
+  $("zstd-level-title").textContent=t(image?"选择图片压缩等级":"选择对话压缩等级");
+  $("zstd-level-note").textContent=t(image?
+    "基于7种生成测试图、每级3轮测试估算，大小相对原始未压缩包，耗时为单次压缩中位数。":
+    "基于120条请求、每级3轮测试估算，大小相对原始未压缩包，耗时为单次压缩中位数。");
   const rankedValues=[1,2,3].map(column=>
-    [...new Set(zstdLevelEstimates.map(row=>Number(row[column].toFixed(column===3?3:2))))].sort((a,b)=>a-b));
+    [...new Set(estimates.map(row=>Number(row[column].toFixed(column===3?3:2))))].sort((a,b)=>a-b));
   const estimateCell=(column,value,text)=>{
     const values=rankedValues[column],rank=values.indexOf(Number(value.toFixed(column===2?3:2)));
     // Spread displayed ranks across the palette; equal displayed values share a color.
@@ -1010,30 +1037,32 @@ function renderZstdLevelRows() {
     const cell=el("td",`num zstd-quality zstd-quality-${Math.round(quality*21)}`,text);
     return cell;
   };
-  $("zstd-level-options").replaceChildren(...zstdLevelEstimates.map(([level,smallSize,largeSize,time])=>{
+  $("zstd-level-options").replaceChildren(...estimates.map(([level,smallSize,largeSize,time])=>{
     const current=level===selected,row=el("tr",current?"selected":"");row.dataset.level=String(level);
     const cell=el("td"),button=el("button","zstd-level-option");button.type="button";
     button.setAttribute("aria-pressed",String(current));button.tabIndex=current?0:-1;
     const mark=el("span","zstd-level-check",current?"✓":"");mark.setAttribute("aria-hidden","true");
     button.append(mark,el("span","",t("{level}级").replace("{level}",level)));
-    cell.append(button);row.append(cell,estimateCell(0,smallSize,"-"+smallSize.toFixed(2)+"%"),estimateCell(1,largeSize,"-"+largeSize.toFixed(2)+"%"),estimateCell(2,time,"+"+time.toFixed(3)+"%"));
+    cell.append(button);row.append(cell,estimateCell(0,smallSize,"-"+smallSize.toFixed(2)+"%"),estimateCell(1,largeSize,"-"+largeSize.toFixed(2)+"%"),estimateCell(2,time,time.toFixed(3)+" ms"));
     return row;
   }));
 }
-function openZstdLevelPicker() {
+function openZstdLevelPicker(target="conversation") {
   const dialog=$("zstd-level-dialog");
-  if(!$("settings-dialog").open||$("zstd-level-open").disabled||dialog.open)return;
-  renderZstdLevelRows();dialog.showModal();$("zstd-level-open").setAttribute("aria-expanded","true");
+  if(!$("settings-dialog").open||dialog.open)return;
+  dialog.dataset.target=target==="image"?"image":"conversation";
+  const {trigger}=zstdLevelPickerTarget();if(trigger.disabled)return;
+  renderZstdLevelRows();dialog.showModal();trigger.setAttribute("aria-expanded","true");
   const selected=dialog.querySelector(".zstd-level-option[aria-pressed='true']");
   selected?.focus({preventScroll:true});selected?.scrollIntoView({block:"center"});
 }
 function closeZstdLevelPicker(restoreFocus=true) {
   if($("zstd-level-dialog").open)$("zstd-level-dialog").close();
-  $("zstd-level-open").setAttribute("aria-expanded","false");
-  if(restoreFocus&&$("settings-dialog").open&&!$("zstd-level-open").disabled)$("zstd-level-open").focus({preventScroll:true});
+  const {trigger}=zstdLevelPickerTarget();trigger.setAttribute("aria-expanded","false");
+  if(restoreFocus&&$("settings-dialog").open&&!trigger.disabled)trigger.focus({preventScroll:true});
 }
 function selectZstdLevel(value) {
-  const input=$("zstd-level"),level=Number(value);
+  const {input}=zstdLevelPickerTarget(),level=Number(value);
   fillZstdLevel();
   if(input.disabled||!Number.isInteger(level)||level<1||level>22)return;
   input.value=String(level);input.dispatchEvent(new Event("change",{bubbles:true}));
@@ -2079,13 +2108,14 @@ for(const id of ["capacity-retry-count","capacity-retry-delay"])$(id).addEventLi
 $("settings-dialog").querySelector(".settings-content").addEventListener("input",()=>updateSettingsSaveState());
 $("settings-dialog").querySelector(".settings-content").addEventListener("change",()=>updateSettingsSaveState());
 $("zstd-level").addEventListener("change",fillZstdLevel);
-action("zstd-level-open",openZstdLevelPicker);action("zstd-level-close",()=>closeZstdLevelPicker());
+$("image-zstd-level").addEventListener("change",fillZstdLevel);
+action("zstd-level-open",()=>openZstdLevelPicker("conversation"));action("image-zstd-level-open",()=>openZstdLevelPicker("image"));action("zstd-level-close",()=>closeZstdLevelPicker());
 $("zstd-level-options").addEventListener("click",event=>{
   const row=event.target.closest("tr[data-level]");if(row)selectZstdLevel(row.dataset.level);
 });
 $("zstd-level-dialog").addEventListener("keydown",navigateZstdLevels);
 $("zstd-level-dialog").addEventListener("cancel",event=>{event.preventDefault();closeZstdLevelPicker();});
-$("zstd-level-dialog").addEventListener("close",()=>$("zstd-level-open").setAttribute("aria-expanded","false"));
+$("zstd-level-dialog").addEventListener("close",()=>{for(const id of ["zstd-level-open","image-zstd-level-open"])$(id).setAttribute("aria-expanded","false");});
 $("zstd-level-dialog").addEventListener("click",event=>{
   const dialog=$("zstd-level-dialog"),rect=dialog.getBoundingClientRect();
   if(event.target===dialog&&(event.clientX<rect.left||event.clientX>rect.right||event.clientY<rect.top||event.clientY>rect.bottom))closeZstdLevelPicker();

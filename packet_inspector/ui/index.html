@@ -205,14 +205,15 @@
     <section id="compression-settings" aria-labelledby="compression-settings-title" aria-disabled="false">
       <h3 id="compression-settings-title">传输压缩</h3>
       <div class="zstd-level-control" data-settings-field="zstd_level">
-        <label for="zstd-level-open">压缩等级</label>
+        <label for="zstd-level-open">对话压缩等级</label>
         <input id="zstd-level" type="hidden" value="3" disabled>
         <button id="zstd-level-open" class="zstd-level-trigger" type="button" aria-haspopup="dialog" aria-controls="zstd-level-dialog" aria-describedby="auto-zstd-level-hint" aria-expanded="false" disabled><span id="zstd-level-value">3级</span><svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
       </div>
       <p id="zstd-level-message" class="help" role="status" hidden></p>
       <div class="zstd-level-control" data-settings-field="image_zstd_level">
-        <label id="image-zstd-level-label" for="image-zstd-level">图片压缩等级</label>
-        <div class="image-zstd-level-value"><select id="image-zstd-level" aria-describedby="auto-zstd-level-hint" disabled><option value="6">6级</option></select><input id="image-zstd-level-fixed" type="text" value="6级" aria-labelledby="image-zstd-level-label" disabled hidden></div>
+        <label for="image-zstd-level-open">图片压缩等级</label>
+        <input id="image-zstd-level" type="hidden" value="6" disabled>
+        <button id="image-zstd-level-open" class="zstd-level-trigger" type="button" aria-haspopup="dialog" aria-controls="zstd-level-dialog" aria-describedby="auto-zstd-level-hint" aria-expanded="false" disabled><span id="image-zstd-level-value">6级</span><svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
       </div>
     </section>
     <section id="image-settings" aria-labelledby="image-settings-title"><h3 id="image-settings-title">图片解析</h3>
@@ -268,8 +269,8 @@
   </dialog>
   <dialog id="zstd-level-dialog" aria-labelledby="zstd-level-title" aria-describedby="zstd-level-note">
     <div class="dialog-heading"><h2 id="zstd-level-title">选择压缩等级</h2><button id="zstd-level-close" type="button" aria-label="关闭等级选择">✕</button></div>
-    <p id="zstd-level-note" class="help muted">基于120条请求、每级3轮测试估算，大小相对原始未压缩包，耗时相对历史成功请求耗时中位数。</p>
-    <div class="zstd-level-scroll"><table class="zstd-level-table"><colgroup><col class="zstd-level-col"><col><col><col class="zstd-time-col"></colgroup><thead><tr><th scope="col" rowspan="2">等级</th><th scope="colgroup" colspan="2" class="zstd-size-heading">请求大小变化</th><th scope="col" rowspan="2" class="num">任务耗时变化</th></tr><tr><th scope="col" class="num">原始请求＜1.5 MB</th><th scope="col" class="num">原始请求≥1.5 MB</th></tr></thead><tbody id="zstd-level-options"></tbody></table></div>
+    <p id="zstd-level-note" class="help muted">基于120条请求、每级3轮测试估算，大小相对原始未压缩包，耗时为单次压缩中位数。</p>
+    <div class="zstd-level-scroll"><table class="zstd-level-table"><colgroup><col class="zstd-level-col"><col><col><col class="zstd-time-col"></colgroup><thead><tr><th scope="col" rowspan="2">等级</th><th scope="colgroup" colspan="2" class="zstd-size-heading">请求大小变化</th><th scope="col" rowspan="2" class="num">压缩耗时</th></tr><tr><th scope="col" class="num">原始请求＜1.5 MB</th><th scope="col" class="num">原始请求≥1.5 MB</th></tr></thead><tbody id="zstd-level-options"></tbody></table></div>
   </dialog>
   <dialog id="settings-restart-dialog" aria-labelledby="settings-restart-title" aria-describedby="settings-restart-description">
     <h2 id="settings-restart-title">重启 ChatGPT App 后生效</h2>

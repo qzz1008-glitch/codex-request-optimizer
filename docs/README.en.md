@@ -40,7 +40,7 @@ Reduce request upload size while preserving the original content and meaning.
 - Losslessly compress conversation requests and JSON image generation/edit requests while preserving image content and quality. The request list and filters distinguish these three operations.
 - Set separate compression levels for conversation and image requests. Images default to **level 6**; smart mode always uses the offline-selected **level 6**, while manual mode uses the selected image level. Runtime requests do not probe different levels.
 - With request size protection enabled, reference images are downscaled if transport compression still leaves an image request over the limit. This can reduce detail; disabling protection leaves only lossless transport compression. Original files and transparency are preserved, with at most two passes from the originals and support for explicitly identified edit masks.
-- Choose from **compression levels 1–22**, with compressed-size and local processing-time estimates to help compare them.
+- Both conversation and image level pickers offer **compression levels 1–22**, with separate sampled estimates of size changes and single-compression durations in milliseconds.
 - View separate estimates for original requests below 1.5 MB and those at or above 1.5 MB, with colors showing relative results within each group.
 - Further optimize existing zstd requests, replacing them only when the compressed body is smaller.
 - With request size protection enabled, use **automatic compression by request size**: keep small requests unchanged, select fast or high compression for larger requests, and leave high compression when requests return to the small-body range.
