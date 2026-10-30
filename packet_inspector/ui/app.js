@@ -941,8 +941,6 @@ function fillSettings() {
   $("capacity-retry-count").disabled=settingsSaving||s.capacity_retry_mode!=="native"||!Number.isInteger(s.capacity_retry_max_retries);
   $("capacity-retry-delay").disabled=settingsSaving||s.capacity_retry_mode!=="native"||!Number.isInteger(s.capacity_retry_delay_seconds);
   fillImageAnalysisMode();
-  if(!settingsEditing)$("image-upload-optimization").checked=state.status.image_upload_optimization_enabled===true;
-  $("image-upload-optimization").disabled=settingsSaving||typeof state.status.image_upload_optimization_enabled!=="boolean";
   $("startup-hint").textContent=t(s.start_on_login_supported?(s.startup_state_known===false?"无法读取开机启动状态，请重新保存设置。":"登录 Windows 后自动启动。"):"开机启动仅支持已安装的 Windows 版本。");
   $("runtime-settings-message").hidden=!!s.capacity_retry_supported;
   $("runtime-settings-message").textContent=s.capacity_retry_supported?"":t("当前中转暂不支持此功能。");
@@ -981,11 +979,24 @@ function fillZstdLevel() {
   input.disabled=settingsSaving||!supported||automatic;
   $("zstd-level-open").disabled=input.disabled;
   $("zstd-level-value").textContent=t("{level}级").replace("{level}",selected);
+  fillImageZstdLevel(automatic);
   if($("zstd-level-dialog").open) {
     if(input.disabled)closeZstdLevelPicker();else renderZstdLevelRows();
   }
   const message="";
   $("zstd-level-message").textContent=message;$("zstd-level-message").hidden=!message;
+}
+function fillImageZstdLevel(automatic) {
+  const s=state.status,input=$("image-zstd-level"),fixed=$("image-zstd-level-fixed");
+  const selected=settingsEditing&&input.value?Number(input.value):(s.image_zstd_level??6);
+  if(input.children.length!==22)input.replaceChildren(...Array.from({length:22},(_,index)=>{
+    const option=el("option");option.value=String(index+1);return option;
+  }));
+  for(const option of input.children)option.textContent=t("{level}级").replace("{level}",option.value);
+  input.value=String(selected);
+  input.disabled=settingsSaving||!Number.isInteger(s.image_zstd_level)||automatic;
+  input.hidden=automatic;fixed.hidden=!automatic;
+  fixed.value=t("{level}级").replace("{level}",s.auto_image_zstd_level??6);
 }
 function renderZstdLevelRows() {
   const selected=Number($("zstd-level").value);
@@ -1306,6 +1317,7 @@ function readSettingsDraft() {
   const draft={
     entry_port:$("entry-port").value,
     zstd_level:$("zstd-level").value,
+    image_zstd_level:$("image-zstd-level").value,
     packet_size_protection_enabled:$("packet-size-protection").checked,
     auto_zstd_level_enabled:$("packet-size-protection").checked&&$("auto-zstd-level").checked,
     budget:$("budget").value,
@@ -1314,7 +1326,6 @@ function readSettingsDraft() {
     capacity_retry_max_retries:$("capacity-retry-count").value,
     capacity_retry_delay_seconds:$("capacity-retry-delay").value,
     image_analysis_mode:selectedImageAnalysisMode(),
-    image_upload_optimization_enabled:$("image-upload-optimization").checked,
     image_save_dir:$("image-save-dir").value,
     log_dir:$("log-dir").value,
     cache_dir:$("cache-dir").value,
@@ -1391,9 +1402,9 @@ async function saveSettings() {
   const protectionSupported="packet_size_protection_enabled" in s,storage=storageLimitSettings(s);
   const entries=[
     ["zstd_level","zstd_level",Number(draft.zstd_level),Number.isInteger(s.zstd_level)],
+    ["image_zstd_level","image_zstd_level",Number(draft.image_zstd_level),Number.isInteger(s.image_zstd_level)],
     ["packet_size_protection_enabled","packet_size_protection_enabled",draft.packet_size_protection_enabled,protectionSupported],
     ["auto_zstd_level_enabled","auto_zstd_level_enabled",draft.auto_zstd_level_enabled,typeof s.auto_zstd_level_enabled==="boolean"],
-    ["image_upload_optimization_enabled","image_upload_optimization_enabled",draft.image_upload_optimization_enabled,typeof s.image_upload_optimization_enabled==="boolean"],
     ["budget","budget_bytes",Math.round(Number(draft.budget)*1000),protectionSupported],
     ["start_on_login","start_on_login",draft.start_on_login,s.start_on_login_supported],
     ["capacity_retry_enabled","capacity_retry_enabled",draft.capacity_retry_enabled,s.capacity_retry_supported],
@@ -1555,7 +1566,7 @@ async function selectPacket(id,refresh=false,expectedListRequest=null) {
 function renderProtectionPanelState() {
   const panel=$("packet-protection-panel");if(!panel)return;
   const enabled={size:state.status?.packet_size_protection_enabled===true,retry:state.status?.capacity_retry_enabled===true,
-    image:state.status?.image_upload_optimization_enabled===true};
+    image:state.status?.packet_size_protection_enabled===true};
   const rows=[...panel.querySelectorAll("[data-protection]")];
   const disabled=!rows.some(row=>enabled[row.dataset.protection]);
   panel.classList.toggle("protection-disabled",disabled);
@@ -1564,7 +1575,7 @@ function renderProtectionPanelState() {
   for(const row of rows) {
     const inactive=!enabled[row.dataset.protection];
     row.classList.toggle("protection-inactive",inactive);
-    row.title=inactive?t(row.dataset.protection==="retry"?"可在设置中开启重试保护":row.dataset.protection==="image"?"可在设置中开启参考图缩小":"可在设置中开启请求大小保护"):"";
+    row.title=inactive?t(row.dataset.protection==="retry"?"可在设置中开启重试保护":"可在设置中开启请求大小保护"):"";
   }
 }
 function renderCompression(m) {

@@ -10,6 +10,7 @@ AUTO_ZSTD_HIGH_LEVEL = 16
 # Offline image JSON benchmark: levels 1-22, seven fixtures, three rounds.
 # Higher levels save very little on already-encoded image data.
 AUTO_IMAGE_ZSTD_LEVEL = 6
+DEFAULT_IMAGE_ZSTD_LEVEL = AUTO_IMAGE_ZSTD_LEVEL
 
 
 class PreparedRequest(NamedTuple):

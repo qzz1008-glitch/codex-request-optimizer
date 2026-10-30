@@ -190,8 +190,11 @@ class ImageUploadTests(unittest.TestCase):
         self.assertGreater(len(result.body),100_000)
 
     def test_defaults_and_existing_settings_survive_reload(self):
-        for saved, expected in (({},False), ({"image_upload_optimization_enabled":True},True),
-                                ({"image_upload_optimization_enabled":"true"},False)):
+        for saved, expected in (({},6), ({"image_upload_optimization_enabled":True},6),
+                                ({"image_upload_optimization_enabled":False,"image_zstd_level":12},12),
+                                ({"image_zstd_level":22,"zstd_level":11,"packet_size_protection_enabled":True},22),
+                                ({"image_zstd_level":True},6), ({"image_zstd_level":"9"},6),
+                                ({"image_zstd_level":0},6), ({"image_zstd_level":23},6)):
             with self.subTest(saved=saved), tempfile.TemporaryDirectory() as directory:
                 folder = Path(directory)
                 config = folder/"config.toml"
@@ -200,8 +203,15 @@ class ImageUploadTests(unittest.TestCase):
                 data.mkdir()
                 (data/"settings.json").write_text(json.dumps(saved),encoding="utf-8")
                 with InspectorServer(("127.0.0.1",0),data,config,"http://127.0.0.1:9/v1") as server:
-                    self.assertIs(server.status()["image_upload_optimization_enabled"],expected)
+                    self.assertEqual(server.status()["image_zstd_level"],expected)
                     self.assertEqual(server.status()["auto_image_zstd_level"],6)
+                    self.assertEqual(server.settings["zstd_level"],saved.get("zstd_level",3))
+                    self.assertEqual(server.settings["packet_size_protection_enabled"],saved.get("packet_size_protection_enabled",False))
+                    self.assertNotIn("image_upload_optimization_enabled",server.status())
+                    self.assertNotIn("image_upload_optimization_enabled",server.settings)
+                    persisted = json.loads(server.settings_path.read_text(encoding="utf-8"))
+                    self.assertNotIn("image_upload_optimization_enabled",persisted)
+                    self.assertEqual(persisted["image_zstd_level"],expected)
 
 
 class ImageUploadRelayTests(unittest.TestCase):
@@ -217,19 +227,22 @@ class ImageUploadRelayTests(unittest.TestCase):
     latest = fixtures.RelayTests.latest
     api = fixtures.RelayTests.api
 
-    def test_checkbox_validation_and_resizing_are_live_without_extra_inference_requests(self):
-        self.assertFalse(self.api("/api/status")[1]["image_upload_optimization_enabled"])
-        for invalid in (1,"true",None):
-            self.assertEqual(self.api("/api/settings",{"image_upload_optimization_enabled":invalid})[0],400)
-        with patch.dict(self.server.settings, {"auto_detect_providers":True,"packet_size_protection_enabled":True,
-                        "auto_zstd_level_enabled":True,"image_upload_optimization_enabled":False,"zstd_level":22}):
+    def test_image_levels_and_size_protection_are_live_without_extra_inference_requests(self):
+        self.assertEqual(self.api("/api/status")[1]["image_zstd_level"],6)
+        original_settings = self.server.settings_path.read_bytes()
+        for invalid in (0,23,True,"6",None):
+            self.assertEqual(self.api("/api/settings",{"image_zstd_level":invalid,"zstd_level":8})[0],400)
+            self.assertEqual(self.server.settings_path.read_bytes(),original_settings)
+        with patch.dict(self.server.settings, {"auto_detect_providers":True,"packet_size_protection_enabled":False,
+                        "auto_zstd_level_enabled":False,"image_zstd_level":3,"zstd_level":22}):
             raw = body(alpha=True)
             before = len(self.up.requests)
             self.assertEqual(self.relay(raw,path=PATH)[0],200)
             sent = self.up.requests[-1]
             self.assertEqual(decode_body(sent["body"],sent["headers"].get("Content-Encoding","identity")),raw)
-            self.assertEqual(self.latest()[0]["transport_zstd_level"],6)
-            self.assertEqual(self.api("/api/settings",{"image_upload_optimization_enabled":True})[0],200)
+            self.assertEqual(self.latest()[0]["transport_zstd_level"],3)
+            self.assertNotIn("image_upload_optimized",self.latest()[0])
+            self.assertEqual(self.api("/api/settings",{"packet_size_protection_enabled":True})[0],200)
             self.assertEqual(self.relay(raw,path=PATH,headers={"Digest":"sha-256=old-body"})[0],200)
             sent = self.up.requests[-1]
             self.assertNotIn("Digest",sent["headers"])
@@ -238,10 +251,27 @@ class ImageUploadRelayTests(unittest.TestCase):
             meta,_ = self.latest()
             self.assertTrue(meta["image_upload_optimized"])
             self.assertLessEqual(meta["image_upload_iterations"],2)
-            self.assertEqual(meta["transport_zstd_level"],6)
+            self.assertEqual(meta["transport_zstd_level"],3)
             self.assertEqual(meta["relay_wire_bytes"],len(sent["body"]))
             self.assertNotIn("usage_override_applied",meta)
             self.assertNotIn("overflow_compaction_calls",meta)
+            self.assertEqual(self.api("/api/settings",{"image_zstd_level":17,"auto_zstd_level_enabled":True})[0],200)
+            self.assertEqual(self.relay(raw,path=PATH)[0],200)
+            meta,_ = self.latest()
+            self.assertEqual(meta["transport_zstd_level"],6)
+            self.assertTrue(meta["image_upload_optimized"])
+            self.assertEqual(self.server.settings["image_zstd_level"],17)
+            self.assertEqual(self.api("/api/settings",{"packet_size_protection_enabled":False})[0],200)
+            self.assertFalse(self.server.settings["auto_zstd_level_enabled"])
+            self.assertEqual(self.relay(raw,path=PATH)[0],200)
+            sent = self.up.requests[-1]
+            self.assertEqual(decode_body(sent["body"],sent["headers"].get("Content-Encoding","identity")),raw)
+            self.assertEqual(self.latest()[0]["transport_zstd_level"],17)
+            self.assertNotIn("image_upload_optimized",self.latest()[0])
+            ordinary = json.dumps({"input":[{"role":"user","content":"ordinary request "*300}]}).encode()
+            self.assertEqual(self.relay(ordinary,path="/responses")[0],200)
+            self.assertEqual(self.latest()[0]["transport_zstd_level"],22)
+            self.assertEqual(len(self.up.requests),before+5)
 
 
 if __name__ == "__main__":

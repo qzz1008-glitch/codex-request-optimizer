@@ -322,6 +322,8 @@ code.session-id{font-family:Consolas,"Cascadia Mono",monospace;font-size:11px;wo
 #settings-dialog .auto-zstd-row:is(:hover,:focus-within),
 #settings-dialog .settings-content:has(#compression-settings.is-automatic:hover) .auto-zstd-row{border-radius:8px;background:var(--soft);box-shadow:0 0 0 1px #b9c9ed}
 #settings-dialog .zstd-level-trigger{width:var(--settings-number-width);max-width:100%;justify-self:start;font-variant-numeric:tabular-nums;display:flex;align-items:center;justify-content:flex-end;gap:12px;text-align:right}
+#settings-dialog .image-zstd-level-value{width:var(--settings-number-width);max-width:100%;font-variant-numeric:tabular-nums}
+#settings-dialog .image-zstd-level-value :is(select,input){width:100%;text-align:right}
 #zstd-level-dialog{width:min(640px,calc(100vw - 32px));max-height:min(640px,calc(100vh - 40px));padding:20px;overflow:hidden}
 #zstd-level-dialog[open]{display:flex;flex-direction:column}
 #zstd-level-dialog .dialog-heading{flex:none;align-items:center;gap:16px;margin-bottom:6px}
