@@ -10,8 +10,10 @@ class Element{
   select(){this.selected=true;}
 }
 const elements=new Map(),node=id=>{if(!elements.has(id))elements.set(id,new Element());return elements.get(id);};
-const idle={supported:true,addresses:["192.168.1.20"],host:{active:false,running:false},client:{active:false}};
-const host={...idle,host:{active:true,running:true,address:"192.168.1.20",port:47846,requests:1,in_flight:0,expires_at:2000000000}};
+const idle={supported:true,protocol:3,addresses:["192.168.1.20"],host:{active:false,running:false},client:{active:false},
+  egress:{supported:true,host:{active:false},selection:{mode:"provider",peer_configured:false}}};
+const host={...idle,host:{active:true,running:true,address:"192.168.1.20",port:47846,requests:1,in_flight:0,started_at:1900000000,expires_at:2000000000,
+  token_limit:100000,usage:{input_tokens:1234,output_tokens:66,total_tokens:1300,cached_input_tokens:500,cached_responses:1,responses:1,missing_responses:0}}};
 const pending=[],requests=[],stored=new Map();let copied="",timers=0;
 const context={console,AbortController,Date,Number,Set,Map,
  document:{hidden:false,getElementById:node,createElement:()=>new Element(),addEventListener(){}},
@@ -26,14 +28,19 @@ const flush=async()=>{await new Promise(resolve=>setImmediate(resolve));await ne
 (async()=>{
   assert.equal(requests.length,0,"A hidden sharing tab must not start authorization or network calls");
   context.InspectorSharing.setActive(true);await flush();assert.equal(requests.length,1);assert.equal(node("sharing-address").value,"192.168.1.20");
-  node("sharing-port").value="47846";node("sharing-hours").value="8";node("sharing-limit").value="0";
+  node("sharing-port").value="47846";node("sharing-hours").value="8";node("sharing-limit").value="0";node("sharing-token-limit").value="100000";
   let finish;pending.push(new Promise(resolve=>{finish=resolve;}));
   const submit=()=>node("sharing-host-form").handlers.submit({preventDefault(){}});submit();submit();
   assert.equal(node("sharing-start").attributes["aria-busy"],"true");assert.equal(node("sharing-start").disabled,true);
   assert.equal(requests.filter(value=>value.data?.action==="host_start").length,1,"Double click must not create multiple listeners");
+  assert.equal(requests.find(value=>value.data?.action==="host_start").data.token_limit,100000);
   finish({status:200,data:{...host,link:"codex-share://dummy-first-link"}});await flush();
   assert.equal(node("sharing-start").attributes["aria-busy"],"false");assert.equal(node("sharing-link-area").hidden,false);
+  assert.equal(node("sharing-usage").hidden,false);assert.equal(node("sharing-total-tokens").textContent,Number(1300).toLocaleString());
+  assert.equal(node("sharing-input-tokens").textContent,Number(1234).toLocaleString());assert.equal(node("sharing-cached-tokens").textContent,"500");
+  assert.equal(node("sharing-token-limit").disabled,true);
   assert.equal(node("sharing-connect").disabled,true,"Hosting and consuming sharing cannot form a relay loop");
+  assert.equal(node("exit-start").disabled,false,"Quota lending must not disable independent physical exit sharing");
   await node("sharing-copy").onclick();assert.equal(copied,"codex-share://dummy-first-link");
   pending.push({status:200,data:{...host,link:"codex-share://dummy-replaced-link"}});node("sharing-rotate").onclick();await flush();
   assert.equal(node("sharing-link").value,"codex-share://dummy-replaced-link");
@@ -42,11 +49,36 @@ const flush=async()=>{await new Promise(resolve=>setImmediate(resolve));await ne
   pending.push({status:200,data:{...idle,client:{active:true,address:"192.168.1.21",port:47846}}});
   node("sharing-client-form").handlers.submit({preventDefault(){}});await flush();
   assert.equal(node("sharing-remote-link").value,"");assert.equal(node("sharing-start").disabled,true);assert.equal(node("sharing-disconnect").hidden,false);
+  assert.equal(node("sharing-connect").disabled,false,"Borrowing must allow replacing one quota source");
+  assert.equal(node("exit-start").disabled,false,"Borrowing quota must still allow sharing this machine's physical exit");
   assert.match(node("sharing-message").textContent,/重新加载/);
+  const borrowed={...idle,client:{active:true,address:"192.168.1.22",port:47846}};
+  pending.push({status:200,data:{...borrowed,reload_required:false}});node("sharing-remote-link").value="codex-share://replacement";
+  node("sharing-client-form").handlers.submit({preventDefault(){}});await flush();
+  assert.match(node("sharing-message").textContent,/后续请求/);assert.doesNotMatch(node("sharing-message").textContent,/重新加载/);
+  node("exit-source").value="peer";node("exit-source").handlers.change();node("exit-peer-link").value="codex-exit://private-exit-link";
+  pending.push({status:200,data:borrowed});context.InspectorSharing.setActive(true);await flush();
+  assert.equal(node("exit-source").value,"peer","Polling must preserve an unapplied exit selection");
+  const withExit={...borrowed,egress:{...idle.egress,selection:{mode:"peer",peer_configured:true,address:"192.168.1.23",port:47847}}};
+  pending.push({status:200,data:withExit});node("exit-source-form").handlers.submit({preventDefault(){}});await flush();
+  assert.deepEqual(requests.at(-1).data,{action:"egress_select",mode:"peer",link:"codex-exit://private-exit-link"});
+  assert.equal(node("exit-peer-link").value,"");assert.match(node("exit-selection-detail").textContent,/192.168.1.23/);
+  const exitHost={...withExit,egress:{...withExit.egress,host:{active:true,address:"192.168.1.20",port:47847,connections:2,in_flight:1,sent_bytes:12000,received_bytes:4000}}};
+  node("exit-port").value="47847";node("exit-hours").value="8";
+  pending.push({status:200,data:{...exitHost,egress_link:"codex-exit://physical-only"}});node("exit-host-form").handlers.submit({preventDefault(){}});await flush();
+  assert.equal(requests.at(-1).data.action,"egress_start");assert.equal(node("exit-start").hidden,true);
+  assert.equal(node("exit-source").value,"peer","Sharing a local exit must preserve the independently selected peer exit");
+  await node("exit-copy").onclick();assert.equal(copied,"codex-exit://physical-only");
+  pending.push({status:200,data:withExit});node("exit-stop").onclick();await flush();assert.equal(node("exit-link").value,"");
   pending.push({status:200,data:idle});node("sharing-disconnect").onclick();await flush();assert.equal(node("sharing-start").disabled,false);
-  assert.equal([...stored.values()].some(value=>String(value).includes("codex-share://")),false,"Grants must not enter localStorage");
+  assert.equal([...stored.values()].some(value=>/codex-(share|exit):\/\//.test(String(value))),false,"Quota and exit grants must not enter localStorage");
   pending.push({status:200,data:{...idle,host:{...host.host,active:false,error:"Codex 登录已变更"}}});context.InspectorSharing.setActive(true);await flush();
   assert.equal(node("sharing-stop").hidden,false,"A paused listener must remain stoppable");assert.equal(node("sharing-rotate").disabled,true);
+  pending.push({status:200,data:{...host,host:{...host.host,usage:{...host.host.usage,responses:0,missing_responses:1}}}});context.InspectorSharing.setActive(true);await flush();
+  assert.equal(node("sharing-total-tokens").textContent,"—","Missing upstream usage must not display fake zero totals");
+  assert.match(node("sharing-usage-coverage").textContent,/可能不完整/);
+  pending.push({status:200,data:{...idle,protocol:1}});context.InspectorSharing.setActive(true);await flush();
+  assert.equal(node("sharing-cards").hidden,true);assert.match(node("sharing-message").textContent,/独立额度与出口/);
   pending.push({status:404,data:{error:"missing"}});context.InspectorSharing.setActive(true);await flush();assert.match(node("sharing-message").textContent,/当前后台不支持共享/);
 
   let trendActive=null,sharingActive=null,reloaded=0;

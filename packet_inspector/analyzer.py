@@ -9,9 +9,10 @@ import re
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from .request_context import is_delegation_notice, request_image_paths, request_session_context, temporary_request_kind
+from .request_types import image_request_kind
 
 MAX_BODY = 128 * 1024 * 1024
-CLASSIFICATION_VERSION = 2
+CLASSIFICATION_VERSION = 3
 SECRET_KEYS = {"authorization", "proxy-authorization", "cookie", "set-cookie",
                "x-api-key", "api-key", "api_key", "apikey", "access_token",
                "refresh_token", "id_token", "client_secret", "password",
@@ -66,6 +67,9 @@ def safe_path(path):
 def classify_request(value, headers=None, path=""):
     """Classify this dispatch, without treating historical summaries as requests."""
     result = {"is_compaction": False, "classification_version": CLASSIFICATION_VERSION}
+    image_kind = image_request_kind(path)
+    if image_kind:
+        return {**result, "request_kind": image_kind}
     if urlsplit(path).path.rstrip("/").endswith("/alpha/search"):
         return {**result, "request_kind": "tool_search"}
     lower = {k.lower(): v for k, v in (headers or {}).items()}

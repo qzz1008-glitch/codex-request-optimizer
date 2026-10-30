@@ -404,7 +404,7 @@ class RequestTrace:
         self.journal, self.body = journal, body
         self.start = time.monotonic()
         self.secrets = [str(v) for k, v in headers.items() if k.lower() in {
-            "authorization", "proxy-authorization", "cookie", "x-api-key", "api-key"} and v]
+            "authorization", "proxy-authorization", "cookie", "x-api-key", "api-key", "x-inspector-shared-egress"} and v]
         self.secrets.extend(value.split(" ", 1)[1] for value in list(self.secrets) if " " in value)
         for value in journal.proxies.values():
             try:

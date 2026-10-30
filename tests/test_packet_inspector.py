@@ -834,6 +834,38 @@ class RelayTests(unittest.TestCase):
         finally:
             self.api("/api/link",{"action":"activate" if previous else "restore"})
 
+    def test_json_image_relay_uses_stateless_auto_levels_without_conversation_protection(self):
+        settings = {"auto_detect_providers":True, "packet_size_protection_enabled":True,
+                    "auto_zstd_level_enabled":True, "zstd_level":1, "budget_bytes":1_000_000}
+        policy = self.server.compression_policy
+        with patch.dict(self.server.settings, settings), \
+                patch.object(policy, "reserve", wraps=policy.reserve) as reserve, \
+                patch.object(policy, "begin", wraps=policy.begin) as begin, \
+                patch.object(policy, "finish", wraps=policy.finish) as finish, \
+                patch.object(self.server.overflow, "prepare", side_effect=AssertionError("Images cannot be summarized")):
+            for path in ("/images/edits", "/images/generations"):
+                for size, level in ((800_000,None), (1_000_000,6), (1_600_000,6)):
+                    with self.subTest(path=path, size=size):
+                        raw=b' {"model":"gpt-image-2","prompt":"'+b'x'*size+b'","images":[]}\n'
+                        self.assertEqual(self.relay(raw,path=path)[0],200)
+                        forwarded=self.up.requests[-1]
+                        encoding=forwarded["headers"].get("Content-Encoding","identity")
+                        decoded=zstandard.ZstdDecompressor().decompress(forwarded["body"]) if encoding=="zstd" else forwarded["body"]
+                        self.assertEqual(decoded,raw)
+                        if level:
+                            self.assertEqual(forwarded["body"],zstandard.ZstdCompressor(level=level).compress(raw))
+                        else:
+                            self.assertEqual(encoding,"identity")
+                        meta,_=self.latest()
+                        self.assertEqual(meta["transport_zstd_level"],level)
+                        self.assertEqual(meta["relay_wire_bytes"],len(forwarded["body"]))
+                        self.assertEqual(meta["request_kind"],"image_edit" if path.endswith("edits") else "image_generation")
+                        self.assertNotIn("relay_auto_zstd_phase",meta)
+                        self.assertNotIn("usage_override_request_bytes",meta)
+            reserve.assert_not_called()
+            begin.assert_not_called()
+            finish.assert_not_called()
+
     def test_obsolete_compression_modes_cannot_create_a_third_backend_state(self):
         before = self.config.read_bytes()
         for mode in ("off", "zstd", "invalid"):

@@ -4,6 +4,7 @@ import time
 from typing import NamedTuple
 
 from .request_context import temporary_kind_from_metadata
+from .request_types import image_request_kind
 from .transport import AUTO_ZSTD_HIGH_LEVEL
 
 INITIAL_HIGH_BYTES = 1_500_000
@@ -34,7 +35,8 @@ def is_main_request(meta):
     # A subagent has its own real session. App-generated auxiliary dispatches
     # must not look like a compacted main request just because they are small.
     return (not meta.get("is_compaction")
-            and meta.get("request_kind") not in {"prewarm", "memory", "tool_search"}
+            and meta.get("request_kind") not in {"prewarm", "memory", "tool_search", "image_generation", "image_edit"}
+            and image_request_kind(meta.get("path", "")) is None
             and temporary_kind_from_metadata(meta) in {None, "subagent"})
 
 

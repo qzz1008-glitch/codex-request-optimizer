@@ -17,11 +17,20 @@ https://docs.python.org/3/license.html
 python-zstandard: BSD 3-Clause License.
 https://github.com/indygreg/python-zstandard
 
+Pillow: MIT-CMU License and included image codec licenses.
+Used for optional in-memory resizing of oversized image edit requests.
+https://github.com/python-pillow/Pillow
+The Pillow LICENSE, including bundled codec notices, is embedded in the EXE.
+
 Zstandard: BSD 3-Clause License (the BSD licensing option).
 https://github.com/facebook/zstd
 
 TOML Kit: MIT License.
 https://github.com/python-poetry/tomlkit
+
+urllib3: MIT License.
+Used for HTTPS CONNECT with independently verified proxy and upstream TLS.
+https://github.com/urllib3/urllib3
 
 cryptography: Apache License 2.0 or BSD 3-Clause License.
 Used to create temporary certificates for encrypted LAN sharing.
