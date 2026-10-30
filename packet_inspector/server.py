@@ -34,7 +34,10 @@ from .response_summary import ResponseSummary
 from .session_summary import SessionSummaries
 from .storage import DEFAULT_STORAGE_BYTES, Store
 from .storage_paths import resolve_directory, path_settings
-from .transport import DEFAULT_ZSTD_LEVEL, prepare_request_info, validate_zstd_level
+from .transport import (AUTO_IMAGE_ZSTD_LEVEL, DEFAULT_IMAGE_ZSTD_LEVEL, DEFAULT_ZSTD_LEVEL,
+                        PreparedRequest, prepare_request_info, validate_zstd_level)
+from .request_types import is_json_image_request
+from .image_upload import optimize_image_request
 from .compression_policy import CompressionPolicy, INITIAL_HIGH_BYTES, is_main_request
 from .request_context import request_session_context, temporary_request_kind, trend_packet_metadata
 from .installation import manage_installation
@@ -52,6 +55,8 @@ from .overflow import CheckpointStream, OverflowCompactor, OverflowFailure
 from .image_config import IMAGE_MODES, ImageToolConfig, WORKER_HEADER, image_mode
 from .image_isolation import ImageIsolation, ImageIsolationFailure, check_image_directory, resolve_image_directory, is_analysis_request
 from .sharing import Sharing, SharingError, forwarding_headers, allowed_request as sharing_request_allowed
+from .shared_egress import SharedEgress
+from .egress_transport import EGRESS_HEADER
 
 HOP = {"connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
        "te", "trailer", "transfer-encoding", "upgrade"}
@@ -113,6 +118,7 @@ def retention_settings(saved):
 def protection_settings(saved, *, default_enabled=False):
     values = dict(saved)
     values.pop("request_compression", None)  # Legacy analysis/optimization modes.
+    values.pop("image_upload_optimization_enabled", None)
     if "packet_size_protection_enabled" not in values:
         legacy = ("overflow_compaction_enabled", "native_compact_trigger_enabled")
         values["packet_size_protection_enabled"] = (any(values.get(key) is True for key in legacy)
@@ -143,6 +149,7 @@ class InspectorServer(ThreadingHTTPServer):
                          "capture_enabled": True, "budget_bytes": DEFAULT_BUDGET_BYTES,
                          "max_packets": 2000,
                          "zstd_level": DEFAULT_ZSTD_LEVEL,
+                         "image_zstd_level": DEFAULT_IMAGE_ZSTD_LEVEL,
                          "packet_size_protection_enabled": False,
                          "ui_language": "zh",
                          "start_on_login": False, "capacity_retry_enabled": False,
@@ -155,10 +162,11 @@ class InspectorServer(ThreadingHTTPServer):
         self.settings.pop("ui_token", None)
         self.settings["image_analysis_mode"] = image_mode(saved)
         self.settings["image_isolation_enabled"] = self.settings["image_analysis_mode"] == "optimized"
-        try:
-            self.settings["zstd_level"] = validate_zstd_level(self.settings["zstd_level"])
-        except ValueError:
-            self.settings["zstd_level"] = DEFAULT_ZSTD_LEVEL
+        for key, default in (("zstd_level", DEFAULT_ZSTD_LEVEL), ("image_zstd_level", DEFAULT_IMAGE_ZSTD_LEVEL)):
+            try:
+                self.settings[key] = validate_zstd_level(self.settings[key])
+            except ValueError:
+                self.settings[key] = default
         limit = self.settings["capacity_retry_max_retries"]
         self.settings["capacity_retry_max_retries"] = (
             min(limit, MAX_RETRIES) if isinstance(limit, int) and not isinstance(limit, bool) and limit >= 1
@@ -184,6 +192,7 @@ class InspectorServer(ThreadingHTTPServer):
         self.public_port = public_port or self.port
         self.provider_guard = threading.RLock()
         self.sharing = Sharing(self)
+        self.egress = SharedEgress(self)
         self.provider_fingerprint = None
         self.provider_sync_error = ""
         self.provider_sync_result = {}
@@ -421,6 +430,12 @@ class InspectorServer(ThreadingHTTPServer):
                 sharing.close()
             except Exception:
                 pass  # Retain recovery metadata, but always close the ordinary relay.
+        egress = getattr(self, "egress", None)
+        if egress is not None:
+            try:
+                egress.close()
+            except Exception:
+                pass  # Optional exit cleanup must not prevent ordinary relay cleanup.
         presentation = getattr(self, "presentation", None)
         if presentation is not None:
             presentation.stop()
@@ -483,7 +498,9 @@ class InspectorServer(ThreadingHTTPServer):
                 "connection_policy": 1, "connection_reload_required": self.connection_reload_required,
                 "trend_packets_supported": True,
                 "zstd_level": self.settings["zstd_level"],
+                "image_zstd_level": self.settings["image_zstd_level"],
                 "auto_zstd_level_enabled": self.settings["auto_zstd_level_enabled"],
+                "auto_image_zstd_level": AUTO_IMAGE_ZSTD_LEVEL,
                 "ui_language": self.settings["ui_language"],
                 "packet_size_protection_enabled": self.settings["packet_size_protection_enabled"],
                 "overflow_compaction_enabled": self.settings["packet_size_protection_enabled"],
@@ -647,11 +664,10 @@ class Handler(BaseHTTPRequestHandler):
             self._json(404, {"error": "image_tool_uses_stdio"})
             return
         if path.startswith(relay_prefix + "/"):
-            for endpoint in (self.server.sharing.client_endpoint, self.server.sharing.host_endpoint):
-                sharing_prefix = urlsplit(endpoint).path
-                if path.startswith(sharing_prefix + "/"):
-                    self._relay(sharing_prefix)
-                    return
+            sharing_prefix = urlsplit(self.server.sharing.client_endpoint).path
+            if path.startswith(sharing_prefix + "/"):
+                self._relay(sharing_prefix)
+                return
             if path.startswith(relay_prefix + "/sharing/"):
                 self._json(404, {"error": "unknown_sharing_route"})
                 return
@@ -690,7 +706,7 @@ class Handler(BaseHTTPRequestHandler):
                     action = data.get("action")
                     if action == "host_start":
                         result = self.server.sharing.start_host(data.get("address"), data.get("port", 47846),
-                            data.get("hours", 8), data.get("request_limit", 0))
+                            data.get("hours", 8), data.get("request_limit", 0), data.get("token_limit", 0))
                     elif action == "host_stop":
                         result = self.server.sharing.stop_host()
                     elif action == "host_rotate":
@@ -699,6 +715,20 @@ class Handler(BaseHTTPRequestHandler):
                         result = self.server.sharing.connect(data.get("link"))
                     elif action == "client_disconnect":
                         result = self.server.sharing.disconnect()
+                    elif action in {"egress_start", "egress_stop", "egress_rotate", "egress_select", "egress_link"}:
+                        if action == "egress_start":
+                            exit_result = self.server.egress.start(data.get("address"), data.get("port", 47847), data.get("hours", 8))
+                        elif action == "egress_stop":
+                            exit_result = self.server.egress.stop()
+                        elif action == "egress_rotate":
+                            exit_result = self.server.egress.rotate()
+                        elif action == "egress_select":
+                            exit_result = self.server.egress.select(data.get("mode"), data.get("link", ""))
+                        else:
+                            exit_result = {"link": self.server.egress.local_link}
+                        result = self.server.sharing.status()
+                        if exit_result.get("link"):
+                            result["egress_link"] = exit_result["link"]
                     else:
                         raise ValueError("invalid sharing action")
                 self._json(200, result)
@@ -785,8 +815,9 @@ class Handler(BaseHTTPRequestHandler):
                     image_isolation = ImageIsolation(self.server.data_dir, candidate["image_save_dir"])
                 if "request_compression" in data:
                     raise ValueError("仅支持接入和断开；接入后由本软件管理 zstd 压缩。")
-                if "zstd_level" in data:
-                    candidate["zstd_level"] = validate_zstd_level(data["zstd_level"])
+                for key in ("zstd_level", "image_zstd_level"):
+                    if key in data:
+                        candidate[key] = validate_zstd_level(data[key])
                 if "ui_language" in data:
                     if not isinstance(data["ui_language"], str) or data["ui_language"] not in {"zh", "en"}:
                         raise ValueError("invalid interface language")
@@ -998,7 +1029,7 @@ class Handler(BaseHTTPRequestHandler):
         # This is a separate, tool-free summary call. The original turn has not
         # been uploaded. Never follow redirects or retry either request.
         local = urlsplit(upstream).hostname in {"localhost", "127.0.0.1", "::1"}
-        opener = opener or (self.server.local_opener if local else self.server.opener)
+        opener = opener or (self.server.local_opener if local else self.server.egress.outgoing(own_request=True))
         try:
             response = opener.open(Request(upstream + suffix, data=body, headers=compact_headers, method="POST"),
                                    timeout=UPSTREAM_READ_TIMEOUT_SECONDS)
@@ -1047,9 +1078,8 @@ class Handler(BaseHTTPRequestHandler):
             self._json(400, {"error": "invalid_request_path"})
             return
         shared_client = prefix == urlsplit(self.server.sharing.client_endpoint).path
-        shared_host = prefix == urlsplit(self.server.sharing.host_endpoint).path
         remote = None
-        if shared_client or shared_host:
+        if shared_client:
             if not sharing_request_allowed(self.command, suffix):
                 if self.command == "GET" and suffix == "/responses":
                     self._json(426, {"error": {"code": "websocket_not_supported", "message": "Use HTTP POST."}})
@@ -1057,8 +1087,8 @@ class Handler(BaseHTTPRequestHandler):
                     self._json(404, {"error": "sharing_route_not_found"})
                 return
             try:
-                remote = self.server.sharing.client_route() if shared_client else None
-                sharing_upstream = remote["upstream"] if remote else self.server.sharing.host_route()
+                remote = self.server.sharing.client_route()
+                sharing_upstream = remote["upstream"]
             except SharingError as exc:
                 self._json(503, {"error": {"code": "sharing_unavailable", "message": str(exc)}})
                 return
@@ -1075,7 +1105,7 @@ class Handler(BaseHTTPRequestHandler):
                 if suffix.startswith("//"):
                     self._json(400, {"error": "invalid_request_path"})
                     return
-        if shared_client or shared_host:
+        if shared_client:
             upstream = sharing_upstream
         # GET on the Responses creation endpoint is a WebSocket transport probe.
         # Intermediaries may remove every Upgrade header. Return Codex's HTTP
@@ -1090,20 +1120,21 @@ class Handler(BaseHTTPRequestHandler):
         with self.server.guard:
             # Disconnected clients may briefly retain an old relay URL until
             # ChatGPT restarts. Keep forwarding them without extra zstd work.
-            compression = "zstd" if (self.server.settings["auto_detect_providers"] or shared_client) and not shared_host else "off"
-            zstd_level = self.server.settings["zstd_level"]
-            protection_enabled = self.server.settings["packet_size_protection_enabled"] and not shared_host
+            compression = "zstd" if self.server.settings["auto_detect_providers"] or shared_client else "off"
+            json_image = is_json_image_request(suffix, self.headers)
+            zstd_level = self.server.settings["image_zstd_level" if json_image else "zstd_level"]
+            protection_enabled = self.server.settings["packet_size_protection_enabled"]
             budget = self.server.settings["budget_bytes"]
-            image_enabled = self.server.settings["image_isolation_enabled"] and not shared_host
+            image_enabled = self.server.settings["image_isolation_enabled"]
             image_isolation = self.server.image_isolation
             image_configured = self.server.image_config.state.get("enabled", False)
             image_worker = self.server.image_config.is_worker(self.headers.get(WORKER_HEADER, ""))
             auto_zstd_level = (protection_enabled and self.server.settings["auto_zstd_level_enabled"]
                                and compression == "zstd" and not image_worker)
             auto_eligible = (auto_zstd_level and self.command == "POST"
-                             and urlsplit(suffix).path.rstrip("/").endswith("/responses")
+                             and not json_image and urlsplit(suffix).path.rstrip("/").endswith("/responses")
                              and self.headers.get("Content-Encoding", "identity").strip().lower() in {"", "identity", "zstd"})
-            auto_ticket = self.server.compression_policy.reserve() if auto_eligible else None
+            auto_ticket = self.server.compression_policy.reserve() if auto_eligible and not json_image else None
         if (image_enabled and not image_worker and self.command == "POST"
                 and urlsplit(suffix).path.rstrip("/").endswith(("/responses", "/responses/compact"))
                 and is_analysis_request(body, self.headers)):
@@ -1111,7 +1142,7 @@ class Handler(BaseHTTPRequestHandler):
             auto_zstd_level, auto_ticket = False, None
         packet_id = None
         capture_meta = {}
-        if self.server.settings["capture_enabled"] and not shared_host:
+        if self.server.settings["capture_enabled"]:
             try:
                 meta, content = inspect_request(body, dict(self.headers.items()), suffix)
                 capture_meta = meta
@@ -1128,10 +1159,21 @@ class Handler(BaseHTTPRequestHandler):
                     self.server.capture_errors += 1
         connection_tokens = {s.strip().lower() for s in self.headers.get("Connection", "").split(",")}
         headers = {k: v for k, v in self.headers.items()
-                   if k.lower() not in HOP | connection_tokens | {"host", "content-length", "x-codex-inspector-packet-id", WORKER_HEADER.lower()}}
+                   if k.lower() not in HOP | connection_tokens | {"host", "content-length", "x-codex-inspector-packet-id", WORKER_HEADER.lower(), EGRESS_HEADER.lower()}}
         if shared_client:
             headers = forwarding_headers(headers)
             headers["Authorization"] = "Bearer " + remote["token"]
+            try:
+                exit_link = self.server.egress.request_exit(remote)
+            except (OSError, SharingError):
+                update(state="relay_error", relay_error="shared_exit_unavailable", status=503)
+                self._json(503, {"error": {"code": "shared_exit_unavailable", "message": "所选出口未就绪，请检查共享出口设置。"}})
+                return
+            if exit_link:
+                headers[EGRESS_HEADER] = exit_link
+        local_upstream = urlsplit(upstream).hostname in {"localhost", "127.0.0.1", "::1"}
+        request_opener = (remote["opener"] if shared_client else self.server.local_opener
+                          if local_upstream else self.server.egress.outgoing(own_request=True))
         # urllib preserves content bytes, does not decompress responses, and
         # uses the OS/environment proxy. Redirects and inference retries are disabled.
         trigger_size = None
@@ -1193,6 +1235,14 @@ class Handler(BaseHTTPRequestHandler):
                 encoded = prepare_request_info(body, headers, self.command, suffix, compression, zstd_level,
                                                 auto_zstd_level=auto_zstd_level, budget_bytes=budget)
                 outbound_body, outbound_encoding, applied_zstd_level = encoded
+            if protection_enabled and json_image and self.command == "POST" and compression == "zstd":
+                prepared_image, upload_meta = optimize_image_request(body, headers, suffix,
+                    PreparedRequest(outbound_body, outbound_encoding, applied_zstd_level), budget_bytes=budget,
+                    zstd_level=AUTO_IMAGE_ZSTD_LEVEL if auto_zstd_level else zstd_level)
+                outbound_body, outbound_encoding, applied_zstd_level = prepared_image
+                update(**upload_meta)
+                if upload_meta.get("image_upload_optimized"):
+                    headers = {key:value for key,value in headers.items() if key.lower() not in {"content-md5", "digest"}}
             # The displayed compressed packet is measured before summary
             # substitution. Preserve its encoding/level before overflow can
             # rebuild a small identity body and replace the final relay fields.
@@ -1211,7 +1261,7 @@ class Handler(BaseHTTPRequestHandler):
                     outbound_body, outbound_encoding, source_body, headers, suffix, upstream, compression, budget,
                     lambda compact_body, encoding: self._checkpoint(upstream, suffix, headers, compact_body, encoding,
                         packet_id=packet_id, session_id=capture_meta.get("thread_id"),
-                        **({"opener": remote["opener"]} if shared_client else {})),
+                        opener=request_opener),
                     request_scope=scope, zstd_level=zstd_level, auto_zstd_level=auto_zstd_level)
                 applied_zstd_level = overflow_meta.get("relay_zstd_level", applied_zstd_level)
                 update(**overflow_meta)
@@ -1244,10 +1294,9 @@ class Handler(BaseHTTPRequestHandler):
                compression_applied=outbound_body is not body,
                relay_zstd_level=applied_zstd_level, relay_auto_zstd_level=auto_zstd_level,
                relay_compression_scope=compression_scope)
-        local_upstream = urlsplit(upstream).hostname in {"localhost", "127.0.0.1", "::1"}
         update(native_retry_mode="native")
         retry_settings = self.server.settings
-        capacity_retry = (not shared_host and retry_settings["capacity_retry_enabled"] and self.command == "POST"
+        capacity_retry = (retry_settings["capacity_retry_enabled"] and self.command == "POST"
                           and urlsplit(suffix).path.rstrip("/").endswith("/responses"))
         def current_retry_policy():
             settings = self.server.settings
@@ -1292,7 +1341,7 @@ class Handler(BaseHTTPRequestHandler):
                 if not local_upstream:
                     update(outbound_wire_bytes=len(outbound_body),
                            outbound_content_encoding=outbound_encoding)
-                opener = remote["opener"] if shared_client else self.server.local_opener if local_upstream else self.server.opener
+                opener = request_opener
                 notify(diagnostic.record if diagnostic else None, "attempt_started", attempt=1)
                 with network_trace.active():
                     response = opener.open(request, timeout=UPSTREAM_READ_TIMEOUT_SECONDS)

@@ -298,12 +298,14 @@ function hasModelTokenUsage(p) {
     (!p.path || /\/responses\/*(?:\?.*)?$/.test(p.path));
 }
 function requestKind(p) {
+  if(p.request_kind==="image_generation" || /\/images\/generations\/*(?:\?.*)?$/.test(p.path||""))return t("图片生成");
+  if(p.request_kind==="image_edit" || /\/images\/edits\/*(?:\?.*)?$/.test(p.path||""))return t("图片编辑");
   if(p.request_kind==="tool_search" || /\/alpha\/search\/*(?:\?.*)?$/.test(p.path||""))return t("工具搜索");
   if(p.is_compaction)return t("上下文压缩");
   const purpose=purposeFromMetadata(p)||requestPurposeCache.get(p.id)||auxiliarySessionKind(sessionSummaries.find(row=>row.thread_id===p.thread_id));
   return purpose&&purpose!=="subagent"?t(auxiliaryLabels[purpose]):p.method==="POST"?t("对话生成"):String(p.method||t("未知")).slice(0,10);
 }
-const requestKinds = uiI18n.labels({generation:"对话生成",compaction:"上下文压缩",other:"其他请求"});
+const requestKinds = uiI18n.labels({generation:"对话生成",compaction:"上下文压缩",image_generation:"图片生成",image_edit:"图片编辑",other:"其他请求"});
 const filterLabels = uiI18n.labels({kind:"类型",status:"状态"});
 function statusLabel(value) { return value.startsWith("http:") ? "HTTP "+value.slice(5) : states[value.slice(6)] || t("未知状态"); }
 function setFilterOptions(key, options) {
@@ -323,7 +325,7 @@ function setFilterOptions(key, options) {
 async function refreshFilters() {
   const revision=state.status?.storage.revision;
   const options=await api("/api/packet-filters");
-  setFilterOptions("kind",["generation","compaction",...(options.kinds.includes("other")?["other"]:[])].map(value=>({value,label:requestKinds[value]})));
+  setFilterOptions("kind",["generation","compaction",...["image_generation","image_edit","other"].filter(value=>options.kinds.includes(value))].map(value=>({value,label:requestKinds[value]})));
   setFilterOptions("status",options.statuses.map(value=>({value,label:statusLabel(value)})));
   state.sessions=options.threads;
   state.filterRevision=revision;
@@ -968,6 +970,7 @@ function fillImageAnalysisMode() {
 }
 function fillZstdLevel() {
   const s=state.status,input=$("zstd-level"),supported=Number.isInteger(s.zstd_level);
+  $("auto-zstd-level-hint").textContent=Number.isInteger(s.auto_image_zstd_level)?t("对话按大小选档，图片请求使用{level}级；开启后禁用手动选择。").replace("{level}",s.auto_image_zstd_level):t("根据请求大小自动选择合适的压缩等级，开启后禁用手动选择。");
   const selected=settingsEditing?Number(input.value):(s.zstd_level??3);
   const automatic=$("packet-size-protection").checked&&$("auto-zstd-level").checked;
   $("compression-settings").classList.toggle("is-automatic",automatic);
@@ -976,11 +979,24 @@ function fillZstdLevel() {
   input.disabled=settingsSaving||!supported||automatic;
   $("zstd-level-open").disabled=input.disabled;
   $("zstd-level-value").textContent=t("{level}级").replace("{level}",selected);
+  fillImageZstdLevel(automatic);
   if($("zstd-level-dialog").open) {
     if(input.disabled)closeZstdLevelPicker();else renderZstdLevelRows();
   }
   const message="";
   $("zstd-level-message").textContent=message;$("zstd-level-message").hidden=!message;
+}
+function fillImageZstdLevel(automatic) {
+  const s=state.status,input=$("image-zstd-level"),fixed=$("image-zstd-level-fixed");
+  const selected=settingsEditing&&input.value?Number(input.value):(s.image_zstd_level??6);
+  if(input.children.length!==22)input.replaceChildren(...Array.from({length:22},(_,index)=>{
+    const option=el("option");option.value=String(index+1);return option;
+  }));
+  for(const option of input.children)option.textContent=t("{level}级").replace("{level}",option.value);
+  input.value=String(selected);
+  input.disabled=settingsSaving||!Number.isInteger(s.image_zstd_level)||automatic;
+  input.hidden=automatic;fixed.hidden=!automatic;
+  fixed.value=t("{level}级").replace("{level}",s.auto_image_zstd_level??6);
 }
 function renderZstdLevelRows() {
   const selected=Number($("zstd-level").value);
@@ -1301,6 +1317,7 @@ function readSettingsDraft() {
   const draft={
     entry_port:$("entry-port").value,
     zstd_level:$("zstd-level").value,
+    image_zstd_level:$("image-zstd-level").value,
     packet_size_protection_enabled:$("packet-size-protection").checked,
     auto_zstd_level_enabled:$("packet-size-protection").checked&&$("auto-zstd-level").checked,
     budget:$("budget").value,
@@ -1385,6 +1402,7 @@ async function saveSettings() {
   const protectionSupported="packet_size_protection_enabled" in s,storage=storageLimitSettings(s);
   const entries=[
     ["zstd_level","zstd_level",Number(draft.zstd_level),Number.isInteger(s.zstd_level)],
+    ["image_zstd_level","image_zstd_level",Number(draft.image_zstd_level),Number.isInteger(s.image_zstd_level)],
     ["packet_size_protection_enabled","packet_size_protection_enabled",draft.packet_size_protection_enabled,protectionSupported],
     ["auto_zstd_level_enabled","auto_zstd_level_enabled",draft.auto_zstd_level_enabled,typeof s.auto_zstd_level_enabled==="boolean"],
     ["budget","budget_bytes",Math.round(Number(draft.budget)*1000),protectionSupported],
@@ -1547,12 +1565,14 @@ async function selectPacket(id,refresh=false,expectedListRequest=null) {
 }
 function renderProtectionPanelState() {
   const panel=$("packet-protection-panel");if(!panel)return;
-  const enabled={size:state.status?.packet_size_protection_enabled===true,retry:state.status?.capacity_retry_enabled===true};
-  const disabled=!enabled.size&&!enabled.retry;
+  const enabled={size:state.status?.packet_size_protection_enabled===true,retry:state.status?.capacity_retry_enabled===true,
+    image:state.status?.packet_size_protection_enabled===true};
+  const rows=[...panel.querySelectorAll("[data-protection]")];
+  const disabled=!rows.some(row=>enabled[row.dataset.protection]);
   panel.classList.toggle("protection-disabled",disabled);
   panel.setAttribute("aria-disabled",String(disabled));
   panel.title=disabled?t("可在设置中开启请求保护"):"";
-  for(const row of panel.querySelectorAll("[data-protection]")) {
+  for(const row of rows) {
     const inactive=!enabled[row.dataset.protection];
     row.classList.toggle("protection-inactive",inactive);
     row.title=inactive?t(row.dataset.protection==="retry"?"可在设置中开启重试保护":"可在设置中开启请求大小保护"):"";
@@ -1571,6 +1591,9 @@ function renderCompression(m) {
   fact(sizes,t("压缩方式"),encoding==="identity"?t("不压缩"):encoding||"—");
   const level=hasTransport?m.transport_zstd_level:summaryTriggered?null:m.relay_zstd_level;
   fact(sizes,t("压缩等级"),Number.isInteger(level)&&level>=1&&level<=22?level:"—");
+  if(m.image_upload_optimized) {
+    fact(sizes,t("缩图前转发请求"),bytes(m.image_upload_before_bytes));
+  }
   if(original>0 && compressed!==null)fact(sizes,t("减小比例"),(100*(1-compressed/original)).toFixed(1)+"%").title=t("包含图片处理和传输压缩带来的大小变化，按超限摘要处理前的正文计算。");
   if(summaryTriggered) {
     const estimate=requestTokenUsage(m), actual=m.upstream_usage?.input_tokens;
@@ -1578,6 +1601,16 @@ function renderCompression(m) {
     fact(sizes,t("上游实际输入 Token"),Number.isSafeInteger(actual)&&actual>=0?nf.format(actual):"—");
   }
   root.append(sizes);
+  if(m.image_upload_optimized&&Array.isArray(m.image_upload_images)&&m.image_upload_images.length) {
+    const resolutions=panel(t("图片分辨率"));
+    const resolution=(width,height)=>Number.isSafeInteger(width)&&width>0&&Number.isSafeInteger(height)&&height>0?`${width} × ${height}`:"—";
+    for(const [index,image] of m.image_upload_images.entries()) {
+      const name=image.mask?t("编辑蒙版"):t("参考图 {index}").replace("{index}",index+1);
+      fact(resolutions,name+" · "+t("压缩前"),resolution(image.original_width,image.original_height));
+      fact(resolutions,name+" · "+t("压缩后"),resolution(image.width,image.height));
+    }
+    root.append(resolutions);
+  }
   const steps=panel(t("请求保护"));steps.id="packet-protection-panel";steps.classList.add("packet-protection-panel");
   const triggerStatus=triggered=>triggered?t("已触发"):m.source==="live"?t("未触发"):t("暂无记录");
   const predictiveArmed=Number.isSafeInteger(m.usage_override_request_bytes)&&m.usage_override_request_bytes>0;
@@ -1589,6 +1622,9 @@ function renderCompression(m) {
   const summaryFailed=typeof m.relay_error==="string"&&m.relay_error.startsWith("overflow_");
   fact(steps,t("超限保护"),summaryFailed?t("处理失败"):triggerStatus(summaryTriggered)).dataset.protection="size";
   fact(steps,t("重试保护"),triggerStatus(m.native_retry_advised===true||capacityRetryCount(m)>0)).dataset.protection="retry";
+  if(m.request_kind==="image_edit"||m.request_kind==="image_generation"||/\/images\/(?:edits|generations)\/*(?:\?.*)?$/.test(m.path||"")) {
+    fact(steps,t("参考图缩小"),triggerStatus(m.image_upload_optimized===true)).dataset.protection="image";
+  }
   root.append(steps);reconcileContent($("compression-content"),root);renderProtectionPanelState();
 }
 function bars(title, rows, total,bodyAvailable=true) {
@@ -2144,8 +2180,8 @@ $("tree-query").addEventListener("input",scheduleTreeQuery);
 $("tree-query").addEventListener("compositionend",scheduleTreeQuery);
 $("tree-query").addEventListener("keydown",e=>{if(e.key==="Enter" && !e.isComposing){e.preventDefault();Promise.resolve().then(submitTreeQuery).catch(fail);}});
 function isTrendGeneration(packet) {
-  const purpose=purposeFromMetadata(packet)||packet.session_kind||packet.request_kind;
-  return hasModelTokenUsage(packet)&&!["prewarm","title_generation","next_message_suggestion","session_index"].includes(purpose);
+  const kinds=[purposeFromMetadata(packet),packet.request_purpose,packet.request_kind,packet.session_kind];
+  return hasModelTokenUsage(packet)&&kinds.every(kind=>!kind||["turn","generation","subagent"].includes(kind));
 }
 class TokenTrendView {
   constructor(services) {

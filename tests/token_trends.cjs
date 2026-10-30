@@ -2,16 +2,16 @@
 const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
 const source=fs.readFileSync('packet_inspector/ui/app.js','utf8');
 const classSource=source.slice(source.indexOf('function isTrendGeneration('),source.indexOf('tokenTrendView=new TokenTrendView('));
-const helpers=source.split(/\r?\n/).filter(line=>/^function (tokenVersion|compressedBytes|originalBytes|uploadBytes|compact)\(/.test(line)).join('\n');
+const helpers=source.split(/\r?\n/).filter(line=>/^function (tokenVersion|compressedBytes|originalBytes|uploadBytes|compact)\(/.test(line)||/^const auxiliaryLabels=/.test(line)).join('\n');
+const requestHelpers=source.slice(source.indexOf('function purposeFromMetadata('),source.indexOf('function cacheRequestPurpose('))+
+  source.slice(source.indexOf('function hasModelTokenUsage('),source.indexOf('function requestKind('));
 const usageHelpers=source.slice(source.indexOf('function overflowApplied('),source.indexOf('function listTokens('))+
   source.slice(source.indexOf('function sortInputTokens('),source.indexOf('function sortedTokenPackets('));
 // Keep samples and viewports on one clock, including on slower CI runners.
 const fixtureNow=Date.now();
 class FixtureDate extends Date{static now(){return fixtureNow;}}
-const context={Date:FixtureDate,Map,Set,AbortController,setTimeout,clearTimeout,URLSearchParams,document:{hidden:false},
-  purposeFromMetadata:p=>p.session_kind||null,hasModelTokenUsage:p=>p.method==='POST'&&!p.is_compaction&&p.request_kind!=='tool_search',
-  tokenVersion:null};
-vm.createContext(context);vm.runInContext(helpers+'\n'+usageHelpers+'\n'+classSource+'\nglobalThis.View=TokenTrendView;globalThis.isGeneration=isTrendGeneration;',context);
+const context={Date:FixtureDate,Map,Set,AbortController,setTimeout,clearTimeout,URLSearchParams,document:{hidden:false},tokenVersion:null};
+vm.createContext(context);vm.runInContext(helpers+'\n'+requestHelpers+'\n'+usageHelpers+'\n'+classSource+'\nglobalThis.View=TokenTrendView;globalThis.isGeneration=isTrendGeneration;',context);
 const View=context.View,now=fixtureNow/1000,id=n=>n.toString(16).padStart(32,'0');
 const packet=(n,extra={})=>({id:id(n),created:now-n,thread_id:'session-a',method:'POST',path:'/responses',state:'complete',status:200,...extra});
 const estimate=input_tokens=>({state:'available',source:'codex_estimate',estimated:true,input_tokens});
@@ -155,10 +155,35 @@ function eventRows(){return [
   assert.ok(View.events(packet(1,{relay_error:'overflow_prepare_failed'})).includes('overflow'));
  });
  await test('automatic auxiliary requests do not distort session context',()=>{
-  for(const kind of ['prewarm','title_generation','next_message_suggestion','session_index','tool_search'])assert.equal(context.isGeneration(packet(1,{request_kind:kind})),false);
-  assert.equal(context.isGeneration(packet(1,{session_kind:'image_analysis'})),true);
+  for(const kind of ['prewarm','title_generation','next_message_suggestion','session_index','tool_search','image_analysis','image_generation','image_edit','other'])
+   for(const field of ['request_kind','request_purpose','session_kind'])assert.equal(context.isGeneration(packet(1,{[field]:kind})),false);
+  assert.equal(context.isGeneration(packet(1,{image_isolation_worker:true})),false);
+  assert.equal(context.isGeneration(packet(1,{request_kind:'turn',session_kind:'subagent',request_purpose:'image_analysis'})),false);
+  for(const kind of ['turn','generation','subagent'])assert.equal(context.isGeneration(packet(1,{request_kind:kind})),true);
+  assert.equal(context.isGeneration(packet(1,{method:'GET'})),false);
+  assert.equal(context.isGeneration(packet(1,{path:'/alpha/search'})),false);
   assert.equal(context.isGeneration(packet(1,{is_compaction:true})),false);
  });
+  await test('both rendered charts and their legend contain only conversation and compaction requests',()=>{
+   const rows=[packet(201,{request_kind:'turn',upstream_usage:{input_tokens:50},outbound_wire_bytes:1000}),
+    packet(202,{is_compaction:true,request_kind:'compaction',outbound_wire_bytes:800}),
+    packet(203,{thread_id:'image-first',request_kind:'image_analysis',session_kind:'image_analysis',request_purpose:'image_analysis',upstream_usage:{input_tokens:999999},outbound_wire_bytes:99999999}),
+    packet(204,{thread_id:'image-second',image_isolation_worker:true,upstream_usage:{input_tokens:999999},outbound_wire_bytes:99999999}),
+    packet(205,{thread_id:'title',request_kind:'title_generation',upstream_usage:{input_tokens:999999},outbound_wire_bytes:99999999})];
+   const {result,ids}=rendered(rows),model=result.model();
+   assert.deepEqual(Array.from(model.series,series=>series.id),['session-a']);
+   assert.deepEqual(Array.from(model.series[0].points,point=>point.packet.id).sort(),[id(201),id(202)]);
+   assert.ok(model.series[0].points.some(point=>point.events.includes('compact')));
+   assert.ok(result.charts.every(chart=>chart.points.length>0&&chart.points.every(point=>point.series.id==='session-a')));
+   assert.deepEqual(ids.get('trend-series').children.filter(node=>node.dataset.renderKey).map(node=>node.dataset.renderKey),['trend-series:session-a']);
+  });
+  await test('auxiliary-only history produces no points or session legend entries',()=>{
+   const {result,ids}=rendered(['image_analysis','title_generation','next_message_suggestion','session_index','prewarm'].map((kind,i)=>
+    packet(210+i,{thread_id:'auxiliary-'+i,request_kind:kind,upstream_usage:{input_tokens:100},outbound_wire_bytes:1000})));
+   assert.equal(result.model().series.length,0);
+   assert.ok(result.charts.every(chart=>chart.points.length===0));
+   assert.equal(ids.get('trend-series').children.filter(node=>node.dataset.renderKey).length,0);
+  });
  await test('scale includes all values and identity colors stay stable',()=>{
   for(const n of [0,1,999,500000,10000000]){const scale=View.scale(n);assert.ok(scale.max>=n&&scale.step>0&&Number.isFinite(scale.max));}
   assert.equal(View.color('session-a'),View.color('session-a'));assert.notEqual(View.color('session-a'),View.color('session-b'));
@@ -217,6 +242,9 @@ function eventRows(){return [
   await result.hydrate();assert.equal(calls,8);assert.equal(maximum,2);
   await result.hydrate();assert.equal(calls,9);
   result.packets.set(id(50),packet(50,{usage_override_applied:true}));await result.hydrate();assert.equal(calls,9,'synthetic protection usage never triggers native backfill');
+  for(const [i,kind] of ['image_analysis','next_message_suggestion','title_generation','session_index'].entries())
+   result.packets.set(id(60+i),packet(60+i,{request_kind:kind}));
+  await result.hydrate();assert.equal(calls,9,'auxiliary requests never trigger chart usage backfill');
  });
  await test('size curves use the request-list basis without fabricating missing values',()=>{
   assert.equal(View.size({overflow_original_wire_bytes:50,usage_override_request_bytes:40,outbound_wire_bytes:30}),50);

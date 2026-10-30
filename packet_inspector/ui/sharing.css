@@ -21,6 +21,15 @@
 .sharing-link-area{margin-top:22px}
 .sharing-link-area textarea{margin:8px 0 10px;font:12px/1.6 Consolas,monospace;overflow-wrap:anywhere;resize:vertical}
 .sharing-detail{font-size:13px;color:var(--muted);line-height:1.7;overflow-wrap:anywhere;margin:16px 0 0}
+.sharing-usage{margin-top:18px;padding:16px;border:1px solid var(--line);border-radius:8px;background:var(--bg)}
+.sharing-usage-heading{display:flex;align-items:baseline;flex-wrap:wrap;gap:8px 12px;font-size:13px}
+.sharing-usage-heading strong{font-size:23px;font-weight:650;font-variant-numeric:tabular-nums}
+.sharing-usage-parts{display:flex;flex-wrap:wrap;gap:12px 22px;margin:15px 0 12px;font-size:12px}
+.sharing-usage-parts dt{color:var(--muted);margin-bottom:5px}
+.sharing-usage-parts dd{margin:0;font-size:14px;font-variant-numeric:tabular-nums}
+.sharing-usage-note{font-size:12px;color:var(--muted);line-height:1.7;margin:6px 0 0}
+.sharing-usage-note a{color:var(--accent);white-space:nowrap}
+.sharing-roles{margin-top:20px;margin-bottom:0}
 .sharing-message{padding:12px 16px;margin-bottom:20px;border:1px solid var(--line);border-radius:8px;background:var(--soft);color:var(--ink);line-height:1.7}
 .sharing-message.error{background:#fff2f1;border-color:#efcfcc;color:var(--danger)}
 #sharing-remote-link{margin-top:9px;font-family:Consolas,monospace}
