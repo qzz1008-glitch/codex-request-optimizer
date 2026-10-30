@@ -284,7 +284,7 @@ class NativeTray:
 
         def window_proc(hwnd, message, wparam, lparam):
             if message == callback_message:
-                if lparam in (0x202, 0x203):  # left button up/double click
+                if lparam == 0x203:  # WM_LBUTTONDBLCLK; ignore single left clicks.
                     invoke(self.open_window)
                 elif lparam == 0x205:  # right button up
                     if self.show_panel is not None:
