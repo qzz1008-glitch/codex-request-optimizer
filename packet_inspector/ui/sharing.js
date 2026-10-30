@@ -13,7 +13,7 @@ globalThis.InspectorSharing=(()=>{
   const message=(value,error=false)=>{const box=get("sharing-message");box.textContent=tr(value);box.hidden=!value;box.classList.toggle("error",error);const local=get("credential-edit-message");local.textContent=error?tr(value):"";local.hidden=!error;};
   function card(kind){
     const title=kind==="quota"?"额度":"出口";
-    return `<section class="sharing-card" data-kind="${kind}"><header><h2>${label(title)}</h2><span id="${kind}-state" class="sharing-state"></span></header>
+    return `<section class="sharing-card" data-kind="${kind}"><header><h2>${label(title)}</h2><span id="${kind}-state" class="sharing-state"></span><button type="button" class="sharing-service" id="${kind}-service" data-action="service" data-kind="${kind}" hidden>${label("暂停借出")}</button></header>
       <div class="sharing-switch" role="group" aria-label="${label(title)}"><button type="button" data-view="out" data-kind="${kind}" aria-pressed="true">${label("借出")}</button><button type="button" data-view="in" data-kind="${kind}" aria-pressed="false">${label("借入")}</button></div>
       <form id="${kind}-issue" class="sharing-form"><label>${label("同事名称")}<input id="${kind}-label" maxlength="80" required autocomplete="off"></label>
         <label>${label("到期时间")}<input id="${kind}-expiry" type="datetime-local"></label>
@@ -23,7 +23,6 @@ globalThis.InspectorSharing=(()=>{
       </form>
       <form id="${kind}-borrow" class="sharing-form" hidden><label>${label("名称")}<input id="${kind}-borrow-label" maxlength="80" required autocomplete="off"></label><label>${label("对方的凭据")}<input id="${kind}-borrow-link" type="password" autocomplete="off" spellcheck="false" required placeholder="${kind==="quota"?"codex-share":"codex-exit"}://…"></label><div class="sharing-actions"><button type="submit" class="primary" id="${kind}-activate">${label("保存并借入")}</button></div></form>
       ${kind==="quota"?`<button id="quota-local" class="sharing-local" type="button" data-action="local" data-kind="quota">${label("使用本机额度")}</button>`:`<div id="exit-local" class="sharing-exit-source"><button type="button" data-action="provider" data-kind="exit">${label("额度方出口")}</button><button type="button" data-action="local" data-kind="exit">${label("本机出口")}</button></div>`}
-      <button type="button" class="sharing-local" id="${kind}-service" data-action="service" data-kind="${kind}">${label("暂停借出")}</button>
       <p class="sharing-card-note">${label(kind==="quota"?"每张凭据仅供一位同事使用。":"借出的出口始终使用本机网络。")}</p>
     </section>`;
   }
@@ -78,7 +77,7 @@ globalThis.InspectorSharing=(()=>{
       get(kind+"-generate").disabled=busy||(kind==="quota"&&borrowing);get(kind+"-activate").disabled=busy||(kind==="quota"&&hosting);
       const running=kind==="quota"?hosting:exitHosting;get(kind+"-service").hidden=!running&&!(value.credentials||[]).some(row=>row.kind===kind&&row.direction==="out");get(kind+"-service").textContent=tr(running?"暂停借出":"恢复借出");get(kind+"-service").disabled=busy||(kind==="quota"&&borrowing);
     }
-    get("quota-local").hidden=!borrowing;get("quota-local").disabled=busy;
+    get("quota-local").hidden=!borrowing;get("quota-local").disabled=busy;get("exit-local").hidden=views.exit!=="in";
     for(const button of get("exit-local").querySelectorAll("button")){button.disabled=busy;button.setAttribute("aria-pressed",String(button.dataset.action===value.egress?.selection?.mode));}
     for(const button of get("sharing-credential-rows").querySelectorAll("button"))button.disabled=busy;
     renderStats();
