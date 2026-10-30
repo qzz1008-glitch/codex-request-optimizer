@@ -2,7 +2,7 @@
 
 const uiI18n = (() => {
   const english = {
-    "额度上限（美元）":"Budget limit (USD)",
+    "美元":"USD",
     "共享额度现按美元设置，请更新客户端。":"Shared quota now uses USD budgets. Update your client.",
     "共享时长不在允许范围。":"The sharing duration is outside the allowed range.",
     "上次共享已结束，已恢复原连接。请重新加载 Codex 配置。":"The previous share ended and the original connection was restored. Reload Codex configuration.",
