@@ -11,6 +11,7 @@ from .app_icon import APP_ICON
 
 STATUS_MESSAGE = 0x8002
 NATIVE_MENU_MESSAGE = 0x8003
+ICON_REFRESH_TIMER = 1
 
 
 def tray_status_lines(status):
@@ -83,6 +84,8 @@ class NativeTray:
         self.hwnd = None
         self.thread = None
         self.owned_icon = None
+        self._icon_size = None
+        self._scaled_icon_loader = None
         self.status_thread = None
         self._status = {}
         self._status_guard = threading.Lock()
@@ -163,6 +166,50 @@ class NativeTray:
         if self.icon.szTip != tip[:127]:
             self.icon.szTip = tip[:127]
             self.shell.Shell_NotifyIconW(1, ctypes.byref(self.icon))
+
+    def _icon_dimensions(self):
+        try:
+            taskbar = self.user.FindWindowW("Shell_TrayWnd", None)
+            dpi = self.user.GetDpiForWindow(taskbar or self.hwnd)
+            if dpi:
+                size = tuple(self.user.GetSystemMetricsForDpi(index, dpi) for index in (49, 50))
+                if all(value > 0 for value in size):
+                    return size
+        except (AttributeError, OSError):
+            pass
+        return tuple(self.user.GetSystemMetrics(index) or 16 for index in (49, 50))
+
+    def _load_icon(self, size):
+        if self._scaled_icon_loader is not None:
+            handle = wintypes.HICON()
+            result = self._scaled_icon_loader(None, str(APP_ICON), *size, ctypes.byref(handle))
+            if result >= 0 and handle.value:
+                return handle.value
+            if handle.value:
+                self.user.DestroyIcon(handle.value)
+        return self.user.LoadImageW(None, str(APP_ICON), 1, *size, 0x10)
+
+    def _refresh_icon(self, *, add=False):
+        if not self.hwnd or getattr(self, "icon", None) is None:
+            return False
+        size = self._icon_dimensions()
+        if not add and size == self._icon_size:
+            return True
+        previous, owned = self.icon.hIcon, self.owned_icon
+        loaded = self._load_icon(size)
+        if not loaded and previous and not add:
+            return False  # Keep the current product icon when a reload fails.
+        self.icon.hIcon = loaded or previous or self.user.LoadIconW(None, ctypes.c_void_p(32512))
+        if not self.shell.Shell_NotifyIconW(0 if add else 1, ctypes.byref(self.icon)):
+            self.icon.hIcon = previous
+            if loaded:
+                self.user.DestroyIcon(loaded)
+            return False
+        if loaded:
+            self.owned_icon, self._icon_size = loaded, size
+            if owned and owned != loaded:
+                self.user.DestroyIcon(owned)
+        return True
 
     def _launch_panel(self):
         try:
@@ -251,6 +298,29 @@ class NativeTray:
         user.LoadImageW.restype = wintypes.HANDLE
         user.GetSystemMetrics.argtypes = [ctypes.c_int]
         user.GetSystemMetrics.restype = ctypes.c_int
+        user.FindWindowW.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR]
+        user.FindWindowW.restype = wintypes.HWND
+        for name, arguments, result in (
+            ("GetDpiForWindow", [wintypes.HWND], wintypes.UINT),
+            ("GetSystemMetricsForDpi", [ctypes.c_int, wintypes.UINT], ctypes.c_int),
+            ("SetThreadDpiAwarenessContext", [wintypes.HANDLE], wintypes.HANDLE),
+        ):
+            function = getattr(user, name, None)
+            if function is not None:
+                function.argtypes, function.restype = arguments, result
+        set_thread_dpi = getattr(user, "SetThreadDpiAwarenessContext", None)
+        if set_thread_dpi is not None:
+            # Scope DPI awareness to the tray thread, leaving WebView windows alone.
+            if not set_thread_dpi(ctypes.c_void_p(-4)):  # PER_MONITOR_AWARE_V2
+                set_thread_dpi(ctypes.c_void_p(-3))  # Earlier per-monitor support.
+        try:
+            self.icon_library = ctypes.WinDLL("comctl32", use_last_error=True)
+            self._scaled_icon_loader = self.icon_library.LoadIconWithScaleDown
+            self._scaled_icon_loader.argtypes = [wintypes.HINSTANCE, wintypes.LPCWSTR,
+                                                 ctypes.c_int, ctypes.c_int, ctypes.POINTER(wintypes.HICON)]
+            self._scaled_icon_loader.restype = ctypes.c_long
+        except (AttributeError, OSError):
+            self._scaled_icon_loader = None
         user.DestroyIcon.argtypes = [wintypes.HICON]
         user.DestroyIcon.restype = wintypes.BOOL
         user.PostMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
@@ -273,6 +343,10 @@ class NativeTray:
         user.GetCursorPos.argtypes = [ctypes.POINTER(wintypes.POINT)]
         user.RegisterWindowMessageW.argtypes = [wintypes.LPCWSTR]
         user.UnregisterClassW.argtypes = [wintypes.LPCWSTR, wintypes.HINSTANCE]
+        user.SetTimer.argtypes = [wintypes.HWND, ctypes.c_size_t, wintypes.UINT, ctypes.c_void_p]
+        user.SetTimer.restype = ctypes.c_size_t
+        user.KillTimer.argtypes = [wintypes.HWND, ctypes.c_size_t]
+        user.KillTimer.restype = wintypes.BOOL
         shell.Shell_NotifyIconW.argtypes = [wintypes.DWORD, ctypes.POINTER(NotifyIcon)]
         shell.Shell_NotifyIconW.restype = wintypes.BOOL
 
@@ -301,8 +375,17 @@ class NativeTray:
             if message == NATIVE_MENU_MESSAGE:
                 self._show_native_menu()
                 return 0
+            if message in (0x1A, 0x7E, 0x2E0):  # settings, display, or DPI changed
+                self._refresh_icon()
+                # Explorer can finish updating its DPI after this broadcast.
+                user.SetTimer(hwnd, ICON_REFRESH_TIMER, 250, None)
+                return 0
+            if message == 0x113 and wparam == ICON_REFRESH_TIMER:  # WM_TIMER
+                user.KillTimer(hwnd, ICON_REFRESH_TIMER)
+                self._refresh_icon()
+                return 0
             if message == taskbar_created:
-                shell.Shell_NotifyIconW(0, ctypes.byref(self.icon))
+                self._refresh_icon(add=True)
                 return 0
             if message == 0x10:  # WM_CLOSE
                 user.DestroyWindow(hwnd)
@@ -310,6 +393,7 @@ class NativeTray:
             if message == 2:  # WM_DESTROY
                 self._stopped.set()
                 self._status_requested.set()
+                user.KillTimer(hwnd, ICON_REFRESH_TIMER)
                 shell.Shell_NotifyIconW(2, ctypes.byref(self.icon))
                 if self.owned_icon:
                     user.DestroyIcon(self.owned_icon)
@@ -336,11 +420,8 @@ class NativeTray:
         self.icon.cbSize = ctypes.sizeof(NotifyIcon)
         self.icon.hWnd, self.icon.uID = self.hwnd, 1
         self.icon.uFlags, self.icon.uCallbackMessage = 7, callback_message
-        self.owned_icon = user.LoadImageW(None, str(APP_ICON), 1,
-                                         user.GetSystemMetrics(49), user.GetSystemMetrics(50), 0x10)
-        self.icon.hIcon = self.owned_icon or user.LoadIconW(None, ctypes.c_void_p(32512))
         self.icon.szTip = "Codex 请求优化器 · 中转服务运行中"
-        if not shell.Shell_NotifyIconW(0, ctypes.byref(self.icon)):
+        if not self._refresh_icon(add=True):
             user.DestroyWindow(self.hwnd)
             raise ctypes.WinError(ctypes.get_last_error())
         self.ready.set()
