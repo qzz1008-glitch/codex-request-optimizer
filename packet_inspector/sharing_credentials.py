@@ -1,0 +1,263 @@
+"""Durable grants and aggregate statistics. Never stores model credentials or content."""
+from contextlib import contextmanager
+from datetime import datetime, timedelta
+import ctypes
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import secrets
+import sqlite3
+import time
+
+from .sharing_auth import SharingError
+from .sharing_pricing import budget_nanos, reference_cost
+
+CLIENT_HEADER = "X-Inspector-Client"
+COUNTERS = ("input_tokens", "output_tokens", "total_tokens", "cached_input_tokens", "responses",
+            "missing_responses", "unpriced_responses", "cost_nanos", "sent_bytes", "received_bytes", "requests")
+
+
+def protect(value, decrypt=False):
+    if os.name != "nt":
+        return value  # Private-file fallback for isolated non-Windows test fixtures.
+    class Blob(ctypes.Structure):
+        _fields_ = [("size", ctypes.c_ulong), ("data", ctypes.POINTER(ctypes.c_ubyte))]
+    source = ctypes.create_string_buffer(value)
+    incoming = Blob(len(value), ctypes.cast(source, ctypes.POINTER(ctypes.c_ubyte)))
+    outgoing = Blob()
+    library = ctypes.WinDLL("crypt32", use_last_error=True)
+    function = library.CryptUnprotectData if decrypt else library.CryptProtectData
+    if not function(ctypes.byref(incoming), None, None, None, None, 1, ctypes.byref(outgoing)):
+        raise OSError("无法读取本机共享凭据。" if decrypt else "无法保护本机共享凭据。")
+    try:
+        return ctypes.string_at(outgoing.data, outgoing.size)
+    finally:
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel.LocalFree.argtypes = [ctypes.c_void_p]
+        kernel.LocalFree(ctypes.cast(outgoing.data, ctypes.c_void_p))
+
+
+def expiration(value):
+    if value is None or value == "":
+        return None
+    if type(value) not in {int, float} or not time.time() < value <= 253402214400:
+        raise SharingError("请选择未来的到期时间，或选择永久。")
+    return float(value)
+
+
+def week_start(now=None):
+    current = datetime.fromtimestamp(time.time() if now is None else now)
+    return (current.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=current.weekday())).timestamp()
+
+
+def day_key(now=None):
+    return datetime.fromtimestamp(time.time() if now is None else now).strftime("%Y-%m-%d")
+
+
+class CredentialVault:
+    def __init__(self, root):
+        self.path = Path(root) / "sharing-credentials.sqlite"
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        with self.connection() as db:
+            db.executescript("""CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value BLOB NOT NULL);
+                CREATE TABLE IF NOT EXISTS credentials (id TEXT PRIMARY KEY, kind TEXT NOT NULL,
+                direction TEXT NOT NULL, digest TEXT, secret BLOB NOT NULL, data TEXT NOT NULL);
+                CREATE UNIQUE INDEX IF NOT EXISTS grants ON credentials(digest) WHERE digest IS NOT NULL;""")
+        if os.name != "nt":
+            self.path.chmod(0o600)
+        self.client_id = self.secret("client-id", lambda: secrets.token_hex(32).encode()).decode()
+
+    @contextmanager
+    def connection(self):
+        db = sqlite3.connect(self.path, timeout=10)
+        db.row_factory = sqlite3.Row
+        try:
+            db.execute("BEGIN IMMEDIATE")
+            yield db
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            db.close()
+
+    def secret(self, key, factory):
+        with self.connection() as db:
+            row = db.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
+            if row:
+                return protect(row[0], True)
+            value = factory()
+            db.execute("INSERT INTO meta VALUES (?,?)", (key, protect(value)))
+            return value
+
+    @staticmethod
+    def _save(db, identifier, data):
+        db.execute("UPDATE credentials SET data=? WHERE id=?", (json.dumps(data, separators=(",", ":")), identifier))
+
+    @staticmethod
+    def _roll(data):
+        if data.get("weekly_reset") and data["period_started_at"] < week_start():
+            data.update(period_id=secrets.token_hex(8), period_started_at=week_start(), period_cost_nanos=0)
+            return True
+        return False
+
+    def issue(self, kind, label="", expires_at=None, budget=0, weekly_reset=False, *, internal=False):
+        if kind not in {"quota", "exit"} or type(weekly_reset) is not bool:
+            raise SharingError("凭据类型或刷新设置无效。")
+        limit = budget_nanos(budget)
+        expiry = expiration(expires_at)
+        identifier, token = secrets.token_hex(12), secrets.token_urlsafe(32)
+        data = {"id": identifier, "kind": kind, "direction": "out", "label": str(label or "同事")[:80],
+                "created_at": time.time(), "expires_at": expiry, "enabled": True, "bound": False, "internal": internal,
+                "budget_nanos": limit if kind == "quota" else 0, "weekly_reset": weekly_reset if kind == "quota" else False,
+                "period_id": secrets.token_hex(8), "period_started_at": time.time(), "period_cost_nanos": 0,
+                "totals": {key: 0 for key in COUNTERS}, "daily": {}}
+        with self.connection() as db:
+            db.execute("INSERT INTO credentials VALUES (?,?,?,?,?,?)", (identifier, kind, "out",
+                       hashlib.sha256(token.encode()).hexdigest(), protect(token.encode()), json.dumps(data)))
+        return identifier, token
+
+    def import_link(self, kind, link, label="", snapshot=None):
+        # Keep one history entry per grant even if the sender's address changes.
+        grant = link.rsplit("#", 1)[-1]
+        digest = hashlib.sha256((kind + grant).encode()).hexdigest()
+        with self.connection() as db:
+            row = db.execute("SELECT id,data FROM credentials WHERE direction='in' AND digest=?", (digest,)).fetchone()
+            identifier = row["id"] if row else secrets.token_hex(12)
+            data = json.loads(row["data"]) if row else {"id": identifier, "kind": kind, "direction": "in", "created_at": time.time()}
+            data.update(label=str(label or data.get("label") or "借入凭据")[:80], last_seen=time.time())
+            if snapshot is not None:
+                data["snapshot"] = snapshot
+                data["online"] = True
+            db.execute("INSERT OR REPLACE INTO credentials VALUES (?,?,?,?,?,?)",
+                       (identifier, kind, "in", digest, protect(link.encode()), json.dumps(data)))
+            return identifier
+
+    def get_secret(self, identifier, kind=None, direction=None):
+        with self.connection() as db:
+            row = db.execute("SELECT * FROM credentials WHERE id=?", (identifier,)).fetchone()
+            if not row or (kind and row["kind"] != kind) or (direction and row["direction"] != direction):
+                raise SharingError("凭据不存在。")
+            return protect(row["secret"], True).decode()
+
+    def authenticate(self, kind, value, client, *, spend=False):
+        if not isinstance(client, str) or not re.fullmatch(r"[a-f0-9]{64}", client) or not value.startswith("Bearer "):
+            raise SharingError("凭据或客户端标识无效，请双方更新软件。")
+        digest = hashlib.sha256(value[7:].encode()).hexdigest()
+        binding = hashlib.sha256(client.encode()).hexdigest()
+        with self.connection() as db:
+            row = db.execute("SELECT id,data FROM credentials WHERE kind=? AND direction='out' AND digest=?", (kind, digest)).fetchone()
+            if row is None:
+                raise SharingError("凭据无效或已撤销。")
+            data = json.loads(row["data"])
+            self._roll(data)
+            if not data["enabled"] or (data["expires_at"] is not None and time.time() >= data["expires_at"]):
+                raise SharingError("凭据已停用或到期。")
+            if data.get("client_hash") and not secrets.compare_digest(data["client_hash"], binding):
+                raise SharingError("此凭据已绑定另一位同事，请申请独立凭据。")
+            if spend and data["budget_nanos"] and data["period_cost_nanos"] >= data["budget_nanos"]:
+                raise SharingError("此凭据的本期额度已用完。")
+            data.update(bound=True, client_hash=binding, last_seen=time.time())
+            if spend:
+                data["totals"]["requests"] += 1
+            self._save(db, row["id"], data)
+            return {"credential_id": row["id"], "period_id": data["period_id"], "started_at": time.time()}
+
+    def record(self, reservation, values=None, *, missing=False, sent=0, received=0):
+        if not reservation:
+            return
+        increments = {key: 0 for key in COUNTERS}
+        increments.update(sent_bytes=max(0, sent), received_bytes=max(0, received), missing_responses=int(missing))
+        if values is not None:
+            for key in ("input_tokens", "output_tokens", "total_tokens", "cached_input_tokens"):
+                increments[key] = values.get(key, 0)
+            cost = reference_cost(values)
+            increments.update(responses=1, cost_nanos=cost or 0, unpriced_responses=int(cost is None))
+        with self.connection() as db:
+            row = db.execute("SELECT data FROM credentials WHERE id=?", (reservation["credential_id"],)).fetchone()
+            if row is None:
+                return
+            data = json.loads(row[0])
+            self._roll(data)
+            for key, amount in increments.items():
+                data["totals"][key] += amount
+            if data["period_id"] == reservation["period_id"]:
+                data["period_cost_nanos"] += increments["cost_nanos"]
+            day = day_key()
+            daily = data["daily"].setdefault(day, {key: 0 for key in COUNTERS})
+            for key, amount in increments.items():
+                daily[key] += amount
+            # Keep a year of chart aggregates; lifetime totals never shrink.
+            data["daily"] = dict(sorted(data["daily"].items())[-366:])
+            self._save(db, reservation["credential_id"], data)
+
+    @staticmethod
+    def public(data):
+        data = {key: value for key, value in data.items() if key not in {"client_hash", "period_id"}}
+        if data.get("direction") == "out":
+            start = day_key(week_start())
+            data["week_cost_nanos"] = sum(v["cost_nanos"] for k, v in data["daily"].items() if k >= start)
+            data["expired"] = data["expires_at"] is not None and time.time() >= data["expires_at"]
+            data["exhausted"] = bool(data["budget_nanos"] and data["period_cost_nanos"] >= data["budget_nanos"])
+            data["daily"] = dict(sorted(data["daily"].items())[-30:])
+        return data
+
+    def rows(self):
+        with self.connection() as db:
+            output = []
+            for row in db.execute("SELECT id,data FROM credentials ORDER BY rowid DESC"):
+                data = json.loads(row["data"])
+                if data["direction"] == "out" and self._roll(data):
+                    self._save(db, row["id"], data)
+                output.append(self.public(data))
+            return output
+
+    def snapshot(self, reservation):
+        with self.connection() as db:
+            row = db.execute("SELECT data FROM credentials WHERE id=?", (reservation["credential_id"],)).fetchone()
+            if not row:
+                return {}
+            data = json.loads(row[0])
+            if self._roll(data):
+                self._save(db, reservation["credential_id"], data)
+            return self.public(data)
+
+    def update(self, identifier, changes, *, reset=False):
+        with self.connection() as db:
+            row = db.execute("SELECT data FROM credentials WHERE id=? AND direction='out'", (identifier,)).fetchone()
+            if not row:
+                raise SharingError("只能修改本机借出的凭据。")
+            data = json.loads(row[0])
+            self._roll(data)
+            if "label" in changes:
+                data["label"] = str(changes["label"])[:80]
+            if "expires_at" in changes:
+                data["expires_at"] = expiration(changes["expires_at"])
+            if "budget" in changes:
+                data["budget_nanos"] = budget_nanos(changes["budget"])
+            for key in ("enabled", "weekly_reset"):
+                if key in changes:
+                    if type(changes[key]) is not bool:
+                        raise SharingError("凭据设置无效。")
+                    data[key] = changes[key]
+            if reset:
+                data.update(period_id=secrets.token_hex(8), period_started_at=time.time(), period_cost_nanos=0)
+            self._save(db, identifier, data)
+
+    def refresh_snapshot(self, identifier, snapshot):
+        with self.connection() as db:
+            row = db.execute("SELECT data FROM credentials WHERE id=? AND direction='in'", (identifier,)).fetchone()
+            if row:
+                data = json.loads(row[0])
+                data.update(snapshot=snapshot, last_seen=time.time())
+                self._save(db, identifier, data)
+
+    def availability(self, identifier, online):
+        with self.connection() as db:
+            row = db.execute("SELECT data FROM credentials WHERE id=? AND direction='in'", (identifier,)).fetchone()
+            if row:
+                data = json.loads(row[0])
+                data.update(online=online, checked_at=time.time())
+                self._save(db, identifier, data)

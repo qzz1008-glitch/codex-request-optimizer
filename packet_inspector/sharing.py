@@ -18,16 +18,17 @@ from urllib.parse import urlsplit
 from urllib.error import HTTPError
 from urllib.request import build_opener, HTTPSHandler, HTTPRedirectHandler, ProxyHandler, Request
 
-from .analyzer import MAX_BODY
+from .analyzer import MAX_BODY, decode_body
 from .http_io import UPSTREAM_READ_TIMEOUT_SECONDS
 from .connection_policy import codex_auth
 from .sharing_auth import NativeAuthorization, SharingError
 from .sharing_config import SharedProvider
 from .sharing_usage import SharedUsageStream, empty_usage
 from .sharing_role import MachineSharingRole
+from .sharing_credentials import CLIENT_HEADER, CredentialVault
 from .usage_trigger import raw_chunks
 
-PROTOCOL = 3  # Private forwarding, aggregate-only accounting and an explicit physical/selected exit.
+PROTOCOL = 4  # One-client credentials, durable aggregate-only accounting, independent exit.
 POST_PATHS = {"/responses", "/responses/compact"}
 PRIVATE_NETWORKS = tuple(ipaddress.ip_network(n) for n in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"))
 DROP_HEADERS = {"authorization", "proxy-authorization", "cookie", "host", "content-length",
@@ -131,7 +132,7 @@ def pinned_opener(host, port, fingerprint):
     return build_opener(ProxyHandler({}), HTTPSHandler(context=pinned_tls_context(host, port, fingerprint)), NoRedirect())
 
 
-def tls_context(host):
+def tls_context(host, vault=None, purpose="quota"):
     # Lazy import: a missing optional build dependency cannot break ordinary relay startup.
     try:
         from cryptography import x509
@@ -140,21 +141,26 @@ def tls_context(host):
         from cryptography.x509.oid import NameOID
     except ImportError:
         raise SharingError("当前安装缺少共享依赖，请更新完整安装包。") from None
-    key = ec.generate_private_key(ec.SECP256R1())
-    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Codex LAN sharing")])
-    now = datetime.now(timezone.utc)
-    cert = (x509.CertificateBuilder().subject_name(name).issuer_name(name).public_key(key.public_key())
-            .serial_number(x509.random_serial_number()).not_valid_before(now - timedelta(minutes=5))
-            .not_valid_after(now + timedelta(days=2))
-            .add_extension(x509.SubjectAlternativeName([x509.IPAddress(ipaddress.ip_address(host))]), critical=False)
-            .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True).sign(key, hashes.SHA256()))
+    def generate():
+        key = ec.generate_private_key(ec.SECP256R1())
+        name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Codex LAN sharing")])
+        now = datetime.now(timezone.utc)
+        cert = (x509.CertificateBuilder().subject_name(name).issuer_name(name).public_key(key.public_key())
+                .serial_number(x509.random_serial_number()).not_valid_before(now - timedelta(minutes=5))
+                .not_valid_after(now + timedelta(days=7305))
+                .add_extension(x509.SubjectAlternativeName([x509.IPAddress(ipaddress.ip_address(host))]), critical=False)
+                .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True).sign(key, hashes.SHA256()))
+        return json.dumps({"cert": cert.public_bytes(serialization.Encoding.PEM).decode(),
+                           "key": key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
+                                                    serialization.NoEncryption()).decode()}).encode()
+    identity = json.loads(vault.secret("tls:" + purpose + ":" + host, generate) if vault else generate())
+    cert = x509.load_pem_x509_certificate(identity["cert"].encode())
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.minimum_version = ssl.TLSVersion.TLSv1_2
     with tempfile.TemporaryDirectory(prefix="codex-share-") as folder:
         certificate, private = Path(folder) / "cert.pem", Path(folder) / "key.pem"
-        certificate.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
-        private.write_bytes(key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
-                                             serialization.NoEncryption()))
+        certificate.write_text(identity["cert"], encoding="ascii")
+        private.write_text(identity["key"], encoding="ascii")
         context.load_cert_chain(certificate, private)
     return context, cert.fingerprint(hashes.SHA256()).hex()
 
@@ -215,11 +221,15 @@ class LANHandler(BaseHTTPRequestHandler):
                                            and not allowed_request(self.command, suffix)):
             self.reply(404, {"error": "sharing_route_not_found"})
             return
-        if not controller.authorized(self.headers.get("Authorization", "")):
+        client = self.headers.get(CLIENT_HEADER, "")
+        if not controller.authorized(self.headers.get("Authorization", ""), client):
             self.reply(403, {"error": "sharing_unavailable", "message": "共享已停止、到期或链接已撤销。"})
             return
         if self.command == "GET" and path == "/v1/status":
-            self.reply(200, {"protocol": PROTOCOL, "available": True})
+            try:
+                self.reply(200, controller.peer_status(self.headers.get("Authorization", ""), client))
+            except SharingError:
+                self.reply(403, {"error": "sharing_unavailable"})
             return
         if self.command == "GET" and path == "/v1/responses":
             self.reply(426, {"error": {"code": "websocket_not_supported", "message": "Use HTTP POST."}})
@@ -246,7 +256,8 @@ class LANHandler(BaseHTTPRequestHandler):
         usage = None
         try:
             headers = forwarding_headers(self.headers)
-            credentials, reservation = controller.reserve(self.headers.get("Authorization", ""), count=self.command == "POST")
+            credentials, reservation = controller.reserve(self.headers.get("Authorization", ""), client,
+                                                          count=self.command == "POST")
             headers.update(credentials)
             reserved = True
             # B has already prepared the body. A only substitutes authorization
@@ -257,12 +268,23 @@ class LANHandler(BaseHTTPRequestHandler):
                               data=body if self.command == "POST" else None, headers=headers, method=self.command)
             try:
                 from .egress_transport import EGRESS_HEADER
-                opener = controller.server.egress.outgoing(self.headers.get(EGRESS_HEADER, ""))
+                opener = controller.server.egress.outgoing(self.headers.get(EGRESS_HEADER, ""), client_id=client)
                 response = opener.open(request, timeout=UPSTREAM_READ_TIMEOUT_SECONDS)
             except HTTPError as exc:
                 response = exc
             if self.command == "POST":
-                usage = SharedUsageStream(response, lambda values: controller.add_usage(reservation, values))
+                model, tier = "", None
+                try:
+                    payload = json.loads(decode_body(body, self.headers.get("Content-Encoding", "identity")))
+                    if isinstance(payload, dict):
+                        model = payload.get("model", "")
+                        tier = payload.get("service_tier")
+                    del payload
+                except Exception:
+                    pass
+                usage = SharedUsageStream(response, lambda values: controller.add_usage(reservation, values),
+                                          model=model if isinstance(model, str) else "",
+                                          service_tier=tier if isinstance(tier, str) else None)
             self.connection.settimeout(UPSTREAM_READ_TIMEOUT_SECONDS)
             self.send_response(response.status)
             for key, value in response.headers.items():
@@ -310,6 +332,10 @@ class Sharing:
         self.closed = False
         self.addresses = []
         self.address_time = 0
+        self._vault = None
+        self._vault_guard = threading.RLock()
+        self.refreshing = False
+        self.refreshed_at = 0
         self.provider = SharedProvider(server.link, server.data_dir / "sharing-provider.json")
         self.recovery_error = ""
         self.recovered = False
@@ -321,6 +347,13 @@ class Sharing:
     @property
     def client_endpoint(self):
         return self.server.endpoint + "/sharing/client"
+
+    @property
+    def vault(self):
+        with self._vault_guard:
+            if self._vault is None:
+                self._vault = CredentialVault(self.server.data_dir)
+            return self._vault
 
     def _host_upstream(self, credentials):
         profile = self.server.link.profile()
@@ -342,15 +375,29 @@ class Sharing:
         return expected
 
     def start_host(self, address=None, port=None, hours=8, token_limit=0):
+        # Compatibility for the original local API; new credentials use issue().
+        if (type(hours) is not int or not 1 <= hours <= 24 or type(token_limit) is not int
+                or not 0 <= token_limit <= 1_000_000_000_000):
+            raise SharingError("共享时长或 Token 上限不在允许范围。")
+        result = self.issue(address=address, port=port, expires_at=time.time() + hours * 3600)
+        self.host["token_limit"] = token_limit
+        return result
+
+    def ensure_service(self, address=None, port=None):
+        with self.guard:
+            if self.remote:
+                raise SharingError("请先断开或停止当前共享连接。")
+            if self.listener:
+                return
         address = automatic_address() if address is None else lan_address(address)
         port = self.server.settings["sharing_port"] if port is None else port
-        for value, minimum, maximum in ((port, 1, 65535), (hours, 1, 24),
-                                         (token_limit, 0, 1_000_000_000_000)):
-            if type(value) is not int or not minimum <= value <= maximum:
-                raise SharingError("共享端口、时长或 Token 上限不在允许范围。")
+        if type(port) is not int or not 1 <= port <= 65535:
+            raise SharingError("共享端口不在允许范围。")
         with self.guard:
-            if self.remote or self.listener:
+            if self.remote:
                 raise SharingError("请先断开或停止当前共享连接。")
+            if self.listener:
+                return
             self.role.acquire()
             authorization = None
             listener = None
@@ -358,25 +405,17 @@ class Sharing:
                 authorization = self.authorization_factory()
                 credentials = authorization.credentials()
                 upstream = self._host_upstream(credentials)
-                context, fingerprint = tls_context(address)
+                context, fingerprint = tls_context(address, self.vault)
                 listener = LANServer((address, port), self, context)
-                grant = secrets.token_urlsafe(32)
                 self.host = {"active": True, "address": address, "port": listener.server_address[1],
-                             "expires_at": time.time() + hours * 3600, "requests": 0, "in_flight": 0,
-                             "token_limit": token_limit, "usage": empty_usage(),
+                             "expires_at": None, "requests": 0, "in_flight": 0,
+                             "token_limit": 0, "usage": empty_usage(),
                              "started_at": time.time(), "error": "", "upstream": upstream,
-                             "grant_hash": hashlib.sha256(grant.encode()).digest(),
                              "identity_hash": hashlib.sha256(credentials["identity"].encode()).digest(),
                              "fingerprint": fingerprint}
                 self.authorization, self.listener = authorization, listener
                 self.recovered = False
                 threading.Thread(target=listener.serve_forever, name="codex-lan-sharing", daemon=True).start()
-                state = self.host
-                self.timer = threading.Timer(hours * 3600, lambda: self.stop_host(expected=state))
-                self.timer.daemon = True
-                self.timer.start()
-                return {"link": f"codex-share://{address}:{listener.server_address[1]}/#{grant}.{fingerprint}",
-                        **self.status()}
             except Exception as exc:
                 try:
                     if listener:
@@ -389,51 +428,84 @@ class Sharing:
                     raise
                 raise SharingError("无法开启共享，请检查网络、Codex 登录状态或设置中的额度端口。") from None
 
-    def authorized(self, value):
-        if not value.startswith("Bearer "):
-            return False
-        digest = hashlib.sha256(value[7:].encode()).digest()
+    def issue(self, *, label="", expires_at=None, budget=0, weekly_reset=False, address=None, port=None):
+        # Validate before starting a listener or the native authorization helper.
+        from .sharing_credentials import expiration
+        from .sharing_pricing import budget_nanos
+        expiration(expires_at)
+        budget_nanos(budget)
+        if type(weekly_reset) is not bool:
+            raise SharingError("凭据刷新设置无效。")
+        self.ensure_service(address, port)
         with self.guard:
-            return bool(self.listener and self.host.get("active") and time.time() < self.host["expires_at"]
-                        and secrets.compare_digest(digest, self.host["grant_hash"]))
+            identifier, _ = self.vault.issue("quota", label, expires_at, budget, weekly_reset)
+            self.host["last_credential_id"] = identifier
+            return {**self.status(), "link": self.credential_link(identifier), "issued_id": identifier}
+
+    def credential_link(self, identifier):
+        if not self.listener:
+            raise SharingError("请先开启额度借出。")
+        token = self.vault.get_secret(identifier, "quota", "out")
+        return f"codex-share://{self.host['address']}:{self.host['port']}/#{token}.{self.host['fingerprint']}"
+
+    def authorized(self, value, client=""):
+        with self.guard:
+            if not self.listener or not self.host.get("active"):
+                return False
+            if self.host.get("expires_at") is not None and time.time() >= self.host["expires_at"]:
+                return False
+            try:
+                self.vault.authenticate("quota", value, client)
+                return True
+            except SharingError:
+                return False
+
+    def peer_status(self, value, client):
+        reservation = self.vault.authenticate("quota", value, client)
+        return {"protocol": PROTOCOL, "available": True, "credential": self.vault.snapshot(reservation)}
 
     def rotate(self):
         with self.guard:
-            if not self.listener or not self.host.get("active") or time.time() >= self.host["expires_at"]:
+            if not self.listener or not self.host.get("active"):
                 raise SharingError("请先开启共享。")
-            grant = secrets.token_urlsafe(32)
-            self.host["grant_hash"] = hashlib.sha256(grant.encode()).digest()
-            return {**self.status(), "link": f"codex-share://{self.host['address']}:{self.host['port']}/#{grant}.{self.host['fingerprint']}"}
+            prior = self.host.get("last_credential_id")
+            if prior:
+                self.vault.update(prior, {"enabled": False})
+            return self.issue()
 
-    def reserve(self, value, *, count=True):
+    def reserve(self, value, client="", *, count=True):
         with self.guard:
-            if not self.authorized(value):
+            if not self.authorized(value, client):
                 raise SharingError("共享已停止、到期或链接已撤销。")
             if count and self.host["token_limit"] and self.host["usage"]["total_tokens"] >= self.host["token_limit"]:
                 raise SharingError("本次共享的 Token 上限已达到。")
             credentials = self.authorization.credentials()
-            if not self.authorized(value):
+            if not self.authorized(value, client):
                 raise SharingError("共享已停止、到期或链接已撤销。")
             if not secrets.compare_digest(hashlib.sha256(credentials["identity"].encode()).digest(), self.host["identity_hash"]):
                 self.host.update(active=False, error="Codex 登录已变更，请重新开启共享。")
                 raise SharingError(self.host["error"])
+            reservation = self.vault.authenticate("quota", value, client, spend=count)
             self.host["requests"] += int(count)
             self.host["in_flight"] += 1
-            return credentials["headers"], self.host
+            return credentials["headers"], {**reservation, "state": self.host, "upstream": self.host["upstream"]}
 
     def add_usage(self, reservation, values):
         with self.guard:
-            usage = reservation["usage"]
+            usage = reservation["state"]["usage"]
             for key in ("input_tokens", "output_tokens", "total_tokens", "cached_input_tokens"):
                 usage[key] += values.get(key, 0)
             usage["responses"] += 1
             usage["cached_responses"] += int("cached_input_tokens" in values)
+            self.vault.record(reservation, values)
 
     def release(self, reservation, *, metered=None):
         with self.guard:
-            reservation["in_flight"] = max(0, reservation.get("in_flight", 0) - 1)
+            state = reservation["state"]
+            state["in_flight"] = max(0, state.get("in_flight", 0) - 1)
             if metered is False:
-                reservation["usage"]["missing_responses"] += 1
+                state["usage"]["missing_responses"] += 1
+                self.vault.record(reservation, missing=True)
 
     def stop_host(self, *, expected=None):
         with self.guard:
@@ -456,10 +528,12 @@ class Sharing:
             authorization.close()
         return self.status()
 
-    def connect(self, link):
+    def connect(self, link=None, *, label="", identifier=None):
         with self.guard:
             if self.listener:
                 raise SharingError("请先断开或停止当前共享连接。")
+            if identifier:
+                link = self.vault.get_secret(identifier, "quota", "in")
             host, port, token, fingerprint = parse_link(link)
             replacing = self.remote is not None
             if not replacing:
@@ -467,16 +541,19 @@ class Sharing:
             try:
                 opener = pinned_opener(host, port, fingerprint)
                 upstream = f"https://{host}:{port}/v1"
-                request = Request(upstream + "/status", headers={"Authorization": "Bearer " + token})
+                request = Request(upstream + "/status", headers={"Authorization": "Bearer " + token,
+                                                                 CLIENT_HEADER: self.vault.client_id})
                 with opener.open(request, timeout=8) as response:
-                    result = json.loads(response.read(4096))
+                    result = json.loads(response.read(256_000))
                 if result.get("protocol") != PROTOCOL or result.get("available") is not True:
                     raise SharingError("共享协议不兼容，请双方更新软件。")
+                saved_id = self.vault.import_link("quota", link, label, result.get("credential", {}))
                 settings = self.server.settings
                 if not replacing:
                     self.provider.activate(self.client_endpoint, settings["capacity_retry_max_retries"]
                                            if settings["capacity_retry_enabled"] else None)
-                self.remote = {"host": host, "port": port, "upstream": upstream, "opener": opener, "token": token}
+                self.remote = {"host": host, "port": port, "upstream": upstream, "opener": opener, "token": token,
+                               "credential_id": saved_id}
                 self.recovered = False
                 if not replacing:
                     self.server.connection_reload_required = True
@@ -508,6 +585,42 @@ class Sharing:
                 raise SharingError("共享连接已断开，请重新连接。")
             return {**self.remote}
 
+    def refresh_peers(self):
+        """UI-only polling, outside inference paths and controller locks."""
+        with self.guard:
+            if self.closed or self.refreshing or time.monotonic() - self.refreshed_at < 5:
+                return
+            self.refreshing = True
+            remote = dict(self.remote) if self.remote else None
+        def refresh():
+            try:
+                if remote:
+                    identifier = remote["credential_id"]
+                    try:
+                        request = Request(remote["upstream"] + "/status", headers={
+                            "Authorization": "Bearer " + remote["token"], CLIENT_HEADER: self.vault.client_id})
+                        with remote["opener"].open(request, timeout=5) as response:
+                            value = json.loads(response.read(256_000))
+                        self.vault.refresh_snapshot(identifier, value.get("credential", {}))
+                        self.vault.availability(identifier, True)
+                    except (OSError, ValueError):
+                        self.vault.availability(identifier, False)
+                egress = getattr(self.server, "egress", None)
+                if egress:
+                    with egress.guard:
+                        opener, identifier = egress.peer_opener, egress.peer_id
+                    if opener and identifier:
+                        try:
+                            self.vault.refresh_snapshot(identifier, opener.refresh_status())
+                            self.vault.availability(identifier, True)
+                        except (OSError, ValueError):
+                            self.vault.availability(identifier, False)
+            finally:
+                with self.guard:
+                    self.refreshing = False
+                    self.refreshed_at = time.monotonic()
+        threading.Thread(target=refresh, name="sharing-peer-statistics", daemon=True).start()
+
     def status(self):
         with self.guard:
             if not self.closed and (not self.address_time or time.monotonic() - self.address_time > 30):
@@ -516,14 +629,16 @@ class Sharing:
                     "token_limit", "error")
             host = {key: self.host[key] for key in keys if key in self.host}
             host["usage"] = dict(self.host.get("usage", empty_usage()))
-            host["active"] = bool(self.listener and self.host.get("active") and time.time() < self.host.get("expires_at", 0))
+            host["active"] = bool(self.listener and self.host.get("active") and
+                                  (self.host.get("expires_at") is None or time.time() < self.host["expires_at"]))
             host["running"] = bool(self.listener)
             client = {"active": bool(self.remote)}
             if self.remote:
-                client.update(address=self.remote["host"], port=self.remote["port"])
+                client.update(address=self.remote["host"], port=self.remote["port"], active_id=self.remote["credential_id"])
             egress = getattr(self.server, "egress", None)
             return {"supported": True, "protocol": PROTOCOL, "host": host, "client": client, "addresses": self.addresses,
-                    "automatic_address_supported": True,
+                    "automatic_address_supported": True, "credentials_supported": True,
+                    "credentials": self.vault.rows() if not self.closed else [],
                     "egress": egress.status() if egress is not None else {"supported": False},
                     "recovery_error": self.recovery_error, "recovered": self.recovered}
 

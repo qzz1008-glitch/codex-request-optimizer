@@ -16,6 +16,7 @@ from urllib.request import ProxyHandler, proxy_bypass
 from .egress_transport import EGRESS_PROTOCOL, ExitOpener, UPSTREAM_HOSTS, parse_egress_link
 from .http_io import UPSTREAM_READ_TIMEOUT_SECONDS
 from .sharing import LANServer, SharingError, automatic_address, lan_address, tls_context
+from .sharing_credentials import CLIENT_HEADER
 
 
 def physical_tunnel(server, host, port):
@@ -61,17 +62,24 @@ class ExitHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path != "/v1/status":
             self.reply(404, {"error": "exit_route_not_found"})
-        elif not self.server.controller.authorized(self.headers.get("Authorization", "")):
+        elif not self.server.controller.authorized(self.headers.get("Authorization", ""), self.headers.get(CLIENT_HEADER, "")):
             self.reply(403, {"error": "exit_unavailable"})
         else:
-            self.reply(200, {"kind": "network_exit", "protocol": EGRESS_PROTOCOL})
+            controller = self.server.controller
+            try:
+                self.reply(200, controller.peer_status(self.headers.get("Authorization", ""), self.headers.get(CLIENT_HEADER, "")))
+            except SharingError:
+                self.reply(403, {"error": "exit_unavailable"})
 
     def do_CONNECT(self):
         controller = self.server.controller
         if self.path not in {host + ":443" for host in UPSTREAM_HOSTS}:
             self.reply(403, {"error": "exit_target_forbidden"})
             return
-        reservation = controller.reserve(self.headers.get("Proxy-Authorization", ""))
+        try:
+            reservation = controller.reserve(self.headers.get("Proxy-Authorization", ""), self.headers.get(CLIENT_HEADER, ""))
+        except SharingError:
+            reservation = None
         if reservation is None:
             self.reply(403, {"error": "exit_unavailable"})
             return
@@ -126,6 +134,8 @@ class SharedEgress:
         self.mode = "provider"
         self.peer_link = ""
         self.peer_opener = None
+        self.peer_id = None
+        self.callback_link = ""
         self.connect_physical = lambda host, port: physical_tunnel(server, host, port)
         self.opener_factory = ExitOpener
 
@@ -134,52 +144,87 @@ class SharedEgress:
         if timer:
             timer.cancel()
 
+    @property
+    def vault(self):
+        return self.server.sharing.vault
+
     def start(self, address=None, port=None, hours=8):
-        address = automatic_address() if address is None else lan_address(address)
-        port = self.server.settings["egress_port"] if port is None else port
-        if type(port) is not int or not 0 <= port <= 65535 or type(hours) is not int or not 1 <= hours <= 24:
-            raise SharingError("出口端口或时长不在允许范围。")
+        if type(hours) is not int or not 1 <= hours <= 24:
+            raise SharingError("出口时长不在允许范围。")
+        with self.guard:
+            if self.listener and self.local_link:
+                return {**self.status(), "link": self.local_link}
+        return self.issue(address=address, port=port, expires_at=time.time() + hours * 3600)
+
+    def ensure_service(self, address=None, port=None):
         with self.guard:
             if self.listener:
-                return {**self.status(), "link": self.local_link}
-            context, fingerprint = tls_context(address)
+                return
+        address = automatic_address() if address is None else lan_address(address)
+        port = self.server.settings["egress_port"] if port is None else port
+        if type(port) is not int or not 0 <= port <= 65535:
+            raise SharingError("出口端口不在允许范围。")
+        with self.guard:
+            if self.listener:
+                return
+            context, fingerprint = tls_context(address, self.vault, "exit")
             try:
                 listener = LANServer((address, port), self, context, ExitHandler)
             except OSError:
                 raise SharingError("无法开启出口共享，请检查网络或设置中的出口端口。") from None
-            grant = secrets.token_urlsafe(32)
-            self.host = {"address": address, "port": listener.server_port, "expires_at": time.time() + hours * 3600,
-                         "grant_hash": hashlib.sha256(grant.encode()).digest(), "fingerprint": fingerprint,
+            self.host = {"address": address, "port": listener.server_port, "expires_at": None,
+                         "fingerprint": fingerprint,
                          "connections": 0, "in_flight": 0, "sent_bytes": 0, "received_bytes": 0}
             self.listener = listener
-            self.local_link = f"codex-exit://{address}:{listener.server_port}/#{grant}.{fingerprint}"
             threading.Thread(target=listener.serve_forever, name="codex-shared-exit", daemon=True).start()
-            state = self.host
-            self.timer = threading.Timer(hours * 3600, lambda: self.stop(expected=state))
-            self.timer.daemon = True
-            self.timer.start()
-            return {**self.status(), "link": self.local_link}
 
-    def authorized(self, value):
-        if not value.startswith("Bearer "):
-            return False
+    def issue(self, *, label="", expires_at=None, address=None, port=None, internal=False):
+        from .sharing_credentials import expiration
+        expiration(expires_at)
+        self.ensure_service(address, port)
         with self.guard:
-            return bool(self.listener and time.time() < self.host["expires_at"]
-                        and secrets.compare_digest(hashlib.sha256(value[7:].encode()).digest(), self.host["grant_hash"]))
+            identifier, _ = self.vault.issue("exit", "本机出口回接" if internal else label, expires_at, internal=internal)
+            if not internal:
+                self.host["last_credential_id"] = identifier
+                self.local_link = self.credential_link(identifier)
+            return {**self.status(), "link": self.credential_link(identifier), "issued_id": identifier}
 
-    def reserve(self, value):
+    def credential_link(self, identifier):
+        if not self.listener:
+            raise SharingError("请先开启出口借出。")
+        token = self.vault.get_secret(identifier, "exit", "out")
+        return f"codex-exit://{self.host['address']}:{self.host['port']}/#{token}.{self.host['fingerprint']}"
+
+    def authorized(self, value, client=""):
         with self.guard:
-            if not self.authorized(value):
+            if not self.listener or (self.host.get("expires_at") is not None and time.time() >= self.host["expires_at"]):
+                return False
+            try:
+                self.vault.authenticate("exit", value, client)
+                return True
+            except SharingError:
+                return False
+
+    def peer_status(self, value, client):
+        reservation = self.vault.authenticate("exit", value, client)
+        return {"kind": "network_exit", "protocol": EGRESS_PROTOCOL, "credential": self.vault.snapshot(reservation)}
+
+    def reserve(self, value, client=""):
+        with self.guard:
+            if not self.authorized(value, client):
                 return None
+            reservation = self.vault.authenticate("exit", value, client, spend=True)
             self.host["connections"] += 1
             self.host["in_flight"] += 1
-            return self.host
+            return {**reservation, "state": self.host}
 
     def release(self, reservation, sent, received):
         with self.guard:
-            reservation["in_flight"] -= 1
-            reservation["sent_bytes"] += sent
-            reservation["received_bytes"] += received
+            state = reservation["state"]
+            state["in_flight"] -= 1
+            state["sent_bytes"] += sent
+            state["received_bytes"] += received
+            self.vault.record(reservation, sent=sent, received=received)
 
     def stop(self, *, expected=None):
         with self.guard:
@@ -188,6 +233,7 @@ class SharedEgress:
             listener, self.listener = self.listener, None
             self._stop_timer()
             self.local_link = ""
+            self.callback_link = ""
             self.host.pop("grant_hash", None)
             if expected is None and self.mode == "local":
                 self.mode = "provider"
@@ -198,23 +244,32 @@ class SharedEgress:
 
     def rotate(self):
         with self.guard:
-            if not self.listener or time.time() >= self.host["expires_at"]:
+            if not self.listener:
                 raise SharingError("请先开启共享出口。")
-            grant = secrets.token_urlsafe(32)
-            self.host["grant_hash"] = hashlib.sha256(grant.encode()).digest()
-            self.local_link = f"codex-exit://{self.host['address']}:{self.host['port']}/#{grant}.{self.host['fingerprint']}"
-            return {**self.status(), "link": self.local_link}
+            prior = self.host.get("last_credential_id")
+            if prior:
+                self.vault.update(prior, {"enabled": False})
+            return self.issue()
 
-    def select(self, mode, link=""):
+    def select(self, mode, link="", *, label="", identifier=None):
         if mode not in {"provider", "local", "peer"}:
             raise SharingError("请选择本机、额度提供方或其他共享出口。")
+        if identifier:
+            link = self.vault.get_secret(identifier, "exit", "in")
         if mode == "peer" and not link:
             with self.guard:
                 link = self.peer_link
-        opener = self.opener_factory(link) if mode == "peer" else None
+        opener = self.opener_factory(link, client_id=self.vault.client_id) if mode == "peer" else None
+        try:
+            saved_id = self.vault.import_link("exit", link, label, getattr(opener, "snapshot", {})) if opener else None
+        except Exception:
+            if opener:
+                opener.close()
+            raise
         with self.guard:
             prior = self.peer_opener
             self.mode, self.peer_link, self.peer_opener = mode, link if mode == "peer" else "", opener
+            self.peer_id = saved_id
         if prior:
             prior.close()
         return self.status()
@@ -230,18 +285,19 @@ class SharedEgress:
         if not account_peer:
             return ""
         with self.guard:
-            if self.listener and time.time() < self.host["expires_at"]:
-                return self.local_link
+            if self.listener and self.callback_link:
+                return self.callback_link
         # Selecting the borrower's own exit implies a callback tunnel. The
         # kernel chooses the LAN interface that can reach the quota provider.
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as route:
             route.connect((account_peer["host"], account_peer["port"]))
             address = route.getsockname()[0]
-        return self.start(address)["link"]
+        self.callback_link = self.issue(address=address, internal=True)["link"]
+        return self.callback_link
 
-    def outgoing(self, override="", *, own_request=False):
+    def outgoing(self, override="", *, own_request=False, client_id=None):
         if override:
-            return self.opener_factory(override, ephemeral=True)
+            return self.opener_factory(override, client_id=client_id or self.vault.client_id, ephemeral=True)
         if own_request:
             with self.guard:
                 if self.mode == "peer":
@@ -251,8 +307,8 @@ class SharedEgress:
     def status(self):
         with self.guard:
             host = {key: value for key, value in self.host.items() if key not in {"grant_hash", "fingerprint"}}
-            host["active"] = bool(self.listener and time.time() < self.host.get("expires_at", 0))
-            selection = {"mode": self.mode, "peer_configured": bool(self.peer_link)}
+            host["active"] = bool(self.listener and (self.host.get("expires_at") is None or time.time() < self.host["expires_at"]))
+            selection = {"mode": self.mode, "peer_configured": bool(self.peer_link), "active_id": self.peer_id}
             if self.peer_link:
                 address, port, _token, _fingerprint = parse_egress_link(self.peer_link)
                 selection.update(address=address, port=port)

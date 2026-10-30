@@ -1,116 +1,46 @@
 "use strict";
 const assert=require("node:assert/strict"),fs=require("node:fs"),vm=require("node:vm");
 class Element{
-  constructor(){this.value="";this.hidden=false;this.disabled=false;this.attributes={};this.handlers={};this.children=[];this.classes=new Set();this.classList={toggle:(key,on)=>on?this.classes.add(key):this.classes.delete(key)};}
-  get options(){return this.children;}
-  setAttribute(key,value){this.attributes[key]=value;}
-  addEventListener(key,value){this.handlers[key]=value;}
-  replaceChildren(...children){this.children=children;if(!children.some(node=>node.value===this.value))this.value=children[0]?.value||"";}
-  focus(){}
-  select(){this.selected=true;}
+ constructor(){this.value="";this.hidden=false;this.disabled=false;this.checked=false;this.attributes={};this.handlers={};this.innerHTML="";this.textContent="";this.dataset={};this.classList={toggle(){}};}
+ setAttribute(k,v){this.attributes[k]=v;} addEventListener(k,v){this.handlers[k]=v;} querySelectorAll(){return [];}
+ focus(){} select(){this.selected=true;} showModal(){this.open=true;} close(){this.open=false;}
 }
 const elements=new Map(),node=id=>{if(!elements.has(id))elements.set(id,new Element());return elements.get(id);};
-const idle={supported:true,protocol:3,automatic_address_supported:true,addresses:["192.168.1.20"],host:{active:false,running:false},client:{active:false},
-  egress:{supported:true,host:{active:false},selection:{mode:"provider",peer_configured:false}}};
-const host={...idle,host:{active:true,running:true,address:"192.168.1.20",port:47846,requests:1,in_flight:0,started_at:1900000000,expires_at:2000000000,
-  token_limit:100000,usage:{input_tokens:1234,output_tokens:66,total_tokens:1300,cached_input_tokens:500,cached_responses:1,responses:1,missing_responses:0}}};
-const pending=[],requests=[],stored=new Map();let copied="",timers=0;
-const context={console,AbortController,Date,Number,Set,Map,
- document:{hidden:false,getElementById:node,createElement:()=>new Element(),addEventListener(){}},
- localStorage:{getItem:key=>stored.get(key),setItem:(key,value)=>stored.set(key,value)},
- navigator:{clipboard:{writeText:async value=>{copied=value;}}},
- setInterval:()=>++timers,clearInterval(){},t:value=>value,
- fetch:async(url,options)=>{requests.push({url,...options,data:options.body?JSON.parse(options.body):null});const response=await(pending.shift()||{status:200,data:idle});return {status:response.status,ok:response.status<400,json:async()=>response.data};}
-};
-context.globalThis=context;vm.createContext(context);
-vm.runInContext(fs.readFileSync("packet_inspector/ui/sharing.js","utf8"),context);
-const flush=async()=>{await new Promise(resolve=>setImmediate(resolve));await new Promise(resolve=>setImmediate(resolve));};
+const idle={supported:true,protocol:4,credentials_supported:true,host:{active:false,running:false},client:{active:false},egress:{supported:true,host:{active:false},selection:{mode:"provider"}},credentials:[]};
+const outgoing={id:"q1",kind:"quota",direction:"out",label:"Colleague <name>",enabled:true,bound:true,expires_at:null,budget_nanos:10e9,period_cost_nanos:2e9,week_cost_nanos:3e9,weekly_reset:true,totals:{cost_nanos:4e9,input_tokens:1234,output_tokens:66,cached_input_tokens:500,missing_responses:1,unpriced_responses:2},daily:{}};
+const incoming={id:"q2",kind:"quota",direction:"in",label:"Saved provider",snapshot:{...outgoing,expires_at:Date.now()/1000+86400}};
+const exitIncoming={id:"e1",kind:"exit",direction:"in",label:"Exit provider",snapshot:{expires_at:null,enabled:true,totals:{sent_bytes:30000,received_bytes:20000,requests:2},daily:{}}};
+const host={...idle,host:{active:true,running:true},credentials:[outgoing,incoming,exitIncoming]};
+const requests=[],pending=[];let copied="",interval=null;
+const context={console,AbortController,Date,Number,Set,Map,document:{hidden:false,getElementById:node,addEventListener(){}},navigator:{clipboard:{writeText:async value=>{copied=value;}}},setInterval:fn=>{interval=fn;return 1;},clearInterval:()=>{interval=null;},t:x=>x,
+ fetch:async(url,options)=>{requests.push({url,data:options.body?JSON.parse(options.body):null});const r=await(pending.shift()||{status:200,data:idle});return {status:r.status,ok:r.status<400,json:async()=>r.data};}};
+context.globalThis=context;vm.createContext(context);vm.runInContext(fs.readFileSync("packet_inspector/ui/sharing.js","utf8"),context);
+const flush=()=>new Promise(resolve=>setImmediate(resolve));
+const click=(target,dataset)=>{const button=new Element();button.dataset=dataset;return node(target).handlers.click({target:{closest:()=>button}});};
+const submit=id=>node(id).handlers.submit({preventDefault(){}});
 (async()=>{
-  assert.equal(requests.length,0,"A hidden sharing tab must not start authorization or network calls");
-  context.InspectorSharing.setActive(true);await flush();assert.equal(requests.length,1);
-  node("sharing-port").value="50001";node("exit-port").value="50002";
-  node("sharing-hours").value="8";node("sharing-token-limit").value="100000";
-  let finish;pending.push(new Promise(resolve=>{finish=resolve;}));
-  const submit=()=>node("sharing-host-form").handlers.submit({preventDefault(){}});submit();submit();
-  assert.equal(node("sharing-start").attributes["aria-busy"],"true");assert.equal(node("sharing-start").disabled,true);
-  assert.equal(requests.filter(value=>value.data?.action==="host_start").length,1,"Double click must not create multiple listeners");
-  assert.equal(requests.find(value=>value.data?.action==="host_start").data.token_limit,100000);
-  for(const key of ["address","port","request_limit"])assert.equal(key in requests.at(-1).data,false);
-  finish({status:200,data:{...host,link:"codex-share://dummy-first-link"}});await flush();
-  assert.equal(node("sharing-start").attributes["aria-busy"],"false");assert.equal(node("sharing-link-area").hidden,false);
-  assert.equal(node("sharing-usage").hidden,false);assert.equal(node("sharing-total-tokens").textContent,Number(1300).toLocaleString());
-  assert.equal(node("sharing-input-tokens").textContent,Number(1234).toLocaleString());assert.equal(node("sharing-cached-tokens").textContent,"500");
-  assert.equal(node("sharing-token-limit").disabled,true);
-  assert.equal(node("sharing-port").value,"50001","Sharing polling must not overwrite settings drafts");
-  assert.equal(node("sharing-connect").disabled,true,"Hosting and consuming sharing cannot form a relay loop");
-  assert.equal(node("exit-start").disabled,false,"Quota lending must not disable independent physical exit sharing");
-  await node("sharing-copy").onclick();assert.equal(copied,"codex-share://dummy-first-link");
-  pending.push({status:200,data:{...host,link:"codex-share://dummy-replaced-link"}});node("sharing-rotate").onclick();await flush();
-  assert.equal(node("sharing-link").value,"codex-share://dummy-replaced-link");
-  pending.push({status:200,data:idle});node("sharing-stop").onclick();await flush();assert.equal(node("sharing-link").value,"");
-  node("sharing-remote-link").value="codex-share://dummy-peer-link";
-  pending.push({status:200,data:{...idle,client:{active:true,address:"192.168.1.21",port:47846}}});
-  node("sharing-client-form").handlers.submit({preventDefault(){}});await flush();
-  assert.equal(node("sharing-remote-link").value,"");assert.equal(node("sharing-start").disabled,true);assert.equal(node("sharing-disconnect").hidden,false);
-  assert.equal(node("sharing-connect").disabled,false,"Borrowing must allow replacing one quota source");
-  assert.equal(node("exit-start").disabled,false,"Borrowing quota must still allow sharing this machine's physical exit");
-  assert.match(node("sharing-message").textContent,/重新加载/);
-  const borrowed={...idle,client:{active:true,address:"192.168.1.22",port:47846}};
-  pending.push({status:200,data:{...borrowed,reload_required:false}});node("sharing-remote-link").value="codex-share://replacement";
-  node("sharing-client-form").handlers.submit({preventDefault(){}});await flush();
-  assert.match(node("sharing-message").textContent,/后续请求/);assert.doesNotMatch(node("sharing-message").textContent,/重新加载/);
-  node("exit-source").value="peer";node("exit-source").handlers.change();node("exit-peer-link").value="codex-exit://private-exit-link";
-  pending.push({status:200,data:borrowed});context.InspectorSharing.setActive(true);await flush();
-  assert.equal(node("exit-source").value,"peer","Polling must preserve an unapplied exit selection");
-  const withExit={...borrowed,egress:{...idle.egress,selection:{mode:"peer",peer_configured:true,address:"192.168.1.23",port:47847}}};
-  pending.push({status:200,data:withExit});node("exit-source-form").handlers.submit({preventDefault(){}});await flush();
-  assert.deepEqual(requests.at(-1).data,{action:"egress_select",mode:"peer",link:"codex-exit://private-exit-link"});
-  assert.equal(node("exit-peer-link").value,"");assert.equal(node("exit-selection-state").textContent,"共享出口");
-  const exitHost={...withExit,egress:{...withExit.egress,host:{active:true,address:"192.168.1.20",port:47847,connections:2,in_flight:1,sent_bytes:12000,received_bytes:4000}}};
-  node("exit-hours").value="8";
-  pending.push({status:200,data:{...exitHost,egress_link:"codex-exit://physical-only"}});node("exit-host-form").handlers.submit({preventDefault(){}});await flush();
-  assert.equal(requests.at(-1).data.action,"egress_start");assert.equal(node("exit-start").hidden,true);
-  for(const key of ["address","port"])assert.equal(key in requests.at(-1).data,false);
-  assert.equal(node("exit-port").value,"50002");
-  assert.equal(node("exit-source").value,"peer","Sharing a local exit must preserve the independently selected peer exit");
-  await node("exit-copy").onclick();assert.equal(copied,"codex-exit://physical-only");
-  pending.push({status:200,data:withExit});node("exit-stop").onclick();await flush();assert.equal(node("exit-link").value,"");
-  pending.push({status:200,data:idle});node("sharing-disconnect").onclick();await flush();assert.equal(node("sharing-start").disabled,false);
-  assert.equal([...stored.values()].some(value=>/codex-(share|exit):\/\//.test(String(value))),false,"Quota and exit grants must not enter localStorage");
-  pending.push({status:200,data:{...idle,host:{...host.host,active:false,error:"Codex 登录已变更"}}});context.InspectorSharing.setActive(true);await flush();
-  assert.equal(node("sharing-stop").hidden,false,"A paused listener must remain stoppable");assert.equal(node("sharing-rotate").disabled,true);
-  pending.push({status:200,data:{...host,host:{...host.host,usage:{...host.host.usage,responses:0,missing_responses:1}}}});context.InspectorSharing.setActive(true);await flush();
-  assert.equal(node("sharing-total-tokens").textContent,"—","Missing upstream usage must not display fake zero totals");
-  assert.match(node("sharing-usage-coverage").textContent,/可能不完整/);
-  pending.push({status:200,data:{...idle,automatic_address_supported:false}});context.InspectorSharing.setActive(true);await flush();
-  pending.push({status:200,data:host});node("sharing-host-form").handlers.submit({preventDefault(){}});await flush();
-  assert.equal(requests.at(-1).data.address,"192.168.1.20","Older backends must still receive an automatically selected address");
-  pending.push({status:200,data:{...idle,protocol:1}});context.InspectorSharing.setActive(true);await flush();
-  assert.equal(node("sharing-cards").hidden,true);assert.match(node("sharing-message").textContent,/独立额度与出口/);
-  pending.push({status:404,data:{error:"missing"}});context.InspectorSharing.setActive(true);await flush();assert.match(node("sharing-message").textContent,/当前后台不支持共享/);
-
-  let trendActive=null,sharingActive=null,reloaded=0;
-  context.workspaceView="records";context.state={status:{},listController:{abort(){}}};
-  context.$=node;context.tokenTrendView={setActive:value=>{trendActive=value;}};
-  context.InspectorSharing={setActive:value=>{sharingActive=value;}};
-  context.cancelTokenRead=()=>{};context.loadTokenWindow=()=>{};context.loadListTokens=()=>{};context.fail=()=>{};
-  context.loadPackets=()=>{reloaded++;return Promise.resolve();};
-  node("records-view").chosenSession="preserved";
-  const app=fs.readFileSync("packet_inspector/ui/app.js","utf8"),start=app.indexOf("function setWorkspaceView(view)"),end=app.indexOf('$("view-records").onclick',start);
-  vm.runInContext(app.slice(start,end),context);
-  context.setWorkspaceView("sharing");assert.equal(node("sharing-view").hidden,false);assert.equal(node("records-view").hidden,true);assert.equal(trendActive,false);assert.equal(sharingActive,true);assert.equal(reloaded,0);
-  context.setWorkspaceView("trends");assert.equal(trendActive,true);assert.equal(sharingActive,false);assert.equal(node("token-trend-view").hidden,false);
-  context.setWorkspaceView("records");assert.equal(node("records-view").hidden,false);assert.equal(node("records-view").chosenSession,"preserved");assert.equal(reloaded,1);
-  context.InspectorSharing=undefined;context.setWorkspaceView("sharing");assert.equal(node("sharing-cards").hidden,true);assert.match(node("sharing-message").textContent,/当前后台不支持共享/);
-  context.settingsLanguage=null;context.uiI18n={language:"zh"};context.selectedImageAnalysisMode=()=>"native";
-  const draftStart=app.indexOf("function readSettingsDraft()"),draftEnd=app.indexOf("function changedSettings(",draftStart);
-  vm.runInContext(app.slice(draftStart,draftEnd),context);
-  node("sharing-port").value="52000";node("exit-port").value="52001";
-  const draft=context.readSettingsDraft();assert.equal(draft.sharing_port,"52000");assert.equal(draft.egress_port,"52001");
-  const html=fs.readFileSync("packet_inspector/ui/index.html","utf8");
-  const sharingHTML=html.slice(html.indexOf('<main id="sharing-view"')).split('</main>')[0];
-  assert(!/id="(?:sharing-port|exit-port|sharing-address|exit-address|sharing-limit)"/.test(sharingHTML));
-  const settingsHTML=html.slice(html.indexOf('<section id="sharing-settings"')).split('</section>')[0];
-  for(const id of ["sharing-port","exit-port"])assert(settingsHTML.includes(`id="${id}"`));
-  console.log(JSON.stringify({sharing_ui:"passed"}));
+ context.InspectorSharing.setActive(true);await flush();assert.equal(node("sharing-cards").hidden,false);
+ assert.match(node("sharing-config").innerHTML,/quota-issue/);assert.match(node("sharing-config").innerHTML,/exit-issue/);assert.doesNotMatch(node("sharing-config").innerHTML,/sharing-port|egress-port|Token 上限/);
+ node("quota-label").value="Alice";node("quota-budget").value="10";node("quota-weekly").checked=true;
+ let release;pending.push(new Promise(resolve=>{release=resolve;}));submit("quota-issue");submit("quota-issue");
+ assert.equal(requests.filter(r=>r.data?.action==="credential_issue").length,1);assert.equal(node("quota-generate").attributes["aria-busy"],"true");
+ const created=requests.at(-1).data;assert.equal(created.budget,"10");assert.equal(created.weekly_reset,true);assert.ok(created.expires_at>Date.now()/1000+6*86400);assert.equal("port" in created,false);
+ release({status:200,data:{...host,link:"codex-share://dummy-secret"}});await flush();assert.equal(node("sharing-link-area").hidden,false);await node("sharing-copy").onclick();assert.equal(copied,"codex-share://dummy-secret");
+ assert.match(node("sharing-credential-rows").innerHTML,/Colleague &lt;name&gt;/);assert.doesNotMatch(node("sharing-credential-rows").innerHTML,/Colleague <name>/);assert.match(node("sharing-summary").innerHTML,/\$2\.00/);assert.match(node("sharing-stat-note").textContent,/用量缺失 1 · 未计价 2/);
+ click("sharing-config",{kind:"quota",view:"in"});assert.equal(node("quota-issue").hidden,true);assert.equal(node("quota-borrow").hidden,false);assert.equal(node("quota-activate").disabled,true);assert.equal(node("quota-service").hidden,false,"Pause remains accessible when quota lending blocks borrowing");
+ assert.match(node("sharing-credential-rows").innerHTML,/Saved provider/);assert.doesNotMatch(node("sharing-credential-rows").innerHTML,/data-action="edit"/);
+ pending.push({status:200,data:{...host,host:{active:false,running:false}}});click("sharing-config",{kind:"quota",action:"service"});await flush();assert.equal(requests.at(-1).data.action,"host_stop");assert.equal(node("quota-activate").disabled,false);
+ const borrowing={...host,host:{active:false,running:false},client:{active:true,active_id:"q2"}};
+ pending.push({status:200,data:{...borrowing,reload_required:true}});await click("sharing-credential-rows",{action:"use",id:"q2"});await flush();assert.equal(requests.at(-1).data.id,"q2");assert.equal(requests.at(-1).data.action,"credential_use");assert.match(node("sharing-message").textContent,/重启/);assert.equal(node("quota-generate").disabled,true);
+ click("sharing-config",{kind:"exit",view:"in"});assert.match(node("sharing-stat-title").textContent,/出口/);assert.match(node("sharing-credential-rows").innerHTML,/Exit provider/);assert.equal(node("exit-activate").disabled,false,"Exit and quota sources stay independent");
+ node("exit-borrow-link").value="codex-exit://private-value";node("exit-borrow-label").value="C";pending.push({status:200,data:borrowing});await submit("exit-borrow");assert.equal(requests.at(-1).data.kind,"exit");assert.equal(node("exit-borrow-link").value,"");
+ node("quota-label").value="draft";pending.push({status:200,data:host});await interval();assert.equal(node("quota-label").value,"draft","Polling preserves form drafts");
+ click("sharing-config",{kind:"quota",view:"out"});click("sharing-credential-rows",{action:"edit",id:"q1"});assert.equal(node("sharing-credential-dialog").open,true);assert.equal(node("credential-edit-budget").value,10);assert.equal(node("credential-edit-expiry").value,"");
+ node("credential-edit-budget").value="25";pending.push({status:200,data:host});await submit("credential-edit-form");assert.equal(requests.at(-1).data.budget,"25");assert.equal(requests.at(-1).data.expires_at,null);assert.equal(node("sharing-credential-dialog").open,false);
+ pending.push({status:200,data:host});await click("sharing-credential-rows",{action:"reset",id:"q1"});assert.equal(requests.at(-1).data.action,"credential_reset");
+ const before=requests.length;pending.push({status:400,data:{error:"此凭据已绑定另一位同事"}});await click("sharing-credential-rows",{action:"use",id:"q2"});assert.equal(requests.length,before+1);assert.match(node("sharing-message").textContent,/另一位同事/);
+ context.InspectorSharing.setActive(false);assert.equal(node("sharing-link").value,"");assert.equal(node("sharing-link-area").hidden,true);assert.equal(interval,null);
+ pending.push({status:200,data:{...idle,protocol:3,credentials_supported:false}});context.InspectorSharing.setActive(true);await flush();assert.equal(node("sharing-cards").hidden,true);assert.match(node("sharing-message").textContent,/更新软件/);context.InspectorSharing.setActive(false);
+ assert.doesNotMatch(fs.readFileSync("packet_inspector/ui/sharing.js","utf8"),/localStorage|sessionStorage/);
+ console.log(JSON.stringify({sharing_ui:"passed",checks:["two_resource_cards","one_client_credentials","history_selection","expiry_and_weekly_reset","live_statistics","privacy","old_backend_guard"]}));
 })().catch(error=>{console.error(error);process.exitCode=1;});

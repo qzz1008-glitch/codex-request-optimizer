@@ -57,6 +57,7 @@ from .image_isolation import ImageIsolation, ImageIsolationFailure, check_image_
 from .sharing import Sharing, SharingError, forwarding_headers, allowed_request as sharing_request_allowed
 from .shared_egress import SharedEgress
 from .egress_transport import EGRESS_HEADER
+from .sharing_credentials import CLIENT_HEADER
 
 HOP = {"connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
        "te", "trailer", "transfer-encoding", "upgrade"}
@@ -701,15 +702,51 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/status" and self.command == "GET":
             self._json(200, self.server.status())
         elif path == "/api/sharing" and self.command == "GET":
+            self.server.sharing.refresh_peers()
             self._json(200, self.server.sharing.status())
         elif path == "/api/sharing" and self.command == "POST":
-            data = json.loads(self._body(2048))
+            data = json.loads(self._body(4096))
             if not isinstance(data, dict):
                 raise ValueError("invalid sharing action")
             try:
                 with self.server.provider_guard:
                     action = data.get("action")
-                    if action == "host_start":
+                    if action == "credential_issue":
+                        if data.get("kind") == "quota":
+                            result = self.server.sharing.issue(label=data.get("label", ""),
+                                expires_at=data.get("expires_at"), budget=data.get("budget", 0),
+                                weekly_reset=data.get("weekly_reset", False))
+                        elif data.get("kind") == "exit":
+                            issued = self.server.egress.issue(label=data.get("label", ""), expires_at=data.get("expires_at"))
+                            result = {**self.server.sharing.status(), "link": issued["link"], "issued_id": issued["issued_id"]}
+                        else:
+                            raise ValueError("invalid credential kind")
+                    elif action in {"credential_edit", "credential_reset"}:
+                        self.server.sharing.vault.update(data.get("id"), data, reset=action == "credential_reset")
+                        result = self.server.sharing.status()
+                    elif action == "credential_copy":
+                        rows = self.server.sharing.vault.rows()
+                        row = next((row for row in rows if row["id"] == data.get("id")), None)
+                        if not row or row["direction"] != "out":
+                            raise SharingError("凭据不存在。")
+                        controller = self.server.sharing if row["kind"] == "quota" else self.server.egress
+                        controller.ensure_service()
+                        result = {**self.server.sharing.status(), "link": controller.credential_link(row["id"])}
+                    elif action == "credential_use":
+                        if data.get("kind") == "quota":
+                            result = self.server.sharing.connect(data.get("link"), label=data.get("label", ""), identifier=data.get("id"))
+                        elif data.get("kind") == "exit":
+                            self.server.egress.select("peer", data.get("link", ""), label=data.get("label", ""), identifier=data.get("id"))
+                            result = self.server.sharing.status()
+                        else:
+                            raise ValueError("invalid credential kind")
+                    elif action == "host_resume":
+                        self.server.sharing.ensure_service()
+                        result = self.server.sharing.status()
+                    elif action == "egress_resume":
+                        self.server.egress.ensure_service()
+                        result = self.server.sharing.status()
+                    elif action == "host_start":
                         result = self.server.sharing.start_host(data.get("address"), data.get("port"),
                             data.get("hours", 8), token_limit=data.get("token_limit", 0))
                     elif action == "host_stop":
@@ -1167,10 +1204,11 @@ class Handler(BaseHTTPRequestHandler):
                     self.server.capture_errors += 1
         connection_tokens = {s.strip().lower() for s in self.headers.get("Connection", "").split(",")}
         headers = {k: v for k, v in self.headers.items()
-                   if k.lower() not in HOP | connection_tokens | {"host", "content-length", "x-codex-inspector-packet-id", WORKER_HEADER.lower(), EGRESS_HEADER.lower()}}
+                   if k.lower() not in HOP | connection_tokens | {"host", "content-length", "x-codex-inspector-packet-id", WORKER_HEADER.lower(), EGRESS_HEADER.lower(), CLIENT_HEADER.lower()}}
         if shared_client:
             headers = forwarding_headers(headers)
             headers["Authorization"] = "Bearer " + remote["token"]
+            headers[CLIENT_HEADER] = self.server.sharing.vault.client_id
             try:
                 exit_link = self.server.egress.request_exit(remote)
             except (OSError, SharingError):

@@ -99,43 +99,31 @@
   </main>
   <main id="sharing-view" class="sharing-workspace" hidden>
     <p id="sharing-message" class="sharing-message" role="status" hidden></p>
-    <div id="sharing-cards" class="sharing-cards">
-      <section class="sharing-card" aria-labelledby="sharing-host-title">
-        <header><h2 id="sharing-host-title">共享本机额度</h2><span id="sharing-host-state" class="sharing-state">未开启</span></header>
-        <p class="sharing-description">仅显示汇总用量，不保存借用方请求。</p>
-        <form id="sharing-host-form">
-          <div class="sharing-fields"><label>有效时长（小时）<input id="sharing-hours" type="number" min="1" max="24" value="8" required></label>
-          <label>Token 上限<input id="sharing-token-limit" type="number" min="0" max="1000000000000" step="1" value="0" required title="达到上限后拒绝新请求，进行中的请求可完成。"><small>0 表示不限。</small></label></div>
-          <div class="sharing-actions"><button id="sharing-start" class="primary" type="submit" disabled>开启共享</button><button id="sharing-stop" type="button" hidden>停止共享</button><button id="sharing-rotate" type="button" hidden>更换链接</button></div>
-        </form>
-        <div id="sharing-link-area" class="sharing-link-area" hidden><textarea id="sharing-link" rows="2" readonly spellcheck="false" aria-label="共享链接"></textarea><button id="sharing-copy" type="button">复制链接</button></div>
-        <p id="sharing-host-detail" class="sharing-detail"></p>
-        <section id="sharing-usage" class="sharing-usage" aria-label="本次共享用量" hidden>
-          <div class="sharing-usage-heading"><span>本次共享累计 Token</span><strong id="sharing-total-tokens">0</strong><small id="sharing-token-budget"></small></div>
-          <dl class="sharing-usage-parts"><div><dt>输入</dt><dd id="sharing-input-tokens">0</dd></div><div><dt>其中已知缓存输入</dt><dd id="sharing-cached-tokens">—</dd></div><div><dt>输出</dt><dd id="sharing-output-tokens">0</dd></div></dl>
-          <p id="sharing-usage-coverage" class="sharing-usage-note"></p>
-          <p class="sharing-usage-note"><span>Pro $200/月未公布 Token 配额。</span> <a href="https://learn.chatgpt.com/docs/pricing" target="_blank" rel="noopener noreferrer">用量说明</a></p>
-        </section>
-      </section>
-      <section class="sharing-card" aria-labelledby="sharing-client-title">
-        <header><h2 id="sharing-client-title">额度来源</h2><span id="sharing-client-state" class="sharing-state">本机额度</span></header>
-        <form id="sharing-client-form"><label for="sharing-remote-link">对方的共享链接</label><input id="sharing-remote-link" type="password" autocomplete="off" spellcheck="false" placeholder="codex-share://…" required><div class="sharing-actions"><button id="sharing-connect" class="primary" type="submit" disabled>连接</button><button id="sharing-disconnect" type="button" hidden>断开共享</button></div></form>
-        <p class="sharing-footnote">仅使用可信链接，断开后恢复原配置。</p>
-      </section>
-      <section class="sharing-card" aria-labelledby="exit-host-title">
-        <header><h2 id="exit-host-title">共享本机出口</h2><span id="exit-host-state" class="sharing-state">未开启</span></header>
-        <p class="sharing-description">只共享本机网络，不共享额度。</p>
-        <form id="exit-host-form"><label>有效时长（小时）<input id="exit-hours" type="number" min="1" max="24" value="8" required></label><div class="sharing-actions"><button id="exit-start" class="primary" type="submit">开启出口共享</button><button id="exit-stop" type="button" hidden>停止出口共享</button><button id="exit-rotate" type="button" hidden>更换出口链接</button><button id="exit-copy" type="button" hidden>复制出口链接</button></div></form>
-        <div id="exit-link-area" class="sharing-link-area" hidden><textarea id="exit-link" rows="2" readonly spellcheck="false" aria-label="出口链接"></textarea></div>
-        <p id="exit-host-detail" class="sharing-detail"></p>
-      </section>
-      <section class="sharing-card" aria-labelledby="exit-source-title">
-        <header><h2 id="exit-source-title">网络出口</h2><span id="exit-selection-state" class="sharing-state"></span></header>
-        <form id="exit-source-form"><label>从哪里出网<select id="exit-source"><option value="provider">额度提供方出口</option><option value="local">本机出口</option><option value="peer">其他共享出口</option></select></label><div id="exit-peer-fields" hidden><label for="exit-peer-link">对方的出口链接</label><input id="exit-peer-link" type="password" autocomplete="off" spellcheck="false" placeholder="codex-exit://…"></div><div class="sharing-actions"><button id="exit-apply" class="primary" type="submit">应用出口</button></div></form>
-        <p id="exit-selection-detail" class="sharing-detail"></p>
-        <p class="sharing-footnote">使用本机额度时需保持主页面接入。</p>
+    <div id="sharing-cards" class="sharing-layout">
+      <aside id="sharing-config" class="sharing-config" aria-label="共享配置"></aside>
+      <section class="sharing-statistics" aria-labelledby="sharing-stat-title">
+        <header class="sharing-stat-header"><h2 id="sharing-stat-title">额度 · 借出</h2><span id="sharing-stat-count"></span></header>
+        <div id="sharing-summary" class="sharing-summary"></div>
+        <div id="sharing-chart" class="sharing-chart" aria-label="最近用量统计"></div>
+        <div class="sharing-table-scroll"><table class="sharing-table"><thead id="sharing-table-head"></thead><tbody id="sharing-credential-rows"></tbody></table></div>
+        <p id="sharing-empty" class="sharing-empty">暂无凭据</p>
+        <p id="sharing-stat-note" class="sharing-stat-note"></p>
       </section>
     </div>
+    <div id="sharing-link-area" class="sharing-issued" hidden><label for="sharing-link">新凭据</label><input id="sharing-link" type="text" readonly spellcheck="false"><button id="sharing-copy" type="button">复制凭据</button><button id="sharing-link-close" type="button" aria-label="关闭">×</button></div>
+    <dialog id="sharing-credential-dialog" aria-labelledby="credential-edit-title">
+      <form id="credential-edit-form" class="credential-edit-form">
+        <h2 id="credential-edit-title">编辑凭据</h2>
+        <input id="credential-edit-id" type="hidden">
+        <label>名称<input id="credential-edit-label" maxlength="80" required></label>
+        <label>到期时间<input id="credential-edit-expiry" type="datetime-local"></label>
+        <div class="sharing-presets" data-expiry-target="credential-edit-expiry"><button type="button" data-days="1">一天</button><button type="button" data-days="7">一周</button><button type="button" data-days="0">永久</button></div>
+        <div id="credential-edit-quota"><label>额度（参考美元）<input id="credential-edit-budget" type="number" min="0" max="1000000" step="0.01"></label><label class="sharing-check"><input id="credential-edit-weekly" type="checkbox">每周刷新额度</label></div>
+        <p class="sharing-stat-note">调整作用于新请求，已开始的请求可完成。</p>
+        <p id="credential-edit-message" class="sharing-edit-message" role="alert" hidden></p>
+        <div class="sharing-actions"><button id="credential-edit-cancel" type="button">取消</button><button id="credential-edit-save" class="primary" type="submit">保存</button></div>
+      </form>
+    </dialog>
   </main>
   <dialog id="compression-confirm-dialog" aria-labelledby="compression-confirm-title" aria-describedby="compression-confirm-description compression-confirm-hint">
     <h2 id="compression-confirm-title">取消接入</h2>

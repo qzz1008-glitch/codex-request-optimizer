@@ -6,9 +6,10 @@ from urllib.request import build_opener, HTTPSHandler, ProxyHandler, Request
 from .http_io import UPSTREAM_READ_TIMEOUT_SECONDS
 from .sharing import NoRedirect, parse_link, pinned_tls_context
 from .sharing_auth import SharingError
+from .sharing_credentials import CLIENT_HEADER
 
 EGRESS_HEADER = "X-Inspector-Shared-Egress"
-EGRESS_PROTOCOL = 1
+EGRESS_PROTOCOL = 2
 UPSTREAM_HOSTS = frozenset({"chatgpt.com", "api.openai.com"})
 
 
@@ -55,7 +56,7 @@ class ExitResponse:
 
 
 class ExitOpener:
-    def __init__(self, link, *, ephemeral=False, target_context=None):
+    def __init__(self, link, *, client_id, ephemeral=False, target_context=None):
         # Import lazily so an unavailable optional dependency cannot affect the
         # original relay, account-sharing tab or an exit-only provider.
         try:
@@ -69,13 +70,13 @@ class ExitOpener:
             context = pinned_tls_context(host, port, fingerprint)
             probe = build_opener(ProxyHandler({}), HTTPSHandler(context=context), NoRedirect())
             with probe.open(Request(f"https://{host}:{port}/v1/status",
-                                    headers={"Authorization": "Bearer " + token}), timeout=8) as response:
+                                    headers={"Authorization": "Bearer " + token, CLIENT_HEADER: client_id}), timeout=8) as response:
                 import json
-                value = json.loads(response.read(4096))
+                value = json.loads(response.read(256_000))
             if value.get("protocol") != EGRESS_PROTOCOL or value.get("kind") != "network_exit":
                 raise SharingError("共享出口协议不兼容，请双方更新软件。")
             self.manager = urllib3.ProxyManager(f"https://{host}:{port}",
-                proxy_headers={"Proxy-Authorization": "Bearer " + token}, proxy_ssl_context=context,
+                proxy_headers={"Proxy-Authorization": "Bearer " + token, CLIENT_HEADER: client_id}, proxy_ssl_context=context,
                 proxy_assert_fingerprint=fingerprint, use_forwarding_for_https=False,
                 ssl_context=target_context or ssl.create_default_context(), retries=False,
                 maxsize=8, num_pools=2)
@@ -84,6 +85,17 @@ class ExitOpener:
         except Exception:
             raise SharingError("无法连接共享出口，请检查链接、网络和防火墙。") from None
         self.ephemeral = ephemeral
+        self.snapshot = value.get("credential", {})
+        self.status_url = f"https://{host}:{port}/v1/status"
+        self.status_opener, self.token, self.client_id = probe, token, client_id
+
+    def refresh_status(self):
+        import json
+        with self.status_opener.open(Request(self.status_url, headers={"Authorization": "Bearer " + self.token,
+                                                                      CLIENT_HEADER: self.client_id}), timeout=5) as response:
+            value = json.loads(response.read(256_000))
+        self.snapshot = value.get("credential", {})
+        return self.snapshot
 
     def open(self, request, timeout=UPSTREAM_READ_TIMEOUT_SECONDS):
         target = urlsplit(request.full_url)
@@ -92,7 +104,7 @@ class ExitOpener:
         try:
             import urllib3
             headers = {key: value for key, value in request.header_items()
-                       if key.lower() not in {"proxy-authorization", EGRESS_HEADER.lower()}}
+                       if key.lower() not in {"proxy-authorization", EGRESS_HEADER.lower(), CLIENT_HEADER.lower()}}
             headers["Connection"] = "close"
             response = self.manager.urlopen(request.get_method(), request.full_url, body=request.data,
                 headers=headers, redirect=False, retries=False, preload_content=False,
