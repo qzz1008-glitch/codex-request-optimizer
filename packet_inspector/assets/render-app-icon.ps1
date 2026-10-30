@@ -74,13 +74,17 @@ function RenderElements($nodes) {
     }
 }
 $w=[int]$artwork.svg.width; $h=[int]$artwork.svg.height
+$viewBox=@([regex]::Matches($artwork.svg.viewBox,'[-+]?\d+(?:\.\d+)?') | ForEach-Object { Number $_.Value })
+if($viewBox.Count -ne 4 -or $viewBox[2] -le 0 -or $viewBox[3] -le 0) { throw 'Invalid icon viewBox.' }
 $bitmap=[Drawing.Bitmap]::new($w,$h,[Drawing.Imaging.PixelFormat]::Format32bppArgb)
 $graphics=[Drawing.Graphics]::FromImage($bitmap)
 try {
     $graphics.Clear([Drawing.Color]::Transparent)
     $graphics.SmoothingMode=[Drawing.Drawing2D.SmoothingMode]::AntiAlias
     $graphics.PixelOffsetMode=[Drawing.Drawing2D.PixelOffsetMode]::HighQuality
+    $graphics.ScaleTransform(($w/$viewBox[2]),($h/$viewBox[3]))
+    $graphics.TranslateTransform((-$viewBox[0]),(-$viewBox[1]))
     RenderElements $artwork.svg.ChildNodes
     $bitmap.Save([IO.Path]::GetFullPath($OutputPath),[Drawing.Imaging.ImageFormat]::Png)
-    [pscustomobject]@{Output=[IO.Path]::GetFullPath($OutputPath);Canvas=@($w,$h);Background='opaque #013CDE';Arrow='solid rounded, matching input arrow'} | ConvertTo-Json -Compress
+    [pscustomobject]@{Output=[IO.Path]::GetFullPath($OutputPath);Canvas=@($w,$h);Background='transparent';Palette='indigo, steel blue, jade'} | ConvertTo-Json -Compress
 } finally { $graphics.Dispose(); $bitmap.Dispose() }

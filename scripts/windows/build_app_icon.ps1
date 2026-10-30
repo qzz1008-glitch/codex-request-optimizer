@@ -6,7 +6,7 @@ param(
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Drawing
 $source = [Drawing.Bitmap]::new((Resolve-Path -LiteralPath $InputPath).Path)
-$sizes = @(16,20,24,32,40,48,64,128,256)
+$sizes = @(16,20,24,28,32,36,40,44,48,56,64,128,256)
 $frames = @()
 try {
     foreach ($size in $sizes) {
