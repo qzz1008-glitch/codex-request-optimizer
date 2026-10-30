@@ -467,6 +467,31 @@ class LANSharingTests(unittest.TestCase):
         self.assertNotIn(link, json.dumps(self.owner.sharing.status()))
         self.assertEqual(self.owner.store.list(), [])
 
+    def test_local_alias_edits_do_not_change_listeners_config_or_provider_limits(self):
+        original_config = self.owner.link.config.read_bytes()
+        for kind, scheme in (("quota", "codex-share"), ("exit", "codex-exit")):
+            with self.subTest(kind=kind):
+                identifier = self.owner.sharing.vault.import_link(kind,
+                    f"{scheme}://127.0.0.1:1/#grant.fingerprint", "Provider",
+                    {"enabled": True, "budget_nanos": 10e9, "expires_at": None})
+                with patch.object(self.owner.sharing, "ensure_service") as quota_start, \
+                     patch.object(self.owner.sharing, "stop_host") as quota_stop, \
+                     patch.object(self.owner.egress, "ensure_service") as exit_start, \
+                     patch.object(self.owner.egress, "stop") as exit_stop:
+                    status, result = self.local_api("/api/sharing", {"action": "credential_edit",
+                        "id": identifier, "label": "Local alias"})
+                    self.assertEqual(status, 200)
+                    row = next(row for row in result["credentials"] if row["id"] == identifier)
+                    self.assertEqual(row["label"], "Local alias")
+                    self.assertEqual(row["snapshot"]["budget_nanos"], 10e9)
+                    for action in ("credential_edit", "credential_reset"):
+                        status, _ = self.local_api("/api/sharing", {"action": action, "id": identifier,
+                            "label": "Another alias", "enabled": True})
+                        self.assertEqual(status, 400)
+                    for mock in (quota_start, quota_stop, exit_start, exit_stop):
+                        mock.assert_not_called()
+                self.assertEqual(self.owner.link.config.read_bytes(), original_config)
+
     def test_credential_rows_control_lending_and_release_the_role_after_the_last_is_disabled(self):
         self.owner.settings["sharing_port"] = free_port()
         with patch("packet_inspector.sharing.automatic_address", return_value="127.0.0.1"), patch.object(
