@@ -57,5 +57,5 @@
 
 .sharing-edit-message{margin:0;color:var(--danger);font-size:12px;line-height:1.6}
 
-.sharing-card header{margin-bottom:14px}.sharing-card>.sharing-actions{margin-top:14px}.sharing-service{margin-left:auto}
+.sharing-card header{margin-bottom:14px}.sharing-card>.sharing-actions{margin-top:14px}
 .sharing-form>label:not(.sharing-check){display:grid;grid-template-columns:64px minmax(0,1fr);align-items:center;gap:10px}.sharing-card-note{margin-top:12px}

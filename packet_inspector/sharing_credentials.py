@@ -230,7 +230,7 @@ class CredentialVault:
                 self._save(db, reservation["credential_id"], data)
             return self.public(data)
 
-    def update(self, identifier, changes, *, reset=False):
+    def update(self, identifier, changes, *, reset=False, dry_run=False):
         with self.connection() as db:
             row = db.execute("SELECT data FROM credentials WHERE id=? AND direction='out'", (identifier,)).fetchone()
             if not row:
@@ -250,7 +250,9 @@ class CredentialVault:
                     data[key] = changes[key]
             if reset:
                 data.update(period_id=secrets.token_hex(8), period_started_at=time.time(), period_cost_nanos=0)
-            self._save(db, identifier, data)
+            if not dry_run:
+                self._save(db, identifier, data)
+            return self.public(data)
 
     def refresh_snapshot(self, identifier, snapshot):
         with self.connection() as db:
