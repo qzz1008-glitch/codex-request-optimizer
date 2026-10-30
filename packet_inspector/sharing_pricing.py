@@ -17,14 +17,17 @@ RATES = {
 }
 
 
-def budget_nanos(value):
+MIN_BUDGET_USD = 1
+
+
+def budget_nanos(value, *, minimum=MIN_BUDGET_USD):
     try:
         amount = Decimal(str(value))
-        if not amount.is_finite() or amount < 0 or amount > 1_000_000:
+        if not amount.is_finite() or amount < minimum or amount > 1_000_000:
             raise ValueError()
         return int(amount * 1_000_000_000)
     except (InvalidOperation, ValueError, TypeError):
-        raise ValueError("额度应为 0 到 1,000,000 美元，0 表示不限。") from None
+        raise ValueError("额度应为 1 到 1,000,000 美元。") from None
 
 
 def reference_cost(values):

@@ -148,13 +148,14 @@ class SharedEgress:
     def vault(self):
         return self.server.sharing.vault
 
-    def start(self, address=None, port=None, hours=8):
-        if type(hours) is not int or not 1 <= hours <= 24:
+    def start(self, address=None, port=None, hours=24):
+        if type(hours) is not int or hours != 24:
             raise SharingError("出口时长不在允许范围。")
         with self.guard:
             if self.listener and self.local_link:
                 return {**self.status(), "link": self.local_link}
-        return self.issue(address=address, port=port, expires_at=time.time() + hours * 3600)
+        now = time.time()
+        return self.issue(address=address, port=port, expires_at=now + hours * 3600, issued_at=now)
 
     def ensure_service(self, address=None, port=None):
         with self.guard:
@@ -178,12 +179,13 @@ class SharedEgress:
             self.listener = listener
             threading.Thread(target=listener.serve_forever, name="codex-shared-exit", daemon=True).start()
 
-    def issue(self, *, label="", expires_at=None, address=None, port=None, internal=False):
+    def issue(self, *, label="", expires_at=None, address=None, port=None, internal=False, issued_at=None):
         from .sharing_credentials import expiration
-        expiration(expires_at)
+        issued_at = time.time() if issued_at is None else issued_at
+        expiration(expires_at, since=issued_at)
         self.ensure_service(address, port)
         with self.guard:
-            identifier, _ = self.vault.issue("exit", "本机出口回接" if internal else label, expires_at, internal=internal)
+            identifier, _ = self.vault.issue("exit", "本机出口回接" if internal else label, expires_at, internal=internal, issued_at=issued_at)
             if not internal:
                 self.host["last_credential_id"] = identifier
                 self.local_link = self.credential_link(identifier)

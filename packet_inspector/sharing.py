@@ -374,12 +374,13 @@ class Sharing:
             raise SharingError("当前连接不是 Codex 原生登录出口，暂不支持共享此连接。")
         return expected
 
-    def start_host(self, address=None, port=None, hours=8, budget=0):
+    def start_host(self, address=None, port=None, hours=24, budget=1):
         # Compatibility for the original local API; new credentials use issue().
-        if type(hours) is not int or not 1 <= hours <= 24:
+        if type(hours) is not int or hours != 24:
             raise SharingError("共享时长不在允许范围。")
         try:
-            return self.issue(address=address, port=port, expires_at=time.time() + hours * 3600, budget=budget)
+            now = time.time()
+            return self.issue(address=address, port=port, expires_at=now + hours * 3600, budget=budget, issued_at=now)
         except ValueError as exc:
             raise SharingError(str(exc)) from None
 
@@ -428,17 +429,18 @@ class Sharing:
                     raise
                 raise SharingError("无法开启共享，请检查网络、Codex 登录状态或设置中的额度端口。") from None
 
-    def issue(self, *, label="", expires_at=None, budget=0, weekly_reset=False, address=None, port=None):
+    def issue(self, *, label="", expires_at=None, budget=1, weekly_reset=False, address=None, port=None, issued_at=None):
         # Validate before starting a listener or the native authorization helper.
         from .sharing_credentials import expiration
         from .sharing_pricing import budget_nanos
-        expiration(expires_at)
+        issued_at = time.time() if issued_at is None else issued_at
+        expiration(expires_at, since=issued_at)
         budget_nanos(budget)
         if type(weekly_reset) is not bool:
             raise SharingError("凭据刷新设置无效。")
         self.ensure_service(address, port)
         with self.guard:
-            identifier, _ = self.vault.issue("quota", label, expires_at, budget, weekly_reset)
+            identifier, _ = self.vault.issue("quota", label, expires_at, budget, weekly_reset, issued_at=issued_at)
             self.host["last_credential_id"] = identifier
             return {**self.status(), "link": self.credential_link(identifier), "issued_id": identifier}
 

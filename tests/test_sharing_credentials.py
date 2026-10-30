@@ -26,10 +26,10 @@ class ReferencePricingTests(unittest.TestCase):
         for values in [dict(model="future-model"), dict(model="gpt-6.1-sol", cached_input_tokens=100),
                        dict(model="gpt-6.1-sol", input_tokens=-1), dict(model="gpt-6.1-sol", service_tier="future-tier")]:
             self.assertIsNone(reference_cost(values))
-        for value in ("nan", "inf", -1, "bad", 1_000_001):
+        for value in ("nan", "inf", -1, 0, "0.99", "bad", 1_000_001):
             with self.assertRaises(ValueError):
                 budget_nanos(value)
-        self.assertEqual(budget_nanos("0.01"), 10_000_000)
+        self.assertEqual(budget_nanos("1"), 1_000_000_000)
 
 
 class CredentialVaultTests(unittest.TestCase):
@@ -44,15 +44,15 @@ class CredentialVaultTests(unittest.TestCase):
         return identifier, "Bearer " + token
 
     def test_multiple_clients_share_one_budget_and_atomic_usage_totals(self):
-        identifier, token = self.grant(budget="0.01")
+        identifier, token = self.grant(budget="1")
         with concurrent.futures.ThreadPoolExecutor(2) as pool:
             reservations = list(pool.map(lambda client: self.vault.authenticate("quota", token, client, spend=True),
                                          ["a" * 64, "b" * 64]))
             self.assertEqual({value["credential_id"] for value in reservations}, {identifier})
-            list(pool.map(lambda value: self.vault.record(value, dict(model="gpt-6.1-sol", input_tokens=2500)), reservations))
+            list(pool.map(lambda value: self.vault.record(value, dict(model="gpt-6.1-sol", input_tokens=250000)), reservations))
         row = self.vault.rows()[0]
-        self.assertEqual(row["period_cost_nanos"], 10_000_000)
-        self.assertEqual(row["totals"]["input_tokens"], 5000)
+        self.assertEqual(row["period_cost_nanos"], 1_000_000_000)
+        self.assertEqual(row["totals"]["input_tokens"], 500000)
         self.assertEqual(row["totals"]["requests"], 2)
         self.assertTrue(row["exhausted"])
         self.assertNotIn("bound", row)
@@ -67,7 +67,7 @@ class CredentialVaultTests(unittest.TestCase):
                 self.vault.authenticate("quota", invalid)
 
     def test_legacy_binding_is_removed_without_changing_grants_or_usage(self):
-        identifier, token = self.grant(budget="10", expires_at=time.time() + 86400)
+        identifier, token = self.grant(budget="10", expires_at=time.time() + 86401)
         reservation = self.vault.authenticate("quota", token, "a" * 64, spend=True)
         self.vault.record(reservation, dict(model="gpt-6.1-sol", input_tokens=2500))
         incoming = self.vault.import_link("quota", "codex-share://127.0.0.1:1/#grant.fingerprint", "saved")
@@ -88,9 +88,9 @@ class CredentialVaultTests(unittest.TestCase):
         upgraded.authenticate("quota", token, spend=True)
 
     def test_budget_live_edits_manual_reset_and_late_completion(self):
-        identifier, token = self.grant(budget="0.01")
+        identifier, token = self.grant(budget="1")
         reservation = self.vault.authenticate("quota", token, "a" * 64, spend=True)
-        values = dict(model="gpt-6.1-sol", input_tokens=5000, output_tokens=1000, total_tokens=6000)
+        values = dict(model="gpt-6.1-sol", input_tokens=5000, output_tokens=100000, total_tokens=105000)
         self.vault.record(reservation, values)
         with self.assertRaises(SharingError):
             self.vault.authenticate("quota", token, "a" * 64, spend=True)
@@ -98,8 +98,8 @@ class CredentialVaultTests(unittest.TestCase):
         self.vault.record(reservation, values)  # Earlier period: lifetime only.
         row = self.vault.rows()[0]
         self.assertEqual(row["period_cost_nanos"], 0)
-        self.assertEqual(row["totals"]["cost_nanos"], 40_000_000)
-        self.assertEqual(row["week_cost_nanos"], 40_000_000)
+        self.assertEqual(row["totals"]["cost_nanos"], 2_020_000_000)
+        self.assertEqual(row["week_cost_nanos"], 2_020_000_000)
         next_request = self.vault.authenticate("quota", token, "a" * 64, spend=True)
         self.vault.record(next_request, dict(input_tokens=1, output_tokens=0, total_tokens=1, model="unknown"))
         self.vault.record(next_request, missing=True)
@@ -123,13 +123,13 @@ class CredentialVaultTests(unittest.TestCase):
         self.assertEqual(self.vault.rows()[0]["totals"]["cost_nanos"], 40_000)
 
     def test_persistence_secret_protection_expiry_and_incoming_history(self):
-        identifier, token = self.grant(expires_at=time.time() + 60)
+        identifier, token = self.grant(expires_at=time.time() + 86460)
         second = CredentialVault(self.root)
         self.assertEqual(second.client_id, self.vault.client_id)
         self.assertEqual(second.get_secret(identifier), token[7:])
         if os.name == "nt":
             self.assertNotIn(token[7:].encode(), self.vault.path.read_bytes())
-        with patch("packet_inspector.sharing_credentials.time.time", return_value=time.time() + 120):
+        with patch("packet_inspector.sharing_credentials.time.time", return_value=time.time() + 2 * 86400):
             with self.assertRaises(SharingError):
                 second.authenticate("quota", token, "a" * 64)
         incoming = self.vault.import_link("quota", "codex-share://127.0.0.1:1/#grant.fingerprint", "owner", {"totals": {"cost_nanos": 1}})
@@ -141,6 +141,29 @@ class CredentialVaultTests(unittest.TestCase):
         for value in (False, -1, "tomorrow"):
             with self.assertRaises(SharingError):
                 expiration(value)
+
+    def test_new_grants_require_a_day_and_one_dollar_without_changing_legacy_values(self):
+        now = 1_800_000_000
+        with patch("packet_inspector.sharing_credentials.time.time", return_value=now):
+            for kind in ("quota", "exit"):
+                for delta in (1, 3600, 86399):
+                    with self.subTest(kind=kind, delta=delta), self.assertRaises(SharingError):
+                        self.vault.issue(kind, expires_at=now + delta)
+                self.vault.issue(kind, expires_at=now + 86400)
+            identifier, _ = self.grant(budget=10)
+            with self.vault.connection() as db:
+                legacy = json.loads(db.execute("SELECT data FROM credentials WHERE id=?", (identifier,)).fetchone()[0])
+                legacy.update(budget_nanos=10_000_000, expires_at=now + 60)
+                self.vault._save(db, identifier, legacy)
+            upgraded = CredentialVault(self.root)
+            row = upgraded.update(identifier, {"label": "renamed", "budget": "0.01", "expires_at": now + 60})
+            self.assertEqual(row["budget_nanos"], 10_000_000)
+            self.assertEqual(row["expires_at"], now + 60)
+            with self.assertRaises(ValueError):
+                upgraded.update(identifier, {"budget": "0.50"})
+            with self.assertRaises(SharingError):
+                upgraded.update(identifier, {"expires_at": now + 3600})
+            upgraded.update(identifier, {"budget": "1", "expires_at": now + 86400})
 
     def test_multiple_distinct_grants_and_exit_stats(self):
         first, token1 = self.grant()

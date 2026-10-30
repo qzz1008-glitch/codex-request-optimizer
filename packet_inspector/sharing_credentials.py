@@ -11,9 +11,10 @@ import sqlite3
 import time
 
 from .sharing_auth import SharingError
-from .sharing_pricing import budget_nanos, reference_cost
+from .sharing_pricing import MIN_BUDGET_USD, budget_nanos, reference_cost
 
 CLIENT_HEADER = "X-Inspector-Client"
+MIN_TTL_SECONDS = 86400
 COUNTERS = ("input_tokens", "output_tokens", "total_tokens", "cached_input_tokens", "responses",
             "missing_responses", "unpriced_responses", "cost_nanos", "sent_bytes", "received_bytes", "requests")
 
@@ -38,11 +39,12 @@ def protect(value, decrypt=False):
         kernel.LocalFree(ctypes.cast(outgoing.data, ctypes.c_void_p))
 
 
-def expiration(value):
+def expiration(value, *, since=None):
     if value is None or value == "":
         return None
-    if type(value) not in {int, float} or not time.time() < value <= 253402214400:
-        raise SharingError("请选择未来的到期时间，或选择无期限。")
+    since = time.time() if since is None else since
+    if type(value) not in {int, float} or not since + MIN_TTL_SECONDS <= value <= 253402214400:
+        raise SharingError("期限至少为一天，也可选择无期限。")
     return float(value)
 
 
@@ -110,14 +112,15 @@ class CredentialVault:
             return True
         return False
 
-    def issue(self, kind, label="", expires_at=None, budget=0, weekly_reset=False, *, internal=False):
+    def issue(self, kind, label="", expires_at=None, budget=MIN_BUDGET_USD, weekly_reset=False, *, internal=False, issued_at=None):
         if kind not in {"quota", "exit"} or type(weekly_reset) is not bool:
             raise SharingError("凭据类型或刷新设置无效。")
-        limit = budget_nanos(budget)
-        expiry = expiration(expires_at)
+        issued_at = time.time() if issued_at is None else issued_at
+        limit = budget_nanos(budget) if kind == "quota" else 0
+        expiry = expiration(expires_at, since=issued_at)
         identifier, token = secrets.token_hex(12), secrets.token_urlsafe(32)
         data = {"id": identifier, "kind": kind, "direction": "out", "label": str(label or "同事")[:80],
-                "created_at": time.time(), "expires_at": expiry, "enabled": True, "internal": internal,
+                "created_at": issued_at, "expires_at": expiry, "enabled": True, "internal": internal,
                 "budget_nanos": limit if kind == "quota" else 0, "weekly_reset": weekly_reset if kind == "quota" else False,
                 "period_id": secrets.token_hex(8), "period_started_at": time.time(), "period_cost_nanos": 0,
                 "totals": {key: 0 for key in COUNTERS}, "daily": {}}
@@ -239,10 +242,13 @@ class CredentialVault:
             self._roll(data)
             if "label" in changes:
                 data["label"] = str(changes["label"])[:80]
-            if "expires_at" in changes:
+            if "expires_at" in changes and changes["expires_at"] != data["expires_at"]:
                 data["expires_at"] = expiration(changes["expires_at"])
             if "budget" in changes:
-                data["budget_nanos"] = budget_nanos(changes["budget"])
+                limit = budget_nanos(changes["budget"], minimum=0)
+                if data["kind"] == "quota" and limit != data["budget_nanos"]:
+                    limit = budget_nanos(changes["budget"])
+                data["budget_nanos"] = limit if data["kind"] == "quota" else 0
             for key in ("enabled", "weekly_reset"):
                 if key in changes:
                     if type(changes[key]) is not bool:

@@ -117,11 +117,19 @@
         <input id="credential-edit-id" type="hidden">
         <label>名称<input id="credential-edit-label" maxlength="80" required></label>
         <div id="credential-edit-expiry-field"></div>
-        <div id="credential-edit-quota"><label><span id="credential-edit-budget-label">额度</span><span class="sharing-amount-field"><input id="credential-edit-budget" type="number" min="0" max="1000000" step="0.01" aria-labelledby="credential-edit-budget-label" aria-describedby="credential-edit-budget-unit"><span id="credential-edit-budget-unit" class="sharing-amount-unit">美元</span></span></label><label class="sharing-check"><input id="credential-edit-weekly" type="checkbox">每周刷新额度</label></div>
+        <div id="credential-edit-quota"><label><span class="sharing-budget-label"><span id="credential-edit-budget-label">额度</span><button id="credential-edit-billing-help" class="sharing-billing-help" type="button" aria-label="计费说明" title="计费说明">?</button></span><span class="sharing-amount-field"><input id="credential-edit-budget" type="number" min="1" max="1000000" step="0.01" aria-labelledby="credential-edit-budget-label" aria-describedby="credential-edit-budget-unit"><span id="credential-edit-budget-unit" class="sharing-amount-unit">美元</span></span></label><label class="sharing-check"><input id="credential-edit-weekly" type="checkbox">每周刷新额度</label></div>
         <p class="sharing-stat-note">调整作用于新请求，已开始的请求可完成。</p>
         <p id="credential-edit-message" class="sharing-edit-message" role="alert" hidden></p>
         <div class="sharing-actions"><button id="credential-edit-cancel" type="button">取消</button><button id="credential-edit-save" class="primary" type="submit">保存</button></div>
       </form>
+    </dialog>
+    <dialog id="sharing-billing-dialog" aria-labelledby="sharing-billing-title">
+      <h2 id="sharing-billing-title">计费说明</h2>
+      <p>按模型和服务档位分别估算普通输入、缓存读写和输出费用；缓存不重复计算，推理已包含在输出中。</p>
+      <p>同一凭据的所有机器共用额度。达到上限后拒绝新请求，进行中的请求可能使费用超过上限。</p>
+      <p id="sharing-pro-equivalence">Pro $200/月包含的 Codex 额度不等于 $200 API 余额；官方未公布与本软件参考费用的固定换算。</p>
+      <p class="sharing-billing-links"><a href="https://learn.chatgpt.com/docs/pricing" target="_blank" rel="noopener noreferrer">官方计费说明</a><a href="https://chatgpt.com/codex/settings/usage" target="_blank" rel="noopener noreferrer">会员用量</a></p>
+      <div class="sharing-actions"><button id="sharing-billing-close" class="primary" type="button">关闭</button></div>
     </dialog>
   </main>
   <dialog id="compression-confirm-dialog" aria-labelledby="compression-confirm-title" aria-describedby="compression-confirm-description compression-confirm-hint">
