@@ -37,6 +37,7 @@ The request list and token chart show input tokens before overflow summarization
 
 Reduce request upload size while preserving the original content and meaning.
 
+- Losslessly compress conversation requests and JSON image generation/edit requests while preserving image content and quality. The request list and filters distinguish these three operations.
 - Choose from **compression levels 1–22**, with compressed-size and local processing-time estimates to help compare them.
 - View separate estimates for original requests below 1.5 MB and those at or above 1.5 MB, with colors showing relative results within each group.
 - Further optimize existing zstd requests, replacing them only when the compressed body is smaller.

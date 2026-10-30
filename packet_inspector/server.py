@@ -35,6 +35,7 @@ from .session_summary import SessionSummaries
 from .storage import DEFAULT_STORAGE_BYTES, Store
 from .storage_paths import resolve_directory, path_settings
 from .transport import DEFAULT_ZSTD_LEVEL, prepare_request_info, validate_zstd_level
+from .request_types import is_json_image_request
 from .compression_policy import CompressionPolicy, INITIAL_HIGH_BYTES, is_main_request
 from .request_context import request_session_context, temporary_request_kind, trend_packet_metadata
 from .installation import manage_installation
@@ -1100,10 +1101,11 @@ class Handler(BaseHTTPRequestHandler):
             image_worker = self.server.image_config.is_worker(self.headers.get(WORKER_HEADER, ""))
             auto_zstd_level = (protection_enabled and self.server.settings["auto_zstd_level_enabled"]
                                and compression == "zstd" and not image_worker)
+            json_image = is_json_image_request(suffix, self.headers)
             auto_eligible = (auto_zstd_level and self.command == "POST"
-                             and urlsplit(suffix).path.rstrip("/").endswith("/responses")
+                             and (urlsplit(suffix).path.rstrip("/").endswith("/responses") or json_image)
                              and self.headers.get("Content-Encoding", "identity").strip().lower() in {"", "identity", "zstd"})
-            auto_ticket = self.server.compression_policy.reserve() if auto_eligible else None
+            auto_ticket = self.server.compression_policy.reserve() if auto_eligible and not json_image else None
         if (image_enabled and not image_worker and self.command == "POST"
                 and urlsplit(suffix).path.rstrip("/").endswith(("/responses", "/responses/compact"))
                 and is_analysis_request(body, self.headers)):
@@ -1157,7 +1159,10 @@ class Handler(BaseHTTPRequestHandler):
                 thread = capture_meta.get("thread_id")
                 original_bytes = capture_meta.get("decoded_bytes")
                 if type(original_bytes) is int:
-                    auto_key = (compression_scope, thread) if thread else None
+                    # Image operations have no conversation history to compact.
+                    # Select from this body alone without inheriting or changing
+                    # the parent conversation's durable compression phase.
+                    auto_key = (compression_scope, thread) if thread and not json_image else None
                     if auto_key and is_main_request(capture_meta):
                         auto_decision = self.server.compression_policy.begin(
                             auto_key, auto_ticket, original_bytes, budget)

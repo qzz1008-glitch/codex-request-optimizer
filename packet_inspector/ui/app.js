@@ -298,12 +298,14 @@ function hasModelTokenUsage(p) {
     (!p.path || /\/responses\/*(?:\?.*)?$/.test(p.path));
 }
 function requestKind(p) {
+  if(p.request_kind==="image_generation" || /\/images\/generations\/*(?:\?.*)?$/.test(p.path||""))return t("图片生成");
+  if(p.request_kind==="image_edit" || /\/images\/edits\/*(?:\?.*)?$/.test(p.path||""))return t("图片编辑");
   if(p.request_kind==="tool_search" || /\/alpha\/search\/*(?:\?.*)?$/.test(p.path||""))return t("工具搜索");
   if(p.is_compaction)return t("上下文压缩");
   const purpose=purposeFromMetadata(p)||requestPurposeCache.get(p.id)||auxiliarySessionKind(sessionSummaries.find(row=>row.thread_id===p.thread_id));
   return purpose&&purpose!=="subagent"?t(auxiliaryLabels[purpose]):p.method==="POST"?t("对话生成"):String(p.method||t("未知")).slice(0,10);
 }
-const requestKinds = uiI18n.labels({generation:"对话生成",compaction:"上下文压缩",other:"其他请求"});
+const requestKinds = uiI18n.labels({generation:"对话生成",compaction:"上下文压缩",image_generation:"图片生成",image_edit:"图片编辑",other:"其他请求"});
 const filterLabels = uiI18n.labels({kind:"类型",status:"状态"});
 function statusLabel(value) { return value.startsWith("http:") ? "HTTP "+value.slice(5) : states[value.slice(6)] || t("未知状态"); }
 function setFilterOptions(key, options) {
@@ -323,7 +325,7 @@ function setFilterOptions(key, options) {
 async function refreshFilters() {
   const revision=state.status?.storage.revision;
   const options=await api("/api/packet-filters");
-  setFilterOptions("kind",["generation","compaction",...(options.kinds.includes("other")?["other"]:[])].map(value=>({value,label:requestKinds[value]})));
+  setFilterOptions("kind",["generation","compaction",...["image_generation","image_edit","other"].filter(value=>options.kinds.includes(value))].map(value=>({value,label:requestKinds[value]})));
   setFilterOptions("status",options.statuses.map(value=>({value,label:statusLabel(value)})));
   state.sessions=options.threads;
   state.filterRevision=revision;

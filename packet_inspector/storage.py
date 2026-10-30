@@ -18,6 +18,7 @@ from .request_context import packet_metadata, trend_packet_metadata
 from .response_usage import compact_packet_usage, packet_usage
 from .token_estimate import request_basis, calibrate, overflow_applied, unavailable
 from .token_window import is_token_request
+from .request_types import image_request_kind
 
 SUMMARY_COLUMNS = "id,created,thread,status,method,kind,status_key,state,capture_owner,wire_bytes,stored_bytes,meta"
 COMPRESSED_SIZE_SQL = "coalesce(json_extract(meta,'$.overflow_original_wire_bytes'),json_extract(meta,'$.usage_override_request_bytes'),json_extract(meta,'$.outbound_wire_bytes'),-1)"
@@ -31,6 +32,7 @@ def summary_values(row):
     return f"""{row}.id,{row}.created,{row}.thread,{row}.status,
         upper(coalesce(json_extract({row}.meta,'$.method'),'')),
         CASE WHEN json_extract({row}.meta,'$.is_compaction') THEN 'compaction'
+             WHEN json_extract({row}.meta,'$.request_kind') IN ('image_generation','image_edit') THEN json_extract({row}.meta,'$.request_kind')
              WHEN json_extract({row}.meta,'$.request_kind')='tool_search' THEN 'other'
              WHEN upper(coalesce(json_extract({row}.meta,'$.method'),''))='POST' THEN 'generation' ELSE 'other' END,
         CASE WHEN coalesce({row}.status,0)>0 THEN 'http:'||{row}.status
@@ -322,7 +324,9 @@ class Store:
         for row in rows:
             meta = json.loads(row["meta"])
             fields = {"classification_version": CLASSIFICATION_VERSION}
-            if row["content"]:
+            if image_request_kind(meta.get("path", "")):
+                fields.update(classify_request(None, path=meta["path"]))
+            elif row["content"]:
                 try:
                     view = json.loads(zlib.decompress(row["content"]))
                     fields.update(classify_request(view.get("body"), meta.get("headers"), meta.get("path", "")))
@@ -344,13 +348,13 @@ class Store:
             "upload_bytes": "coalesce(json_extract(meta,'$.outbound_wire_bytes'),-1)",
             "compressed_bytes": COMPRESSED_SIZE_SQL,
             "decoded_bytes": "coalesce(json_extract(meta,'$.decoded_bytes'),-1)",
-            "kind": "CASE WHEN json_extract(meta,'$.is_compaction') THEN '上下文压缩' WHEN json_extract(meta,'$.request_kind')='tool_search' THEN '工具搜索' WHEN json_extract(meta,'$.method')='POST' THEN '对话生成' ELSE coalesce(json_extract(meta,'$.method'),'未知') END",
+            "kind": "CASE WHEN json_extract(meta,'$.is_compaction') THEN '上下文压缩' WHEN json_extract(meta,'$.request_kind')='image_generation' THEN '图片生成' WHEN json_extract(meta,'$.request_kind')='image_edit' THEN '图片编辑' WHEN json_extract(meta,'$.request_kind')='tool_search' THEN '工具搜索' WHEN json_extract(meta,'$.method')='POST' THEN '对话生成' ELSE coalesce(json_extract(meta,'$.method'),'未知') END",
             "status": "coalesce(status,-1)",
             "thread": "thread",
         }
         if sort not in sort_fields or direction not in {"asc", "desc"}:
             raise ValueError("invalid packet sort")
-        if kind and kind not in {"generation", "compaction", "other"}:
+        if kind and kind not in {"generation", "compaction", "image_generation", "image_edit", "other"}:
             raise ValueError("invalid packet type filter")
         if status and not re.fullmatch(r"http:[1-5]\d{2}|state:[a-z_]{1,40}", status):
             raise ValueError("invalid packet status filter")

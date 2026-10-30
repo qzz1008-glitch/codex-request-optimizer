@@ -618,6 +618,8 @@ const uiI18n = (() => {
     "进程中断":"Interrupted",
     "上下文压缩":"Compaction",
     "对话生成":"Generation",
+    "图片生成":"Image generation",
+    "图片编辑":"Image edit",
     "工具搜索":"Tool search",
     "未知":"Unknown",
     "其他请求":"Other requests",
