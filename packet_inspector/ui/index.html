@@ -114,8 +114,7 @@
     </div>
     <form id="sharing-inline-editor" class="sharing-inline-editor" role="group" aria-labelledby="sharing-inline-label" hidden>
       <label id="sharing-inline-label" for="sharing-inline-value"></label>
-      <input id="sharing-inline-value" required>
-      <label id="sharing-inline-no-expiry" class="sharing-check" hidden><input id="sharing-inline-unlimited" type="checkbox">无期限</label>
+      <div class="sharing-expiry-controls"><input id="sharing-inline-value" required><label id="sharing-inline-no-expiry" class="sharing-expiry-none" hidden><input id="sharing-inline-unlimited" type="checkbox">无期限</label></div>
       <p id="sharing-inline-message" class="sharing-edit-message" role="alert" hidden></p>
       <div class="sharing-inline-actions"><button id="sharing-inline-cancel" type="button">取消</button><button id="sharing-inline-save" class="primary" type="submit">保存</button></div>
     </form>
