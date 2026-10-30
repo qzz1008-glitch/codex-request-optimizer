@@ -130,6 +130,33 @@ class CredentialVaultTests(unittest.TestCase):
                 self.assertEqual(next(row for row in upgraded.rows() if row["id"] == identifier), updated)
                 self.assertEqual(upgraded.get_secret(identifier), link)
 
+    def test_deletion_revokes_grants_and_late_updates_cannot_restore_them(self):
+        for kind, scheme in (("quota", "codex-share"), ("exit", "codex-exit")):
+            with self.subTest(kind=kind):
+                identifier, token = self.vault.issue(kind, "Deleted")
+                reservation = self.vault.authenticate(kind, "Bearer " + token, "a" * 64, spend=True)
+                self.vault.delete(identifier)
+                with self.assertRaises(SharingError):
+                    self.vault.authenticate(kind, "Bearer " + token, "a" * 64)
+                with self.assertRaises(SharingError):
+                    self.vault.get_secret(identifier)
+                with self.assertRaises(SharingError):
+                    self.vault.update(identifier, {"enabled": True})
+                self.vault.record(reservation, dict(model="gpt-6.1-sol", input_tokens=100), sent=10, received=20)
+                self.assertEqual(self.vault.snapshot(reservation), {})
+                incoming = self.vault.import_link(kind, f"{scheme}://127.0.0.1:1/#grant.fingerprint", "Deleted",
+                                                  {"totals": {"requests": 2}})
+                self.vault.delete(incoming)
+                self.vault.refresh_snapshot(incoming, {"totals": {"requests": 3}})
+                self.vault.availability(incoming, True)
+                self.assertEqual(CredentialVault(self.root).rows(), [])
+                with self.assertRaises(SharingError):
+                    self.vault.delete(incoming)
+        internal, _ = self.vault.issue("exit", "callback", internal=True)
+        with self.assertRaises(SharingError):
+            self.vault.delete(internal)
+        self.assertEqual(self.vault.rows()[0]["id"], internal)
+
     def test_defaults_internal_callbacks_and_unchanged_legacy_names_keep_working(self):
         first, _ = self.vault.issue("exit")
         second, _ = self.vault.issue("exit")

@@ -103,11 +103,11 @@
       <aside id="sharing-config" class="sharing-config" aria-label="共享配置"></aside>
       <div id="sharing-lists" class="sharing-lists">
         <section class="sharing-statistics" aria-labelledby="quota-list-title">
-          <header class="sharing-stat-header"><h2 id="quota-list-title">额度凭据</h2><span id="quota-credential-count" class="sharing-credential-count"></span></header>
+          <header class="sharing-stat-header"><h2 id="quota-list-title" tabindex="-1">额度凭据</h2><span id="quota-credential-count" class="sharing-credential-count"></span></header>
           <div class="sharing-table-scroll"><table class="sharing-table"><thead id="quota-table-head"></thead><tbody id="quota-credential-rows"></tbody></table><p id="quota-empty" class="sharing-empty">暂无凭据</p></div>
         </section>
         <section class="sharing-statistics" aria-labelledby="exit-list-title">
-          <header class="sharing-stat-header"><h2 id="exit-list-title">出口凭据</h2><span id="exit-credential-count" class="sharing-credential-count"></span></header>
+          <header class="sharing-stat-header"><h2 id="exit-list-title" tabindex="-1">出口凭据</h2><span id="exit-credential-count" class="sharing-credential-count"></span></header>
           <div class="sharing-table-scroll"><table class="sharing-table"><thead id="exit-table-head"></thead><tbody id="exit-credential-rows"></tbody></table><p id="exit-empty" class="sharing-empty">暂无凭据</p></div>
         </section>
       </div>
@@ -120,6 +120,14 @@
       <div class="sharing-inline-actions"><button id="sharing-inline-cancel" type="button">取消</button><button id="sharing-inline-save" class="primary" type="submit">保存</button></div>
     </form>
   </main>
+  <dialog id="sharing-delete-dialog" aria-labelledby="sharing-delete-title" aria-describedby="sharing-delete-name sharing-delete-description sharing-delete-hint">
+    <h2 id="sharing-delete-title">删除凭据</h2>
+    <p id="sharing-delete-name" class="sharing-delete-name"></p>
+    <p id="sharing-delete-description"></p>
+    <p id="sharing-delete-hint" class="muted help" hidden></p>
+    <p id="sharing-delete-message" class="sharing-edit-message" role="alert" hidden></p>
+    <div class="button-row"><button id="sharing-delete-cancel" type="button" autofocus>取消</button><button id="sharing-delete-confirm" class="sharing-delete-button" type="button">确认删除</button></div>
+  </dialog>
   <dialog id="compression-confirm-dialog" aria-labelledby="compression-confirm-title" aria-describedby="compression-confirm-description compression-confirm-hint">
     <h2 id="compression-confirm-title">取消接入</h2>
     <p id="compression-confirm-description"></p>

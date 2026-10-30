@@ -10,9 +10,9 @@ globalThis.InspectorSharing=(()=>{
   const date=n=>n===null?tr("无期限"):Number.isFinite(n)?localDate(n*1000).replace("T"," "):"—";
   const minimumExpiry=()=>localDate(Math.ceil((Date.now()+864e5)/60000)*60000);
   const defaultExpiry=()=>localDate(Math.ceil((Date.now()+7*864e5)/60000)*60000);
-  let active=false,busy=false,current=null,timer=null,controller=null,recoveryShown=false,editing=null;
+  let active=false,busy=false,current=null,timer=null,controller=null,recoveryShown=false,editing=null,deleting=null;
   const views={quota:"out",exit:"out"};
-  const message=(value,error=false)=>{const box=get("sharing-message");box.textContent=tr(value);box.hidden=!value;box.classList.toggle("error",error);const local=get("sharing-inline-message");local.textContent=error?tr(value):"";local.hidden=!error;};
+  const message=(value,error=false)=>{const box=get("sharing-message");box.textContent=tr(value);box.hidden=!value;box.classList.toggle("error",error);for(const id of ["sharing-inline-message","sharing-delete-message"]){const local=get(id);local.textContent=error?tr(value):"";local.hidden=!error;}};
   const expiryIds=["quota-expiry","exit-expiry"];
   function expiryField(id){
     return `<div id="${id}-field" class="sharing-expiry"><label id="${id}-label" for="${id}">${label("期限")}</label><label class="sharing-expiry-none"><input id="${id}-none" type="checkbox">${label("无期限")}</label><input id="${id}" type="datetime-local" step="60" aria-labelledby="${id}-label" required></div>`;
@@ -81,13 +81,13 @@ globalThis.InspectorSharing=(()=>{
     get(kind+"-credential-count").textContent=number(rows.length);
     get(kind+"-table-head").innerHTML=`<tr>${(quota?["名称","已用 / 额度","本周 / 累计用量","期限","状态","操作"]:["名称","上传 / 下载流量","连接次数","期限","状态","操作"]).map(value=>`<th>${label(value)}</th>`).join("")}</tr>`;
     get(kind+"-credential-rows").innerHTML=rows.map(row=>{const d=data(row),out=row.direction==="out";
-      return `<tr class="${isActive(row)?"current":""}"><td>${fieldValue(row,"label",`<strong title="${esc(row.label)}">${esc(row.label)}</strong>`)}<small class="sharing-direction">${label(out?"借出":"借入")}</small></td><td>${quota?quotaUsage(row):`${esc(bytes(d.totals?.sent_bytes))}<small> / ${esc(bytes(d.totals?.received_bytes))}</small>`}</td><td>${esc(quota?money(d.week_cost_nanos,[row]):number(d.totals?.requests))}${quota?`<small> / ${esc(money(d.totals?.cost_nanos,[row]))}</small>`:""}</td><td><span class="sharing-expiry-cell">${fieldValue(row,"expires_at",esc(d.expires_at===undefined?"—":date(d.expires_at)))}${quota?weeklyValue(row):""}</span></td><td class="sharing-row-status">${out?`<button type="button" class="sharing-cell-value" data-action="toggle" data-id="${row.id}" title="${label(lending(row)?"停用":"启用")}">${label(status(row))}</button>`:label(status(row))}</td><td><div class="sharing-row-actions">${out?`<button type="button" data-action="copy" data-id="${row.id}" title="${label("复制凭据")}" aria-label="${label("复制凭据")}">${label("凭据")}</button>${quota?`<button type="button" data-action="reset" data-id="${row.id}">${label("重置")}</button>`:""}`:`<button type="button" data-action="use" data-id="${row.id}" ${isActive(row)?"disabled":""}>${label(isActive(row)?"使用中":"使用")}</button>`}</div></td></tr>`;
+      return `<tr class="${isActive(row)?"current":""}"><td>${fieldValue(row,"label",`<strong title="${esc(row.label)}">${esc(row.label)}</strong>`)}<small class="sharing-direction">${label(out?"借出":"借入")}</small></td><td>${quota?quotaUsage(row):`${esc(bytes(d.totals?.sent_bytes))}<small> / ${esc(bytes(d.totals?.received_bytes))}</small>`}</td><td>${esc(quota?money(d.week_cost_nanos,[row]):number(d.totals?.requests))}${quota?`<small> / ${esc(money(d.totals?.cost_nanos,[row]))}</small>`:""}</td><td><span class="sharing-expiry-cell">${fieldValue(row,"expires_at",esc(d.expires_at===undefined?"—":date(d.expires_at)))}${quota?weeklyValue(row):""}</span></td><td class="sharing-row-status">${out?`<button type="button" class="sharing-cell-value" data-action="toggle" data-id="${row.id}" title="${label(lending(row)?"停用":"启用")}">${label(status(row))}</button>`:label(status(row))}</td><td><div class="sharing-row-actions">${out?`<button type="button" data-action="copy" data-id="${row.id}" title="${label("复制凭据")}" aria-label="${label("复制凭据")}">${label("凭据")}</button>${quota?`<button type="button" data-action="reset" data-id="${row.id}">${label("重置")}</button>`:""}`:`<button type="button" data-action="use" data-id="${row.id}" ${isActive(row)?"disabled":""}>${label(isActive(row)?"使用中":"使用")}</button>`}<button type="button" class="sharing-row-delete" data-action="delete" data-id="${row.id}" title="${label("删除凭据")}">${label("删除")}</button></div></td></tr>`;
     }).join("");
     get(kind+"-empty").hidden=rows.length>0;
   }
   function render(value){
-    if(!value.credentials_supported||value.protocol<4){closeInline(false);current=null;get("sharing-cards").hidden=true;message("当前后台不支持凭据管理，请更新软件。",true);return;}
-    current=value;if(editing)return;get("sharing-cards").hidden=false;
+    if(!value.credentials_supported||value.protocol<4){closeInline(false);closeDelete(false);current=null;get("sharing-cards").hidden=true;message("当前后台不支持凭据管理，请更新软件。",true);return;}
+    current=value;if(editing||deleting)return;get("sharing-cards").hidden=false;
     const hosting=value.host?.running===true,borrowing=value.client?.active===true;
     for(const kind of ["quota","exit"]){const out=views[kind]==="out";get(kind+"-issue").hidden=!out;get(kind+"-borrow").hidden=out;
       get(kind+"-generate").hidden=!out;get(kind+"-activate").hidden=out;
@@ -102,9 +102,9 @@ globalThis.InspectorSharing=(()=>{
   }
   async function action(button,dataValue,success=""){if(busy)return;controller?.abort();busy=true;button?.setAttribute("aria-busy","true");if(button)button.disabled=true;message("");
     try{const result=await request(dataValue),{link,...state}=result;
-      render(state);if(link)await copy(link);else if(result.reload_required===true)message("已切换额度来源。请重新加载 Codex 配置或重启 ChatGPT 应用。");else message(success===null?"":success||"已更新，新请求使用当前设置。");return result;
+      render(state);if(link)await copy(link);else if(result.reload_required===true)message(dataValue.action==="credential_delete"?"已删除凭据。请重新加载 Codex 配置或重启 ChatGPT 应用。":"已切换额度来源。请重新加载 Codex 配置或重启 ChatGPT 应用。");else message(success===null?"":success||"已更新，新请求使用当前设置。");return result;
     }catch(error){message(error.message,true);}finally{busy=false;button?.setAttribute("aria-busy","false");if(button)button.disabled=false;if(current)render(current);}}
-  async function refresh(){if(!active||document.hidden||busy||editing)return;controller?.abort();const task=new AbortController();controller=task;try{const value=await request(null,task.signal);if(active&&!task.signal.aborted)render(value);}catch(error){if(error.name!=="AbortError")message(error.message,true);}finally{if(controller===task)controller=null;}}
+  async function refresh(){if(!active||document.hidden||busy||editing||deleting)return;controller?.abort();const task=new AbortController();controller=task;try{const value=await request(null,task.signal);if(active&&!task.signal.aborted)render(value);}catch(error){if(error.name!=="AbortError")message(error.message,true);}finally{if(controller===task)controller=null;}}
   function positionInline(){
     if(!editing)return;
     const box=get("sharing-inline-editor"),anchor=editing.anchor.getBoundingClientRect(),rect=box.getBoundingClientRect(),margin=12;
@@ -161,6 +161,27 @@ globalThis.InspectorSharing=(()=>{
   document.addEventListener("keydown",event=>{if(editing&&!busy&&event.key==="Escape"){event.preventDefault();closeInline();}});
   globalThis.addEventListener("resize",positionInline);
   document.addEventListener("scroll",positionInline,true);
+  function openDelete(row){
+    controller?.abort();closeInline(false);message("");deleting={id:row.id,kind:row.kind};
+    get("sharing-delete-name").textContent=[tr(row.kind==="quota"?"额度":"出口"),tr(row.direction==="out"?"借出":"借入"),row.label].join(" · ");
+    get("sharing-delete-description").textContent=tr(row.direction==="out"?"删除后该凭据将失效，其用量记录也会移除，无法撤销。":"仅移除本机保存的凭据和用量记录，不影响对方的凭据。");
+    const hint=get("sharing-delete-hint");hint.hidden=!isActive(row);hint.textContent=isActive(row)?tr(row.kind==="quota"?"此凭据正在使用，删除后将停止借用并恢复原连接，需要重新加载 Codex 配置或重启 ChatGPT 应用。":"此凭据正在使用，删除后将恢复默认出口。"):"";
+    get("sharing-delete-dialog").showModal();get("sharing-delete-cancel").focus();
+  }
+  function closeDelete(renderNow=true){
+    if(!deleting)return;
+    const draft=deleting;deleting=null;get("sharing-delete-dialog").close();get("sharing-delete-message").hidden=true;
+    if(renderNow&&current){render(current);const target=get("sharing-lists").querySelector(`[data-action="delete"][data-id="${draft.id}"]`)||get(draft.kind+"-credential-rows").querySelector("[data-action=delete]")||get(draft.kind+"-list-title");target.focus();}
+  }
+  get("sharing-delete-cancel").addEventListener("click",()=>{if(!busy)closeDelete();});
+  get("sharing-delete-dialog").addEventListener("cancel",event=>{event.preventDefault();if(!busy)closeDelete();});
+  get("sharing-delete-dialog").addEventListener("close",()=>{if(deleting&&!get("sharing-delete-dialog").open)closeDelete();});
+  get("sharing-delete-confirm").addEventListener("click",async()=>{
+    if(!deleting||busy)return;
+    const draft=deleting,dialog=get("sharing-delete-dialog");get("sharing-delete-cancel").disabled=true;dialog.setAttribute("aria-busy","true");
+    try{const result=await action(get("sharing-delete-confirm"),{action:"credential_delete",id:draft.id},"已删除凭据。");if(result&&deleting===draft)closeDelete();}
+    finally{get("sharing-delete-cancel").disabled=false;dialog.setAttribute("aria-busy","false");}
+  });
   async function copy(value){try{await navigator.clipboard.writeText(value);message("已复制凭据");}catch(_){message("复制失败，请点击右侧“凭据”重试。",true);}}
   get("sharing-config").addEventListener("click",event=>{const button=event.target.closest("button");if(!button||busy)return;const {kind,view,action:command}=button.dataset;
     if(view){views[kind]=view;if(current)render(current);return;}
@@ -172,6 +193,7 @@ globalThis.InspectorSharing=(()=>{
   }
   get("sharing-lists").addEventListener("click",async event=>{const button=event.target.closest("[data-action]");if(!button||busy)return;const row=(current?.credentials||[]).find(row=>row.id===button.dataset.id);if(!row)return;const command=button.dataset.action;
     if(command==="weekly")return;
+    if(command==="delete"){openDelete(row);return;}
     if(command==="field"){openInline(row,button.dataset.field,button);return;}if(editing)closeInline(false);if(command==="copy"){await action(button,{action:"credential_copy",id:row.id});return;}
     if(command==="reset")await action(button,{action:"credential_reset",id:row.id},"本期额度已重置，累计统计已保留。");
     if(command==="toggle")await action(button,{action:"credential_edit",id:row.id,enabled:!lending(row)});
@@ -185,7 +207,7 @@ globalThis.InspectorSharing=(()=>{
     await action(input,{action:"credential_edit",id:row.id,weekly_reset:value},null);
   });
   document.addEventListener("visibilitychange",()=>{if(document.hidden)controller?.abort();else if(active)refresh();});
-  function setActive(value){active=value;clearInterval(timer);timer=null;if(!active){controller?.abort();closeInline(false);return;}message("");refresh();timer=setInterval(refresh,3000);}
+  function setActive(value){active=value;clearInterval(timer);timer=null;if(!active){controller?.abort();closeInline(false);closeDelete(false);return;}message("");refresh();timer=setInterval(refresh,3000);}
   return {setActive};
 })();
 if(typeof workspaceView!=="undefined"&&workspaceView==="sharing")globalThis.InspectorSharing.setActive(true);
