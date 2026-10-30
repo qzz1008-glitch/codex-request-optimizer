@@ -42,6 +42,7 @@
 .sharing-budget-progress[data-full=true]{--sharing-progress-color:var(--danger)}.sharing-budget-progress::-webkit-progress-bar{background:var(--line);border-radius:3px}.sharing-budget-progress::-webkit-progress-value{background:var(--sharing-progress-color);border-radius:3px}.sharing-budget-progress::-moz-progress-bar{background:var(--sharing-progress-color);border-radius:3px}
 .sharing-table tr.current td:first-child strong{color:var(--accent)}.sharing-row-actions{gap:4px;flex-wrap:nowrap}
 .sharing-row-actions button{flex:none;padding:3px 6px;min-height:25px;font-size:11px;background:transparent}.sharing-row-actions button:hover{background:var(--bg)}
+.sharing-copy-button{position:relative}.sharing-button-copied{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;visibility:hidden;pointer-events:none}.sharing-copy-button[data-copied=true]>.sharing-button-original{visibility:hidden}.sharing-copy-button[data-copied=true]>.sharing-button-copied{visibility:visible}.sharing-row-actions .sharing-copy-button{min-width:calc(3em + 14px)}
 .sharing-row-actions .sharing-row-delete{color:var(--muted)}.sharing-row-actions .sharing-row-delete:hover{color:var(--danger);border-color:var(--danger)}
 .sharing-empty{text-align:center;color:var(--muted);padding:32px 10px;font-size:13px}
 .sharing-message{flex:none;box-sizing:border-box;margin:0;padding:10px 14px;border:1px solid var(--line);border-radius:7px;background:var(--panel);font-size:13px;line-height:1.6}
