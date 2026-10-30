@@ -11,6 +11,7 @@ import tomlkit
 
 from .config_link import ConfigLink, PROVIDER, validate_upstream
 from .connection_policy import native_compression, standardize
+from .sharing_config import SHARED_PROVIDER
 
 MODE = "all-providers-v1"
 
@@ -100,6 +101,8 @@ class ProviderManager:
             fields = []
             providers = data.get("model_providers", {})
             for provider_id, provider in providers.items():
+                if provider_id == SHARED_PROVIDER:
+                    continue
                 if not isinstance(provider, dict):
                     continue
                 inherited = base.get("model_providers", {}).get(provider_id, {}) if path != self.link.config else {}
@@ -144,6 +147,8 @@ class ProviderManager:
                     self._record(records, data, ws_keys, False)
                     _put(document, ws_keys, False)
             for provider_id, provider in data.get("model_providers", {}).items():
+                if provider_id == SHARED_PROVIDER:
+                    continue
                 if not isinstance(provider, dict) or provider.get("wire_api", "responses") != "responses":
                     continue
                 for key, value in (("stream_max_retries", retry_limit), ("request_max_retries", 0)):

@@ -11,7 +11,7 @@ import sys
 from .build_info import build_info
 
 PROFILE_NAME = "_build_profile.json"
-RESOURCES = ("index.html", "i18n.js", "app.js", "style.css", "tray.html", "tray.js", "tray.css")
+RESOURCES = ("index.html", "i18n.js", "app.js", "style.css", "sharing.js", "sharing.css", "tray.html", "tray.js", "tray.css")
 DESKTOP_PROFILE = "desktop-profile.json"
 PORTABLE_UI = "@bundled"
 

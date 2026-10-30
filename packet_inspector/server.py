@@ -51,13 +51,16 @@ from .usage_trigger import (raw_chunks, request_size as usage_trigger_size,
 from .overflow import CheckpointStream, OverflowCompactor, OverflowFailure
 from .image_config import IMAGE_MODES, ImageToolConfig, WORKER_HEADER, image_mode
 from .image_isolation import ImageIsolation, ImageIsolationFailure, check_image_directory, resolve_image_directory, is_analysis_request
+from .sharing import Sharing, SharingError, forwarding_headers, allowed_request as sharing_request_allowed
 
 HOP = {"connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
        "te", "trailer", "transfer-encoding", "upgrade"}
 UI_FILES = {"/": ("index.html", "text/html; charset=utf-8"),
             "/i18n.js": ("i18n.js", "text/javascript; charset=utf-8"),
             "/app.js": ("app.js", "text/javascript; charset=utf-8"),
-            "/style.css": ("style.css", "text/css; charset=utf-8")}
+            "/style.css": ("style.css", "text/css; charset=utf-8"),
+            "/sharing.js": ("sharing.js", "text/javascript; charset=utf-8"),
+            "/sharing.css": ("sharing.css", "text/css; charset=utf-8")}
 
 
 class NoRedirect(HTTPRedirectHandler):
@@ -180,10 +183,11 @@ class InspectorServer(ThreadingHTTPServer):
         self.port = self.server_address[1]
         self.public_port = public_port or self.port
         self.provider_guard = threading.RLock()
+        self.sharing = Sharing(self)
         self.provider_fingerprint = None
         self.provider_sync_error = ""
         self.provider_sync_result = {}
-        self.connection_reload_required = False
+        self.connection_reload_required = bool(self.sharing.recovered)
         self.provider_next_scan = 0
         self.upgrade_draining = False
         self.token_windows = TokenWindows()
@@ -316,6 +320,16 @@ class InspectorServer(ThreadingHTTPServer):
 
     def sync_providers(self):
         with self.provider_guard:
+            if self.sharing.remote:
+                changed = self.sharing.provider.set_retry(self.settings["capacity_retry_max_retries"]
+                    if self.settings["capacity_retry_enabled"] else None)
+                self.connection_reload_required |= changed
+                self.provider_fingerprint = self._provider_fingerprint()
+                self.provider_next_scan = time.monotonic() + 30
+                self.provider_sync_error = ""
+                self.provider_sync_result = {"active": True, "changed": changed, "reload_required": changed,
+                                            "provider_count": 1, "config_files": 1, "backups": [], "warnings": []}
+                return self.provider_sync_result
             if not self.settings["auto_detect_providers"]:
                 return {"enabled": False}
             manager = ProviderManager(self.link, self.endpoint, self.settings["upstream"])
@@ -340,6 +354,8 @@ class InspectorServer(ThreadingHTTPServer):
 
     def set_connection(self, connected):
         with self.provider_guard:
+            if self.sharing.remote:
+                self.sharing.disconnect()
             previous = self.settings["auto_detect_providers"]
             before = self._diagnostic_profile() if connected else {}
             proxy_repair = None
@@ -399,6 +415,12 @@ class InspectorServer(ThreadingHTTPServer):
 
     def server_close(self):
         # TCPServer also calls this when binding fails, before worker setup.
+        sharing = getattr(self, "sharing", None)
+        if sharing is not None:
+            try:
+                sharing.close()
+            except Exception:
+                pass  # Retain recovery metadata, but always close the ordinary relay.
         presentation = getattr(self, "presentation", None)
         if presentation is not None:
             presentation.stop()
@@ -432,6 +454,7 @@ class InspectorServer(ThreadingHTTPServer):
         prefix = self.endpoint + "/p/"
         matches = (actual == self.endpoint or isinstance(actual, str) and actual.startswith(prefix)
                    and actual[len(prefix):] in self.settings["provider_routes"])
+        matches |= bool(self.sharing.remote and actual == self.sharing.client_endpoint)
         profile["endpoint_matches"] = bool(matches)
         profile["active"] = bool(matches)
         return profile
@@ -624,6 +647,14 @@ class Handler(BaseHTTPRequestHandler):
             self._json(404, {"error": "image_tool_uses_stdio"})
             return
         if path.startswith(relay_prefix + "/"):
+            for endpoint in (self.server.sharing.client_endpoint, self.server.sharing.host_endpoint):
+                sharing_prefix = urlsplit(endpoint).path
+                if path.startswith(sharing_prefix + "/"):
+                    self._relay(sharing_prefix)
+                    return
+            if path.startswith(relay_prefix + "/sharing/"):
+                self._json(404, {"error": "unknown_sharing_route"})
+                return
             self._relay(relay_prefix)
             return
         if path in UI_FILES and self.command == "GET":
@@ -648,6 +679,31 @@ class Handler(BaseHTTPRequestHandler):
         one = lambda k, default="": query.get(k, [default])[0]
         if path == "/api/status" and self.command == "GET":
             self._json(200, self.server.status())
+        elif path == "/api/sharing" and self.command == "GET":
+            self._json(200, self.server.sharing.status())
+        elif path == "/api/sharing" and self.command == "POST":
+            data = json.loads(self._body(2048))
+            if not isinstance(data, dict):
+                raise ValueError("invalid sharing action")
+            try:
+                with self.server.provider_guard:
+                    action = data.get("action")
+                    if action == "host_start":
+                        result = self.server.sharing.start_host(data.get("address"), data.get("port", 47846),
+                            data.get("hours", 8), data.get("request_limit", 0))
+                    elif action == "host_stop":
+                        result = self.server.sharing.stop_host()
+                    elif action == "host_rotate":
+                        result = self.server.sharing.rotate()
+                    elif action == "client_connect":
+                        result = self.server.sharing.connect(data.get("link"))
+                    elif action == "client_disconnect":
+                        result = self.server.sharing.disconnect()
+                    else:
+                        raise ValueError("invalid sharing action")
+                self._json(200, result)
+            except SharingError as exc:
+                self._json(400, {"error": str(exc)})
         elif path == "/api/tray-status" and self.command == "GET":
             self._json(200, self.server.tray_status())
         elif path == "/api/network-diagnostics" and self.command == "GET":
@@ -920,7 +976,7 @@ class Handler(BaseHTTPRequestHandler):
             with self.server.guard:
                 self.server.active_requests -= 1
 
-    def _checkpoint(self, upstream, suffix, headers, body, encoding, *, packet_id=None, session_id=None):
+    def _checkpoint(self, upstream, suffix, headers, body, encoding, *, packet_id=None, session_id=None, opener=None):
         remove = {"content-encoding", "accept", "accept-encoding", "content-md5", "digest",
                   "x-request-id", "x-codex-turn-metadata"}
         compact_headers = {k: v for k, v in headers.items() if k.lower() not in remove}
@@ -929,6 +985,8 @@ class Handler(BaseHTTPRequestHandler):
             packet_id=packet_id, session_id=session_id, kind="relay_compaction", outgoing_encoding=encoding)
         try:
             with trace.active():
+                if opener is not None:
+                    return self._checkpoint_request(upstream, suffix, compact_headers, body, trace, opener=opener)
                 return self._checkpoint_request(upstream, suffix, compact_headers, body, trace)
         except Exception as exc:
             trace.finish(exc)
@@ -936,11 +994,11 @@ class Handler(BaseHTTPRequestHandler):
         finally:
             trace.finish()
 
-    def _checkpoint_request(self, upstream, suffix, compact_headers, body, network_trace):
+    def _checkpoint_request(self, upstream, suffix, compact_headers, body, network_trace, *, opener=None):
         # This is a separate, tool-free summary call. The original turn has not
         # been uploaded. Never follow redirects or retry either request.
         local = urlsplit(upstream).hostname in {"localhost", "127.0.0.1", "::1"}
-        opener = self.server.local_opener if local else self.server.opener
+        opener = opener or (self.server.local_opener if local else self.server.opener)
         try:
             response = opener.open(Request(upstream + suffix, data=body, headers=compact_headers, method="POST"),
                                    timeout=UPSTREAM_READ_TIMEOUT_SECONDS)
@@ -988,6 +1046,22 @@ class Handler(BaseHTTPRequestHandler):
         if not suffix.startswith("/") or suffix.startswith("//"):
             self._json(400, {"error": "invalid_request_path"})
             return
+        shared_client = prefix == urlsplit(self.server.sharing.client_endpoint).path
+        shared_host = prefix == urlsplit(self.server.sharing.host_endpoint).path
+        remote = None
+        if shared_client or shared_host:
+            if not sharing_request_allowed(self.command, suffix):
+                if self.command == "GET" and suffix == "/responses":
+                    self._json(426, {"error": {"code": "websocket_not_supported", "message": "Use HTTP POST."}})
+                else:
+                    self._json(404, {"error": "sharing_route_not_found"})
+                return
+            try:
+                remote = self.server.sharing.client_route() if shared_client else None
+                sharing_upstream = remote["upstream"] if remote else self.server.sharing.host_route()
+            except SharingError as exc:
+                self._json(503, {"error": {"code": "sharing_unavailable", "message": str(exc)}})
+                return
         with self.server.guard:
             upstream = self.server.settings["upstream"]
             if suffix.startswith("/p/"):
@@ -1001,6 +1075,8 @@ class Handler(BaseHTTPRequestHandler):
                 if suffix.startswith("//"):
                     self._json(400, {"error": "invalid_request_path"})
                     return
+        if shared_client or shared_host:
+            upstream = sharing_upstream
         # GET on the Responses creation endpoint is a WebSocket transport probe.
         # Intermediaries may remove every Upgrade header. Return Codex's HTTP
         # fallback status locally instead of forwarding a GET that yields 405
@@ -1014,11 +1090,11 @@ class Handler(BaseHTTPRequestHandler):
         with self.server.guard:
             # Disconnected clients may briefly retain an old relay URL until
             # ChatGPT restarts. Keep forwarding them without extra zstd work.
-            compression = "zstd" if self.server.settings["auto_detect_providers"] else "off"
+            compression = "zstd" if (self.server.settings["auto_detect_providers"] or shared_client) and not shared_host else "off"
             zstd_level = self.server.settings["zstd_level"]
-            protection_enabled = self.server.settings["packet_size_protection_enabled"]
+            protection_enabled = self.server.settings["packet_size_protection_enabled"] and not shared_host
             budget = self.server.settings["budget_bytes"]
-            image_enabled = self.server.settings["image_isolation_enabled"]
+            image_enabled = self.server.settings["image_isolation_enabled"] and not shared_host
             image_isolation = self.server.image_isolation
             image_configured = self.server.image_config.state.get("enabled", False)
             image_worker = self.server.image_config.is_worker(self.headers.get(WORKER_HEADER, ""))
@@ -1035,7 +1111,7 @@ class Handler(BaseHTTPRequestHandler):
             auto_zstd_level, auto_ticket = False, None
         packet_id = None
         capture_meta = {}
-        if self.server.settings["capture_enabled"]:
+        if self.server.settings["capture_enabled"] and not shared_host:
             try:
                 meta, content = inspect_request(body, dict(self.headers.items()), suffix)
                 capture_meta = meta
@@ -1053,6 +1129,9 @@ class Handler(BaseHTTPRequestHandler):
         connection_tokens = {s.strip().lower() for s in self.headers.get("Connection", "").split(",")}
         headers = {k: v for k, v in self.headers.items()
                    if k.lower() not in HOP | connection_tokens | {"host", "content-length", "x-codex-inspector-packet-id", WORKER_HEADER.lower()}}
+        if shared_client:
+            headers = forwarding_headers(headers)
+            headers["Authorization"] = "Bearer " + remote["token"]
         # urllib preserves content bytes, does not decompress responses, and
         # uses the OS/environment proxy. Redirects and inference retries are disabled.
         trigger_size = None
@@ -1131,7 +1210,8 @@ class Handler(BaseHTTPRequestHandler):
                 outbound_body, outbound_encoding, overflow_meta = self.server.overflow.prepare(
                     outbound_body, outbound_encoding, source_body, headers, suffix, upstream, compression, budget,
                     lambda compact_body, encoding: self._checkpoint(upstream, suffix, headers, compact_body, encoding,
-                        packet_id=packet_id, session_id=capture_meta.get("thread_id")),
+                        packet_id=packet_id, session_id=capture_meta.get("thread_id"),
+                        **({"opener": remote["opener"]} if shared_client else {})),
                     request_scope=scope, zstd_level=zstd_level, auto_zstd_level=auto_zstd_level)
                 applied_zstd_level = overflow_meta.get("relay_zstd_level", applied_zstd_level)
                 update(**overflow_meta)
@@ -1167,7 +1247,7 @@ class Handler(BaseHTTPRequestHandler):
         local_upstream = urlsplit(upstream).hostname in {"localhost", "127.0.0.1", "::1"}
         update(native_retry_mode="native")
         retry_settings = self.server.settings
-        capacity_retry = (retry_settings["capacity_retry_enabled"] and self.command == "POST"
+        capacity_retry = (not shared_host and retry_settings["capacity_retry_enabled"] and self.command == "POST"
                           and urlsplit(suffix).path.rstrip("/").endswith("/responses"))
         def current_retry_policy():
             settings = self.server.settings
@@ -1212,7 +1292,7 @@ class Handler(BaseHTTPRequestHandler):
                 if not local_upstream:
                     update(outbound_wire_bytes=len(outbound_body),
                            outbound_content_encoding=outbound_encoding)
-                opener = self.server.local_opener if local_upstream else self.server.opener
+                opener = remote["opener"] if shared_client else self.server.local_opener if local_upstream else self.server.opener
                 notify(diagnostic.record if diagnostic else None, "attempt_started", attempt=1)
                 with network_trace.active():
                     response = opener.open(request, timeout=UPSTREAM_READ_TIMEOUT_SECONDS)

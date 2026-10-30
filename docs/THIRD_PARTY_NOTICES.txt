@@ -23,11 +23,18 @@ https://github.com/facebook/zstd
 TOML Kit: MIT License.
 https://github.com/python-poetry/tomlkit
 
+cryptography: Apache License 2.0 or BSD 3-Clause License.
+Used to create temporary certificates for encrypted LAN sharing.
+https://github.com/pyca/cryptography
+Bundled dependency licenses, including OpenSSL, are included where provided
+by the installed cryptography distribution. cffi and pycparser, when bundled,
+use the MIT License and BSD 3-Clause License respectively.
+
 PyInstaller bootloader: GPL with the PyInstaller bootloader exception,
 which permits distributing bundled applications under their own licenses.
 https://pyinstaller.org/en/stable/license.html
 
 The build embeds available license texts from the installed Python,
-python-zstandard, TOML Kit and PyInstaller distributions in THIRD_PARTY_LICENSES/,
+python-zstandard, TOML Kit, cryptography and PyInstaller distributions in THIRD_PARTY_LICENSES/,
 and appends the same texts below in the distributed THIRD_PARTY_NOTICES.txt.
 No Codex desktop resources or OpenAI executable are redistributed.

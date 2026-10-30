@@ -2694,20 +2694,29 @@ class TokenTrendView {
 }
 tokenTrendView=new TokenTrendView({api,status:()=>state.status,sessions:()=>sessionSummaries,peek:listTokens,read:readListTokens,isGeneration:isTrendGeneration});
 function setWorkspaceView(view) {
-  workspaceView=view==="trends"?"trends":"records";
+  workspaceView=["trends","sharing"].includes(view)?view:"records";
   $("records-view").hidden=workspaceView!=="records";$("token-trend-view").hidden=workspaceView!=="trends";
+  if($("sharing-view"))$("sharing-view").hidden=workspaceView!=="sharing";
   $("view-records").setAttribute("aria-pressed",String(workspaceView==="records"));$("view-trends").setAttribute("aria-pressed",String(workspaceView==="trends"));
+  $("view-sharing")?.setAttribute("aria-pressed",String(workspaceView==="sharing"));
   try {localStorage.setItem("packet-inspector-view",workspaceView);} catch(_) {}
   tokenTrendView.setActive(workspaceView==="trends");
-  if(workspaceView==="trends"){cancelTokenRead();state.listController?.abort();}else if(state.status){loadPackets(false,true).catch(fail);loadTokenWindow();loadListTokens();}
+  globalThis.InspectorSharing?.setActive(workspaceView==="sharing");
+  if(workspaceView==="sharing"&&!globalThis.InspectorSharing&&$("sharing-message")) {
+    $("sharing-message").textContent=t("当前后台不支持共享，请更新软件后使用。");$("sharing-message").hidden=false;
+    if($("sharing-cards"))$("sharing-cards").hidden=true;
+  }
+  if(workspaceView!=="records"){cancelTokenRead();state.listController?.abort();}else if(state.status){loadPackets(false,true).catch(fail);loadTokenWindow();loadListTokens();}
 }
 $("view-records").onclick=()=>setWorkspaceView("records");$("view-trends").onclick=()=>setWorkspaceView("trends");
-try {if(localStorage.getItem("packet-inspector-view")==="trends")setWorkspaceView("trends");} catch(_) {}
+$("view-sharing")?.addEventListener("click",()=>setWorkspaceView("sharing"));
+try {const saved=localStorage.getItem("packet-inspector-view");if(["trends","sharing"].includes(saved))setWorkspaceView(saved);} catch(_) {}
 async function poll() {
   if(state.polling || document.hidden)return;
   state.polling=true;
   try {
     await refreshStatus();
+    if(workspaceView==="sharing")return;
     if(workspaceView==="trends") {
       if(state.filterRevision!==state.status.storage.revision)await refreshFilters();
       await refreshSessionSummaries();await tokenTrendView.refresh();return;
@@ -2720,5 +2729,5 @@ async function poll() {
   } catch(e) {fail(e);} finally {state.polling=false;}
 }
 const pollTimer=setInterval(poll,2000);
-document.addEventListener("visibilitychange",()=>{if(document.hidden){tokenTrendView.cancelPending();return;}if(workspaceView==="trends")tokenTrendView.refresh();else{loadTokenWindow();loadMorePackets();loadListTokens();}});
+document.addEventListener("visibilitychange",()=>{if(document.hidden){tokenTrendView.cancelPending();return;}if(workspaceView==="trends")tokenTrendView.refresh();else if(workspaceView==="records"){loadTokenWindow();loadMorePackets();loadListTokens();}});
 (async()=>{state.polling=true;try{await Promise.all([refreshStatus(true),refreshFilters()]);await refreshSessionSummaries();}finally{state.polling=false;}})().catch(fail);

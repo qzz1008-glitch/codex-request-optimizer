@@ -81,6 +81,15 @@ Choose a custom image folder if needed. After switching image tools, follow the 
 
 ---
 
+### 🤝 LAN sharing
+
+- A separate Sharing tab, off by default, leaves the existing records and trends views intact.
+- Install this app on both computers. The owner selects a local LAN address, starts sharing, and sends the generated link to a colleague, who pastes it to connect. Native Codex login connections are supported; there is no account pool to maintain.
+- The owner's Codex manages and renews upstream authorization; it is never written to the colleague's configuration. Sharing grants are held temporarily in memory. Connections use HTTPS and verify the certificate fingerprint in the link before sending the grant, without installing certificates.
+- Set an expiration and a forwarded request limit, replace the link, or stop sharing at any time. Sharing stops when the owner's app exits. Counts cover model requests, including compaction and image analysis, and do not represent official credits.
+- The colleague's local compression, request size protection and image processing settings still apply. Disconnecting restores the previous provider selection. Reload Codex configuration for changes to take effect; existing chats may retain their previous connection.
+- Both computers need reachable LAN connectivity and firewall access to the sharing port. The sharing entry only accepts model requests and model catalog queries, without exposing local settings or history. Requests pass through the owner's computer; share only with trusted colleagues.
+
 ## 🚀 Usage
 
 ### Download and setup
