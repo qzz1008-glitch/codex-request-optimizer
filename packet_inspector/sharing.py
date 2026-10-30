@@ -25,7 +25,8 @@ from .sharing_auth import NativeAuthorization, SharingError
 from .sharing_config import SharedProvider
 from .sharing_usage import SharedUsageStream, empty_usage
 from .sharing_role import MachineSharingRole
-from .sharing_credentials import CLIENT_HEADER, CredentialVault, QuotaMachineMismatch
+from .sharing_credentials import CLIENT_HEADER, CredentialVault
+from .sharing_errors import error_payload
 from .usage_trigger import raw_chunks
 
 PROTOCOL = 4  # Reusable credentials, durable aggregate-only accounting, independent exit.
@@ -213,6 +214,11 @@ class LANHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
         self.close_connection = True
 
+    def reply_error(self, status, code, message):
+        # Existing peers read flat status codes; Codex reads error.message.
+        payload = {"error": code, "message": message} if self.path == "/v1/status" else error_payload(code, message)
+        self.reply(status, payload)
+
     def handle_route(self):
         controller = self.server.controller
         path = self.path
@@ -225,13 +231,13 @@ class LANHandler(BaseHTTPRequestHandler):
         if self.command == "GET" and path == "/v1/status":
             try:
                 self.reply(200, controller.peer_status(self.headers.get("Authorization", ""), client))
-            except QuotaMachineMismatch:
-                self.reply(403, {"error": "quota_credential_machine_mismatch"})
-            except SharingError:
-                self.reply(403, {"error": "sharing_unavailable"})
+            except SharingError as exc:
+                self.reply_error(403, exc.code, str(exc))
             return
-        if not controller.authorized(self.headers.get("Authorization", ""), client):
-            self.reply(403, {"error": "sharing_unavailable", "message": "共享已停止、到期或链接已撤销。"})
+        try:
+            controller.authorize(self.headers.get("Authorization", ""), client)
+        except SharingError as exc:
+            self.reply_error(403, exc.code, str(exc))
             return
         if self.command == "GET" and path == "/v1/responses":
             self.reply(426, {"error": {"code": "websocket_not_supported", "message": "Use HTTP POST."}})
@@ -300,10 +306,10 @@ class LANHandler(BaseHTTPRequestHandler):
                 self.wfile.flush()
         except SharingError as exc:
             if not sent_headers:
-                self.reply(403, {"error": "sharing_unavailable", "message": str(exc)})
+                self.reply_error(403, exc.code, str(exc))
         except (OSError, ValueError):
             if not sent_headers:
-                self.reply(502, {"error": "sharing_relay_unreachable", "message": "提供方中转连接失败。"})
+                self.reply_error(502, "sharing_relay_unreachable", "提供方中转连接失败，请检查双方网络。")
         finally:
             if response:
                 response.close()
@@ -453,24 +459,24 @@ class Sharing:
         token = self.vault.get_secret(identifier, "quota", "out")
         return f"codex-share://{self.host['address']}:{self.host['port']}/#{token}.{self.host['fingerprint']}"
 
-    def authorized(self, value, client=""):
+    def authorize(self, value, client=""):
         with self.guard:
             if not self.listener or not self.host.get("active"):
-                return False
+                raise SharingError(self.host.get("error") or "额度共享已停止，请联系提供方重新开启，或切回本机额度。", code="sharing_stopped")
             if self.host.get("expires_at") is not None and time.time() >= self.host["expires_at"]:
-                return False
-            try:
-                self.vault.authenticate("quota", value, client)
-                return True
-            except SharingError:
-                return False
+                raise SharingError("额度共享已到期，请联系提供方重新开启，或切回本机额度。", code="sharing_expired")
+            return self.vault.authenticate("quota", value, client)
+
+    def authorized(self, value, client=""):
+        try:
+            self.authorize(value, client)
+            return True
+        except SharingError:
+            return False
 
     def peer_status(self, value, client):
         with self.guard:
-            if not self.listener or not self.host.get("active") or (
-                    self.host.get("expires_at") is not None and time.time() >= self.host["expires_at"]):
-                raise SharingError("共享已停止、到期或链接已撤销。")
-            reservation = self.vault.authenticate("quota", value, client)
+            reservation = self.authorize(value, client)
             return {"protocol": PROTOCOL, "available": True, "credential": self.vault.snapshot(reservation)}
 
     def rotate(self):
@@ -484,11 +490,9 @@ class Sharing:
 
     def reserve(self, value, client="", *, count=True):
         with self.guard:
-            if not self.authorized(value, client):
-                raise SharingError("共享已停止、到期或链接已撤销。")
+            self.authorize(value, client)
             credentials = self.authorization.credentials()
-            if not self.authorized(value, client):
-                raise SharingError("共享已停止、到期或链接已撤销。")
+            self.authorize(value, client)
             if not secrets.compare_digest(hashlib.sha256(credentials["identity"].encode()).digest(), self.host["identity_hash"]):
                 self.host.update(active=False, error="Codex 登录已变更，请重新开启共享。")
                 raise SharingError(self.host["error"])

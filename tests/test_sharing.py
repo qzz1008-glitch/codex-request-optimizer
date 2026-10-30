@@ -567,6 +567,35 @@ class LANSharingTests(unittest.TestCase):
             status, _ = self.local_api("/api/sharing", {"action": "credential_issue", "kind": "quota", "label": "second"})
             self.assertEqual(status, 200, "Deleting a credential releases its name")
 
+    def test_model_sharing_denials_preserve_specific_reasons_through_the_borrower(self):
+        link = self.start()
+        self.guest.sharing.connect(link)
+        vault = self.owner.sharing.vault
+        identifier = next(row["id"] for row in vault.rows() if row["kind"] == "quota")
+        with vault.connection() as db:
+            original = json.loads(db.execute("SELECT data FROM credentials WHERE id=?", (identifier,)).fetchone()[0])
+        cases = (("disabled", {"enabled": False}, "sharing_credential_disabled", "凭据已停用"),
+                 ("expired", {"expires_at": time.time() - 1}, "sharing_credential_expired", "凭据已到期"),
+                 ("exhausted", {"period_cost_nanos": original["budget_nanos"]}, "sharing_quota_exhausted", "本期额度已用完"))
+        for name, changes, code, text in cases:
+            with self.subTest(case=name):
+                with vault.connection() as db:
+                    vault._save(db, identifier, {**original, **changes})
+                client, response, _ = self.request_guest()
+                try:
+                    payload = json.loads(response.read())
+                    self.assertEqual(response.status, 403)
+                    self.assertEqual(payload["error"]["code"], code)
+                    self.assertIn(text, payload["error"]["message"])
+                    self.assertIn("提供方", payload["error"]["message"])
+                finally:
+                    client.close()
+                self.assertEqual(self.owner.sharing.host["requests"], 0)
+                self.assertEqual(self.owner.sharing.host["in_flight"], 0)
+        with vault.connection() as db:
+            vault._save(db, identifier, original)
+        self.consume()
+
     def test_exit_credential_api_rejects_duplicate_names_and_releases_deleted_names(self):
         with patch("packet_inspector.shared_egress.automatic_address", return_value="127.0.0.1"):
             status, first = self.local_api("/api/sharing", {"action": "credential_issue", "kind": "exit", "label": "test"})
