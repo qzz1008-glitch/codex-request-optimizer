@@ -1,11 +1,13 @@
 "use strict";
 const assert=require("node:assert/strict"),fs=require("node:fs"),vm=require("node:vm");
+const pickerCalls=[];let userGesture=false;
 class Element{
  constructor(){this.value="";this.hidden=false;this.disabled=false;this.checked=false;this.attributes={};this.handlers={};this.innerHTML="";this.textContent="";this.dataset={};this.style={};this.classList={toggle(){}};}
  setAttribute(k,v){this.attributes[k]=v;} addEventListener(k,v){this.handlers[k]=v;} querySelectorAll(selector){return selector==="[data-copied=true]"?[...elements.values()].filter(node=>node.attributes["data-copied"]==="true"):[];} querySelector(){return null;}
  getBoundingClientRect(){return {left:500,top:200,bottom:220,width:256,height:150};} contains(target){return target===this;}
  setCustomValidity(value){this.validationMessage=value;} focus(){this.focused=true;} select(){this.selected=true;}
  showModal(){this.open=true;} close(){this.open=false;}
+ showPicker(){pickerCalls.push({type:this.type,enabled:!this.disabled,visible:!node("sharing-inline-editor").hidden,focused:this.focused===true,userGesture});}
 }
 const elements=new Map(),node=id=>{if(!elements.has(id))elements.set(id,new Element());return elements.get(id);};
 const idle={supported:true,protocol:4,credentials_supported:true,host:{active:false,running:false},client:{active:false},egress:{supported:true,host:{active:false},selection:{mode:"provider"}},credentials:[]};
@@ -22,7 +24,7 @@ context.setTimeout=fn=>{timeouts.set(++timeoutId,fn);return timeoutId;};context.
 context.globalThis=context;vm.createContext(context);vm.runInContext(fs.readFileSync("packet_inspector/ui/sharing.js","utf8"),context);
 const formMarkup=()=>node("quota-config").innerHTML+node("exit-config").innerHTML;
 const flush=()=>new Promise(resolve=>setImmediate(resolve));
-const click=(target,dataset)=>{const button=new Element();button.dataset=dataset;return node(target).handlers.click({target:{closest:()=>button}});};
+const click=(target,dataset)=>{const button=new Element();button.dataset=dataset;userGesture=true;try{return node(target).handlers.click({target:{closest:()=>button}});}finally{userGesture=false;}};
 const submit=id=>node(id).handlers.submit({preventDefault(){}});
 const edit=(id,field)=>click("sharing-cards",{action:"field",id,field});
 const save=()=>submit("sharing-inline-editor");
@@ -38,8 +40,11 @@ const noExpiry=async(id,checked)=>{openExpiry(id);if(checked)await node("sharing
  for(const kind of ["quota","exit"]){
   const id=kind+"-expiry",value=node(id).value,before=requests.length,delta=new Date(value).getTime()-Date.now()-7*864e5;
   assert.ok(delta>-2000&&delta<60000);assert.equal(node(id+"-value").textContent,value.replace("T"," "));
-  openExpiry(id);assert.equal(node("sharing-inline-value").type,"datetime-local");assert.equal(node("sharing-inline-value").disabled,false);assert.equal(node("sharing-inline-save").textContent,"确定");
+  const pickerBefore=pickerCalls.length;openExpiry(id);assert.equal(pickerCalls.length,pickerBefore+1,"The first expiry click opens the native calendar synchronously");assert.deepEqual(pickerCalls.at(-1),{type:"datetime-local",enabled:true,visible:true,focused:true,userGesture:true});assert.equal(node("sharing-inline-value").type,"datetime-local");assert.equal(node("sharing-inline-value").disabled,false);assert.equal(node("sharing-inline-save").textContent,"确定");
   node("sharing-inline-value").value=minute(Date.now()+10*864e5);cancel();assert.equal(node(id).value,value);
+  const dateInput=node("sharing-inline-value"),originalPicker=dateInput.showPicker;
+  dateInput.showPicker=undefined;openExpiry(id);assert.equal(node("sharing-inline-editor").hidden,false,"Unsupported hosts still allow manual date entry");cancel();
+  dateInput.showPicker=()=>{throw Error("native picker unavailable");};openExpiry(id);assert.equal(node("sharing-inline-editor").hidden,false,"A rejected native picker leaves the date field usable");cancel();dateInput.showPicker=originalPicker;
   openExpiry(id);documentEvents.keydown({key:"Escape",preventDefault(){}});assert.equal(node(id).value,value);
   openExpiry(id);documentEvents.pointerdown({target:{closest:()=>null}});assert.equal(node("sharing-inline-editor").hidden,true);assert.equal(node(id).value,value);
   openExpiry(id);openExpiry(id);assert.equal(node("sharing-inline-editor").hidden,true,"Clicking the same trigger closes the picker");
@@ -83,7 +88,7 @@ const noExpiry=async(id,checked)=>{openExpiry(id);if(checked)await node("sharing
  pending.push({status:200,data:host});await save();assert.equal(JSON.stringify(requests.at(-1).data),JSON.stringify({action:"credential_edit",id:"q1",budget:"25"}));assert.equal(node("sharing-inline-editor").hidden,true);
  edit("q1","label");assert.equal(node("sharing-inline-no-expiry").hidden,true);node("sharing-inline-value").value="  Renamed colleague  ";pending.push({status:400,data:{error:"同类型凭据名称已存在，请使用其他名称。"}});await save();assert.equal(node("sharing-inline-editor").hidden,false);assert.equal(node("sharing-inline-value").value,"  Renamed colleague  ");assert.match(node("sharing-inline-message").textContent,/同类型凭据名称已存在/);
  pending.push({status:200,data:host});await save();assert.equal(JSON.stringify(requests.at(-1).data),JSON.stringify({action:"credential_edit",id:"q1",label:"Renamed colleague"}));
- edit("q1","expires_at");assert.equal(node("sharing-inline-no-expiry").hidden,false);assert.equal(node("sharing-inline-value").disabled,false);assert.equal(node("sharing-inline-value").type,"datetime-local");const changedExpiry=minute(Date.now()+10*864e5);node("sharing-inline-value").value=changedExpiry;pending.push({status:200,data:host});await save();assert.equal(JSON.stringify(requests.at(-1).data),JSON.stringify({action:"credential_edit",id:"q1",expires_at:new Date(changedExpiry).getTime()/1000}));
+ const tablePickerBefore=pickerCalls.length;edit("q1","expires_at");assert.equal(pickerCalls.length,tablePickerBefore+1,"Editing an existing deadline also opens the calendar immediately");assert.equal(node("sharing-inline-no-expiry").hidden,false);assert.equal(node("sharing-inline-value").disabled,false);assert.equal(node("sharing-inline-value").type,"datetime-local");const changedExpiry=minute(Date.now()+10*864e5);node("sharing-inline-value").value=changedExpiry;pending.push({status:200,data:host});await save();assert.equal(JSON.stringify(requests.at(-1).data),JSON.stringify({action:"credential_edit",id:"q1",expires_at:new Date(changedExpiry).getTime()/1000}));
  const beforeNoExpiry=requests.length;edit("q1","expires_at");await node("sharing-inline-no-expiry").handlers.click();assert.equal(requests.length,beforeNoExpiry,"An unchanged unlimited deadline sends no edit");assert.equal(node("sharing-inline-editor").hidden,true);
  const finite={...host,credentials:[{...outgoing,expires_at:new Date(changedExpiry).getTime()/1000},incoming,exitIncoming]};pending.push({status:200,data:finite});await interval();edit("q1","expires_at");pending.push({status:200,data:host});await node("sharing-inline-no-expiry").handlers.click();assert.equal(JSON.stringify(requests.at(-1).data),JSON.stringify({action:"credential_edit",id:"q1",expires_at:null}));
  pending.push({status:200,data:host});await weekly("q1",false);assert.equal(JSON.stringify(requests.at(-1).data),JSON.stringify({action:"credential_edit",id:"q1",weekly_reset:false}));
@@ -118,6 +123,7 @@ const noExpiry=async(id,checked)=>{openExpiry(id);if(checked)await node("sharing
  await deleteRow("e2");pending.push({status:400,data:{error:"invalid sharing action"}});await confirmDelete();assert.equal(node("sharing-delete-dialog").open,true);assert.match(node("sharing-delete-message").textContent,/当前后台不支持删除凭据.*更新软件/);assert.doesNotMatch(node("sharing-delete-message").textContent,/invalid sharing action/);assert.match(node("exit-credential-rows").innerHTML,/data-id="e2"/);node("sharing-delete-cancel").handlers.click();
  click("sharing-cards",{kind:"exit",view:"in"});await deleteRow("e1");context.InspectorSharing.setActive(false);assert.equal(node("sharing-delete-dialog").open,false);assert.equal(interval,null);
  pending.push({status:200,data:{...idle,protocol:3,credentials_supported:false}});context.InspectorSharing.setActive(true);await flush();assert.equal(node("sharing-cards").hidden,true);assert.match(node("sharing-message").textContent,/更新软件/);context.InspectorSharing.setActive(false);
+ assert.ok(pickerCalls.every(call=>call.type==="datetime-local"&&call.enabled&&call.visible&&call.focused&&call.userGesture),"Only ready date fields open a native picker during their original user gesture");
  assert.doesNotMatch(fs.readFileSync("packet_inspector/ui/sharing.js","utf8"),/localStorage|sessionStorage/);
  console.log(JSON.stringify({sharing_ui:"passed",checks:["two_resource_cards","split_credential_lists","independent_empty_states","reusable_credentials","history_selection","expiry_and_weekly_reset","live_usage","privacy","confirmed_deletion","old_backend_guard"]}));
 })().catch(error=>{console.error(error);process.exitCode=1;});
