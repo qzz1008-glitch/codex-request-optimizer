@@ -948,6 +948,7 @@ function fillSettings() {
   const s=state.status,p=s.profile;
   const storage=storageLimitSettings(s),storageInput=$("storage-limit");
   storageInput.min=storage.min;storageInput.max=storage.max;storageInput.step=storage.step;
+  $("packet-limit").max=s.packet_limit_max??20000;
   storageInput.title=storage.key==="max_storage_bytes"?"":t("当前后台的存储上限步长为 1.048576 MB；更新后台后支持精确设置。");
   fillEntryPort();
   if(!settingsEditing) {
