@@ -101,6 +101,35 @@ class CredentialVaultTests(unittest.TestCase):
             upgraded.issue("exit", " SAME NAME ")
         self.assertEqual(len(upgraded.rows()), 1)
 
+    def test_incoming_alias_edits_preserve_authorization_and_provider_statistics(self):
+        for kind, scheme in (("quota", "codex-share"), ("exit", "codex-exit")):
+            with self.subTest(kind=kind):
+                self.vault.issue(kind, "reserved")
+                link = f"{scheme}://127.0.0.1:1/#grant.fingerprint"
+                snapshot = {"expires_at": time.time() + 7 * 86400, "budget_nanos": 10e9,
+                            "enabled": True, "weekly_reset": True, "period_cost_nanos": 2e9,
+                            "totals": {"cost_nanos": 3e9, "requests": 2}}
+                identifier = self.vault.import_link(kind, link, "Provider", snapshot)
+                original = next(row for row in self.vault.rows() if row["id"] == identifier)
+                draft = self.vault.update(identifier, {"label": " Local alias "}, dry_run=True)
+                self.assertEqual(draft["label"], "Local alias")
+                self.assertEqual(next(row for row in self.vault.rows() if row["id"] == identifier), original)
+                updated = self.vault.update(identifier, {"action": "credential_edit", "id": identifier,
+                                                         "label": " Local alias "})
+                self.assertEqual(updated, {**original, "label": "Local alias"})
+                for changes in ({}, {"budget": 20}, {"expires_at": None}, {"weekly_reset": False},
+                                {"enabled": False}, {"snapshot": {}}, {"label": "Alias", "budget": 20}):
+                    with self.subTest(changes=changes), self.assertRaises(SharingError):
+                        self.vault.update(identifier, changes)
+                with self.assertRaises(SharingError):
+                    self.vault.update(identifier, {"label": "Alias"}, reset=True)
+                for name in ("reserved", "  RESERVED  ", "   "):
+                    with self.subTest(name=name), self.assertRaises(SharingError):
+                        self.vault.update(identifier, {"label": name})
+                upgraded = CredentialVault(self.root)
+                self.assertEqual(next(row for row in upgraded.rows() if row["id"] == identifier), updated)
+                self.assertEqual(upgraded.get_secret(identifier), link)
+
     def test_defaults_internal_callbacks_and_unchanged_legacy_names_keep_working(self):
         first, _ = self.vault.issue("exit")
         second, _ = self.vault.issue("exit")

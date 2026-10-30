@@ -113,18 +113,13 @@
       </div>
     </div>
     <div id="sharing-link-area" class="sharing-issued" hidden><label for="sharing-link">新凭据</label><input id="sharing-link" type="text" readonly spellcheck="false"><button id="sharing-copy" type="button">复制凭据</button><button id="sharing-link-close" type="button" aria-label="关闭">×</button></div>
-    <dialog id="sharing-credential-dialog" aria-labelledby="credential-edit-title">
-      <form id="credential-edit-form" class="credential-edit-form">
-        <h2 id="credential-edit-title">编辑凭据</h2>
-        <input id="credential-edit-id" type="hidden">
-        <label>名称<input id="credential-edit-label" maxlength="80" required></label>
-        <div id="credential-edit-expiry-field"></div>
-        <div id="credential-edit-quota"><div class="sharing-budget-row"><label id="credential-edit-budget-label" for="credential-edit-budget">额度</label><span class="sharing-amount-field"><input id="credential-edit-budget" type="number" min="1" max="1000000" step="0.01" aria-labelledby="credential-edit-budget-label" aria-describedby="credential-edit-budget-unit"><span id="credential-edit-budget-unit" class="sharing-amount-unit">美元</span></span><label class="sharing-check"><input id="credential-edit-weekly" type="checkbox">每周刷新</label></div></div>
-        <p class="sharing-stat-note">调整作用于新请求，已开始的请求可完成。</p>
-        <p id="credential-edit-message" class="sharing-edit-message" role="alert" hidden></p>
-        <div class="sharing-actions"><button id="credential-edit-cancel" type="button">取消</button><button id="credential-edit-save" class="primary" type="submit">保存</button></div>
-      </form>
-    </dialog>
+    <form id="sharing-inline-editor" class="sharing-inline-editor" role="group" aria-labelledby="sharing-inline-label" hidden>
+      <label id="sharing-inline-label" for="sharing-inline-value"></label>
+      <input id="sharing-inline-value" required>
+      <label id="sharing-inline-no-expiry" class="sharing-check" hidden><input id="sharing-inline-unlimited" type="checkbox">无期限</label>
+      <p id="sharing-inline-message" class="sharing-edit-message" role="alert" hidden></p>
+      <div class="sharing-inline-actions"><button id="sharing-inline-cancel" type="button">取消</button><button id="sharing-inline-save" class="primary" type="submit">保存</button></div>
+    </form>
   </main>
   <dialog id="compression-confirm-dialog" aria-labelledby="compression-confirm-title" aria-describedby="compression-confirm-description compression-confirm-hint">
     <h2 id="compression-confirm-title">取消接入</h2>

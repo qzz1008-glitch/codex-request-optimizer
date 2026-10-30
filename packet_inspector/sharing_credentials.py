@@ -293,10 +293,13 @@ class CredentialVault:
 
     def update(self, identifier, changes, *, reset=False, dry_run=False):
         with self.connection() as db:
-            row = db.execute("SELECT data FROM credentials WHERE id=? AND direction='out'", (identifier,)).fetchone()
+            row = db.execute("SELECT data FROM credentials WHERE id=?", (identifier,)).fetchone()
             if not row:
                 raise SharingError("只能修改本机借出的凭据。")
             data = json.loads(row[0])
+            if data["direction"] == "in" and (reset or "label" not in changes or
+                    set(changes) - {"label", "id", "action"}):
+                raise SharingError("只能修改本机借出的凭据。")
             self._roll(data)
             if "label" in changes:
                 name = str(changes["label"] or "").strip()[:80].strip()
