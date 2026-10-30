@@ -24,6 +24,10 @@ class ExitMachineMismatch(SharingError):
     pass
 
 
+class QuotaMachineMismatch(SharingError):
+    pass
+
+
 def protect(value, decrypt=False):
     if os.name != "nt":
         return value  # Private-file fallback for isolated non-Windows test fixtures.
@@ -192,12 +196,14 @@ class CredentialVault:
             return protect(row["secret"], True).decode()
 
     def authenticate(self, kind, value, client="", *, spend=False):
-        # Quota is shared across clients; an exit belongs to one client identity,
-        # including when its quota provider opens a delegated tunnel.
+        # Both grant types belong to one persistent client identity. Delegated
+        # exit tunnels retain that borrower's identity.
         if not isinstance(value, str) or not value.startswith("Bearer "):
             raise SharingError("凭据无效或已撤销。")
         if kind == "exit" and (not isinstance(client, str) or not re.fullmatch(r"[a-f0-9]{64}", client)):
             raise SharingError("出口凭据需要有效的机器标识，请更新使用方软件。")
+        if kind == "quota" and (not isinstance(client, str) or not re.fullmatch(r"[a-f0-9]{64}", client)):
+            raise SharingError("额度凭据需要有效的机器标识，请更新使用方软件。")
         digest = hashlib.sha256(value[7:].encode()).hexdigest()
         with self.connection() as db:
             row = db.execute("SELECT id,data FROM credentials WHERE kind=? AND direction='out' AND digest=?", (kind, digest)).fetchone()
@@ -209,11 +215,14 @@ class CredentialVault:
                 raise SharingError("凭据已停用或到期。")
             if spend and data["budget_nanos"] and data["period_cost_nanos"] >= data["budget_nanos"]:
                 raise SharingError("此凭据的本期额度已用完。")
-            if kind == "exit":
+            if kind in {"exit", "quota"}:
                 binding = hashlib.sha256(client.encode()).hexdigest()
-                if data.get("exit_client_hash") and not secrets.compare_digest(data["exit_client_hash"], binding):
-                    raise ExitMachineMismatch("此出口凭据已绑定其他机器，请使用独立凭据。")
-                data["exit_client_hash"] = binding
+                key = kind + "_client_hash"
+                if data.get(key) and not secrets.compare_digest(data[key], binding):
+                    if kind == "exit":
+                        raise ExitMachineMismatch("此出口凭据已绑定其他机器，请使用独立凭据。")
+                    raise QuotaMachineMismatch("此额度凭据已绑定其他机器，请使用独立凭据。")
+                data[key] = binding
             data.update(last_seen=time.time())
             if spend:
                 data["totals"]["requests"] += 1
@@ -250,7 +259,7 @@ class CredentialVault:
 
     @staticmethod
     def public(data):
-        private = {"bound", "client_hash", "exit_client_hash", "period_id"}
+        private = {"bound", "client_hash", "exit_client_hash", "quota_client_hash", "period_id"}
         data = {key: value for key, value in data.items() if key not in private}
         if isinstance(data.get("snapshot"), dict):
             data["snapshot"] = {key: value for key, value in data["snapshot"].items() if key not in private}

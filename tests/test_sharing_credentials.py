@@ -9,7 +9,7 @@ import unittest
 from unittest.mock import patch
 
 from packet_inspector.sharing_auth import SharingError
-from packet_inspector.sharing_credentials import CredentialVault, ExitMachineMismatch, expiration, week_start
+from packet_inspector.sharing_credentials import CredentialVault, ExitMachineMismatch, QuotaMachineMismatch, expiration, week_start
 from packet_inspector.sharing_pricing import budget_nanos, reference_cost
 
 
@@ -119,11 +119,11 @@ class CredentialVaultTests(unittest.TestCase):
             upgraded.issue("exit", "同事")
         upgraded.update(second, {"label": "another name"})
 
-    def test_multiple_clients_share_one_budget_and_atomic_usage_totals(self):
+    def test_one_client_shares_a_budget_across_concurrent_requests(self):
         identifier, token = self.grant(budget="1")
         with concurrent.futures.ThreadPoolExecutor(2) as pool:
             reservations = list(pool.map(lambda client: self.vault.authenticate("quota", token, client, spend=True),
-                                         ["a" * 64, "b" * 64]))
+                                         ["a" * 64, "a" * 64]))
             self.assertEqual({value["credential_id"] for value in reservations}, {identifier})
             list(pool.map(lambda value: self.vault.record(value, dict(model="gpt-6.1-sol", input_tokens=250000)), reservations))
         row = self.vault.rows()[0]
@@ -133,47 +133,52 @@ class CredentialVaultTests(unittest.TestCase):
         self.assertTrue(row["exhausted"])
         self.assertNotIn("bound", row)
         self.assertNotIn("client_hash", row)
-        self.vault.authenticate("quota", token)  # A client ID is no longer required.
+        self.vault.authenticate("quota", token, "a" * 64)
         for client in ("", "ip:192.168.1.2", "x" * 64):
-            self.vault.authenticate("quota", token, client)
-            with self.assertRaisesRegex(SharingError, "本期额度已用完"):
-                self.vault.authenticate("quota", token, client, spend=True)
+            with self.assertRaises(SharingError):
+                self.vault.authenticate("quota", token, client)
+        with self.assertRaises(QuotaMachineMismatch):
+            self.vault.authenticate("quota", token, "b" * 64)
         for invalid in (None, "", "Basic token", "Bearer unknown"):
             with self.assertRaises(SharingError):
                 self.vault.authenticate("quota", invalid)
 
-    def test_exit_binding_is_atomic_persistent_and_private(self):
-        identifier, token = self.vault.issue("exit", "one computer")
-        bearer = "Bearer " + token
-        for invalid in ("", "ip:192.168.1.2", "x" * 64):
-            with self.assertRaises(SharingError):
-                self.vault.authenticate("exit", bearer, invalid)
-        def claim(client):
-            try:
-                self.vault.authenticate("exit", bearer, client)
-                return client
-            except ExitMachineMismatch:
-                return None
-        with concurrent.futures.ThreadPoolExecutor(2) as pool:
-            accepted = list(pool.map(claim, ["a" * 64, "b" * 64]))
-        self.assertEqual(sum(client is not None for client in accepted), 1)
-        winner = next(client for client in accepted if client)
-        loser = "b" * 64 if winner == "a" * 64 else "a" * 64
-        upgraded = CredentialVault(self.root)
-        reservation = upgraded.authenticate("exit", bearer, winner, spend=True)
-        upgraded.record(reservation, sent=100, received=200)
-        upgraded.update(identifier, {"label": "renamed", "enabled": False})
-        with self.assertRaises(SharingError):
-            upgraded.authenticate("exit", bearer, winner)
-        upgraded.update(identifier, {"enabled": True})
-        with self.assertRaises(ExitMachineMismatch):
-            upgraded.authenticate("exit", bearer, loser)
-        self.assertEqual(upgraded.snapshot(reservation)["totals"]["sent_bytes"], 100)
-        self.assertNotIn("exit_client_hash", json.dumps(upgraded.rows()))
-        self.assertNotIn("exit_client_hash", upgraded.snapshot(reservation))
-        other_id, other_token = upgraded.issue("exit", "another computer")
-        self.assertNotEqual(other_id, identifier)
-        upgraded.authenticate("exit", "Bearer " + other_token, loser)
+    def test_grant_bindings_are_atomic_persistent_and_private(self):
+        for kind, mismatch in (("exit", ExitMachineMismatch), ("quota", QuotaMachineMismatch)):
+            with self.subTest(kind=kind):
+                identifier, token = self.vault.issue(kind, "one computer")
+                bearer = "Bearer " + token
+                for invalid in ("", "ip:192.168.1.2", "x" * 64):
+                    with self.assertRaises(SharingError):
+                        self.vault.authenticate(kind, bearer, invalid)
+                def claim(client):
+                    try:
+                        self.vault.authenticate(kind, bearer, client)
+                        return client
+                    except mismatch:
+                        return None
+                with concurrent.futures.ThreadPoolExecutor(2) as pool:
+                    accepted = list(pool.map(claim, ["a" * 64, "b" * 64]))
+                self.assertEqual(sum(client is not None for client in accepted), 1)
+                winner = next(client for client in accepted if client)
+                loser = "b" * 64 if winner == "a" * 64 else "a" * 64
+                upgraded = CredentialVault(self.root)
+                reservation = upgraded.authenticate(kind, bearer, winner, spend=True)
+                upgraded.record(reservation, sent=100, received=200)
+                upgraded.update(identifier, {"label": "renamed", "enabled": False})
+                with self.assertRaises(SharingError):
+                    upgraded.authenticate(kind, bearer, winner)
+                upgraded.update(identifier, {"enabled": True})
+                if kind == "quota":
+                    upgraded.update(identifier, {}, reset=True)
+                with self.assertRaises(mismatch):
+                    upgraded.authenticate(kind, bearer, loser)
+                self.assertEqual(upgraded.snapshot(reservation)["totals"]["sent_bytes"], 100)
+                self.assertNotIn(kind + "_client_hash", json.dumps(upgraded.rows()))
+                self.assertNotIn(kind + "_client_hash", upgraded.snapshot(reservation))
+                other_id, other_token = upgraded.issue(kind, "another computer")
+                self.assertNotEqual(other_id, identifier)
+                upgraded.authenticate(kind, "Bearer " + other_token, loser)
 
     def test_internal_exit_callback_is_bound_to_the_borrowing_machine(self):
         _, token = self.vault.issue("exit", internal=True)
@@ -199,8 +204,9 @@ class CredentialVaultTests(unittest.TestCase):
             self.assertEqual(snapshot, {"budget_nanos": 123})
         self.assertEqual(upgraded.get_secret(identifier), token[7:])
         self.assertEqual(upgraded.get_secret(incoming), "codex-share://127.0.0.1:1/#grant.fingerprint")
-        upgraded.authenticate("quota", token, "b" * 64, spend=True)
-        upgraded.authenticate("quota", token, spend=True)
+        with self.assertRaises(QuotaMachineMismatch):
+            upgraded.authenticate("quota", token, "b" * 64, spend=True)
+        upgraded.authenticate("quota", token, "a" * 64, spend=True)
 
     def test_budget_live_edits_manual_reset_and_late_completion(self):
         identifier, token = self.grant(budget="1")

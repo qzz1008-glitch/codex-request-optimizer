@@ -293,10 +293,10 @@ class LANSharingTests(unittest.TestCase):
         with patch.object(self.owner.sharing, "_host_upstream", return_value=self.target):
             return self.owner.sharing.start_host("127.0.0.1", free_port(), **options)["link"]
 
-    def remote_request(self, link, path="/v1/status", body=None, grant=True):
+    def remote_request(self, link, path="/v1/status", body=None, grant=True, client=None):
         host, port, token, fingerprint = parse_link(link)
         opener = pinned_opener(host, port, fingerprint)
-        headers = {"Authorization": "Bearer " + token, CLIENT_HEADER: self.guest.sharing.vault.client_id} if grant else {}
+        headers = {"Authorization": "Bearer " + token, CLIENT_HEADER: client or self.guest.sharing.vault.client_id} if grant else {}
         try:
             response = opener.open(Request(f"https://{host}:{port}" + path, data=body, headers=headers), timeout=HTTP_TIMEOUT)
         except HTTPError as exc:
@@ -407,11 +407,23 @@ class LANSharingTests(unittest.TestCase):
         self.guest.sharing.disconnect()
         self.assertEqual(tomllib.loads(self.guest.link.config.read_text()), tomllib.loads(original.decode()))
 
-    def test_multiple_borrowers_share_one_owner_and_only_aggregate_usage_is_kept(self):
+    def test_multiple_borrowers_use_distinct_grants_and_only_aggregate_usage_is_kept(self):
         link = self.start()
         second = self.extra_relay("another-borrower")
         self.guest.sharing.connect(link)
-        second.sharing.connect(link)
+        original_config = second.link.config.read_bytes()
+        with self.assertRaisesRegex(SharingError, "此额度凭据已绑定其他机器"):
+            second.sharing.connect(link)
+        self.assertEqual(second.link.config.read_bytes(), original_config)
+        self.assertFalse(second.sharing.status()["client"]["active"])
+        status, payload = self.remote_request(link, client=second.sharing.vault.client_id)
+        self.assertEqual(status, 403)
+        self.assertEqual(json.loads(payload)["error"], "quota_credential_machine_mismatch")
+        status, _ = self.remote_request(link, "/v1/responses", body=b"{}", client=second.sharing.vault.client_id)
+        self.assertEqual(status, 403)
+        self.assertEqual(self.owner.sharing.status()["host"]["requests"], 0)
+        second_link = self.owner.sharing.issue(label="another borrower")["link"]
+        second.sharing.connect(second_link)
         self.consume(content="private-first-borrower")
         self.consume(guest=second, content="private-second-borrower")
         wait_for_idle(self.owner, self.guest, second)
@@ -419,13 +431,13 @@ class LANSharingTests(unittest.TestCase):
         self.assertEqual(host["requests"], 2)
         self.assertEqual(host["usage"]["total_tokens"], 78)
         outgoing = [row for row in self.owner.sharing.status()["credentials"] if row["direction"] == "out"]
-        self.assertEqual(len(outgoing), 1)
-        self.assertEqual(outgoing[0]["totals"]["total_tokens"], 78)
+        self.assertEqual(len(outgoing), 2)
+        self.assertEqual([row["totals"]["total_tokens"] for row in outgoing], [39, 39])
         self.assertEqual(self.owner.store.list(), [])
         self.assertTrue(self.guest.sharing.status()["client"]["active"])
         self.assertTrue(second.sharing.status()["client"]["active"])
 
-    def test_credential_api_live_edits_history_selection_and_shared_machine_usage(self):
+    def test_credential_api_live_edits_history_selection_and_single_machine_usage(self):
         self.owner.settings["sharing_port"] = free_port()
         with patch("packet_inspector.sharing.automatic_address", return_value="127.0.0.1"), patch.object(
                 self.owner.sharing, "_host_upstream", return_value=self.target):
@@ -434,11 +446,9 @@ class LANSharingTests(unittest.TestCase):
         self.assertEqual(status, 200)
         identifier, link = issued["issued_id"], issued["link"]
         self.guest.sharing.connect(link, label="provider history")
-        second = self.extra_relay("second-colleague")
-        second.sharing.connect(link)
         self.consume()
-        self.consume(guest=second)
-        wait_for_idle(self.owner, self.guest, second)
+        self.consume()
+        wait_for_idle(self.owner, self.guest)
         status, edited = self.local_api("/api/sharing", {"action": "credential_edit", "id": identifier,
             "budget": "25", "weekly_reset": False, "expires_at": time.time() + 7 * 86400})
         self.assertEqual(status, 200)
