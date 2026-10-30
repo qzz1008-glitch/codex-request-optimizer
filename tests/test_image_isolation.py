@@ -279,6 +279,10 @@ class ImageConfigurationTests(unittest.TestCase):
             providers.sync(routes, lambda updated: routes.update(updated), retry_limit=10)
         def connection(path):
             data = tomllib.loads(path.read_text(encoding="utf8"))
+            if "features" in data:
+                data["features"].pop("view_image", None)
+                if not data["features"]:
+                    data.pop("features")
             return {key: value for key, value in data.items() if key not in {"tools", "mcp_servers"}}
         def effective_provider(data, base):
             selected = data.get("model_provider", base["model_provider"])

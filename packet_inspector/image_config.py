@@ -90,14 +90,20 @@ class ImageToolConfig:
 
     def _disable_tools(self, document, data, previous):
         tools = data.get("tools", {})
+        features = data.get("features", {})
         mcp = data.get("mcp_servers", {}).get(TOOL_SERVER)
         original = {"native_present": "view_image" in tools, "native": tools.get("view_image"),
+                    "native_feature_present": "view_image" in features, "native_feature": features.get("view_image"),
+                    "features_created": "features" not in data,
                     "tools_created": "tools" not in data, "mcp_present": mcp is not None,
                     "mcp_enabled_present": mcp is not None and "enabled" in mcp,
                     "mcp_enabled": mcp.get("enabled") if mcp is not None else None}
         if "tools" not in document:
             document["tools"] = tomlkit.table()
         document["tools"]["view_image"] = False
+        if "features" not in document:
+            document["features"] = tomlkit.table()
+        document["features"]["view_image"] = False
         if mcp is not None:
             document["mcp_servers"][TOOL_SERVER]["enabled"] = False
         return {**previous, "schema_version": 3, "config": str(self.link.config.resolve()),
@@ -107,6 +113,14 @@ class ImageToolConfig:
         original = previous["disabled_original"]
         if data.get("tools", {}).get("view_image") is not False:
             raise ValueError("原生图片工具配置已被修改，未覆盖用户配置。")
+        if "native_feature_present" in original:
+            if data.get("features", {}).get("view_image") is not False:
+                raise ValueError("原生图片工具开关已被修改，未覆盖用户配置。")
+            document["features"].pop("view_image", None)
+            if original["native_feature_present"]:
+                document["features"]["view_image"] = original["native_feature"]
+            if original["features_created"] and not document["features"]:
+                document.pop("features")
         if original["mcp_present"]:
             mcp = data.get("mcp_servers", {}).get(TOOL_SERVER, {})
             if mcp.get("enabled") is not False:
@@ -147,7 +161,7 @@ class ImageToolConfig:
         if not cli:
             raise ValueError("未找到 Codex CLI，无法安装独立图片工具。请先安装或打开 Codex 桌面版，或安装 Codex CLI 后重试。")
         registration = self.installation.install(cli) if old_tool is None else None
-        fields = [("tools", "view_image")]
+        fields = [("tools", "view_image"), ("features", "view_image")]
         if TOOL_SERVER not in data.get("mcp_servers", {}):
             fields.append(("mcp_servers", TOOL_SERVER))
         originals = []
@@ -157,6 +171,7 @@ class ImageToolConfig:
             if table not in document:
                 document[table] = tomlkit.table()
         document["tools"]["view_image"] = False
+        document["features"]["view_image"] = False
         if old_tool is None:
             document["mcp_servers"][TOOL_SERVER] = registration
         # Tool isolation uses a profile that inherits the current connection.
@@ -179,35 +194,55 @@ class ImageToolConfig:
         current = data.get("mcp_servers", {}).get(TOOL_SERVER)
         managed = self.state.get("managed_mcp")
         adopted = not managed and self.installation.matches(current)
-        if not managed and not adopted:
+        feature_owned = any(v["table"] == "features" and v["name"] == "view_image"
+                            for v in self.state.get("originals", []))
+        if feature_owned and data.get("features", {}).get("view_image") is not False:
+            raise ValueError("原生图片工具开关已被修改，未覆盖用户配置。")
+        manage_registration = bool(managed or adopted)
+        if not manage_registration and feature_owned:
             return False
         if managed and current != managed:
             raise ValueError("独立图片工具注册已被修改，未覆盖用户配置。")
         cli = self.state.get("cli")
-        if not cli or not Path(cli).is_file():
-            cli = find_codex_cli()
-        if not cli:
-            raise ValueError("未找到 Codex CLI，无法更新独立图片工具。请先安装或打开 Codex 桌面版后重试。")
-        registration = self.installation.install(cli)
+        registration = current
+        if manage_registration:
+            if not cli or not Path(cli).is_file():
+                cli = find_codex_cli()
+            if not cli:
+                raise ValueError("未找到 Codex CLI，无法更新独立图片工具。请先安装或打开 Codex 桌面版后重试。")
+            registration = self.installation.install(cli)
         if (managed == registration and self.state.get("schema_version") == 5
-                and self.state.get("cli") == str(cli)):
+                and self.state.get("cli") == str(cli) and feature_owned):
             return False
         document = tomlkit.parse(before)
-        document["mcp_servers"][TOOL_SERVER] = registration
-        updated = tomlkit.dumps(document)
+        if manage_registration:
+            document["mcp_servers"][TOOL_SERVER] = registration
         previous = deepcopy(self.state)
         state_raw = self.path.read_bytes() if self.path.exists() else None
-        candidate = {**previous, "schema_version": 5, "cli": str(cli), "managed_mcp": registration, "existing_tool_preserved": False}
+        candidate = deepcopy(previous)
+        if manage_registration:
+            candidate.update(schema_version=5, cli=str(cli), managed_mcp=registration, existing_tool_preserved=False)
         candidate.pop("mcp_token", None)
         if adopted and not any(v["table"] == "mcp_servers" and v["name"] == TOOL_SERVER for v in candidate["originals"]):
             candidate["originals"] = [*candidate["originals"],
                 {"table": "mcp_servers", "name": TOOL_SERVER, "present": False, "value": None}]
+        if not feature_owned:
+            features = data.get("features", {})
+            candidate["originals"] = [*candidate.get("originals", []),
+                {"table": "features", "name": "view_image", "present": "view_image" in features,
+                 "value": features.get("view_image")}]
+            if "features" not in document:
+                document["features"] = tomlkit.table()
+                candidate["created_tables"] = [*candidate.get("created_tables", []), "features"]
+            document["features"]["view_image"] = False
+        updated = tomlkit.dumps(document)
         written = False
         try:
             if updated != before:
                 candidate["backup"] = self.link._write(updated)
                 written = True
-            self._validate(candidate)
+            if manage_registration:
+                self._validate(candidate)
             self._save(candidate)
             return True
         except BaseException:
@@ -224,9 +259,12 @@ class ImageToolConfig:
             raise ValueError("独立图片工具注册已被修改，未覆盖用户配置。")
         if data.get("tools", {}).get("view_image") is not False:
             raise ValueError("原生图片工具配置已被修改，未覆盖用户配置。")
+        if (any(v["table"] == "features" and v["name"] == "view_image" for v in previous["originals"])
+                and data.get("features", {}).get("view_image") is not False):
+            raise ValueError("原生图片工具开关已被修改，未覆盖用户配置。")
         for original in previous["originals"]:
             table = original["table"]
-            if table not in {"tools", "mcp_servers"}:
+            if table not in {"tools", "features", "mcp_servers"}:
                 continue  # Legacy provider records now belong to connection management.
             if table not in document:
                 document[table] = tomlkit.table()
@@ -235,7 +273,7 @@ class ImageToolConfig:
             if original["present"]:
                 target[original["name"]] = original["value"]
         for table in previous.get("created_tables", []):
-            if table in {"tools", "mcp_servers"} and not document.get(table):
+            if table in {"tools", "features", "mcp_servers"} and not document.get(table):
                 document.pop(table, None)
         profile_updated = tomlkit.dumps(profile_document) if self.profile_path.exists() else None
         if (previous.get("schema_version", 0) >= 5 and previous.get("profile_created")
@@ -260,7 +298,8 @@ class ImageToolConfig:
                         and not self.installation.manifest.exists()):
                     yield False
                     return
-            if previous_mode == mode and mode != "native":
+            if (previous_mode == mode and mode != "native"
+                    and (mode != "disabled" or "native_feature_present" in previous.get("disabled_original", {}))):
                 if mode == "optimized":
                     _, data, _ = read_configuration(self.link.config)
                     _, profile_data, _ = read_configuration(self.profile_path)

@@ -128,7 +128,19 @@ function Invoke-ImageAnalysis($Arguments, [string]$ParentThreadId) {
             $listed.ExitCode + ').' + (Get-ToolFailureDetail $listed)) }
         $servers = ConvertFrom-Json -InputObject $listed.Output
         $entries = @(foreach ($server in $servers) {
-            if ($server.name -is [string]) { ($server.name | ConvertTo-Json -Compress) + '={enabled=false}' }
+            if ($server.name -is [string]) {
+                # A listed server can come from a different config layer. Keep a
+                # complete transport when disabling it for the isolated process.
+                $transport = $server.transport
+                if ($transport.command -is [string] -and $transport.command) {
+                    $definition = 'command=' + ($transport.command | ConvertTo-Json -Compress)
+                } elseif ($transport.url -is [string] -and $transport.url) {
+                    $definition = 'url=' + ($transport.url | ConvertTo-Json -Compress)
+                } else {
+                    throw ('MCP server has no usable transport: ' + $server.name)
+                }
+                ($server.name | ConvertTo-Json -Compress) + '={enabled=false,' + $definition + '}'
+            }
         })
         $override = 'mcp_servers={' + ($entries -join ',') + '}'
         $resultPath = Join-Path $work 'last-message.txt'
@@ -178,7 +190,7 @@ function Invoke-McpRequest($Message) {
         $script:Initialized = $true
         $version = $Message.params.protocolVersion
         if ($version -notin @('2025-03-26','2025-06-18','2025-11-25')) { $version = '2025-06-18' }
-        $reply.result = @{protocolVersion=$version; capabilities=@{tools=@{}}; serverInfo=@{name='codex-isolated-vision';version='2.0.1'}}
+        $reply.result = @{protocolVersion=$version; capabilities=@{tools=@{}}; serverInfo=@{name='codex-isolated-vision';version='2.0.2'}}
     } elseif (-not $script:Initialized) {
         $reply.error = @{code=-32000;message='Initialize the image tool first.'}
     } elseif ($Message.method -eq 'ping') {
