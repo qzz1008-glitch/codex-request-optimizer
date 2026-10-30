@@ -133,6 +133,8 @@ globalThis.InspectorSharing=(()=>{
     get("sharing-inline-save").textContent=tr(isDate?"确定":"保存");
     box.dataset.field=field;box.hidden=false;positionInline();
     input.focus();if(field==="label")input.select();
+    // Keep the native calendar inside the original click gesture, after showing and positioning its input.
+    if(isDate&&typeof input.showPicker==="function"){try{input.showPicker();}catch(_){/* Keep manual date entry available when the host cannot open a picker. */}}
   }
   get("sharing-inline-value").addEventListener("input",()=>{get("sharing-inline-value").setCustomValidity("");get("sharing-inline-message").hidden=true;});
   get("sharing-inline-cancel").addEventListener("click",()=>{if(!busy)closeInline();});
