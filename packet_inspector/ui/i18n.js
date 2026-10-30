@@ -648,6 +648,7 @@ const uiI18n = (() => {
     "可能损失细节；保留原文件与透明度。":"May reduce detail; keeps original files and transparency.",
     "对话按大小选档，图片请求使用{level}级；开启后禁用手动选择。":"Conversation compression adapts to size; image requests use level {level}. Disables manual selection.",
     "缩图前转发请求":"Forwarded request before downscaling",
+    "图片分辨率":"Image resolution",
     "参考图 {index}":"Reference image {index}",
     "编辑蒙版":"Edit mask",
     "参考图缩小":"Reference image downscaling",
