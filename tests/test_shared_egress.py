@@ -117,7 +117,7 @@ class SharedEgressTests(unittest.TestCase):
         return self.relay.egress.start('127.0.0.1', 0)['link']
 
     def opener(self, link):
-        opener = ExitOpener(link, target_context=self.trust)
+        opener = ExitOpener(link, client_id=self.relay.sharing.vault.client_id, target_context=self.trust)
         self.openers.append(opener)
         return opener
 
@@ -184,7 +184,7 @@ class SharedEgressTests(unittest.TestCase):
 
     def test_upstream_certificate_is_verified_independently_of_the_exit_pin(self):
         link = self.start()
-        untrusted = ExitOpener(link)
+        untrusted = ExitOpener(link, client_id=self.relay.sharing.vault.client_id)
         self.openers.append(untrusted)
         with self.assertRaises(OSError):
             untrusted.open(self.request(), timeout=HTTP_TIMEOUT)
@@ -226,6 +226,26 @@ class SharedEgressTests(unittest.TestCase):
                 self.assertIn(b'response.completed', second.read())
         self.assertEqual(len(self.requests), 2)
         self.assertEqual(self.relay.egress.status()['host']['connections'], 2)
+
+    def test_exit_grants_bind_to_one_client_and_support_separate_colleagues(self):
+        link = self.start()
+        first = ExitOpener(link, client_id='a' * 64, target_context=self.trust)
+        self.openers.append(first)
+        with self.assertRaises(SharingError):
+            ExitOpener(link, client_id='b' * 64, target_context=self.trust)
+        separate = self.relay.egress.issue(label='second colleague')['link']
+        second = ExitOpener(separate, client_id='b' * 64, target_context=self.trust)
+        self.openers.append(second)
+        for opener in (first, second):
+            with opener.open(self.request(), timeout=HTTP_TIMEOUT) as response:
+                self.assertIn(b'response.completed', response.read())
+        # The quota holder delegates using the borrower's ID, not its own ID.
+        self.relay.egress.opener_factory = lambda value, **kwargs: ExitOpener(value, target_context=self.trust, **kwargs)
+        delegated = self.relay.egress.outgoing(link, client_id='a' * 64)
+        self.openers.append(delegated)
+        with delegated.open(self.request(), timeout=HTTP_TIMEOUT) as response:
+            self.assertEqual(response.status, 200)
+            response.read()
 
     def test_tunnel_does_not_add_a_one_megabyte_upload_limit(self):
         body = b'synthetic-local-upload' * 55000

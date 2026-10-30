@@ -27,6 +27,7 @@ from packet_inspector.sharing import SharingError, automatic_address, parse_link
 from packet_inspector.sharing_auth import NativeAuthorization
 from packet_inspector.sharing_config import SharedProvider, SHARED_PROVIDER
 from packet_inspector.sharing_role import MachineSharingRole
+from packet_inspector.sharing_credentials import CLIENT_HEADER
 from tests.relay_fixture import HTTP_TIMEOUT, wait_for_idle
 
 
@@ -295,7 +296,7 @@ class LANSharingTests(unittest.TestCase):
     def remote_request(self, link, path="/v1/status", body=None, grant=True):
         host, port, token, fingerprint = parse_link(link)
         opener = pinned_opener(host, port, fingerprint)
-        headers = {"Authorization": "Bearer " + token} if grant else {}
+        headers = {"Authorization": "Bearer " + token, CLIENT_HEADER: self.guest.sharing.vault.client_id} if grant else {}
         try:
             response = opener.open(Request(f"https://{host}:{port}" + path, data=body, headers=headers), timeout=HTTP_TIMEOUT)
         except HTTPError as exc:
@@ -410,7 +411,7 @@ class LANSharingTests(unittest.TestCase):
         link = self.start()
         second = self.extra_relay("another-borrower")
         self.guest.sharing.connect(link)
-        second.sharing.connect(link)
+        second.sharing.connect(self.owner.sharing.issue(label="second borrower")["link"])
         self.consume(content="private-first-borrower")
         self.consume(guest=second, content="private-second-borrower")
         wait_for_idle(self.owner, self.guest, second)
@@ -421,12 +422,68 @@ class LANSharingTests(unittest.TestCase):
         self.assertTrue(self.guest.sharing.status()["client"]["active"])
         self.assertTrue(second.sharing.status()["client"]["active"])
 
+    def test_credential_api_live_edits_history_selection_and_one_colleague_binding(self):
+        self.owner.settings["sharing_port"] = free_port()
+        with patch("packet_inspector.sharing.automatic_address", return_value="127.0.0.1"), patch.object(
+                self.owner.sharing, "_host_upstream", return_value=self.target):
+            status, issued = self.local_api("/api/sharing", {"action": "credential_issue", "kind": "quota",
+                "label": "first colleague", "budget": "10", "weekly_reset": True, "expires_at": None})
+        self.assertEqual(status, 200)
+        identifier, link = issued["issued_id"], issued["link"]
+        self.guest.sharing.connect(link, label="provider history")
+        second = self.extra_relay("denied-colleague")
+        before = second.link.config.read_bytes()
+        with self.assertRaises(SharingError):
+            second.sharing.connect(link)
+        self.assertEqual(second.link.config.read_bytes(), before)
+        self.consume()
+        wait_for_idle(self.owner, self.guest)
+        status, edited = self.local_api("/api/sharing", {"action": "credential_edit", "id": identifier,
+            "budget": "25", "weekly_reset": False, "expires_at": time.time() + 7 * 86400})
+        self.assertEqual(status, 200)
+        row = next(row for row in edited["credentials"] if row["id"] == identifier)
+        self.assertEqual(row["budget_nanos"], 25_000_000_000)
+        self.assertFalse(row["weekly_reset"])
+        self.assertEqual(row["totals"]["unpriced_responses"], 1)  # Dummy model has no published rate.
+        self.guest.sharing.disconnect()
+        saved = next(row for row in self.guest.sharing.status()["credentials"] if row["direction"] == "in")
+        self.assertEqual(saved["label"], "provider history")
+        self.guest.sharing.connect(identifier=saved["id"])
+        self.assertEqual(self.guest.sharing.status()["client"]["active_id"], saved["id"])
+        self.local_api("/api/sharing", {"action": "credential_edit", "id": identifier, "enabled": False})
+        self.assertEqual(self.remote_request(link)[0], 403)
+        self.assertNotIn(link, json.dumps(self.owner.sharing.status()))
+        self.assertEqual(self.owner.store.list(), [])
+
+    def test_saved_quota_links_survive_listener_restart_without_rebinding(self):
+        link = self.start()
+        self.guest.sharing.connect(link)
+        host, port, _token, fingerprint = parse_link(link)
+        self.owner.sharing.stop_host()
+        self.authorization = DummyAuthorization()
+        with patch.object(self.owner.sharing, "_host_upstream", return_value=self.target):
+            self.owner.sharing.ensure_service(host, port)
+        self.assertEqual(self.owner.sharing.host["fingerprint"], fingerprint)
+        self.consume()
+
+    def test_credential_storage_failure_does_not_change_native_provider(self):
+        link = self.start()
+        before = self.guest.link.config.read_bytes()
+        with patch.object(self.guest.sharing.vault, "import_link", side_effect=OSError("storage unavailable")):
+            with self.assertRaises(SharingError):
+                self.guest.sharing.connect(link)
+        self.assertEqual(self.guest.link.config.read_bytes(), before)
+        self.assertIsNone(self.guest.sharing.remote)
+        self.guest.sharing.connect(link)
+        self.consume()
+
     def test_quota_provider_uses_borrower_exit_selection_instead_of_its_own_peer(self):
         self.guest.sharing.connect(self.start())
         foreign = "codex-exit://127.0.0.1:47847/#" + secrets.token_urlsafe(32) + "." + "a" * 64
         owner_routes = []
         physical = self.owner.opener
         def delegated(link, **_options):
+            self.assertEqual(_options["client_id"], self.guest.sharing.vault.client_id)
             owner_routes.append(link)
             return physical
         self.owner.egress.opener_factory = delegated
@@ -638,6 +695,7 @@ class LANSharingTests(unittest.TestCase):
         self.assertEqual(modes, ['zstd', 'zstd'])
 
     def test_host_usage_is_true_upstream_usage_before_guest_predictive_rewrite(self):
+        self.completion = self.completion.replace(b'"status":"completed"', b'"status":"completed","model":"gpt-6.1-sol"')
         self.guest.sharing.connect(self.start())
         self.guest.settings.update(packet_size_protection_enabled=True, budget_bytes=50001)
         client, response, _ = self.request_guest()
@@ -653,6 +711,8 @@ class LANSharingTests(unittest.TestCase):
         self.assertEqual(usage['total_tokens'], 39)
         self.assertEqual(usage['responses'], 1)
         self.assertEqual(self.guest.store.list()[0]['reported_usage']['input_tokens'], 500000)
+        credential = next(row for row in self.owner.sharing.status()['credentials'] if row['direction'] == 'out')
+        self.assertEqual(credential['totals']['cost_nanos'], 94_000)
 
     def test_shared_privacy_bypasses_host_capture_diagnostics_and_error_body_storage(self):
         self.guest.sharing.connect(self.start())
