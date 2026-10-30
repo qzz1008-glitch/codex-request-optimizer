@@ -5,9 +5,8 @@
 .sharing-card{padding:18px}.sharing-statistics{padding:22px;overflow:hidden}
 .sharing-card header,.sharing-stat-header{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:18px}
 .sharing-card h2,.sharing-stat-header h2{margin:0;font-size:17px;font-weight:650;white-space:nowrap}
-.sharing-state{font-size:12px;color:var(--muted);background:var(--bg);padding:4px 8px;border-radius:5px}
-.sharing-switch{display:flex;padding:3px;background:var(--bg);border:1px solid var(--line);border-radius:7px;margin-bottom:18px;gap:3px}
-.sharing-switch button{flex:1;border:0;background:transparent;color:var(--muted);border-radius:4px;min-height:30px}
+.sharing-switch{display:inline-flex;flex-shrink:0;margin-left:auto;padding:3px;background:var(--bg);border:1px solid var(--line);border-radius:7px;gap:3px}
+.sharing-switch button{flex:0 0 auto;border:0;background:transparent;color:var(--muted);border-radius:4px;min-height:28px;padding:4px 10px;font-size:12px}
 .sharing-switch button[aria-pressed=true]{background:var(--panel);color:var(--ink);box-shadow:0 1px 3px #0001}
 .sharing-form{display:grid;gap:10px}.sharing-form[hidden]{display:none}
 .sharing-form>label,.credential-edit-form label{display:flex;flex-direction:column;gap:7px;font-size:12px;color:var(--muted)}
@@ -52,5 +51,5 @@
 
 .sharing-edit-message{margin:0;color:var(--danger);font-size:12px;line-height:1.6}
 
-.sharing-card header{margin-bottom:12px}.sharing-card .sharing-state{margin-left:auto}.sharing-service{padding:4px 7px;min-height:26px;font-size:11px}.sharing-switch{margin-bottom:14px}
+.sharing-card header{margin-bottom:14px}.sharing-card>.sharing-actions{margin-top:14px}.sharing-service{margin-left:auto}
 .sharing-form>label:not(.sharing-check){display:grid;grid-template-columns:64px minmax(0,1fr);align-items:center;gap:10px}.sharing-card-note{margin-top:12px}
