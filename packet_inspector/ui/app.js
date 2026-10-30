@@ -956,8 +956,12 @@ function fillSettings() {
     $("capacity-retry").checked=!!s.capacity_retry_enabled;
     $("capacity-retry-count").value=s.capacity_retry_max_retries??15;
     $("capacity-retry-delay").value=s.capacity_retry_delay_seconds??30;
+    $("sharing-port").value=s.sharing_port??47846;
+    $("exit-port").value=s.egress_port??47847;
   }
   for(const id of ["storage-limit","packet-limit"])$(id).disabled=settingsSaving;
+  $("sharing-settings").hidden=!s.sharing_settings_supported;
+  for(const id of ["sharing-port","exit-port"])$(id).disabled=settingsSaving||!s.sharing_settings_supported;
   $("start-on-login").disabled=settingsSaving||!s.start_on_login_supported;
   $("capacity-retry").disabled=settingsSaving||!s.capacity_retry_supported;
   $("capacity-retry-count").disabled=settingsSaving||s.capacity_retry_mode!=="native"||!Number.isInteger(s.capacity_retry_max_retries);
@@ -1345,6 +1349,8 @@ let updateRevision=0,updateStatusLoading=false;
 function readSettingsDraft() {
   const draft={
     entry_port:$("entry-port").value,
+    sharing_port:$("sharing-port").value,
+    egress_port:$("exit-port").value,
     zstd_level:$("zstd-level").value,
     image_zstd_level:$("image-zstd-level").value,
     packet_size_protection_enabled:$("packet-size-protection").checked,
@@ -1431,6 +1437,8 @@ async function saveSettings() {
   const protectionSupported="packet_size_protection_enabled" in s,storage=storageLimitSettings(s);
   const entries=[
     ["zstd_level","zstd_level",Number(draft.zstd_level),Number.isInteger(s.zstd_level)],
+    ["sharing_port","sharing_port",Number(draft.sharing_port),s.sharing_settings_supported],
+    ["egress_port","egress_port",Number(draft.egress_port),s.sharing_settings_supported],
     ["image_zstd_level","image_zstd_level",Number(draft.image_zstd_level),Number.isInteger(s.image_zstd_level)],
     ["packet_size_protection_enabled","packet_size_protection_enabled",draft.packet_size_protection_enabled,protectionSupported],
     ["auto_zstd_level_enabled","auto_zstd_level_enabled",draft.auto_zstd_level_enabled,typeof s.auto_zstd_level_enabled==="boolean"],

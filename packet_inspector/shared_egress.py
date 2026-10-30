@@ -15,7 +15,7 @@ from urllib.request import ProxyHandler, proxy_bypass
 
 from .egress_transport import EGRESS_PROTOCOL, ExitOpener, UPSTREAM_HOSTS, parse_egress_link
 from .http_io import UPSTREAM_READ_TIMEOUT_SECONDS
-from .sharing import LANServer, SharingError, lan_address, tls_context
+from .sharing import LANServer, SharingError, automatic_address, lan_address, tls_context
 
 
 def physical_tunnel(server, host, port):
@@ -134,8 +134,9 @@ class SharedEgress:
         if timer:
             timer.cancel()
 
-    def start(self, address, port=47847, hours=8):
-        address = lan_address(address)
+    def start(self, address=None, port=None, hours=8):
+        address = automatic_address() if address is None else lan_address(address)
+        port = self.server.settings["egress_port"] if port is None else port
         if type(port) is not int or not 0 <= port <= 65535 or type(hours) is not int or not 1 <= hours <= 24:
             raise SharingError("出口端口或时长不在允许范围。")
         with self.guard:
@@ -145,7 +146,7 @@ class SharedEgress:
             try:
                 listener = LANServer((address, port), self, context, ExitHandler)
             except OSError:
-                raise SharingError("无法开启共享出口，请检查本机地址、端口和防火墙。") from None
+                raise SharingError("无法开启出口共享，请检查网络或设置中的出口端口。") from None
             grant = secrets.token_urlsafe(32)
             self.host = {"address": address, "port": listener.server_port, "expires_at": time.time() + hours * 3600,
                          "grant_hash": hashlib.sha256(grant.encode()).digest(), "fingerprint": fingerprint,
@@ -236,7 +237,7 @@ class SharedEgress:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as route:
             route.connect((account_peer["host"], account_peer["port"]))
             address = route.getsockname()[0]
-        return self.start(address, 0)["link"]
+        return self.start(address)["link"]
 
     def outgoing(self, override="", *, own_request=False):
         if override:

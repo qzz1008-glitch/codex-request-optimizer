@@ -130,6 +130,9 @@ def protection_settings(saved, *, default_enabled=False):
                               if type(budget) is int else DEFAULT_BUDGET_BYTES)
     values["auto_zstd_level_enabled"] = (values.get("auto_zstd_level_enabled") is True
                                          and values["packet_size_protection_enabled"] is True)
+    for key, default in (("sharing_port", 47846), ("egress_port", 47847)):
+        value = values.get(key)
+        values[key] = value if type(value) is int and 1 <= value <= 65535 else default
     return retention_settings(values)
 
 
@@ -515,6 +518,8 @@ class InspectorServer(ThreadingHTTPServer):
                 "capacity_retry_delay_seconds": self.settings["capacity_retry_delay_seconds"],
                 "capacity_retry_mode": "native",
                 "capacity_retry_supported": True,
+                "sharing_settings_supported": True,
+                "sharing_port": self.settings["sharing_port"], "egress_port": self.settings["egress_port"],
                 "capacity_retry_diagnostics_supported": True,
                 "capacity_retry_diagnostics_errors": self.retry_journal.errors,
                 "capacity_retry_diagnostics_last_error": self.retry_journal.last_error,
@@ -705,8 +710,8 @@ class Handler(BaseHTTPRequestHandler):
                 with self.server.provider_guard:
                     action = data.get("action")
                     if action == "host_start":
-                        result = self.server.sharing.start_host(data.get("address"), data.get("port", 47846),
-                            data.get("hours", 8), data.get("request_limit", 0), data.get("token_limit", 0))
+                        result = self.server.sharing.start_host(data.get("address"), data.get("port"),
+                            data.get("hours", 8), token_limit=data.get("token_limit", 0))
                     elif action == "host_stop":
                         result = self.server.sharing.stop_host()
                     elif action == "host_rotate":
@@ -717,7 +722,7 @@ class Handler(BaseHTTPRequestHandler):
                         result = self.server.sharing.disconnect()
                     elif action in {"egress_start", "egress_stop", "egress_rotate", "egress_select", "egress_link"}:
                         if action == "egress_start":
-                            exit_result = self.server.egress.start(data.get("address"), data.get("port", 47847), data.get("hours", 8))
+                            exit_result = self.server.egress.start(data.get("address"), data.get("port"), data.get("hours", 8))
                         elif action == "egress_stop":
                             exit_result = self.server.egress.stop()
                         elif action == "egress_rotate":
@@ -861,6 +866,7 @@ class Handler(BaseHTTPRequestHandler):
                 for key, low, high in (("budget_bytes", MIN_BUDGET_BYTES, MAX_BODY), ("max_storage_mb", 16, 8192),
                                        ("max_storage_bytes", MIN_STORAGE_BYTES, MAX_STORAGE_BYTES),
                                        ("max_packets", 10, 20000), ("max_detail_packets", 0, 20000),
+                                       ("sharing_port", 1, 65535), ("egress_port", 1, 65535),
                                        ("capacity_retry_max_retries", 1, MAX_RETRIES),
                                        ("capacity_retry_delay_seconds", 1, MAX_DELAY_SECONDS)):
                     if key in data:
@@ -868,6 +874,8 @@ class Handler(BaseHTTPRequestHandler):
                         if isinstance(value, bool) or not isinstance(value, int) or not low <= value <= high:
                             raise ValueError("设置超出有效范围: " + key)
                         candidate[key] = value
+                if {"sharing_port", "egress_port"}.intersection(data) and candidate["sharing_port"] == candidate["egress_port"]:
+                    raise ValueError("额度端口与出口端口不能相同。")
                 if "max_storage_bytes" in data:
                     legacy = (candidate["max_storage_bytes"] + STORAGE_LEGACY_BYTES - 1) // STORAGE_LEGACY_BYTES
                     if "max_storage_mb" in data and candidate["max_storage_mb"] != legacy:

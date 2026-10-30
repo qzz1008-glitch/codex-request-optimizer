@@ -309,6 +309,7 @@ code.session-id{font-family:Consolas,"Cascadia Mono",monospace;font-size:11px;wo
 #settings-dialog .image-mode-pills input:disabled{opacity:0;cursor:default}
 #settings-dialog .entry-port-row{display:grid;grid-template-columns:var(--settings-label-width) var(--settings-number-width) minmax(0,1fr);align-items:center;gap:16px;margin:0}
 #settings-dialog .entry-port-row input{width:100%;min-width:0}
+#sharing-settings .entry-port-row+.entry-port-row{margin-top:12px}
 #settings-dialog .entry-port-status{min-width:0;font-size:13px;line-height:20px;color:var(--muted);overflow-wrap:anywhere}
 #settings-dialog .entry-port-status[data-state=active]{color:var(--green)}
 #settings-dialog .entry-port-status:is([data-state=pending],[data-state=unsaved]){color:var(--warn)}

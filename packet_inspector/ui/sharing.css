@@ -14,13 +14,14 @@
 .sharing-card input,.sharing-card select,.sharing-card textarea{width:100%;min-width:0;margin:0;padding:9px 10px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--ink)}
 .sharing-card input:disabled,.sharing-card select:disabled{background:var(--bg);color:var(--muted)}
 .sharing-card small{color:var(--muted);font-size:12px;line-height:1.5}
-.sharing-fields{display:grid;grid-template-columns:minmax(0,1fr) minmax(100px,.7fr);gap:16px;margin-bottom:18px}
+.sharing-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin-bottom:18px}
 .sharing-actions{display:flex;align-items:center;flex-wrap:wrap;gap:10px;margin-top:20px}
 .sharing-card button{min-height:34px;padding:6px 14px}
 .sharing-card button[aria-busy=true]::before{content:"";display:inline-block;width:12px;height:12px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;margin-right:8px;vertical-align:-2px;animation:sharing-spin .8s linear infinite}
 .sharing-link-area{margin-top:22px}
 .sharing-link-area textarea{margin:8px 0 10px;font:12px/1.6 Consolas,monospace;overflow-wrap:anywhere;resize:vertical}
 .sharing-detail{font-size:13px;color:var(--muted);line-height:1.7;overflow-wrap:anywhere;margin:16px 0 0}
+.sharing-detail:empty{display:none}
 .sharing-usage{margin-top:18px;padding:16px;border:1px solid var(--line);border-radius:8px;background:var(--bg)}
 .sharing-usage-heading{display:flex;align-items:baseline;flex-wrap:wrap;gap:8px 12px;font-size:13px}
 .sharing-usage-heading strong{font-size:23px;font-weight:650;font-variant-numeric:tabular-nums}

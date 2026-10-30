@@ -84,6 +84,9 @@ class SharedEgressTests(unittest.TestCase):
         config = self.root/'config.toml'
         config.write_text('model="dummy"\n')
         self.relay = InspectorServer(('127.0.0.1', 0), self.root/'data', config, 'https://api.openai.com/v1')
+        with socket.socket() as port:
+            port.bind(('127.0.0.1', 0))
+            self.relay.settings['egress_port'] = port.getsockname()[1]
         self.relay.sharing.role = MachineSharingRole('CodexExitTest-'+secrets.token_hex(16))
         self.relay.egress.connect_physical = self.connect
         self.openers = []
