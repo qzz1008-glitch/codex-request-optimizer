@@ -87,6 +87,7 @@ def outbound_proxies():
 STORAGE_LEGACY_BYTES = 1024 * 1024
 MIN_STORAGE_BYTES = 16 * STORAGE_LEGACY_BYTES
 MAX_STORAGE_BYTES = 8192 * STORAGE_LEGACY_BYTES
+MAX_PACKETS = 100_000
 
 
 def storage_settings(saved):
@@ -540,6 +541,7 @@ class InspectorServer(ThreadingHTTPServer):
                 "image_save_dir_default": str(self.default_image_save_dir), "image_save_dir_supported": True,
                 "budget_bytes": self.settings["budget_bytes"], "upstream": self.settings["upstream"],
                 "max_storage_mb": self.settings["max_storage_mb"], "max_packets": self.settings["max_packets"],
+                "packet_limit_max": MAX_PACKETS,
                 "max_storage_bytes": self.settings["max_storage_bytes"],
                 "storage_limit_min_bytes": MIN_STORAGE_BYTES, "storage_limit_max_bytes": MAX_STORAGE_BYTES,
                 "max_detail_packets": self.settings["max_detail_packets"],
@@ -916,7 +918,7 @@ class Handler(BaseHTTPRequestHandler):
                 candidate["image_isolation_enabled"] = candidate["image_analysis_mode"] == "optimized"
                 for key, low, high in (("budget_bytes", MIN_BUDGET_BYTES, MAX_BODY), ("max_storage_mb", 16, 8192),
                                        ("max_storage_bytes", MIN_STORAGE_BYTES, MAX_STORAGE_BYTES),
-                                       ("max_packets", 10, 20000), ("max_detail_packets", 0, 20000),
+                                       ("max_packets", 10, MAX_PACKETS), ("max_detail_packets", 0, MAX_PACKETS),
                                        ("sharing_port", 1, 65535), ("egress_port", 1, 65535),
                                        ("capacity_retry_max_retries", 1, MAX_RETRIES),
                                        ("capacity_retry_delay_seconds", 1, MAX_DELAY_SECONDS)):

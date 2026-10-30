@@ -60,6 +60,35 @@ class RuntimeSettingsTests(unittest.TestCase):
         self.assertEqual(status, 400)
         self.assertEqual(self.server.settings, previous)
 
+    def test_record_limit_accepts_and_persists_one_hundred_thousand(self):
+        previous = dict(self.server.settings)
+        def restore():
+            self.server.save_settings(previous)
+            self.server.store.configure_limits(previous["max_storage_bytes"], previous["max_packets"])
+        self.addCleanup(restore)
+        for value in (20001, 50000, 100000):
+            with self.subTest(value=value):
+                status, result = self.api("/api/settings", {"max_packets": value})
+                self.assertEqual(status, 200)
+                self.assertEqual(result["max_packets"], value)
+                self.assertEqual(result["max_detail_packets"], value)
+                self.assertEqual(self.server.store.max_count, value)
+                self.assertEqual(json.loads(self.server.settings_path.read_text(encoding="utf8"))["max_packets"], value)
+        status, result = self.api("/api/settings", {"max_packets": 100000, "max_detail_packets": 100000})
+        self.assertEqual(status, 200)
+        self.assertEqual(result["max_packets"], 100000)
+        self.assertEqual(result["max_storage_bytes"], previous["max_storage_bytes"])
+
+    def test_invalid_record_limits_reject_the_entire_update(self):
+        previous = dict(self.server.settings)
+        for value in (9, 100001, True, "100000", 100000.0):
+            with self.subTest(value=value):
+                status, _ = self.api("/api/settings", {"max_packets": value,
+                                                       "capture_enabled": not previous["capture_enabled"]})
+                self.assertEqual(status, 400)
+                self.assertEqual(self.server.settings, previous)
+                self.assertEqual(self.server.store.max_count, previous["max_packets"])
+
     def test_defaults_and_capabilities(self):
         status, result = self.api("/api/status")
         self.assertEqual(status, 200)
@@ -69,6 +98,7 @@ class RuntimeSettingsTests(unittest.TestCase):
         self.assertFalse(result["start_on_login_supported"])
         self.assertTrue(result["capacity_retry_supported"])
         self.assertTrue(result["capacity_retry_diagnostics_supported"])
+        self.assertEqual(result["packet_limit_max"], 100000)
         self.assertIsInstance(result["max_detail_packets"], int)
         self.assertLessEqual(result["max_detail_packets"], result["max_packets"])
         oldest = self.server.store.list(limit=1, sort="created", direction="asc")
@@ -218,7 +248,7 @@ class RuntimeSettingsTests(unittest.TestCase):
 
     def test_invalid_detail_limits_do_not_partially_save_settings(self):
         before = dict(self.server.settings)
-        for value in (-1, True, 1.5, 20001, before["max_packets"] + 1):
+        for value in (-1, True, 1.5, 100001, before["max_packets"] + 1):
             with self.subTest(value=value):
                 status, _ = self.api("/api/settings", {"max_detail_packets": value, "max_storage_mb": 32})
                 self.assertEqual(status, 400)
