@@ -41,6 +41,7 @@ globalThis.InspectorSharing=(()=>{
     get(id).value=picker.dataset.originalValue;get(id).disabled=true;get(id).setCustomValidity("");picker.hidden=true;get(id+"-custom").setAttribute("aria-expanded","false");if(focus)get(id+"-custom").focus();return true;
   }
   function closeExpiryPickers(){for(const id of expiryIds)closeExpiryPicker(id);}
+  function resetIssue(kind){closeExpiryPicker(kind+"-expiry");get(kind+"-label").value="";setExpiry(kind+"-expiry","week");if(kind==="quota"){get("quota-budget").value="0";get("quota-weekly").checked=false;}}
   function applyExpiry(id){
     const input=get(id);input.setCustomValidity("");if(!input.reportValidity())return;
     const value=input.value;try{expiryTime(value);}catch(error){input.setCustomValidity(error.message);input.reportValidity();return;}
@@ -113,7 +114,7 @@ globalThis.InspectorSharing=(()=>{
     if(command==="local"||command==="provider")action(button,kind==="quota"?{action:"client_disconnect"}:{action:"egress_select",mode:command==="provider"?"provider":"local"});
   });
   for(const kind of ["quota","exit"]){
-    get(kind+"-issue").addEventListener("submit",async event=>{event.preventDefault();resource=kind;try{await action(get(kind+"-generate"),{action:"credential_issue",kind,label:get(kind+"-label").value.trim(),expires_at:expiry(kind+"-expiry"),...(kind==="quota"?{budget:get("quota-budget").value,weekly_reset:get("quota-weekly").checked}:{})},"凭据已生成。");}catch(error){message(error.message,true);}});
+    get(kind+"-issue").addEventListener("submit",async event=>{event.preventDefault();resource=kind;try{const result=await action(get(kind+"-generate"),{action:"credential_issue",kind,label:get(kind+"-label").value.trim(),expires_at:expiry(kind+"-expiry"),...(kind==="quota"?{budget:get("quota-budget").value,weekly_reset:get("quota-weekly").checked}:{})},"凭据已生成。");if(result)resetIssue(kind);}catch(error){message(error.message,true);}});
     get(kind+"-borrow").addEventListener("submit",async event=>{event.preventDefault();resource=kind;const result=await action(get(kind+"-activate"),{action:"credential_use",kind,label:get(kind+"-borrow-label").value.trim(),link:get(kind+"-borrow-link").value.trim()});if(result)get(kind+"-borrow-link").value="";});
   }
   get("sharing-view").addEventListener("click",event=>{const button=event.target.closest("[data-expiry-target]");if(!button||busy)return;const {expiryTarget:id,expiryMode:mode,expiryAction:command}=button.dataset;
