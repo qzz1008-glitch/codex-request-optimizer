@@ -15,7 +15,7 @@ globalThis.InspectorSharing=(()=>{
   const message=(value,error=false)=>{const box=get("sharing-message");box.textContent=tr(value);box.hidden=!value;box.classList.toggle("error",error);for(const id of ["sharing-inline-message","sharing-delete-message"]){const local=get(id);local.textContent=error?tr(value):"";local.hidden=!error;}};
   const expiryIds=["quota-expiry","exit-expiry"];
   function expiryField(id){
-    return `<div id="${id}-field" class="sharing-expiry"><label id="${id}-label" for="${id}">${label("期限")}</label><div class="sharing-expiry-controls"><input id="${id}" type="datetime-local" step="60" aria-labelledby="${id}-label" required><label class="sharing-expiry-none"><input id="${id}-none" type="checkbox">${label("无期限")}</label></div></div>`;
+    return `<div class="sharing-expiry"><label id="${id}-label" for="${id}">${label("期限")}</label><button id="${id}" class="sharing-expiry-trigger" type="button" data-action="expiry" data-id="${id}" aria-labelledby="${id}-label ${id}-value" aria-controls="sharing-inline-editor" aria-expanded="false"><span id="${id}-value"></span></button></div>`;
   }
   function copyCaption(text){return `<span class="sharing-button-original">${label(text)}</span><span class="sharing-button-copied">${label("已复制")}</span>`;}
   function clearCopied(){clearTimeout(copyTimer);copyTimer=null;copiedKey=null;for(const button of get("sharing-cards").querySelectorAll("[data-copied=true]"))button.setAttribute("data-copied","false");}
@@ -33,20 +33,14 @@ globalThis.InspectorSharing=(()=>{
   }
   for(const kind of ["quota","exit"])get(kind+"-config").innerHTML=card(kind);
   function setExpiry(id,value){
-    const input=get(id),unlimited=value===null;
-    if(!unlimited)input.dataset.finiteValue=value;
-    input.value=value??"";input.disabled=unlimited;input.required=!unlimited;input.setCustomValidity("");
-    input.min=minimumExpiry();
-    get(id+"-none").checked=unlimited;
+    const button=get(id);if(value!==null)button.dataset.finiteValue=value;
+    button.value=value??"";button.dataset.unlimited=String(value===null);
+    get(id+"-value").textContent=value===null?tr("无期限"):value.replace("T"," ");
   }
   function resetIssue(kind){get(kind+"-label").value="";setExpiry(kind+"-expiry",defaultExpiry());if(kind==="quota"){get("quota-budget").value="1";get("quota-weekly").checked=false;}}
-  for(const id of expiryIds){
-    setExpiry(id,defaultExpiry());
-    get(id).addEventListener("input",()=>get(id).setCustomValidity(""));
-    get(id+"-none").addEventListener("change",()=>{const input=get(id);if(get(id+"-none").checked){input.dataset.finiteValue=input.value||defaultExpiry();setExpiry(id,null);}else setExpiry(id,input.dataset.finiteValue||defaultExpiry());});
-  }
+  for(const id of expiryIds)setExpiry(id,defaultExpiry());
   function expiryTime(value,original){if(Number.isFinite(original)&&value===localDate(original*1000))return original;const n=value?new Date(value).getTime()/1000:NaN;if(!Number.isFinite(n)||n<Date.now()/1000+86400)throw new Error(tr("期限至少为一天，也可选择无期限。"));return n;}
-  function expiry(id){return get(id+"-none").checked?null:expiryTime(get(id).value);}
+  function expiry(id){return get(id).dataset.unlimited==="true"?null:expiryTime(get(id).value);}
   function budget(id){const value=get(id).value,n=Number(value);if(!Number.isFinite(n)||n<1||n>1000000)throw new Error(tr("额度应为 1 到 1,000,000 美元。"));return value;}
   async function request(data,signal){
     const response=await fetch("/api/sharing",{method:data?"POST":"GET",cache:"no-store",headers:data?{"Content-Type":"application/json"}:{},body:data?JSON.stringify(data):undefined,signal});
@@ -62,7 +56,7 @@ globalThis.InspectorSharing=(()=>{
   function status(row){const d=data(row);return isActive(row)?row.online===false?"连接不可用":"使用中":d.expired?"已到期":d.enabled===false||(row.direction==="out"&&!lending(row))?"已停用":d.exhausted?"额度已用完":row.direction==="in"?"未使用":"已启用";}
   function fieldValue(row,field,text){
     if(row.direction!=="out"&&field!=="label")return `<span title="${label("由提供方管理")}">${text}</span>`;
-    return `<button type="button" class="sharing-cell-value" data-action="field" data-field="${field}" data-id="${row.id}" aria-controls="sharing-inline-editor" aria-expanded="false" title="${label("点击修改")}">${text}</button>`;
+    return `<button type="button" class="sharing-cell-value${field==="expires_at"?" sharing-expiry-trigger":""}" data-action="field" data-field="${field}" data-id="${row.id}" aria-controls="sharing-inline-editor" aria-expanded="false" title="${label("点击修改")}">${text}</button>`;
   }
   function weeklyValue(row){
     const value=data(row).weekly_reset;
@@ -115,49 +109,46 @@ globalThis.InspectorSharing=(()=>{
   function closeInline(renderNow=true){
     if(!editing)return;
     const draft=editing;draft.anchor.setAttribute("aria-expanded","false");editing=null;get("sharing-inline-editor").hidden=true;
-    get("sharing-inline-message").hidden=true;if(renderNow&&current){render(current);get("sharing-cards").querySelector(`[data-action="field"][data-id="${draft.id}"][data-field="${draft.field}"]`)?.focus();}
+    get("sharing-inline-message").hidden=true;if(renderNow&&current){render(current);const target=draft.target?get(draft.target):get("sharing-cards").querySelector(`[data-action="field"][data-id="${draft.id}"][data-field="${draft.field}"]`);target?.focus();}
   }
-  function openInline(row,field,anchor){
+  function openInline(row,field,anchor,target=null){
     if(busy||!["label","budget","expires_at"].includes(field)||(row.direction!=="out"&&field!=="label")||(field==="budget"&&row.kind!=="quota"))return;
     controller?.abort();closeInline(false);message("");
     const original=field==="label"?row.label:field==="budget"?row.budget_nanos/1e9:row.expires_at;
-    editing={id:row.id,field,original,anchor};anchor.setAttribute("aria-expanded","true");
+    editing={id:row.id,field,original,anchor,target};anchor.setAttribute("aria-expanded","true");
     const input=get("sharing-inline-value"),box=get("sharing-inline-editor"),isDate=field==="expires_at";
     input.type=isDate?"datetime-local":field==="budget"?"number":"text";input.maxLength=80;input.step=isDate?"60":"any";
-    input.min=isDate?(Number.isFinite(original)?localDate(Math.min(original*1000,new Date(minimumExpiry()).getTime())):minimumExpiry()):field==="budget"?String(Math.min(original,1)):"";
+    input.min=isDate?(!target&&Number.isFinite(original)?localDate(Math.min(original*1000,new Date(minimumExpiry()).getTime())):minimumExpiry()):field==="budget"?String(Math.min(original,1)):"";
     input.max=field==="budget"?"1000000":"";input.autocomplete="off";input.setCustomValidity("");input.disabled=false;input.required=true;
-    input.value=isDate?Number.isFinite(original)?localDate(original*1000):defaultExpiry():original??"";
-    input.dataset.finiteValue=isDate?input.value:"";
+    input.value=isDate?Number.isFinite(original)?localDate(original*1000):target?get(target).dataset.finiteValue||defaultExpiry():defaultExpiry():original??"";
     get("sharing-inline-label").textContent=tr(field==="label"?"名称":field==="budget"?"额度":"期限")+(field==="budget"?" · "+tr("美元"):"");
-    get("sharing-inline-no-expiry").hidden=!isDate;get("sharing-inline-unlimited").checked=isDate&&original===null;
-    if(isDate&&original===null){input.value="";input.disabled=true;input.required=false;}
+    get("sharing-inline-no-expiry").hidden=!isDate;
+    get("sharing-inline-save").textContent=tr(isDate?"确定":"保存");
     box.dataset.field=field;box.hidden=false;positionInline();
-    if(input.disabled)get("sharing-inline-unlimited").focus();else{input.focus();if(field==="label")input.select();}
+    input.focus();if(field==="label")input.select();
   }
-  get("sharing-inline-unlimited").addEventListener("change",()=>{
-    const input=get("sharing-inline-value"),unlimited=get("sharing-inline-unlimited").checked;
-    if(unlimited){input.dataset.finiteValue=input.value||defaultExpiry();input.value="";}else input.value=input.dataset.finiteValue||defaultExpiry();
-    input.disabled=unlimited;input.required=!unlimited;input.setCustomValidity("");
-  });
   get("sharing-inline-value").addEventListener("input",()=>{get("sharing-inline-value").setCustomValidity("");get("sharing-inline-message").hidden=true;});
   get("sharing-inline-cancel").addEventListener("click",()=>{if(!busy)closeInline();});
-  get("sharing-inline-editor").addEventListener("submit",async event=>{
-    event.preventDefault();if(!editing||busy)return;
+  async function saveInline(unlimited=false){
+    if(!editing||busy)return;
     const draft=editing,input=get("sharing-inline-value");
     try{
       let value;
       if(draft.field==="label"){value=input.value.trim();if(!value||value.length>80)throw new Error(tr("名称应为 1 到 80 个字符。"));}
       else if(draft.field==="budget")value=Number(input.value)===draft.original?draft.original:budget("sharing-inline-value");
-      else value=get("sharing-inline-unlimited").checked?null:expiryTime(input.value,draft.original);
+      else value=unlimited?null:expiryTime(input.value,draft.target?undefined:draft.original);
+      if(draft.target){setExpiry(draft.target,value===null?null:localDate(value*1000));closeInline();return;}
       if(value===draft.original){closeInline();return;}
-      input.disabled=true;get("sharing-inline-unlimited").disabled=true;get("sharing-inline-cancel").disabled=true;
+      input.disabled=true;get("sharing-inline-no-expiry").disabled=true;get("sharing-inline-cancel").disabled=true;
       try{
         const result=await action(get("sharing-inline-save"),{action:"credential_edit",id:draft.id,[draft.field]:value},null);
         if(result&&editing===draft)closeInline();else positionInline();
-      }finally{input.disabled=draft.field==="expires_at"&&get("sharing-inline-unlimited").checked;get("sharing-inline-unlimited").disabled=false;get("sharing-inline-cancel").disabled=false;}
+      }finally{input.disabled=false;get("sharing-inline-no-expiry").disabled=false;get("sharing-inline-cancel").disabled=false;}
     }catch(error){message(error.message,true);positionInline();}
-  });
-  document.addEventListener("pointerdown",event=>{if(editing&&!busy&&!get("sharing-inline-editor").contains(event.target)&&!event.target.closest("[data-action=field]"))closeInline(false);});
+  }
+  get("sharing-inline-editor").addEventListener("submit",async event=>{event.preventDefault();await saveInline();});
+  get("sharing-inline-no-expiry").addEventListener("click",()=>{if(editing?.field==="expires_at")return saveInline(true);});
+  document.addEventListener("pointerdown",event=>{if(editing&&!busy&&!get("sharing-inline-editor").contains(event.target)&&!event.target.closest("[data-action=field],[data-action=expiry]"))closeInline(false);});
   document.addEventListener("keydown",event=>{if(editing&&!busy&&event.key==="Escape"){event.preventDefault();closeInline();}});
   globalThis.addEventListener("resize",positionInline);
   document.addEventListener("scroll",positionInline,true);
@@ -189,6 +180,12 @@ globalThis.InspectorSharing=(()=>{
   }
   get("sharing-cards").addEventListener("click",async event=>{const button=event.target.closest("[data-view],[data-action]");if(!button||busy)return;const {kind,view,action:command}=button.dataset;
     if(view){closeInline(false);views[kind]=view;if(current)render(current);return;}
+    if(command==="expiry"){
+      const target=button.dataset.id;if(!expiryIds.includes(target))return;
+      if(editing?.target===target){closeInline();return;}
+      const original=get(target).dataset.unlimited==="true"?null:new Date(get(target).value).getTime()/1000;
+      openInline({id:target,kind:target.startsWith("quota")?"quota":"exit",direction:"out",expires_at:original},"expires_at",button,target);return;
+    }
     if(command==="local"||command==="provider"){await action(button,kind==="quota"?{action:"client_disconnect"}:{action:"egress_select",mode:command==="provider"?"provider":"local"});return;}
     const row=(current?.credentials||[]).find(row=>row.id===button.dataset.id);if(!row)return;
     if(command==="weekly")return;
