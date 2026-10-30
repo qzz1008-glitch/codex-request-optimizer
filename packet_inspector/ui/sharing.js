@@ -18,7 +18,7 @@ globalThis.InspectorSharing=(()=>{
       <form id="${kind}-issue" class="sharing-form"><label>${label("同事名称")}<input id="${kind}-label" maxlength="80" required autocomplete="off"></label>
         <label>${label("到期时间")}<input id="${kind}-expiry" type="datetime-local"></label>
         <div class="sharing-presets" data-expiry-target="${kind}-expiry"><button type="button" data-days="1">${label("一天")}</button><button type="button" data-days="7">${label("一周")}</button><button type="button" data-days="0">${label("永久")}</button></div>
-        ${kind==="quota"?`<label>${label("额度（参考美元）")}<input id="quota-budget" type="number" value="0" min="0" max="1000000" step="0.01" required title="${label("0 表示不限。")}"></label><label class="sharing-check"><input id="quota-weekly" type="checkbox">${label("每周刷新额度")}</label>`:""}
+        ${kind==="quota"?`<label>${label("额度上限（美元）")}<input id="quota-budget" type="number" value="0" min="0" max="1000000" step="0.01" required title="${label("0 表示不限。")}"></label><label class="sharing-check"><input id="quota-weekly" type="checkbox">${label("每周刷新额度")}</label>`:""}
         <div class="sharing-actions"><button class="primary" type="submit" id="${kind}-generate">${label("生成凭据")}</button></div>
       </form>
       <form id="${kind}-borrow" class="sharing-form" hidden><label>${label("名称")}<input id="${kind}-borrow-label" maxlength="80" required autocomplete="off"></label><label>${label("对方的凭据")}<input id="${kind}-borrow-link" type="password" autocomplete="off" spellcheck="false" required placeholder="${kind==="quota"?"codex-share":"codex-exit"}://…"></label><div class="sharing-actions"><button type="submit" class="primary" id="${kind}-activate">${label("保存并借入")}</button></div></form>

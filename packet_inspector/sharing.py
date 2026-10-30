@@ -374,14 +374,14 @@ class Sharing:
             raise SharingError("当前连接不是 Codex 原生登录出口，暂不支持共享此连接。")
         return expected
 
-    def start_host(self, address=None, port=None, hours=8, token_limit=0):
+    def start_host(self, address=None, port=None, hours=8, budget=0):
         # Compatibility for the original local API; new credentials use issue().
-        if (type(hours) is not int or not 1 <= hours <= 24 or type(token_limit) is not int
-                or not 0 <= token_limit <= 1_000_000_000_000):
-            raise SharingError("共享时长或 Token 上限不在允许范围。")
-        result = self.issue(address=address, port=port, expires_at=time.time() + hours * 3600)
-        self.host["token_limit"] = token_limit
-        return result
+        if type(hours) is not int or not 1 <= hours <= 24:
+            raise SharingError("共享时长不在允许范围。")
+        try:
+            return self.issue(address=address, port=port, expires_at=time.time() + hours * 3600, budget=budget)
+        except ValueError as exc:
+            raise SharingError(str(exc)) from None
 
     def ensure_service(self, address=None, port=None):
         with self.guard:
@@ -409,7 +409,7 @@ class Sharing:
                 listener = LANServer((address, port), self, context)
                 self.host = {"active": True, "address": address, "port": listener.server_address[1],
                              "expires_at": None, "requests": 0, "in_flight": 0,
-                             "token_limit": 0, "usage": empty_usage(),
+                             "usage": empty_usage(),
                              "started_at": time.time(), "error": "", "upstream": upstream,
                              "identity_hash": hashlib.sha256(credentials["identity"].encode()).digest(),
                              "fingerprint": fingerprint}
@@ -477,8 +477,6 @@ class Sharing:
         with self.guard:
             if not self.authorized(value, client):
                 raise SharingError("共享已停止、到期或链接已撤销。")
-            if count and self.host["token_limit"] and self.host["usage"]["total_tokens"] >= self.host["token_limit"]:
-                raise SharingError("本次共享的 Token 上限已达到。")
             credentials = self.authorization.credentials()
             if not self.authorized(value, client):
                 raise SharingError("共享已停止、到期或链接已撤销。")
@@ -625,8 +623,7 @@ class Sharing:
         with self.guard:
             if not self.closed and (not self.address_time or time.monotonic() - self.address_time > 30):
                 self.addresses, self.address_time = local_addresses(), time.monotonic()
-            keys = ("active", "address", "port", "started_at", "expires_at", "requests", "in_flight",
-                    "token_limit", "error")
+            keys = ("active", "address", "port", "started_at", "expires_at", "requests", "in_flight", "error")
             host = {key: self.host[key] for key in keys if key in self.host}
             host["usage"] = dict(self.host.get("usage", empty_usage()))
             host["active"] = bool(self.listener and self.host.get("active") and

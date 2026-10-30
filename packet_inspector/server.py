@@ -747,8 +747,10 @@ class Handler(BaseHTTPRequestHandler):
                         self.server.egress.ensure_service()
                         result = self.server.sharing.status()
                     elif action == "host_start":
+                        if "token_limit" in data:
+                            raise SharingError("共享额度现按美元设置，请更新客户端。")
                         result = self.server.sharing.start_host(data.get("address"), data.get("port"),
-                            data.get("hours", 8), token_limit=data.get("token_limit", 0))
+                            data.get("hours", 8), budget=data.get("budget", 0))
                     elif action == "host_stop":
                         result = self.server.sharing.stop_host()
                     elif action == "host_rotate":

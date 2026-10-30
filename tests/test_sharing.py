@@ -742,20 +742,26 @@ class LANSharingTests(unittest.TestCase):
             time.sleep(.01)
         self.assertEqual(self.owner.sharing.status()['host']['usage']['missing_responses'], 1)
 
-    def test_compact_usage_counts_toward_token_limit_and_stop_preserves_only_totals(self):
-        link = self.start(token_limit=100)
-        self.direct_response = json.dumps({'usage': {'input_tokens': 90, 'output_tokens': 10, 'total_tokens': 100,
-            'input_tokens_details': {'cached_tokens': 60}}}).encode()
-        self.assertEqual(self.remote_request(link, '/v1/responses/compact', b'{}')[0], 200)
+    def test_compact_spend_counts_toward_dollar_budget_and_tokens_do_not_limit_requests(self):
+        link = self.start(budget='0.01')
+        self.direct_response = json.dumps({'model': 'gpt-6.1-sol', 'usage': {
+            'input_tokens': 1000, 'output_tokens': 100, 'total_tokens': 1100,
+            'input_tokens_details': {'cached_tokens': 500}}}).encode()
+        for _ in range(5):
+            self.assertEqual(self.remote_request(link, '/v1/responses/compact', b'{}')[0], 200)
         state = self.owner.sharing.status()['host']
-        self.assertEqual(state['usage']['total_tokens'], 100)
-        self.assertEqual(state['usage']['input_tokens'], 90)
-        self.assertEqual(state['usage']['cached_input_tokens'], 60)
+        self.assertNotIn('token_limit', state)
+        self.assertEqual(state['usage']['total_tokens'], 5500)
+        self.assertEqual(state['usage']['input_tokens'], 5000)
+        self.assertEqual(state['usage']['cached_input_tokens'], 2500)
+        credential = next(row for row in self.owner.sharing.status()['credentials'] if row['direction'] == 'out')
+        self.assertEqual(credential['budget_nanos'], 10_000_000)
+        self.assertEqual(credential['period_cost_nanos'], 10_250_000)
         self.assertEqual(self.remote_request(link, '/v1/responses', b'{}')[0], 403)
         self.assertEqual(self.remote_request(link, '/v1/models')[0], 200)
-        self.assertEqual(len(self.received), 1)
+        self.assertEqual(len(self.received), 5)
         self.owner.sharing.stop_host()
-        self.assertEqual(self.owner.sharing.status()['host']['usage']['total_tokens'], 100)
+        self.assertEqual(self.owner.sharing.status()['host']['usage']['total_tokens'], 5500)
         self.authorization = DummyAuthorization()
         self.start()
         self.assertEqual(self.owner.sharing.status()['host']['usage']['total_tokens'], 0)
@@ -800,11 +806,24 @@ class LANSharingTests(unittest.TestCase):
         self.assertEqual(current['usage']['total_tokens'], 0)
         self.assertEqual(current['requests'], 0)
 
-    def test_token_limit_input_validation_occurs_before_native_authorization(self):
-        for value in (-1, True, 1.5, 1_000_000_000_001, '100'):
+    def test_dollar_budget_validation_occurs_before_native_authorization(self):
+        for value in (-1, True, 1_000_001, 'NaN', 'invalid', None):
             with self.subTest(value=value), self.assertRaises(SharingError):
-                self.start(token_limit=value)
+                self.start(budget=value)
         self.assertEqual(self.authorization.calls, 0)
+
+    def test_original_start_api_uses_dollars_and_rejects_the_retired_token_limit(self):
+        action = {'action': 'host_start', 'address': '127.0.0.1', 'port': free_port()}
+        status, result = self.local_api('/api/sharing', {**action, 'token_limit': 100})
+        self.assertEqual(status, 400)
+        self.assertIn('美元', result['error'])
+        self.assertEqual(self.authorization.calls, 0)
+        self.assertIsNone(self.owner.sharing.listener)
+        with patch.object(self.owner.sharing, '_host_upstream', return_value=self.target):
+            status, result = self.local_api('/api/sharing', {**action, 'budget': '1.50'})
+        self.assertEqual(status, 200)
+        self.assertEqual(result['credentials'][0]['budget_nanos'], 1_500_000_000)
+        self.assertNotIn('token_limit', result['host'])
 
     def test_lending_and_borrowing_are_mutually_exclusive_across_instances_on_one_machine(self):
         self.guest.sharing.role = MachineSharingRole(self.owner.sharing.role.name)

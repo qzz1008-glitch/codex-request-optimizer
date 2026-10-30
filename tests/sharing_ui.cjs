@@ -24,7 +24,7 @@ const submit=id=>node(id).handlers.submit({preventDefault(){}});
  node("quota-label").value="Alice";node("quota-budget").value="10";node("quota-weekly").checked=true;
  let release;pending.push(new Promise(resolve=>{release=resolve;}));submit("quota-issue");submit("quota-issue");
  assert.equal(requests.filter(r=>r.data?.action==="credential_issue").length,1);assert.equal(node("quota-generate").attributes["aria-busy"],"true");
- const created=requests.at(-1).data;assert.equal(created.budget,"10");assert.equal(created.weekly_reset,true);assert.ok(created.expires_at>Date.now()/1000+6*86400);assert.equal("port" in created,false);
+ const created=requests.at(-1).data;assert.equal(created.budget,"10");assert.equal(created.weekly_reset,true);assert.ok(created.expires_at>Date.now()/1000+6*86400);assert.equal("port" in created,false);assert.equal("token_limit" in created,false);assert.match(node("sharing-config").innerHTML,/额度上限（美元）/);
  release({status:200,data:{...host,link:"codex-share://dummy-secret"}});await flush();assert.equal(node("sharing-link-area").hidden,false);await node("sharing-copy").onclick();assert.equal(copied,"codex-share://dummy-secret");
  assert.match(node("sharing-credential-rows").innerHTML,/Colleague &lt;name&gt;/);assert.doesNotMatch(node("sharing-credential-rows").innerHTML,/Colleague <name>/);assert.match(node("sharing-summary").innerHTML,/\$2\.00/);assert.match(node("sharing-stat-note").textContent,/用量缺失 1 · 未计价 2/);
  click("sharing-config",{kind:"quota",view:"in"});assert.equal(node("quota-issue").hidden,true);assert.equal(node("quota-borrow").hidden,false);assert.equal(node("quota-activate").disabled,true);assert.equal(node("quota-service").hidden,false,"Pause remains accessible when quota lending blocks borrowing");

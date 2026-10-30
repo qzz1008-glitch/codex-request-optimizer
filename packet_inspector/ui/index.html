@@ -118,7 +118,7 @@
         <label>名称<input id="credential-edit-label" maxlength="80" required></label>
         <label>到期时间<input id="credential-edit-expiry" type="datetime-local"></label>
         <div class="sharing-presets" data-expiry-target="credential-edit-expiry"><button type="button" data-days="1">一天</button><button type="button" data-days="7">一周</button><button type="button" data-days="0">永久</button></div>
-        <div id="credential-edit-quota"><label>额度（参考美元）<input id="credential-edit-budget" type="number" min="0" max="1000000" step="0.01"></label><label class="sharing-check"><input id="credential-edit-weekly" type="checkbox">每周刷新额度</label></div>
+        <div id="credential-edit-quota"><label>额度上限（美元）<input id="credential-edit-budget" type="number" min="0" max="1000000" step="0.01"></label><label class="sharing-check"><input id="credential-edit-weekly" type="checkbox">每周刷新额度</label></div>
         <p class="sharing-stat-note">调整作用于新请求，已开始的请求可完成。</p>
         <p id="credential-edit-message" class="sharing-edit-message" role="alert" hidden></p>
         <div class="sharing-actions"><button id="credential-edit-cancel" type="button">取消</button><button id="credential-edit-save" class="primary" type="submit">保存</button></div>
