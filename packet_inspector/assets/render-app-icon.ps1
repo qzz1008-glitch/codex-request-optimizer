@@ -105,5 +105,5 @@ try {
     $graphics.TranslateTransform((-$viewBox[0]),(-$viewBox[1]))
     RenderElements $artwork.svg.ChildNodes
     $bitmap.Save([IO.Path]::GetFullPath($OutputPath),[Drawing.Imaging.ImageFormat]::Png)
-    [pscustomobject]@{Output=[IO.Path]::GetFullPath($OutputPath);Canvas=@($w,$h);Background='transparent';Palette='indigo, copper, jade'} | ConvertTo-Json -Compress
+    [pscustomobject]@{Output=[IO.Path]::GetFullPath($OutputPath);Canvas=@($w,$h);Background='transparent';Palette='indigo, slate, jade'} | ConvertTo-Json -Compress
 } finally { $graphics.Dispose(); $bitmap.Dispose() }
