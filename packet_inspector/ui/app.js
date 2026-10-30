@@ -2146,8 +2146,8 @@ $("tree-query").addEventListener("input",scheduleTreeQuery);
 $("tree-query").addEventListener("compositionend",scheduleTreeQuery);
 $("tree-query").addEventListener("keydown",e=>{if(e.key==="Enter" && !e.isComposing){e.preventDefault();Promise.resolve().then(submitTreeQuery).catch(fail);}});
 function isTrendGeneration(packet) {
-  const purpose=purposeFromMetadata(packet)||packet.session_kind||packet.request_kind;
-  return hasModelTokenUsage(packet)&&!["prewarm","title_generation","next_message_suggestion","session_index"].includes(purpose);
+  const kinds=[purposeFromMetadata(packet),packet.request_purpose,packet.request_kind,packet.session_kind];
+  return hasModelTokenUsage(packet)&&kinds.every(kind=>!kind||["turn","generation","subagent"].includes(kind));
 }
 class TokenTrendView {
   constructor(services) {
