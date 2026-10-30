@@ -542,6 +542,106 @@ class LANSharingTests(unittest.TestCase):
             _, disabled = self.local_api("/api/sharing", {"action": "credential_edit", "id": first_id, "enabled": False})
             self.assertTrue(disabled["egress"]["host"]["active"], "The internal callback still needs its listener")
 
+    def test_deleting_outgoing_quota_revokes_only_that_grant_and_stops_the_last_listener(self):
+        self.owner.settings["sharing_port"] = free_port()
+        with patch("packet_inspector.sharing.automatic_address", return_value="127.0.0.1"), \
+             patch("packet_inspector.shared_egress.automatic_address", return_value="127.0.0.1"), \
+             patch.object(self.owner.sharing, "_host_upstream", return_value=self.target):
+            _, first = self.local_api("/api/sharing", {"action": "credential_issue", "kind": "quota", "label": "first"})
+            _, second = self.local_api("/api/sharing", {"action": "credential_issue", "kind": "quota", "label": "second"})
+            _, exit_grant = self.local_api("/api/sharing", {"action": "credential_issue", "kind": "exit", "label": "keep"})
+            status, deleted = self.local_api("/api/sharing", {"action": "credential_delete", "id": second["issued_id"]})
+            self.assertEqual(status, 200)
+            self.assertNotIn(second["issued_id"], {row["id"] for row in deleted["credentials"]})
+            self.assertTrue(deleted["host"]["running"])
+            self.assertTrue(deleted["egress"]["host"]["active"])
+            self.assertNotIn("last_credential_id", self.owner.sharing.host)
+            self.assertEqual(self.remote_request(second["link"])[0], 403)
+            self.assertEqual(self.remote_request(first["link"])[0], 200)
+            for action in ("credential_copy", "credential_edit", "credential_delete"):
+                self.assertEqual(self.local_api("/api/sharing", {"action": action, "id": second["issued_id"]})[0], 400)
+            _, last_deleted = self.local_api("/api/sharing", {"action": "credential_delete", "id": first["issued_id"]})
+            self.assertFalse(last_deleted["host"]["running"])
+            self.assertTrue(last_deleted["egress"]["host"]["active"])
+            self.assertEqual(last_deleted["credentials"][0]["id"], exit_grant["issued_id"])
+            status, _ = self.local_api("/api/sharing", {"action": "credential_issue", "kind": "quota", "label": "second"})
+            self.assertEqual(status, 200, "Deleting a credential releases its name")
+
+    def test_deleting_outgoing_exit_preserves_other_grants_and_internal_callback(self):
+        with patch("packet_inspector.shared_egress.automatic_address", return_value="127.0.0.1"):
+            _, first = self.local_api("/api/sharing", {"action": "credential_issue", "kind": "exit", "label": "first"})
+            _, second = self.local_api("/api/sharing", {"action": "credential_issue", "kind": "exit", "label": "second"})
+            internal = self.owner.egress.issue(internal=True)
+            _, _, token1, _ = parse_egress_link(first["link"])
+            _, _, token2, _ = parse_egress_link(second["link"])
+            status, deleted = self.local_api("/api/sharing", {"action": "credential_delete", "id": second["issued_id"]})
+            self.assertEqual(status, 200)
+            self.assertTrue(deleted["egress"]["host"]["active"])
+            self.assertEqual(self.owner.egress.local_link, "")
+            self.assertNotIn("last_credential_id", self.owner.egress.host)
+            self.assertFalse(self.owner.egress.authorized("Bearer " + token2, "a" * 64))
+            self.assertTrue(self.owner.egress.authorized("Bearer " + token1, "a" * 64))
+            self.local_api("/api/sharing", {"action": "credential_delete", "id": first["issued_id"]})
+            self.assertTrue(self.owner.egress.status()["host"]["active"])
+            status, _ = self.local_api("/api/sharing", {"action": "credential_delete", "id": internal["issued_id"]})
+            self.assertEqual(status, 400, "Internal callback grants are not user credentials")
+            self.assertTrue(self.owner.egress.status()["host"]["active"])
+            created = self.owner.egress.issue(label="last")
+            self.owner.sharing.vault.update(internal["issued_id"], {"enabled": False})
+            _, stopped = self.local_api("/api/sharing", {"action": "credential_delete", "id": created["issued_id"]})
+            self.assertFalse(stopped["egress"]["host"]["active"])
+
+    def test_deleting_borrowed_quota_restores_only_the_active_connection(self):
+        source = self.extra_relay("quota-provider")
+        source.sharing.authorization_factory = DummyAuthorization
+        with patch.object(source.sharing, "_host_upstream", return_value=self.target):
+            first = source.sharing.issue(address="127.0.0.1", port=free_port(), label="first")
+            second = source.sharing.issue(label="second")
+        original = self.owner.link.config.read_bytes()
+        self.owner.sharing.connect(first["link"], label="first provider")
+        inactive_id = self.owner.sharing.remote["credential_id"]
+        self.owner.sharing.connect(second["link"], label="second provider")
+        active_id = self.owner.sharing.remote["credential_id"]
+        borrowed_config = self.owner.link.config.read_bytes()
+        status, inactive_deleted = self.local_api("/api/sharing", {"action": "credential_delete", "id": inactive_id})
+        self.assertEqual(status, 200)
+        self.assertFalse(inactive_deleted["reload_required"])
+        self.assertEqual(inactive_deleted["client"]["active_id"], active_id)
+        self.assertEqual(self.owner.link.config.read_bytes(), borrowed_config)
+        with patch.object(self.owner.sharing.provider, "restore", side_effect=SharingError("synthetic restore failure")):
+            status, _ = self.local_api("/api/sharing", {"action": "credential_delete", "id": active_id})
+            self.assertEqual(status, 400)
+        self.assertEqual(self.owner.sharing.remote["credential_id"], active_id)
+        self.assertIn(active_id, {row["id"] for row in self.owner.sharing.vault.rows()})
+        status, active_deleted = self.local_api("/api/sharing", {"action": "credential_delete", "id": active_id})
+        self.assertEqual(status, 200)
+        self.assertTrue(active_deleted["reload_required"])
+        self.assertFalse(active_deleted["client"]["active"])
+        self.assertEqual(active_deleted["credentials"], [])
+        self.assertEqual(tomllib.loads(self.owner.link.config.read_text()), tomllib.loads(original.decode()))
+        self.assertEqual(len(source.sharing.vault.rows()), 2, "Removing local history does not revoke the provider's grants")
+        self.assertEqual(self.local_api("/api/sharing", {"action": "credential_delete", "id": None})[0], 400)
+
+    def test_deleting_borrowed_exit_preserves_inactive_peers_and_resets_the_active_exit(self):
+        first = self.guest.egress.issue(address="127.0.0.1", port=free_port(), label="first")
+        second = self.guest.egress.issue(label="second")
+        original = self.owner.link.config.read_bytes()
+        self.owner.egress.select("peer", first["link"], label="first exit")
+        inactive_id = self.owner.egress.peer_id
+        self.owner.egress.select("peer", second["link"], label="second exit")
+        active_id, opener = self.owner.egress.peer_id, self.owner.egress.peer_opener
+        status, deleted = self.local_api("/api/sharing", {"action": "credential_delete", "id": inactive_id})
+        self.assertEqual(status, 200)
+        self.assertEqual(deleted["egress"]["selection"]["active_id"], active_id)
+        self.assertIs(self.owner.egress.peer_opener, opener)
+        status, deleted = self.local_api("/api/sharing", {"action": "credential_delete", "id": active_id})
+        self.assertEqual(status, 200)
+        self.assertEqual(deleted["egress"]["selection"]["mode"], "provider")
+        self.assertIsNone(self.owner.egress.peer_id)
+        self.assertIsNone(self.owner.egress.peer_opener)
+        self.assertEqual(self.owner.link.config.read_bytes(), original)
+        self.assertEqual(len(self.guest.sharing.vault.rows()), 2)
+
     def test_saved_quota_links_survive_listener_restart_without_rebinding(self):
         link = self.start()
         self.guest.sharing.connect(link)

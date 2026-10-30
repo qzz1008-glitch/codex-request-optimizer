@@ -535,6 +535,38 @@ class Sharing:
             authorization.close()
         return self.status()
 
+    def delete_credential(self, identifier):
+        with self.server.provider_guard:
+            row = next((row for row in self.vault.rows() if row["id"] == identifier and not row.get("internal")), None)
+            if not row:
+                raise SharingError("凭据不存在。")
+            reload_required = False
+            egress = self.server.egress
+            if row["direction"] == "in":
+                if row["kind"] == "quota":
+                    with self.guard:
+                        if self.remote and self.remote["credential_id"] == identifier:
+                            reload_required = self.disconnect()["reload_required"]
+                else:
+                    with egress.guard:
+                        if egress.peer_id == identifier:
+                            egress.select("provider")
+            self.vault.delete(identifier)
+            if row["direction"] == "out":
+                controller = self if row["kind"] == "quota" else egress
+                with controller.guard:
+                    if controller.host.get("last_credential_id") == identifier:
+                        controller.host.pop("last_credential_id", None)
+                        if row["kind"] == "exit":
+                            controller.local_link = ""
+                if not any(other["kind"] == row["kind"] and other["direction"] == "out" and
+                           other["enabled"] and not other["expired"] for other in self.vault.rows()):
+                    if row["kind"] == "quota":
+                        self.stop_host()
+                    else:
+                        egress.stop()
+            return {**self.status(), "reload_required": reload_required}
+
     def connect(self, link=None, *, label="", identifier=None):
         with self.guard:
             if self.listener:

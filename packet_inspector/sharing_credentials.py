@@ -332,6 +332,13 @@ class CredentialVault:
                 data.update(snapshot=snapshot, last_seen=time.time())
                 self._save(db, identifier, data)
 
+    def delete(self, identifier):
+        with self.connection() as db:
+            row = db.execute("SELECT data FROM credentials WHERE id=?", (identifier,)).fetchone()
+            if not row or json.loads(row[0]).get("internal"):
+                raise SharingError("凭据不存在。")
+            db.execute("DELETE FROM credentials WHERE id=?", (identifier,))
+
     def availability(self, identifier, online):
         with self.connection() as db:
             row = db.execute("SELECT data FROM credentials WHERE id=? AND direction='in'", (identifier,)).fetchone()
