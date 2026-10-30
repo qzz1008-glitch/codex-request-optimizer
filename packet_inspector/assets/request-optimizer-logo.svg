@@ -7,7 +7,8 @@
       <stop offset="1" stop-color="#4D87D3"/>
     </linearGradient>
     <linearGradient id="funnel-flow" gradientUnits="userSpaceOnUse" x1="8" y1="128" x2="240" y2="128">
-      <stop offset="0" stop-color="#7789C1"/>
+      <stop offset="0" stop-color="#7789C1" stop-opacity="0"/>
+      <stop offset="0.25" stop-color="#698EBC"/>
       <stop offset="1" stop-color="#409EAD"/>
     </linearGradient>
     <linearGradient id="output-flow" gradientUnits="userSpaceOnUse" x1="160" y1="128" x2="240" y2="128">
