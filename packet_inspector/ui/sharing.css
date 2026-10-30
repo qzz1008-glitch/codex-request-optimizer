@@ -16,8 +16,10 @@
 .sharing-form .sharing-amount-field input,.credential-edit-form .sharing-amount-field input{flex:1;width:0;min-width:0;border:0;border-radius:0;background:transparent;outline:0;box-shadow:none}
 .sharing-amount-field:focus-within{border-color:var(--accent);box-shadow:0 0 0 2px #315fd71a}
 .sharing-amount-unit{flex:none;color:var(--muted);font-size:12px;line-height:1;white-space:nowrap;pointer-events:none;user-select:none}
-.sharing-presets,.sharing-actions,.sharing-row-actions,.sharing-exit-source{display:flex;gap:7px;flex-wrap:wrap;align-items:center}
-.sharing-presets button{font-size:12px;padding:4px 12px;min-height:27px;background:var(--bg)}
+.sharing-expiry{display:grid;grid-template-columns:64px minmax(0,1fr);gap:10px;align-items:center;font-size:12px;color:var(--muted)}
+.sharing-expiry-control{position:relative;min-width:0}.sharing-expiry-options{display:flex;gap:3px}.sharing-expiry-options button{flex:1;min-width:0;min-height:32px;padding:5px 3px;font-size:11px;white-space:nowrap}.sharing-expiry-options button[aria-pressed=true]{border-color:var(--accent);background:var(--soft);color:var(--accent)}
+.sharing-expiry-picker{position:absolute;right:0;top:calc(100% + 6px);z-index:5;width:260px;max-width:calc(100vw - 60px);padding:12px;border:1px solid var(--line);border-radius:8px;background:var(--panel);box-shadow:0 6px 24px #14243b24}.sharing-expiry-picker input{margin:0}.sharing-expiry-picker-actions{display:flex;justify-content:flex-end;gap:7px;margin-top:10px}.sharing-expiry-picker-actions button{padding:5px 12px;font-size:12px;min-height:28px}
+.sharing-actions,.sharing-row-actions,.sharing-exit-source{display:flex;gap:7px;flex-wrap:wrap;align-items:center}
 .sharing-check{flex-direction:row!important;align-items:center;gap:7px!important}.sharing-check input{width:14px;height:14px;margin:0}
 .sharing-actions button{padding:6px 12px;min-height:32px;font-size:12px}
 .sharing-generate-action{display:flex;align-items:center;gap:10px;flex:1 0 100%;min-width:0}.sharing-generate-action>button{flex-shrink:0}.sharing-binding-note{min-width:0;font-size:11px;line-height:1.6;color:var(--muted)}
