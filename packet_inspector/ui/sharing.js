@@ -15,7 +15,7 @@ globalThis.InspectorSharing=(()=>{
   const message=(value,error=false)=>{const box=get("sharing-message");box.textContent=tr(value);box.hidden=!value;box.classList.toggle("error",error);for(const id of ["sharing-inline-message","sharing-delete-message"]){const local=get(id);local.textContent=error?tr(value):"";local.hidden=!error;}};
   const expiryIds=["quota-expiry","exit-expiry"];
   function expiryField(id){
-    return `<div id="${id}-field" class="sharing-expiry"><label id="${id}-label" for="${id}">${label("期限")}</label><label class="sharing-expiry-none"><input id="${id}-none" type="checkbox">${label("无期限")}</label><input id="${id}" type="datetime-local" step="60" aria-labelledby="${id}-label" required></div>`;
+    return `<div id="${id}-field" class="sharing-expiry"><label id="${id}-label" for="${id}">${label("期限")}</label><div class="sharing-expiry-controls"><input id="${id}" type="datetime-local" step="60" aria-labelledby="${id}-label" required><label class="sharing-expiry-none"><input id="${id}-none" type="checkbox">${label("无期限")}</label></div></div>`;
   }
   function card(kind){
     const title=kind==="quota"?"额度":"出口";
