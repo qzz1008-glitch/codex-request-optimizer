@@ -1,8 +1,22 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 256 256" role="img" aria-labelledby="logo-title">
   <title id="logo-title">Codex Request Optimizer</title>
-  <path fill="#5667C5" d="M 16 108 L 60 108 C 62.21 108 64 106.21 64 104 L 64 84 C 64 80.42 68.68 78.62 71.18 81.18 L 111.04 121.04 C 114.88 124.88 114.88 131.12 111.04 134.96 L 71.18 174.82 C 68.68 177.38 64 175.58 64 172 L 64 152 C 64 149.79 62.21 148 60 148 L 16 148 C 11.58 148 8 144.42 8 140 L 8 116 C 8 111.58 11.58 108 16 108 Z"/>
-  <path fill="none" stroke="#64748B" stroke-width="14" stroke-linecap="round" stroke-linejoin="round" d="M 15 33 C 126 85 147 92 228 92 M 15 223 C 126 171 147 164 228 164"/>
+  <defs>
+    <linearGradient id="input-flow" gradientUnits="userSpaceOnUse" x1="8" y1="128" x2="114" y2="128">
+      <stop offset="0" stop-color="#5B66D5"/>
+      <stop offset="1" stop-color="#4D87D3"/>
+    </linearGradient>
+    <linearGradient id="funnel-flow" gradientUnits="userSpaceOnUse" x1="8" y1="128" x2="240" y2="128">
+      <stop offset="0" stop-color="#7789C1"/>
+      <stop offset="1" stop-color="#409EAD"/>
+    </linearGradient>
+    <linearGradient id="output-flow" gradientUnits="userSpaceOnUse" x1="160" y1="128" x2="240" y2="128">
+      <stop offset="0" stop-color="#3098B5"/>
+      <stop offset="1" stop-color="#1DA99C"/>
+    </linearGradient>
+  </defs>
+  <path fill="url(#input-flow)" d="M 16 108 L 60 108 C 62.21 108 64 106.21 64 104 L 64 84 C 64 80.42 68.68 78.62 71.18 81.18 L 111.04 121.04 C 114.88 124.88 114.88 131.12 111.04 134.96 L 71.18 174.82 C 68.68 177.38 64 175.58 64 172 L 64 152 C 64 149.79 62.21 148 60 148 L 16 148 C 11.58 148 8 144.42 8 140 L 8 116 C 8 111.58 11.58 108 16 108 Z"/>
+  <path fill="none" stroke="url(#funnel-flow)" stroke-width="12" stroke-linecap="round" stroke-linejoin="round" d="M 15 20 C 60 83 130 92 228 92 M 15 236 C 60 173 130 164 228 164"/>
   <g transform="matrix(0.75 0 0 0.75 56 32)">
-    <path fill="#28A69A" d="M 166 116 L 204 116 C 206.21 116 208 114.21 208 112 L 208 104 C 208 100.42 212.68 98.62 215.18 101.18 L 237.8 123.8 C 240.12 126.12 240.12 129.88 237.8 132.2 L 215.18 154.82 C 212.68 157.38 208 155.58 208 152 L 208 144 C 208 141.79 206.21 140 204 140 L 166 140 C 162.69 140 160 137.31 160 134 L 160 122 C 160 118.69 162.69 116 166 116 Z"/>
+    <path fill="url(#output-flow)" d="M 166 116 L 204 116 C 206.21 116 208 114.21 208 112 L 208 104 C 208 100.42 212.68 98.62 215.18 101.18 L 237.8 123.8 C 240.12 126.12 240.12 129.88 237.8 132.2 L 215.18 154.82 C 212.68 157.38 208 155.58 208 152 L 208 144 C 208 141.79 206.21 140 204 140 L 166 140 C 162.69 140 160 137.31 160 134 L 160 122 C 160 118.69 162.69 116 166 116 Z"/>
   </g>
 </svg>

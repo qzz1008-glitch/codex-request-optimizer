@@ -2,13 +2,35 @@ param(
     [string]$InputPath = (Join-Path $PSScriptRoot 'request-optimizer-logo.svg'),
     [string]$OutputPath = (Join-Path $PSScriptRoot 'request-optimizer-logo.png')
 )
-# Render this small, flat SVG with built-in Windows drawing APIs.
-# Support the icon's rects, paths and matrix-transformed groups.
+# Render this compact SVG with built-in Windows drawing APIs.
+# Support paths, rounded strokes, linear gradients and matrix-transformed groups.
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Drawing
 [xml]$artwork = Get-Content -LiteralPath $InputPath -Raw
 $culture = [Globalization.CultureInfo]::InvariantCulture
 function Number([string]$value) { return [single]::Parse($value, $culture) }
+function PaintBrush([string]$paint) {
+    $match=[regex]::Match($paint,'^url\(#([A-Za-z][A-Za-z0-9_-]*)\)$')
+    if(-not $match.Success) {
+        return ,[Drawing.SolidBrush]::new([Drawing.ColorTranslator]::FromHtml($paint))
+    }
+    $gradientId=$match.Groups[1].Value
+    $gradient=$artwork.SelectSingleNode("/*[local-name()='svg']/*[local-name()='defs']/*[local-name()='linearGradient' and @id='$gradientId']")
+    if(-not $gradient -or $gradient.GetAttribute('gradientUnits') -ne 'userSpaceOnUse') {
+        throw "Unsupported icon gradient: $gradientId"
+    }
+    $stops=@($gradient.ChildNodes | Where-Object { $_ -is [Xml.XmlElement] -and $_.LocalName -eq 'stop' })
+    if($stops.Count -ne 2 -or $stops[0].GetAttribute('offset') -ne '0' -or $stops[1].GetAttribute('offset') -ne '1') {
+        throw 'Icon gradients require two endpoint stops.'
+    }
+    $start=[Drawing.PointF]::new((Number $gradient.GetAttribute('x1')),(Number $gradient.GetAttribute('y1')))
+    $end=[Drawing.PointF]::new((Number $gradient.GetAttribute('x2')),(Number $gradient.GetAttribute('y2')))
+    $brush=[Drawing.Drawing2D.LinearGradientBrush]::new($start,$end,
+        [Drawing.ColorTranslator]::FromHtml($stops[0].GetAttribute('stop-color')),
+        [Drawing.ColorTranslator]::FromHtml($stops[1].GetAttribute('stop-color')))
+    $brush.WrapMode=[Drawing.Drawing2D.WrapMode]::TileFlipXY
+    return ,$brush
+}
 function RoundedRect($node) {
     $x=Number $node.x; $y=Number $node.y
     $w=Number $node.width; $h=Number $node.height; $r=Number $node.rx
@@ -46,7 +68,7 @@ function Outline([string]$data) {
 }
 function RenderElements($nodes) {
     foreach($node in $nodes) {
-        if($node -isnot [Xml.XmlElement] -or $node.LocalName -eq 'title') { continue }
+        if($node -isnot [Xml.XmlElement] -or $node.LocalName -in @('title','defs')) { continue }
         $saved=$graphics.Save()
         try {
             if($node.HasAttribute('transform')) {
@@ -71,22 +93,27 @@ function RenderElements($nodes) {
                 $fill=$node.GetAttribute('fill')
                 if($fill -ne 'none') {
                     if(-not $fill) { $fill='#000000' }
-                    $brush=[Drawing.SolidBrush]::new([Drawing.ColorTranslator]::FromHtml($fill))
+                    $brush=PaintBrush $fill
                     try { $graphics.FillPath($brush,$path) }
                     finally { $brush.Dispose() }
                 }
                 $stroke=$node.GetAttribute('stroke')
                 if($stroke -and $stroke -ne 'none') {
                     $strokeWidth=if($node.HasAttribute('stroke-width')) { Number $node.GetAttribute('stroke-width') } else { 1 }
-                    $pen=[Drawing.Pen]::new([Drawing.ColorTranslator]::FromHtml($stroke),$strokeWidth)
+                    $strokeBrush=PaintBrush $stroke
+                    $pen=$null
                     try {
+                        $pen=[Drawing.Pen]::new($strokeBrush,$strokeWidth)
                         if($node.GetAttribute('stroke-linecap') -eq 'round') {
                             $pen.StartCap=[Drawing.Drawing2D.LineCap]::Round
                             $pen.EndCap=[Drawing.Drawing2D.LineCap]::Round
                         }
                         if($node.GetAttribute('stroke-linejoin') -eq 'round') { $pen.LineJoin=[Drawing.Drawing2D.LineJoin]::Round }
                         $graphics.DrawPath($pen,$path)
-                    } finally { $pen.Dispose() }
+                    } finally {
+                        if($pen) { $pen.Dispose() }
+                        $strokeBrush.Dispose()
+                    }
                 }
             } finally { $path.Dispose() }
         } finally { $graphics.Restore($saved) }
@@ -105,5 +132,5 @@ try {
     $graphics.TranslateTransform((-$viewBox[0]),(-$viewBox[1]))
     RenderElements $artwork.svg.ChildNodes
     $bitmap.Save([IO.Path]::GetFullPath($OutputPath),[Drawing.Imaging.ImageFormat]::Png)
-    [pscustomobject]@{Output=[IO.Path]::GetFullPath($OutputPath);Canvas=@($w,$h);Background='transparent';Palette='indigo, slate, jade'} | ConvertTo-Json -Compress
+    [pscustomobject]@{Output=[IO.Path]::GetFullPath($OutputPath);Canvas=@($w,$h);Background='transparent';Palette='soft indigo to blue and teal gradients'} | ConvertTo-Json -Compress
 } finally { $graphics.Dispose(); $bitmap.Dispose() }
