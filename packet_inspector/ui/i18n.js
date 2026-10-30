@@ -91,7 +91,6 @@ const uiI18n = (() => {
     "已更新，新请求使用当前设置。":"Updated. New requests use these settings.",
     "凭据已复制。":"Credential copied.",
     "请复制已选中的凭据。":"Copy the selected credential.",
-    "凭据已生成。":"Credential generated.",
     "本期额度已重置，累计统计已保留。":"Current period reset. All-time statistics are preserved.",
     "请选择未来的到期时间，或选择无期限。":"Choose a future expiration time or no expiry.",
     "仅显示汇总用量，不保存借用方请求。":"Only aggregate usage is shown; borrower requests are not stored.",
