@@ -73,7 +73,7 @@ def collect_licenses(source, work):
     if deps.is_dir():distributions.extend(importlib.metadata.distributions(path=[str(deps)]))
     for distribution in distributions:
         name=(distribution.metadata.get("Name") or "").lower()
-        if name not in {"pyinstaller","zstandard","tomlkit","cryptography","cffi","pycparser","pillow"}:continue
+        if name not in {"pyinstaller","zstandard","tomlkit","cryptography","cffi","pycparser","pillow","urllib3"}:continue
         for entry in distribution.files or []:
             if "licenses/" in str(entry).replace("\\","/"):
                 source=Path(distribution.locate_file(entry))

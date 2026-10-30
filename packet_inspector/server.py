@@ -54,6 +54,8 @@ from .overflow import CheckpointStream, OverflowCompactor, OverflowFailure
 from .image_config import IMAGE_MODES, ImageToolConfig, WORKER_HEADER, image_mode
 from .image_isolation import ImageIsolation, ImageIsolationFailure, check_image_directory, resolve_image_directory, is_analysis_request
 from .sharing import Sharing, SharingError, forwarding_headers, allowed_request as sharing_request_allowed
+from .shared_egress import SharedEgress
+from .egress_transport import EGRESS_HEADER
 
 HOP = {"connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
        "te", "trailer", "transfer-encoding", "upgrade"}
@@ -188,6 +190,7 @@ class InspectorServer(ThreadingHTTPServer):
         self.public_port = public_port or self.port
         self.provider_guard = threading.RLock()
         self.sharing = Sharing(self)
+        self.egress = SharedEgress(self)
         self.provider_fingerprint = None
         self.provider_sync_error = ""
         self.provider_sync_result = {}
@@ -425,6 +428,12 @@ class InspectorServer(ThreadingHTTPServer):
                 sharing.close()
             except Exception:
                 pass  # Retain recovery metadata, but always close the ordinary relay.
+        egress = getattr(self, "egress", None)
+        if egress is not None:
+            try:
+                egress.close()
+            except Exception:
+                pass  # Optional exit cleanup must not prevent ordinary relay cleanup.
         presentation = getattr(self, "presentation", None)
         if presentation is not None:
             presentation.stop()
@@ -704,6 +713,20 @@ class Handler(BaseHTTPRequestHandler):
                         result = self.server.sharing.connect(data.get("link"))
                     elif action == "client_disconnect":
                         result = self.server.sharing.disconnect()
+                    elif action in {"egress_start", "egress_stop", "egress_rotate", "egress_select", "egress_link"}:
+                        if action == "egress_start":
+                            exit_result = self.server.egress.start(data.get("address"), data.get("port", 47847), data.get("hours", 8))
+                        elif action == "egress_stop":
+                            exit_result = self.server.egress.stop()
+                        elif action == "egress_rotate":
+                            exit_result = self.server.egress.rotate()
+                        elif action == "egress_select":
+                            exit_result = self.server.egress.select(data.get("mode"), data.get("link", ""))
+                        else:
+                            exit_result = {"link": self.server.egress.local_link}
+                        result = self.server.sharing.status()
+                        if exit_result.get("link"):
+                            result["egress_link"] = exit_result["link"]
                     else:
                         raise ValueError("invalid sharing action")
                 self._json(200, result)
@@ -1003,7 +1026,7 @@ class Handler(BaseHTTPRequestHandler):
         # This is a separate, tool-free summary call. The original turn has not
         # been uploaded. Never follow redirects or retry either request.
         local = urlsplit(upstream).hostname in {"localhost", "127.0.0.1", "::1"}
-        opener = opener or (self.server.local_opener if local else self.server.opener)
+        opener = opener or (self.server.local_opener if local else self.server.egress.outgoing(own_request=True))
         try:
             response = opener.open(Request(upstream + suffix, data=body, headers=compact_headers, method="POST"),
                                    timeout=UPSTREAM_READ_TIMEOUT_SECONDS)
@@ -1134,10 +1157,21 @@ class Handler(BaseHTTPRequestHandler):
                     self.server.capture_errors += 1
         connection_tokens = {s.strip().lower() for s in self.headers.get("Connection", "").split(",")}
         headers = {k: v for k, v in self.headers.items()
-                   if k.lower() not in HOP | connection_tokens | {"host", "content-length", "x-codex-inspector-packet-id", WORKER_HEADER.lower()}}
+                   if k.lower() not in HOP | connection_tokens | {"host", "content-length", "x-codex-inspector-packet-id", WORKER_HEADER.lower(), EGRESS_HEADER.lower()}}
         if shared_client:
             headers = forwarding_headers(headers)
             headers["Authorization"] = "Bearer " + remote["token"]
+            try:
+                exit_link = self.server.egress.request_exit(remote)
+            except (OSError, SharingError):
+                update(state="relay_error", relay_error="shared_exit_unavailable", status=503)
+                self._json(503, {"error": {"code": "shared_exit_unavailable", "message": "所选出口未就绪，请检查共享出口设置。"}})
+                return
+            if exit_link:
+                headers[EGRESS_HEADER] = exit_link
+        local_upstream = urlsplit(upstream).hostname in {"localhost", "127.0.0.1", "::1"}
+        request_opener = (remote["opener"] if shared_client else self.server.local_opener
+                          if local_upstream else self.server.egress.outgoing(own_request=True))
         # urllib preserves content bytes, does not decompress responses, and
         # uses the OS/environment proxy. Redirects and inference retries are disabled.
         trigger_size = None
@@ -1225,7 +1259,7 @@ class Handler(BaseHTTPRequestHandler):
                     outbound_body, outbound_encoding, source_body, headers, suffix, upstream, compression, budget,
                     lambda compact_body, encoding: self._checkpoint(upstream, suffix, headers, compact_body, encoding,
                         packet_id=packet_id, session_id=capture_meta.get("thread_id"),
-                        **({"opener": remote["opener"]} if shared_client else {})),
+                        opener=request_opener),
                     request_scope=scope, zstd_level=zstd_level, auto_zstd_level=auto_zstd_level)
                 applied_zstd_level = overflow_meta.get("relay_zstd_level", applied_zstd_level)
                 update(**overflow_meta)
@@ -1258,7 +1292,6 @@ class Handler(BaseHTTPRequestHandler):
                compression_applied=outbound_body is not body,
                relay_zstd_level=applied_zstd_level, relay_auto_zstd_level=auto_zstd_level,
                relay_compression_scope=compression_scope)
-        local_upstream = urlsplit(upstream).hostname in {"localhost", "127.0.0.1", "::1"}
         update(native_retry_mode="native")
         retry_settings = self.server.settings
         capacity_retry = (retry_settings["capacity_retry_enabled"] and self.command == "POST"
@@ -1306,7 +1339,7 @@ class Handler(BaseHTTPRequestHandler):
                 if not local_upstream:
                     update(outbound_wire_bytes=len(outbound_body),
                            outbound_content_encoding=outbound_encoding)
-                opener = remote["opener"] if shared_client else self.server.local_opener if local_upstream else self.server.opener
+                opener = request_opener
                 notify(diagnostic.record if diagnostic else None, "attempt_started", attempt=1)
                 with network_trace.active():
                     response = opener.open(request, timeout=UPSTREAM_READ_TIMEOUT_SECONDS)
