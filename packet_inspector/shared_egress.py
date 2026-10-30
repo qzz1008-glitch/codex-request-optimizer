@@ -16,7 +16,7 @@ from urllib.request import ProxyHandler, proxy_bypass
 from .egress_transport import EGRESS_PROTOCOL, ExitOpener, UPSTREAM_HOSTS, parse_egress_link
 from .http_io import UPSTREAM_READ_TIMEOUT_SECONDS
 from .sharing import LANServer, SharingError, automatic_address, lan_address, tls_context
-from .sharing_credentials import CLIENT_HEADER
+from .sharing_credentials import CLIENT_HEADER, ExitMachineMismatch
 
 
 def physical_tunnel(server, host, port):
@@ -62,12 +62,12 @@ class ExitHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path != "/v1/status":
             self.reply(404, {"error": "exit_route_not_found"})
-        elif not self.server.controller.authorized(self.headers.get("Authorization", ""), self.headers.get(CLIENT_HEADER, "")):
-            self.reply(403, {"error": "exit_unavailable"})
         else:
             controller = self.server.controller
             try:
                 self.reply(200, controller.peer_status(self.headers.get("Authorization", ""), self.headers.get(CLIENT_HEADER, "")))
+            except ExitMachineMismatch:
+                self.reply(403, {"error": "exit_credential_machine_mismatch"})
             except SharingError:
                 self.reply(403, {"error": "exit_unavailable"})
 
@@ -208,8 +208,11 @@ class SharedEgress:
                 return False
 
     def peer_status(self, value, client):
-        reservation = self.vault.authenticate("exit", value, client)
-        return {"kind": "network_exit", "protocol": EGRESS_PROTOCOL, "credential": self.vault.snapshot(reservation)}
+        with self.guard:
+            if not self.listener or (self.host.get("expires_at") is not None and time.time() >= self.host["expires_at"]):
+                raise SharingError("出口共享已停止或到期。")
+            reservation = self.vault.authenticate("exit", value, client)
+            return {"kind": "network_exit", "protocol": EGRESS_PROTOCOL, "credential": self.vault.snapshot(reservation)}
 
     def reserve(self, value, client=""):
         with self.guard:

@@ -27,7 +27,7 @@ globalThis.InspectorSharing=(()=>{
       <form id="${kind}-borrow" class="sharing-form" hidden><label>${label("名称")}<input id="${kind}-borrow-label" maxlength="80" required autocomplete="off"></label><label>${label("对方的凭据")}<input id="${kind}-borrow-link" type="password" autocomplete="off" spellcheck="false" required placeholder="${kind==="quota"?"codex-share":"codex-exit"}://…"></label></form>
       <div class="sharing-actions"><button class="primary" type="submit" form="${kind}-issue" id="${kind}-generate">${label("生成凭据")}</button><button class="primary" type="submit" form="${kind}-borrow" id="${kind}-activate" hidden>${label("保存并借入")}</button></div>
       ${kind==="quota"?`<button id="quota-local" class="sharing-local" type="button" data-action="local" data-kind="quota">${label("使用本机额度")}</button>`:`<div id="exit-local" class="sharing-exit-source"><button type="button" data-action="provider" data-kind="exit">${label("额度方出口")}</button><button type="button" data-action="local" data-kind="exit">${label("本机出口")}</button></div>`}
-      ${kind==="exit"?`<p class="sharing-card-note">${label("借出的出口始终使用本机网络。")}</p>`:""}
+      ${kind==="exit"?`<p class="sharing-card-note">${label("每张出口凭据仅供一台机器使用，始终通过本机网络转发。")}</p>`:""}
     </section>`;
   }
   get("sharing-config").innerHTML=card("quota")+card("exit");

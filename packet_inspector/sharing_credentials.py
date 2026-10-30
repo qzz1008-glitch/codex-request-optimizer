@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import secrets
 import sqlite3
 import time
@@ -17,6 +18,10 @@ CLIENT_HEADER = "X-Inspector-Client"
 MIN_TTL_SECONDS = 86400
 COUNTERS = ("input_tokens", "output_tokens", "total_tokens", "cached_input_tokens", "responses",
             "missing_responses", "unpriced_responses", "cost_nanos", "sent_bytes", "received_bytes", "requests")
+
+
+class ExitMachineMismatch(SharingError):
+    pass
 
 
 def protect(value, decrypt=False):
@@ -124,6 +129,8 @@ class CredentialVault:
                 "budget_nanos": limit if kind == "quota" else 0, "weekly_reset": weekly_reset if kind == "quota" else False,
                 "period_id": secrets.token_hex(8), "period_started_at": time.time(), "period_cost_nanos": 0,
                 "totals": {key: 0 for key in COUNTERS}, "daily": {}}
+        if kind == "exit" and internal:
+            data["exit_client_hash"] = hashlib.sha256(self.client_id.encode()).hexdigest()
         with self.connection() as db:
             db.execute("INSERT INTO credentials VALUES (?,?,?,?,?,?)", (identifier, kind, "out",
                        hashlib.sha256(token.encode()).hexdigest(), protect(token.encode()), json.dumps(data)))
@@ -153,10 +160,12 @@ class CredentialVault:
             return protect(row["secret"], True).decode()
 
     def authenticate(self, kind, value, client="", *, spend=False):
-        # Client headers remain compatible with existing peers; grants are shared
-        # bearer credentials and are neither bound to nor counted by client ID.
+        # Quota is shared across clients; an exit belongs to one client identity,
+        # including when its quota provider opens a delegated tunnel.
         if not isinstance(value, str) or not value.startswith("Bearer "):
             raise SharingError("凭据无效或已撤销。")
+        if kind == "exit" and (not isinstance(client, str) or not re.fullmatch(r"[a-f0-9]{64}", client)):
+            raise SharingError("出口凭据需要有效的机器标识，请更新使用方软件。")
         digest = hashlib.sha256(value[7:].encode()).hexdigest()
         with self.connection() as db:
             row = db.execute("SELECT id,data FROM credentials WHERE kind=? AND direction='out' AND digest=?", (kind, digest)).fetchone()
@@ -168,6 +177,11 @@ class CredentialVault:
                 raise SharingError("凭据已停用或到期。")
             if spend and data["budget_nanos"] and data["period_cost_nanos"] >= data["budget_nanos"]:
                 raise SharingError("此凭据的本期额度已用完。")
+            if kind == "exit":
+                binding = hashlib.sha256(client.encode()).hexdigest()
+                if data.get("exit_client_hash") and not secrets.compare_digest(data["exit_client_hash"], binding):
+                    raise ExitMachineMismatch("此出口凭据已绑定其他机器，请使用独立凭据。")
+                data["exit_client_hash"] = binding
             data.update(last_seen=time.time())
             if spend:
                 data["totals"]["requests"] += 1
@@ -204,7 +218,10 @@ class CredentialVault:
 
     @staticmethod
     def public(data):
-        data = {key: value for key, value in data.items() if key not in {"bound", "client_hash", "period_id"}}
+        private = {"bound", "client_hash", "exit_client_hash", "period_id"}
+        data = {key: value for key, value in data.items() if key not in private}
+        if isinstance(data.get("snapshot"), dict):
+            data["snapshot"] = {key: value for key, value in data["snapshot"].items() if key not in private}
         if data.get("direction") == "out":
             start = day_key(week_start())
             data["week_cost_nanos"] = sum(v["cost_nanos"] for k, v in data["daily"].items() if k >= start)
