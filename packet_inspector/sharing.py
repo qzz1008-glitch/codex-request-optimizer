@@ -66,6 +66,22 @@ def local_addresses():
     return sorted(values - {"127.0.0.1"}) or ["127.0.0.1"]
 
 
+def automatic_address():
+    # A UDP route lookup selects the default LAN interface without sending data.
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as route:
+            route.connect(("192.0.2.1", 9))
+            address = lan_address(route.getsockname()[0])
+            if not ipaddress.ip_address(address).is_loopback:
+                return address
+    except (OSError, SharingError):
+        pass
+    addresses = [address for address in local_addresses() if not ipaddress.ip_address(address).is_loopback]
+    if addresses:
+        return addresses[0]
+    raise SharingError("未找到可用的局域网连接，请检查网络。")
+
+
 def forwarding_headers(headers):
     connection = {v.strip().lower() for v in headers.get("Connection", "").split(",")}
     return {key: value for key, value in headers.items()
@@ -325,12 +341,13 @@ class Sharing:
             raise SharingError("当前连接不是 Codex 原生登录出口，暂不支持共享此连接。")
         return expected
 
-    def start_host(self, address, port=47846, hours=8, request_limit=0, token_limit=0):
-        address = lan_address(address)
-        for value, minimum, maximum in ((port, 1, 65535), (hours, 1, 24), (request_limit, 0, 100000),
+    def start_host(self, address=None, port=None, hours=8, token_limit=0):
+        address = automatic_address() if address is None else lan_address(address)
+        port = self.server.settings["sharing_port"] if port is None else port
+        for value, minimum, maximum in ((port, 1, 65535), (hours, 1, 24),
                                          (token_limit, 0, 1_000_000_000_000)):
             if type(value) is not int or not minimum <= value <= maximum:
-                raise SharingError("共享端口、时长、转发次数或 Token 上限不在允许范围。")
+                raise SharingError("共享端口、时长或 Token 上限不在允许范围。")
         with self.guard:
             if self.remote or self.listener:
                 raise SharingError("请先断开或停止当前共享连接。")
@@ -346,7 +363,7 @@ class Sharing:
                 grant = secrets.token_urlsafe(32)
                 self.host = {"active": True, "address": address, "port": listener.server_address[1],
                              "expires_at": time.time() + hours * 3600, "requests": 0, "in_flight": 0,
-                             "request_limit": request_limit, "token_limit": token_limit, "usage": empty_usage(),
+                             "token_limit": token_limit, "usage": empty_usage(),
                              "started_at": time.time(), "error": "", "upstream": upstream,
                              "grant_hash": hashlib.sha256(grant.encode()).digest(),
                              "identity_hash": hashlib.sha256(credentials["identity"].encode()).digest(),
@@ -370,7 +387,7 @@ class Sharing:
                     self.role.close()
                 if isinstance(exc, SharingError):
                     raise
-                raise SharingError("无法开启共享，请检查本机地址、端口及 Codex 登录状态。") from None
+                raise SharingError("无法开启共享，请检查网络、Codex 登录状态或设置中的额度端口。") from None
 
     def authorized(self, value):
         if not value.startswith("Bearer "):
@@ -392,9 +409,6 @@ class Sharing:
         with self.guard:
             if not self.authorized(value):
                 raise SharingError("共享已停止、到期或链接已撤销。")
-            limit = self.host["request_limit"]
-            if count and limit and self.host["requests"] >= limit:
-                raise SharingError("本次共享的转发次数已用完。")
             if count and self.host["token_limit"] and self.host["usage"]["total_tokens"] >= self.host["token_limit"]:
                 raise SharingError("本次共享的 Token 上限已达到。")
             credentials = self.authorization.credentials()
@@ -499,7 +513,7 @@ class Sharing:
             if not self.closed and (not self.address_time or time.monotonic() - self.address_time > 30):
                 self.addresses, self.address_time = local_addresses(), time.monotonic()
             keys = ("active", "address", "port", "started_at", "expires_at", "requests", "in_flight",
-                    "request_limit", "token_limit", "error")
+                    "token_limit", "error")
             host = {key: self.host[key] for key in keys if key in self.host}
             host["usage"] = dict(self.host.get("usage", empty_usage()))
             host["active"] = bool(self.listener and self.host.get("active") and time.time() < self.host.get("expires_at", 0))
@@ -509,6 +523,7 @@ class Sharing:
                 client.update(address=self.remote["host"], port=self.remote["port"])
             egress = getattr(self.server, "egress", None)
             return {"supported": True, "protocol": PROTOCOL, "host": host, "client": client, "addresses": self.addresses,
+                    "automatic_address_supported": True,
                     "egress": egress.status() if egress is not None else {"supported": False},
                     "recovery_error": self.recovery_error, "recovered": self.recovered}
 

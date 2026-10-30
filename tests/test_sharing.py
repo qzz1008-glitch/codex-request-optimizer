@@ -23,7 +23,7 @@ from packet_inspector.config_link import ConfigLink
 from packet_inspector.egress_transport import EGRESS_HEADER, parse_egress_link
 from packet_inspector.providers import ProviderManager
 from packet_inspector.server import InspectorServer
-from packet_inspector.sharing import SharingError, parse_link, pinned_opener, forwarding_headers
+from packet_inspector.sharing import SharingError, automatic_address, parse_link, pinned_opener, forwarding_headers
 from packet_inspector.sharing_auth import NativeAuthorization
 from packet_inspector.sharing_config import SharedProvider, SHARED_PROVIDER
 from packet_inspector.sharing_role import MachineSharingRole
@@ -273,6 +273,7 @@ class LANSharingTests(unittest.TestCase):
         config = root / "config.toml"
         config.write_text('model="test"\n', encoding="utf8")
         server = InspectorServer(("127.0.0.1", 0), root / "data", config, self.target)
+        server.settings["egress_port"] = free_port()
         # Owner and guest fixtures represent separate machines, even on one CI host.
         server.sharing.role = MachineSharingRole('CodexSharingTest-' + secrets.token_hex(16))
         return server
@@ -323,6 +324,61 @@ class LANSharingTests(unittest.TestCase):
             self.assertEqual(response.status, 200, result)
         finally:
             client.close()
+
+    def local_api(self, path, data):
+        client = http.client.HTTPConnection("127.0.0.1", self.owner.port, timeout=HTTP_TIMEOUT)
+        try:
+            client.request("POST", path, json.dumps(data).encode(), {"Content-Type": "application/json"})
+            response = client.getresponse()
+            return response.status, json.loads(response.read())
+        finally:
+            client.close()
+
+    def test_automatic_binding_uses_saved_ports_without_interrupting_active_sharing(self):
+        quota, exit_port = free_port(), free_port()
+        while exit_port == quota:
+            exit_port = free_port()
+        status, result = self.local_api('/api/settings', {'sharing_port': quota, 'egress_port': exit_port})
+        self.assertEqual(status, 200)
+        self.assertTrue(result['sharing_settings_supported'])
+        with patch('packet_inspector.sharing.automatic_address', return_value='127.0.0.1'), \
+             patch('packet_inspector.shared_egress.automatic_address', return_value='127.0.0.1'), \
+             patch.object(self.owner.sharing, '_host_upstream', return_value=self.target):
+            status, host = self.local_api('/api/sharing', {'action':'host_start', 'request_limit':1})
+            self.assertEqual(status, 200)
+            self.assertEqual(host['host']['port'], quota)
+            self.assertNotIn('request_limit', host['host'])
+            status, shared_exit = self.local_api('/api/sharing', {'action':'egress_start'})
+            self.assertEqual(status, 200)
+            self.assertEqual(shared_exit['egress']['host']['port'], exit_port)
+            for _ in range(2):
+                self.assertEqual(self.remote_request(host['link'], '/v1/responses', b'{}')[0], 200)
+            new_quota, new_exit = free_port(), free_port()
+            while new_exit == new_quota:
+                new_exit = free_port()
+            status, _ = self.local_api('/api/settings', {'sharing_port': new_quota, 'egress_port': new_exit})
+            self.assertEqual(status, 200)
+            self.assertEqual(self.owner.sharing.listener.server_port, quota)
+            self.assertEqual(self.owner.egress.listener.server_port, exit_port)
+            self.assertEqual(self.remote_request(host['link'])[0], 200)
+            saved = json.loads(self.owner.settings_path.read_text())
+            self.assertEqual((saved['sharing_port'], saved['egress_port']), (new_quota, new_exit))
+            self.owner.sharing.stop_host()
+            self.owner.egress.stop()
+            self.authorization = DummyAuthorization()
+            self.assertEqual(self.local_api('/api/sharing', {'action':'host_start'})[1]['host']['port'], new_quota)
+            self.assertEqual(self.local_api('/api/sharing', {'action':'egress_start'})[1]['egress']['host']['port'], new_exit)
+
+    def test_invalid_sharing_ports_reject_the_whole_settings_update(self):
+        previous = dict(self.owner.settings)
+        invalid = [{'sharing_port': value} for value in (True, 0, 65536, '47846', 47846.0)]
+        invalid += [{'egress_port': value} for value in (True, -1, 65536)]
+        invalid += [{'sharing_port': 50001, 'egress_port': 50001}]
+        for fields in invalid:
+            with self.subTest(fields=fields):
+                status, _ = self.local_api('/api/settings', {'capture_enabled': False, **fields})
+                self.assertEqual(status, 400)
+                self.assertEqual(self.owner.settings, previous)
 
     def test_one_quota_source_is_replaced_atomically_without_rewriting_provider(self):
         original = self.guest.link.config.read_bytes()
@@ -519,8 +575,8 @@ class LANSharingTests(unittest.TestCase):
         self.assertFalse(self.guest.sharing.provider.path.exists())
         self.assertIsNone(self.guest.sharing.remote)
 
-    def test_native_model_catalog_is_forwarded_without_using_model_request_limit(self):
-        link = self.start(request_limit=1)
+    def test_native_model_catalog_is_not_counted_as_generation(self):
+        link = self.start()
         status, body = self.remote_request(link, '/v1/models?client_version=test')
         self.assertEqual(status, 200)
         self.assertIn(b'dummy-test-model', body)
@@ -778,11 +834,12 @@ class LANSharingTests(unittest.TestCase):
         finally:
             relay.server_close()
 
-    def test_request_cap_expiration_and_native_account_change_fail_closed(self):
-        link = self.start(request_limit=1)
+    def test_unlimited_requests_still_enforce_expiration_and_native_account_change(self):
+        link = self.start()
         self.assertEqual(self.remote_request(link, "/v1/responses", b'{"model":"test","input":[]}')[0], 200)
-        self.assertEqual(self.remote_request(link, "/v1/responses", b'{}')[0], 403)
-        self.assertEqual(len(self.received), 1)
+        self.assertEqual(self.remote_request(link, "/v1/responses", b'{}')[0], 200)
+        self.assertEqual(len(self.received), 2)
+        self.assertEqual(self.owner.sharing.status()["host"]["requests"], 2)
         self.owner.sharing.host["expires_at"] = time.time() - 1
         self.assertEqual(self.remote_request(link)[0], 403)
         self.assertFalse(self.owner.sharing.status()["host"]["active"])
@@ -792,7 +849,7 @@ class LANSharingTests(unittest.TestCase):
         self.authorization.identity = "another-account"
         self.assertEqual(self.remote_request(link, "/v1/responses", b'{}')[0], 403)
         self.assertFalse(self.owner.sharing.status()["host"]["active"])
-        self.assertEqual(len(self.received), 1)
+        self.assertEqual(len(self.received), 2)
 
     def test_custom_upstream_is_not_sent_native_credentials(self):
         self.owner.link.config.write_text('model_provider="custom"\n[model_providers.custom]\nbase_url="https://example.invalid/v1"\n')
@@ -881,6 +938,23 @@ class LANSharingTests(unittest.TestCase):
 
 
 class LinkTests(unittest.TestCase):
+    def test_automatic_address_prefers_the_routed_interface(self):
+        with patch('packet_inspector.sharing.socket.socket') as factory:
+            route = factory.return_value.__enter__.return_value
+            route.getsockname.return_value = ('192.168.3.20', 12345)
+            self.assertEqual(automatic_address(), '192.168.3.20')
+            route.send.assert_not_called()
+            route.sendto.assert_not_called()
+
+    def test_automatic_address_falls_back_to_lan_and_rejects_loopback_only(self):
+        with patch('packet_inspector.sharing.socket.socket', side_effect=OSError()), \
+             patch('packet_inspector.sharing.local_addresses', return_value=['10.1.2.3']):
+            self.assertEqual(automatic_address(), '10.1.2.3')
+        with patch('packet_inspector.sharing.socket.socket', side_effect=OSError()), \
+             patch('packet_inspector.sharing.local_addresses', return_value=['127.0.0.1']):
+            with self.assertRaisesRegex(SharingError, '局域网'):
+                automatic_address()
+
     def test_no_public_urls_path_traversal_queries_or_extra_credentials(self):
         fragment = secrets.token_urlsafe(32) + "." + "f" * 64
         for value in (f"https://192.168.1.2:47846/#{fragment}", f"codex-share://8.8.8.8:443/#{fragment}",
