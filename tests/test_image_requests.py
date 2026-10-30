@@ -19,7 +19,7 @@ class ImageTransportTests(unittest.TestCase):
     def test_json_image_endpoints_preserve_every_byte_at_the_requested_level(self):
         raw = b' {"model":"gpt-image-2","prompt":"' + b'unchanged content '*2000 + b'","images":[]}\n'
         for path in ("/images/edits", "/v1/images/generations/?test=1"):
-            for level in (1, 3, 16, 22):
+            for level in range(1, 23):
                 with self.subTest(path=path, level=level):
                     prepared = prepare_request_info(raw, {"Content-Type":"application/json; charset=utf-8"},
                                                     "POST", path, "zstd", level)

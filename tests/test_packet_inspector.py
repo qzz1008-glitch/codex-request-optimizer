@@ -844,7 +844,7 @@ class RelayTests(unittest.TestCase):
                 patch.object(policy, "finish", wraps=policy.finish) as finish, \
                 patch.object(self.server.overflow, "prepare", side_effect=AssertionError("Images cannot be summarized")):
             for path in ("/images/edits", "/images/generations"):
-                for size, level in ((800_000,None), (1_000_000,1), (1_600_000,16)):
+                for size, level in ((800_000,None), (1_000_000,6), (1_600_000,6)):
                     with self.subTest(path=path, size=size):
                         raw=b' {"model":"gpt-image-2","prompt":"'+b'x'*size+b'","images":[]}\n'
                         self.assertEqual(self.relay(raw,path=path)[0],200)
