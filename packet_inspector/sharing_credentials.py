@@ -21,11 +21,11 @@ COUNTERS = ("input_tokens", "output_tokens", "total_tokens", "cached_input_token
 
 
 class ExitMachineMismatch(SharingError):
-    pass
+    code = "exit_credential_machine_mismatch"
 
 
 class QuotaMachineMismatch(SharingError):
-    pass
+    code = "quota_credential_machine_mismatch"
 
 
 def protect(value, decrypt=False):
@@ -199,7 +199,7 @@ class CredentialVault:
         # Both grant types belong to one persistent client identity. Delegated
         # exit tunnels retain that borrower's identity.
         if not isinstance(value, str) or not value.startswith("Bearer "):
-            raise SharingError("凭据无效或已撤销。")
+            raise SharingError("凭据无效或已撤销，请向提供方重新获取凭据。", code="sharing_credential_invalid")
         if kind == "exit" and (not isinstance(client, str) or not re.fullmatch(r"[a-f0-9]{64}", client)):
             raise SharingError("出口凭据需要有效的机器标识，请更新使用方软件。")
         if kind == "quota" and (not isinstance(client, str) or not re.fullmatch(r"[a-f0-9]{64}", client)):
@@ -208,13 +208,15 @@ class CredentialVault:
         with self.connection() as db:
             row = db.execute("SELECT id,data FROM credentials WHERE kind=? AND direction='out' AND digest=?", (kind, digest)).fetchone()
             if row is None:
-                raise SharingError("凭据无效或已撤销。")
+                raise SharingError("凭据无效或已撤销，请向提供方重新获取凭据。", code="sharing_credential_invalid")
             data = json.loads(row["data"])
             self._roll(data)
-            if not data["enabled"] or (data["expires_at"] is not None and time.time() >= data["expires_at"]):
-                raise SharingError("凭据已停用或到期。")
+            if not data["enabled"]:
+                raise SharingError("凭据已停用，请联系提供方启用或更换凭据。", code="sharing_credential_disabled")
+            if data["expires_at"] is not None and time.time() >= data["expires_at"]:
+                raise SharingError("凭据已到期，请联系提供方延长期限或更换凭据。", code="sharing_credential_expired")
             if spend and data["budget_nanos"] and data["period_cost_nanos"] >= data["budget_nanos"]:
-                raise SharingError("此凭据的本期额度已用完。")
+                raise SharingError("此凭据的本期额度已用完。请联系提供方增加或重置额度，或切回本机额度。", code="sharing_quota_exhausted")
             if kind in {"exit", "quota"}:
                 binding = hashlib.sha256(client.encode()).hexdigest()
                 key = kind + "_client_hash"

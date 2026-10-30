@@ -13,7 +13,12 @@ import time
 
 
 class SharingError(RuntimeError):
-    pass
+    code = "sharing_unavailable"
+
+    def __init__(self, message="", *, code=None):
+        super().__init__(message)
+        if code is not None:
+            self.code = code
 
 
 def native_command():

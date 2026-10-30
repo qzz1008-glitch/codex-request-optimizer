@@ -55,6 +55,7 @@ from .overflow import CheckpointStream, OverflowCompactor, OverflowFailure
 from .image_config import IMAGE_MODES, ImageToolConfig, WORKER_HEADER, image_mode
 from .image_isolation import ImageIsolation, ImageIsolationFailure, check_image_directory, resolve_image_directory, is_analysis_request
 from .sharing import Sharing, SharingError, forwarding_headers, allowed_request as sharing_request_allowed
+from .sharing_errors import prepare_shared_error
 from .shared_egress import SharedEgress
 from .egress_transport import EGRESS_HEADER
 from .sharing_credentials import CLIENT_HEADER
@@ -1411,6 +1412,8 @@ class Handler(BaseHTTPRequestHandler):
                     response = opener.open(request, timeout=UPSTREAM_READ_TIMEOUT_SECONDS)
             except HTTPError as exc:
                 response = exc
+            if shared_client:
+                response = prepare_shared_error(response)
             network_trace.response(response)
             notify(diagnostic.record if diagnostic else None, "response_headers", status=response.status)
             response = prepare_http_error(response, native_policy, update, diagnostic.record if diagnostic else None)
