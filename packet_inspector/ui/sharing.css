@@ -1,5 +1,5 @@
-.sharing-workspace{flex:1;min-height:0;overflow:auto;scrollbar-gutter:stable;padding:28px 32px 36px}
-.sharing-cards,.sharing-message{max-width:1120px;margin-left:auto;margin-right:auto}
+.sharing-workspace{flex:1;min-height:0;overflow:auto;scrollbar-gutter:stable;padding:var(--view-inset)}
+.sharing-cards,.sharing-message{min-width:0;margin-inline:0}
 .sharing-cards{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:22px;align-items:start}
 .sharing-card{border:1px solid var(--line);background:var(--panel);border-radius:12px;padding:24px;min-width:0}
 .sharing-card header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px}
@@ -29,9 +29,9 @@
 .sharing-usage-note{font-size:12px;color:var(--muted);line-height:1.7;margin:6px 0 0}
 .sharing-usage-note a{color:var(--accent);white-space:nowrap}
 .sharing-roles{margin-top:20px;margin-bottom:0}
-.sharing-message{padding:12px 16px;margin-bottom:20px;border:1px solid var(--line);border-radius:8px;background:var(--soft);color:var(--ink);line-height:1.7}
+.sharing-message{padding:12px 16px;margin:0 0 var(--view-inset);border:1px solid var(--line);border-radius:8px;background:var(--soft);color:var(--ink);line-height:1.7}
 .sharing-message.error{background:#fff2f1;border-color:#efcfcc;color:var(--danger)}
 #sharing-remote-link{margin-top:9px;font-family:Consolas,monospace}
 @keyframes sharing-spin{to{transform:rotate(360deg)}}
 @media(prefers-reduced-motion:reduce){.sharing-card button[aria-busy=true]::before{animation:none}}
-@media(max-width:920px){.sharing-workspace{padding:22px}.sharing-cards{grid-template-columns:1fr}}
+@media(max-width:920px){.sharing-cards{grid-template-columns:1fr}}
