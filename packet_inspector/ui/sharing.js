@@ -18,9 +18,7 @@ globalThis.InspectorSharing=(()=>{
     return `<div id="${id}-field" class="sharing-expiry"><label id="${id}-label" for="${id}">${label("期限")}</label><div class="sharing-expiry-controls"><input id="${id}" type="datetime-local" step="60" aria-labelledby="${id}-label" required><label class="sharing-expiry-none"><input id="${id}-none" type="checkbox">${label("无期限")}</label></div></div>`;
   }
   function card(kind){
-    const title=kind==="quota"?"额度":"出口";
-    return `<section class="sharing-card" data-kind="${kind}"><header><h2>${label(title)}</h2>
-      <div class="sharing-switch" role="group" aria-label="${label(title)}"><button type="button" data-view="out" data-kind="${kind}" aria-pressed="true">${label("借出")}</button><button type="button" data-view="in" data-kind="${kind}" aria-pressed="false">${label("借入")}</button></div></header>
+    return `<div class="sharing-card" data-kind="${kind}">
       <form id="${kind}-issue" class="sharing-form"><label>${label("名称")}<input id="${kind}-label" maxlength="80" required autocomplete="off"></label>
         ${expiryField(kind+"-expiry")}
         ${kind==="quota"?`<div class="sharing-budget-row"><label id="quota-budget-label" for="quota-budget">${label("额度")}</label><span class="sharing-amount-field"><input id="quota-budget" type="number" value="1" min="1" max="1000000" step="0.01" required aria-labelledby="quota-budget-label" aria-describedby="quota-budget-unit" title="${label("最低 1 美元。")}"><span id="quota-budget-unit" class="sharing-amount-unit">${label("美元")}</span></span><label class="sharing-check"><input id="quota-weekly" type="checkbox">${label("每周刷新")}</label></div>`:""}
@@ -29,9 +27,9 @@ globalThis.InspectorSharing=(()=>{
       <div class="sharing-actions"><button class="primary" type="submit" form="${kind}-issue" id="${kind}-generate">${label("生成凭据")}</button><button class="primary" type="submit" form="${kind}-borrow" id="${kind}-activate" hidden>${label("保存并借入")}</button></div>
       ${kind==="quota"?`<button id="quota-local" class="sharing-local" type="button" data-action="local" data-kind="quota">${label("使用本机额度")}</button>`:`<div id="exit-local" class="sharing-exit-source"><button type="button" data-action="provider" data-kind="exit">${label("额度方出口")}</button><button type="button" data-action="local" data-kind="exit">${label("本机出口")}</button></div>`}
       <p class="sharing-card-note">${label(kind==="quota"?"每张额度凭据仅供一台机器使用。":"每张出口凭据仅供一台机器使用，始终通过本机网络转发。")}</p>
-    </section>`;
+    </div>`;
   }
-  get("sharing-config").innerHTML=card("quota")+card("exit");
+  for(const kind of ["quota","exit"])get(kind+"-config").innerHTML=card(kind);
   function setExpiry(id,value){
     const input=get(id),unlimited=value===null;
     if(!unlimited)input.dataset.finiteValue=value;
@@ -53,7 +51,7 @@ globalThis.InspectorSharing=(()=>{
     if(response.status===404)throw new Error(tr("当前后台不支持共享，请更新软件后使用。"));
     const result=await response.json();if(!response.ok)throw new Error(tr(result.error||"共享操作失败。"));return result;
   }
-  function shownRows(kind){return (current?.credentials||[]).filter(row=>row.kind===kind&&!row.internal);}
+  function shownRows(kind){return (current?.credentials||[]).filter(row=>row.kind===kind&&row.direction===views[kind]&&!row.internal);}
   function data(row){return row.direction==="in"?(row.snapshot||{}):row;}
   const partial=row=>(data(row).totals?.missing_responses||0)+(data(row).totals?.unpriced_responses||0)>0;
   const money=(value,rows)=>(rows.some(partial)?"≥ ":"")+dollars(value);
@@ -91,13 +89,13 @@ globalThis.InspectorSharing=(()=>{
     const hosting=value.host?.running===true,borrowing=value.client?.active===true;
     for(const kind of ["quota","exit"]){const out=views[kind]==="out";get(kind+"-issue").hidden=!out;get(kind+"-borrow").hidden=out;
       get(kind+"-generate").hidden=!out;get(kind+"-activate").hidden=out;
-      for(const button of get("sharing-config").querySelectorAll(`[data-view][data-kind="${kind}"]`))button.setAttribute("aria-pressed",String(button.dataset.view===views[kind]));
+      for(const button of get("sharing-cards").querySelectorAll(`[data-view][data-kind="${kind}"]`))button.setAttribute("aria-pressed",String(button.dataset.view===views[kind]));
       get(kind+"-generate").disabled=busy||(kind==="quota"&&borrowing);get(kind+"-activate").disabled=busy||(kind==="quota"&&hosting);
     }
     get("quota-local").hidden=!borrowing;get("quota-local").disabled=busy;get("exit-local").hidden=views.exit!=="in";
     for(const button of get("exit-local").querySelectorAll("button")){button.disabled=busy;button.setAttribute("aria-pressed",String(button.dataset.action===value.egress?.selection?.mode));}
     for(const kind of ["quota","exit"])renderList(kind);
-    if(busy)for(const input of get("sharing-lists").querySelectorAll("button,input"))input.disabled=true;
+    if(busy)for(const kind of ["quota","exit"])for(const input of get(kind+"-credential-rows").querySelectorAll("button,input"))input.disabled=true;
     if(!recoveryShown&&(value.recovery_error||value.recovered)){recoveryShown=true;message(value.recovery_error||"上次共享已结束，已恢复原连接。请重新加载 Codex 配置。",!!value.recovery_error);}
   }
   async function action(button,dataValue,success=""){if(busy)return;controller?.abort();busy=true;button?.setAttribute("aria-busy","true");if(button)button.disabled=true;message("");
@@ -115,7 +113,7 @@ globalThis.InspectorSharing=(()=>{
   function closeInline(renderNow=true){
     if(!editing)return;
     const draft=editing;draft.anchor.setAttribute("aria-expanded","false");editing=null;get("sharing-inline-editor").hidden=true;
-    get("sharing-inline-message").hidden=true;if(renderNow&&current){render(current);get("sharing-lists").querySelector(`[data-action="field"][data-id="${draft.id}"][data-field="${draft.field}"]`)?.focus();}
+    get("sharing-inline-message").hidden=true;if(renderNow&&current){render(current);get("sharing-cards").querySelector(`[data-action="field"][data-id="${draft.id}"][data-field="${draft.field}"]`)?.focus();}
   }
   function openInline(row,field,anchor){
     if(busy||!["label","budget","expires_at"].includes(field)||(row.direction!=="out"&&field!=="label")||(field==="budget"&&row.kind!=="quota"))return;
@@ -171,7 +169,7 @@ globalThis.InspectorSharing=(()=>{
   function closeDelete(renderNow=true){
     if(!deleting)return;
     const draft=deleting;deleting=null;get("sharing-delete-dialog").close();get("sharing-delete-message").hidden=true;
-    if(renderNow&&current){render(current);const target=get("sharing-lists").querySelector(`[data-action="delete"][data-id="${draft.id}"]`)||get(draft.kind+"-credential-rows").querySelector("[data-action=delete]")||get(draft.kind+"-list-title");target.focus();}
+    if(renderNow&&current){render(current);const target=get("sharing-cards").querySelector(`[data-action="delete"][data-id="${draft.id}"]`)||get(draft.kind+"-credential-rows").querySelector("[data-action=delete]")||get(draft.kind+"-list-title");target.focus();}
   }
   get("sharing-delete-cancel").addEventListener("click",()=>{if(!busy)closeDelete();});
   get("sharing-delete-dialog").addEventListener("cancel",event=>{event.preventDefault();if(!busy)closeDelete();});
@@ -183,15 +181,14 @@ globalThis.InspectorSharing=(()=>{
     finally{get("sharing-delete-cancel").disabled=false;dialog.setAttribute("aria-busy","false");}
   });
   async function copy(value){try{await navigator.clipboard.writeText(value);message("已复制凭据");}catch(_){message("复制失败，请点击右侧“凭据”重试。",true);}}
-  get("sharing-config").addEventListener("click",event=>{const button=event.target.closest("button");if(!button||busy)return;const {kind,view,action:command}=button.dataset;
-    if(view){views[kind]=view;if(current)render(current);return;}
-    if(command==="local"||command==="provider")action(button,kind==="quota"?{action:"client_disconnect"}:{action:"egress_select",mode:command==="provider"?"provider":"local"});
-  });
   for(const kind of ["quota","exit"]){
     get(kind+"-issue").addEventListener("submit",async event=>{event.preventDefault();try{const result=await action(get(kind+"-generate"),{action:"credential_issue",kind,label:get(kind+"-label").value.trim(),expires_at:expiry(kind+"-expiry"),...(kind==="quota"?{budget:budget("quota-budget"),weekly_reset:get("quota-weekly").checked}:{})},null);if(result)resetIssue(kind);}catch(error){message(error.message,true);}});
     get(kind+"-borrow").addEventListener("submit",async event=>{event.preventDefault();const result=await action(get(kind+"-activate"),{action:"credential_use",kind,label:get(kind+"-borrow-label").value.trim(),link:get(kind+"-borrow-link").value.trim()});if(result)get(kind+"-borrow-link").value="";});
   }
-  get("sharing-lists").addEventListener("click",async event=>{const button=event.target.closest("[data-action]");if(!button||busy)return;const row=(current?.credentials||[]).find(row=>row.id===button.dataset.id);if(!row)return;const command=button.dataset.action;
+  get("sharing-cards").addEventListener("click",async event=>{const button=event.target.closest("[data-view],[data-action]");if(!button||busy)return;const {kind,view,action:command}=button.dataset;
+    if(view){closeInline(false);views[kind]=view;if(current)render(current);return;}
+    if(command==="local"||command==="provider"){await action(button,kind==="quota"?{action:"client_disconnect"}:{action:"egress_select",mode:command==="provider"?"provider":"local"});return;}
+    const row=(current?.credentials||[]).find(row=>row.id===button.dataset.id);if(!row)return;
     if(command==="weekly")return;
     if(command==="delete"){openDelete(row);return;}
     if(command==="field"){openInline(row,button.dataset.field,button);return;}if(editing)closeInline(false);if(command==="copy"){await action(button,{action:"credential_copy",id:row.id});return;}
@@ -199,7 +196,7 @@ globalThis.InspectorSharing=(()=>{
     if(command==="toggle")await action(button,{action:"credential_edit",id:row.id,enabled:!lending(row)});
     if(command==="use")await action(button,{action:"credential_use",kind:row.kind,id:row.id});
   });
-  get("sharing-lists").addEventListener("change",async event=>{
+  get("sharing-cards").addEventListener("change",async event=>{
     const input=event.target;if(input.dataset.action!=="weekly")return;
     const row=(current?.credentials||[]).find(row=>row.id===input.dataset.id);
     if(busy||!row||row.direction!=="out"||row.kind!=="quota"){if(row)input.checked=data(row).weekly_reset===true;return;}
