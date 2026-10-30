@@ -67,9 +67,28 @@ function RenderElements($nodes) {
                 'path' { Outline $node.d }
                 default { throw "Unsupported icon element: $($node.LocalName)" }
             }
-            $brush=[Drawing.SolidBrush]::new([Drawing.ColorTranslator]::FromHtml($node.fill))
-            try { $graphics.FillPath($brush,$path) }
-            finally { $brush.Dispose(); $path.Dispose() }
+            try {
+                $fill=$node.GetAttribute('fill')
+                if($fill -ne 'none') {
+                    if(-not $fill) { $fill='#000000' }
+                    $brush=[Drawing.SolidBrush]::new([Drawing.ColorTranslator]::FromHtml($fill))
+                    try { $graphics.FillPath($brush,$path) }
+                    finally { $brush.Dispose() }
+                }
+                $stroke=$node.GetAttribute('stroke')
+                if($stroke -and $stroke -ne 'none') {
+                    $strokeWidth=if($node.HasAttribute('stroke-width')) { Number $node.GetAttribute('stroke-width') } else { 1 }
+                    $pen=[Drawing.Pen]::new([Drawing.ColorTranslator]::FromHtml($stroke),$strokeWidth)
+                    try {
+                        if($node.GetAttribute('stroke-linecap') -eq 'round') {
+                            $pen.StartCap=[Drawing.Drawing2D.LineCap]::Round
+                            $pen.EndCap=[Drawing.Drawing2D.LineCap]::Round
+                        }
+                        if($node.GetAttribute('stroke-linejoin') -eq 'round') { $pen.LineJoin=[Drawing.Drawing2D.LineJoin]::Round }
+                        $graphics.DrawPath($pen,$path)
+                    } finally { $pen.Dispose() }
+                }
+            } finally { $path.Dispose() }
         } finally { $graphics.Restore($saved) }
     }
 }
@@ -86,5 +105,5 @@ try {
     $graphics.TranslateTransform((-$viewBox[0]),(-$viewBox[1]))
     RenderElements $artwork.svg.ChildNodes
     $bitmap.Save([IO.Path]::GetFullPath($OutputPath),[Drawing.Imaging.ImageFormat]::Png)
-    [pscustomobject]@{Output=[IO.Path]::GetFullPath($OutputPath);Canvas=@($w,$h);Background='transparent';Palette='indigo, steel blue, jade'} | ConvertTo-Json -Compress
+    [pscustomobject]@{Output=[IO.Path]::GetFullPath($OutputPath);Canvas=@($w,$h);Background='transparent';Palette='indigo, copper, steel blue, jade'} | ConvertTo-Json -Compress
 } finally { $graphics.Dispose(); $bitmap.Dispose() }
