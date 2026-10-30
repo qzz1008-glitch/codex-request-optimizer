@@ -3,12 +3,20 @@ param(
     [string]$OutputPath = (Join-Path $PSScriptRoot 'request-optimizer-logo.png')
 )
 # Render this compact SVG with built-in Windows drawing APIs.
-# Support paths, rounded strokes, linear gradients and matrix-transformed groups.
+# Support paths, rounded strokes, color/opacity gradients and group transforms.
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Drawing
 [xml]$artwork = Get-Content -LiteralPath $InputPath -Raw
 $culture = [Globalization.CultureInfo]::InvariantCulture
 function Number([string]$value) { return [single]::Parse($value, $culture) }
+function StopColor($stop) {
+    $color=[Drawing.ColorTranslator]::FromHtml($stop.GetAttribute('stop-color'))
+    $opacity=if($stop.HasAttribute('stop-opacity')) { Number ($stop.GetAttribute('stop-opacity')) } else { 1 }
+    if([single]::IsNaN($opacity) -or [single]::IsInfinity($opacity) -or $opacity -lt 0 -or $opacity -gt 1) {
+        throw 'Gradient stop opacity must be between 0 and 1.'
+    }
+    return [Drawing.Color]::FromArgb([int][Math]::Round(255*$opacity),$color)
+}
 function PaintBrush([string]$paint) {
     $match=[regex]::Match($paint,'^url\(#([A-Za-z][A-Za-z0-9_-]*)\)$')
     if(-not $match.Success) {
@@ -20,14 +28,25 @@ function PaintBrush([string]$paint) {
         throw "Unsupported icon gradient: $gradientId"
     }
     $stops=@($gradient.ChildNodes | Where-Object { $_ -is [Xml.XmlElement] -and $_.LocalName -eq 'stop' })
-    if($stops.Count -ne 2 -or $stops[0].GetAttribute('offset') -ne '0' -or $stops[1].GetAttribute('offset') -ne '1') {
-        throw 'Icon gradients require two endpoint stops.'
+    if($stops.Count -lt 2) { throw 'Icon gradients require at least two stops.' }
+    $positions=[single[]]@($stops | ForEach-Object { Number ($_.GetAttribute('offset')) })
+    if($positions[0] -ne 0 -or $positions[-1] -ne 1) {
+        throw 'Icon gradients must span from 0 to 1.'
     }
+    for($index=1; $index -lt $positions.Length; $index++) {
+        if([single]::IsNaN($positions[$index]) -or $positions[$index] -le $positions[$index-1]) {
+            throw 'Gradient stops must be ordered from 0 to 1.'
+        }
+    }
+    $colors=[Drawing.Color[]]@($stops | ForEach-Object { StopColor $_ })
     $start=[Drawing.PointF]::new((Number $gradient.GetAttribute('x1')),(Number $gradient.GetAttribute('y1')))
     $end=[Drawing.PointF]::new((Number $gradient.GetAttribute('x2')),(Number $gradient.GetAttribute('y2')))
     $brush=[Drawing.Drawing2D.LinearGradientBrush]::new($start,$end,
-        [Drawing.ColorTranslator]::FromHtml($stops[0].GetAttribute('stop-color')),
-        [Drawing.ColorTranslator]::FromHtml($stops[1].GetAttribute('stop-color')))
+        $colors[0],$colors[-1])
+    $blend=[Drawing.Drawing2D.ColorBlend]::new($stops.Count)
+    $blend.Positions=$positions
+    $blend.Colors=$colors
+    $brush.InterpolationColors=$blend
     $brush.WrapMode=[Drawing.Drawing2D.WrapMode]::TileFlipXY
     return ,$brush
 }
