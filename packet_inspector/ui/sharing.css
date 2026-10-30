@@ -36,11 +36,11 @@
 .sharing-chart text{font-size:11px;fill:var(--muted)}
 .sharing-table-scroll{overflow-x:auto;scrollbar-gutter:stable}.sharing-table{width:100%;border-collapse:collapse;font-size:12px;table-layout:auto}
 .sharing-table th{font-weight:500;text-align:left;font-size:11px;color:var(--muted);padding:0 9px 12px;border-bottom:1px solid var(--line);white-space:nowrap}
-.sharing-table td{padding:14px 9px;border-bottom:1px solid var(--line);vertical-align:middle;font-variant-numeric:tabular-nums}
-.sharing-table th:first-child,.sharing-table td:first-child{padding-left:0}.sharing-table td:first-child{max-width:180px;overflow-wrap:anywhere}
-.sharing-table td strong{font-weight:600;font-size:12px}.sharing-table td small{display:block;color:var(--muted);font-size:11px;margin-top:5px}
-.sharing-table tr.current td:first-child strong{color:var(--accent)}.sharing-row-actions{gap:4px;min-width:115px;max-width:170px}
-.sharing-row-actions button{padding:3px 6px;min-height:25px;font-size:11px;background:transparent}.sharing-row-actions button:hover{background:var(--bg)}
+.sharing-table td{padding:10px 9px;border-bottom:1px solid var(--line);vertical-align:middle;white-space:nowrap;overflow-wrap:normal;line-height:1.4;font-variant-numeric:tabular-nums}
+.sharing-table th:first-child,.sharing-table td:first-child{padding-left:0}
+.sharing-table td strong{display:inline-block;max-width:160px;overflow:hidden;text-overflow:ellipsis;vertical-align:middle;font-weight:600;font-size:12px}.sharing-table td small{display:inline;color:var(--muted);font-size:11px}.sharing-row-status{margin-left:8px}
+.sharing-table tr.current td:first-child strong{color:var(--accent)}.sharing-row-actions{gap:4px;flex-wrap:nowrap}
+.sharing-row-actions button{flex:none;padding:3px 6px;min-height:25px;font-size:11px;background:transparent}.sharing-row-actions button:hover{background:var(--bg)}
 .sharing-empty{text-align:center;color:var(--muted);padding:32px 10px;font-size:13px}
 .sharing-message{box-sizing:border-box;margin:0 0 var(--view-inset,12px);padding:10px 14px;border:1px solid var(--line);border-radius:7px;background:var(--panel);font-size:13px;line-height:1.6}
 .sharing-message.error{color:var(--danger);border-color:var(--danger)}
