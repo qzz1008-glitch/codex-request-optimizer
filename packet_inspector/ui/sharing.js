@@ -42,10 +42,17 @@ globalThis.InspectorSharing=(()=>{
   function expiryTime(value,original){if(Number.isFinite(original)&&value===localDate(original*1000))return original;const n=value?new Date(value).getTime()/1000:NaN;if(!Number.isFinite(n)||n<Date.now()/1000+86400)throw new Error(tr("期限至少为一天，也可选择无期限。"));return n;}
   function expiry(id){return get(id).dataset.unlimited==="true"?null:expiryTime(get(id).value);}
   function budget(id){const value=get(id).value,n=Number(value);if(!Number.isFinite(n)||n<1||n>1000000)throw new Error(tr("额度应为 1 到 1,000,000 美元。"));return value;}
+  function credentialName(kind,value,identifier=null){
+    const name=String(value??"").trim();
+    if(!name||name.length>80)throw new Error(tr("名称应为 1 到 80 个字符。"));
+    const original=(current?.credentials||[]).find(row=>row.id===identifier);
+    if(name!==original?.label&&(current?.credentials||[]).some(row=>row.kind===kind&&!row.internal&&row.id!==identifier&&String(row.label??"").trim().toLowerCase()===name.toLowerCase()))throw new Error(tr("同类型凭据名称已存在，请使用其他名称。"));
+    return name;
+  }
   async function request(data,signal){
     const response=await fetch("/api/sharing",{method:data?"POST":"GET",cache:"no-store",headers:data?{"Content-Type":"application/json"}:{},body:data?JSON.stringify(data):undefined,signal});
     if(response.status===404)throw new Error(tr("当前后台不支持共享，请更新软件后使用。"));
-    const result=await response.json();if(!response.ok)throw new Error(tr(result.error||"共享操作失败。"));return result;
+    const result=await response.json();if(!response.ok){if(data?.action==="credential_delete"&&result.error==="invalid sharing action")throw new Error(tr("当前后台不支持删除凭据，请更新软件后重试。"));throw new Error(tr(result.error||"共享操作失败。"));}return result;
   }
   function shownRows(kind){return (current?.credentials||[]).filter(row=>row.kind===kind&&row.direction===views[kind]&&!row.internal);}
   function data(row){return row.direction==="in"?(row.snapshot||{}):row;}
@@ -115,7 +122,7 @@ globalThis.InspectorSharing=(()=>{
     if(busy||!["label","budget","expires_at"].includes(field)||(row.direction!=="out"&&field!=="label")||(field==="budget"&&row.kind!=="quota"))return;
     controller?.abort();closeInline(false);message("");
     const original=field==="label"?row.label:field==="budget"?row.budget_nanos/1e9:row.expires_at;
-    editing={id:row.id,field,original,anchor,target};anchor.setAttribute("aria-expanded","true");
+    editing={id:row.id,kind:row.kind,field,original,anchor,target};anchor.setAttribute("aria-expanded","true");
     const input=get("sharing-inline-value"),box=get("sharing-inline-editor"),isDate=field==="expires_at";
     input.type=isDate?"datetime-local":field==="budget"?"number":"text";input.maxLength=80;input.step=isDate?"60":"any";
     input.min=isDate?(!target&&Number.isFinite(original)?localDate(Math.min(original*1000,new Date(minimumExpiry()).getTime())):minimumExpiry()):field==="budget"?String(Math.min(original,1)):"";
@@ -134,7 +141,7 @@ globalThis.InspectorSharing=(()=>{
     const draft=editing,input=get("sharing-inline-value");
     try{
       let value;
-      if(draft.field==="label"){value=input.value.trim();if(!value||value.length>80)throw new Error(tr("名称应为 1 到 80 个字符。"));}
+      if(draft.field==="label")value=credentialName(draft.kind,input.value,draft.id);
       else if(draft.field==="budget")value=Number(input.value)===draft.original?draft.original:budget("sharing-inline-value");
       else value=unlimited?null:expiryTime(input.value,draft.target?undefined:draft.original);
       if(draft.target){setExpiry(draft.target,value===null?null:localDate(value*1000));closeInline();return;}
@@ -175,7 +182,7 @@ globalThis.InspectorSharing=(()=>{
   });
   async function copy(value,key){try{await navigator.clipboard.writeText(value);copiedKey=key;copyTimer=setTimeout(clearCopied,1800);message("");}catch(_){message("复制失败，请点击右侧“凭据”重试。",true);}}
   for(const kind of ["quota","exit"]){
-    get(kind+"-issue").addEventListener("submit",async event=>{event.preventDefault();try{const result=await action(get(kind+"-generate"),{action:"credential_issue",kind,label:get(kind+"-label").value.trim(),expires_at:expiry(kind+"-expiry"),...(kind==="quota"?{budget:budget("quota-budget"),weekly_reset:get("quota-weekly").checked}:{})},null);if(result)resetIssue(kind);}catch(error){message(error.message,true);}});
+    get(kind+"-issue").addEventListener("submit",async event=>{event.preventDefault();try{const result=await action(get(kind+"-generate"),{action:"credential_issue",kind,label:credentialName(kind,get(kind+"-label").value),expires_at:expiry(kind+"-expiry"),...(kind==="quota"?{budget:budget("quota-budget"),weekly_reset:get("quota-weekly").checked}:{})},null);if(result)resetIssue(kind);}catch(error){message(error.message,true);}});
     get(kind+"-borrow").addEventListener("submit",async event=>{event.preventDefault();const result=await action(get(kind+"-activate"),{action:"credential_use",kind,label:get(kind+"-borrow-label").value.trim(),link:get(kind+"-borrow-link").value.trim()});if(result)get(kind+"-borrow-link").value="";});
   }
   get("sharing-cards").addEventListener("click",async event=>{const button=event.target.closest("[data-view],[data-action]");if(!button||busy)return;const {kind,view,action:command}=button.dataset;

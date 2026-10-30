@@ -567,6 +567,27 @@ class LANSharingTests(unittest.TestCase):
             status, _ = self.local_api("/api/sharing", {"action": "credential_issue", "kind": "quota", "label": "second"})
             self.assertEqual(status, 200, "Deleting a credential releases its name")
 
+    def test_exit_credential_api_rejects_duplicate_names_and_releases_deleted_names(self):
+        with patch("packet_inspector.shared_egress.automatic_address", return_value="127.0.0.1"):
+            status, first = self.local_api("/api/sharing", {"action": "credential_issue", "kind": "exit", "label": "test"})
+            self.assertEqual(status, 200)
+            self.local_api("/api/sharing", {"action": "credential_edit", "id": first["issued_id"], "enabled": False})
+            status, duplicate = self.local_api("/api/sharing", {"action": "credential_issue", "kind": "exit", "label": " TEST "})
+            self.assertEqual(status, 400)
+            self.assertIn("同类型凭据名称已存在", duplicate["error"])
+            status, other = self.local_api("/api/sharing", {"action": "credential_issue", "kind": "exit", "label": "other"})
+            self.assertEqual(status, 200)
+            before = self.owner.sharing.vault.rows()
+            status, duplicate = self.local_api("/api/sharing", {"action": "credential_edit", "id": other["issued_id"], "label": "test"})
+            self.assertEqual(status, 400)
+            self.assertIn("同类型凭据名称已存在", duplicate["error"])
+            self.assertEqual(self.owner.sharing.vault.rows(), before)
+            status, deleted = self.local_api("/api/sharing", {"action": "credential_delete", "id": first["issued_id"]})
+            self.assertEqual(status, 200)
+            self.assertEqual([row["id"] for row in deleted["credentials"]], [other["issued_id"]])
+            status, _ = self.local_api("/api/sharing", {"action": "credential_issue", "kind": "exit", "label": "test"})
+            self.assertEqual(status, 200, "A deleted exit credential no longer reserves its name")
+
     def test_deleting_outgoing_exit_preserves_other_grants_and_internal_callback(self):
         with patch("packet_inspector.shared_egress.automatic_address", return_value="127.0.0.1"):
             _, first = self.local_api("/api/sharing", {"action": "credential_issue", "kind": "exit", "label": "first"})
