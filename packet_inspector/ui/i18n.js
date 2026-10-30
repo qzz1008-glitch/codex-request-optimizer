@@ -19,6 +19,7 @@ const uiI18n = (() => {
     "期限":"Expiry",
     "一周":"One week",
     "无期限":"No expiry",
+    "设为无期限":"Set no expiry",
     "指定时间":"Set time",
     "确定":"Confirm",
     "每周刷新额度":"Reset budget weekly",
