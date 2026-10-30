@@ -1,4 +1,4 @@
-"""Move inline user images out of the upstream main request, never into its text."""
+"""Replace inline request images with paths in the upstream main request."""
 import base64
 import binascii
 import hashlib
@@ -188,29 +188,39 @@ class ImageIsolation:
         images_removed = 0
         if isinstance(inputs, list):
             for i, item in enumerate(inputs):
-                if not isinstance(item, dict) or item.get("role") != "user":
+                if not isinstance(item, dict):
                     continue
-                if isinstance(item.get("content"), str):
-                    rewrite_text(item["content"], f"/input/{i}/content")
+                if item.get("role") == "user":
+                    field = "content"
+                elif item.get("type") in {"function_call_output", "custom_tool_call_output"}:
+                    field = "output"
+                else:
                     continue
-                if not isinstance(item.get("content"), list):
+                pointer = f"/input/{i}/{field}"
+                parts = item.get(field)
+                if isinstance(parts, str):
+                    if field == "content":
+                        rewrite_text(parts, pointer)
                     continue
-                for j, part in enumerate(item["content"]):
+                if not isinstance(parts, list):
+                    continue
+                for j, part in enumerate(parts):
                     if not isinstance(part, dict):
                         continue
                     if part.get("type") != "input_image":
-                        rewrite_text(part.get("text"), f"/input/{i}/content/{j}/text")
+                        if field == "content":
+                            rewrite_text(part.get("text"), f"{pointer}/{j}/text")
                         continue
                     if part.get("file_id"):
                         raise ImageIsolationFailure("image_reference_unsupported", "图片文件 ID 无法转换成本地路径，原图未转发。")
                     image_path = self._store(part.get("image_url"), protected)
                     text = str(image_path)
                     index = index or JsonBytes(decoded)
-                    a, b = index.spans[f"/input/{i}/content/{j}"]
+                    a, b = index.spans[f"{pointer}/{j}"]
                     replacements.append((a, b, encode({"type": "input_text", "text": text})))
                     images_removed += 1
                     # Mark only the local parsed copy, to check for unsupported image locations.
-                    item["content"][j] = {"type": "input_text", "text": text}
+                    parts[j] = {"type": "input_text", "text": text}
         def has_image(value):
             if isinstance(value, dict):
                 return value.get("type") == "input_image" or any(has_image(v) for v in value.values())

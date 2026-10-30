@@ -47,6 +47,19 @@ def request_body():
         {"role": "user", "content": [{"type": "input_text", "text": "Read the error in this image."}, image_part()]}]}
 
 
+def tool_image_body(custom=False):
+    body = request_body()
+    body["input"].extend([
+        {"type": "custom_tool_call" if custom else "function_call", "id": "tool-call",
+         "call_id": "image-call", "name": "exec" if custom else "image_tool",
+         "input" if custom else "arguments": "original tool input"},
+        {"type": "custom_tool_call_output" if custom else "function_call_output", "id": "tool-output",
+         "call_id": "image-call", "output": [
+             {"type": "input_text", "text": "Original tool result.", "extra": "preserve"}, image_part()],
+         "internal_chat_message_metadata_passthrough": {"original": True}}])
+    return body
+
+
 class ImageCliDiscoveryTests(unittest.TestCase):
     def test_configured_cli_takes_priority(self):
         with patch.dict(os.environ, {"CODEX_CLI_PATH": "environment-cli"}), patch(
@@ -451,7 +464,7 @@ class ImageRewriteTests(unittest.TestCase):
         self.assertEqual(metrics["image_paths"], [str(attachments[0].resolve())])
 
     def test_rewrites_all_encodings_and_preserves_unrelated_original_bytes(self):
-        raw = b' { "extra" : "\\u0061", "encrypted_content" : "EXACT\\nbytes", "input":' + encode(request_body()["input"]) + b' } '
+        raw = b' { "extra" : "\\u0061", "encrypted_content" : "EXACT\\nbytes", "input":' + encode(tool_image_body(custom=True)["input"]) + b' } '
         for coding, source in (("identity", raw), ("gzip", gzip.compress(raw)),
                                ("zstd", zstandard.ZstdCompressor().compress(raw))):
             for mode in ("off", "zstd"):
@@ -461,6 +474,29 @@ class ImageRewriteTests(unittest.TestCase):
                     self.assertTrue(decoded.startswith(b' { "extra" : "\\u0061", "encrypted_content" : "EXACT\\nbytes",'))
                     self.assertTrue(decoded.endswith(b' } '))
                     self.assertNotIn("input_image", decoded.decode())
+
+    def test_tool_result_images_become_paths_without_changing_calls_or_other_content(self):
+        for custom in (False, True):
+            with self.subTest(custom=custom):
+                body = tool_image_body(custom)
+                original = deepcopy(body)
+                wire, coding, metrics = self.isolation.prepare(encode(body), {}, "/responses", "off")
+                result = json.loads(decode_body(wire, coding))
+                reference = result["input"][2]["content"][1]
+                expected = deepcopy(original)
+                expected["input"][2]["content"][1] = reference
+                expected["input"][-1]["output"][1] = reference
+                self.assertEqual(result, expected)
+                self.assertEqual(body, original)
+                self.assertEqual(reference["type"], "input_text")
+                self.assertTrue(Path(reference["text"]).is_file())
+                self.assertEqual(metrics["image_isolation_removed"], 2)
+                self.assertEqual(len(list(self.isolation.directory.glob("*.png"))), 1)
+
+    def test_text_tool_results_remain_byte_transparent(self):
+        for output in ("original text", [{"type": "input_text", "text": "original text"}]):
+            raw = encode({"input": [{"type": "custom_tool_call_output", "call_id": "original", "output": output}]})
+            self.assertIsNone(self.isolation.prepare(raw, {}, "/responses", "off"))
 
     def test_plain_request_is_byte_transparent(self):
         raw = b' { "input" : [{"role":"user","content":"Just text"}] } '
@@ -483,11 +519,12 @@ class ImageRewriteTests(unittest.TestCase):
         invalid = [{"type": "input_image", "image_url": "https://invalid.example/image.png"},
                    {"type": "input_image", "file_id": "file-test"},
                    {"type": "input_image", "image_url": "data:image/png;base64,AAAA"}]
-        for part in invalid:
-            body = request_body()
-            body["input"][-1]["content"][1] = part
-            with self.subTest(part=list(part)), self.assertRaises(ImageIsolationFailure):
-                self.isolation.prepare(encode(body), {}, "/responses", "off")
+        for location in ("user", "function", "custom"):
+            for part in invalid:
+                body = request_body() if location == "user" else tool_image_body(location == "custom")
+                body["input"][-1]["content" if location == "user" else "output"][1] = part
+                with self.subTest(location=location, part=list(part)), self.assertRaises(ImageIsolationFailure):
+                    self.isolation.prepare(encode(body), {}, "/responses", "off")
 
     def test_server_side_context_and_unknown_image_location_are_rejected(self):
         body = request_body()
@@ -495,7 +532,10 @@ class ImageRewriteTests(unittest.TestCase):
         with self.assertRaises(ImageIsolationFailure):
             self.isolation.prepare(encode(body), {}, "/responses", "off")
         with self.assertRaises(ImageIsolationFailure):
-            self.isolation.prepare(encode({"input": [{"type": "function_call_output", "output": [image_part()]}]}), {}, "/responses", "off")
+            self.isolation.prepare(encode({"input": [{"type": "unknown_result", "output": [image_part()]}]}), {}, "/responses", "off")
+        with self.assertRaises(ImageIsolationFailure):
+            self.isolation.prepare(encode({"input": [{"type": "custom_tool_call_output", "output": [
+                {"type": "unknown_wrapper", "content": [image_part()]}]}]}), {}, "/responses", "off")
 
     def test_cache_budget_does_not_silently_restore_image(self):
         with patch("packet_inspector.image_isolation.MAX_ATTACHMENTS_BYTES", 1), self.assertRaises(ImageIsolationFailure) as caught:
@@ -587,6 +627,28 @@ class ImageRelayTests(unittest.TestCase):
         meta, inbound = self.latest()
         self.assertEqual(meta["image_isolation_removed"], 1)
         self.assertEqual(inbound["body"]["input"][-1]["content"][1]["type"], "input_image")
+
+    def test_tool_images_are_rewritten_before_forwarding_and_in_later_history(self):
+        self.enable()
+        for custom in (False, True):
+            body = tool_image_body(custom)
+            for followup in (False, True):
+                if followup:
+                    body["input"].append({"role": "user", "content": "Continue using the earlier tool result."})
+                with self.subTest(custom=custom, followup=followup):
+                    self.assertEqual(self.relay(encode(body))[0], 200)
+                    outgoing = self.up.requests[-1]
+                    coding = next((v for k, v in outgoing["headers"].items() if k.lower() == "content-encoding"), "identity")
+                    decoded = decode_body(outgoing["body"], coding)
+                    result = json.loads(decoded)
+                    self.assertNotIn("input_image", decoded.decode())
+                    self.assertEqual(result["input"][3], body["input"][3])
+                    self.assertEqual(result["input"][4]["call_id"], "image-call")
+                    self.assertEqual(result["input"][4]["output"][0], body["input"][4]["output"][0])
+                    self.assertEqual(result["input"][4]["output"][1], result["input"][2]["content"][1])
+                    meta, inbound = self.latest()
+                    self.assertEqual(meta["image_isolation_removed"], 2)
+                    self.assertEqual(inbound["body"]["input"][4]["output"][1]["type"], "input_image")
 
     def test_isolated_worker_keeps_image_and_private_header_is_removed(self):
         self.enable()
