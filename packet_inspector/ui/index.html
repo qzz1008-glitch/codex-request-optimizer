@@ -101,23 +101,21 @@
     <p id="sharing-message" class="sharing-message" role="status" hidden></p>
     <div id="sharing-cards" class="sharing-layout">
       <section class="sharing-section" aria-labelledby="quota-section-title">
-        <header class="sharing-section-header"><h2 id="quota-section-title">额度</h2><div class="sharing-switch" role="group" aria-labelledby="quota-section-title"><button type="button" data-view="out" data-kind="quota" aria-pressed="true">借出</button><button type="button" data-view="in" data-kind="quota" aria-pressed="false">借入</button></div></header>
+        <header class="sharing-section-header"><h2 id="quota-section-title" tabindex="-1">额度</h2><span id="quota-credential-count" class="sharing-credential-count"></span><div class="sharing-switch" role="group" aria-labelledby="quota-section-title"><button type="button" data-view="out" data-kind="quota" aria-pressed="true">借出</button><button type="button" data-view="in" data-kind="quota" aria-pressed="false">借入</button></div></header>
         <div class="sharing-section-body">
           <aside id="quota-config" class="sharing-config" aria-labelledby="quota-section-title"></aside>
-          <section class="sharing-statistics" aria-labelledby="quota-list-title">
-            <header class="sharing-stat-header"><h2 id="quota-list-title" tabindex="-1">额度凭据</h2><span id="quota-credential-count" class="sharing-credential-count"></span></header>
-            <div class="sharing-table-scroll"><table class="sharing-table"><thead id="quota-table-head"></thead><tbody id="quota-credential-rows"></tbody></table><p id="quota-empty" class="sharing-empty">暂无凭据</p></div>
-          </section>
+          <div class="sharing-statistics">
+            <div class="sharing-table-scroll"><table class="sharing-table" aria-labelledby="quota-section-title"><thead id="quota-table-head"></thead><tbody id="quota-credential-rows"></tbody></table><p id="quota-empty" class="sharing-empty">暂无凭据</p></div>
+          </div>
         </div>
       </section>
       <section class="sharing-section" aria-labelledby="exit-section-title">
-        <header class="sharing-section-header"><h2 id="exit-section-title">出口</h2><div class="sharing-switch" role="group" aria-labelledby="exit-section-title"><button type="button" data-view="out" data-kind="exit" aria-pressed="true">借出</button><button type="button" data-view="in" data-kind="exit" aria-pressed="false">借入</button></div></header>
+        <header class="sharing-section-header"><h2 id="exit-section-title" tabindex="-1">出口</h2><span id="exit-credential-count" class="sharing-credential-count"></span><div class="sharing-switch" role="group" aria-labelledby="exit-section-title"><button type="button" data-view="out" data-kind="exit" aria-pressed="true">借出</button><button type="button" data-view="in" data-kind="exit" aria-pressed="false">借入</button></div></header>
         <div class="sharing-section-body">
           <aside id="exit-config" class="sharing-config" aria-labelledby="exit-section-title"></aside>
-          <section class="sharing-statistics" aria-labelledby="exit-list-title">
-            <header class="sharing-stat-header"><h2 id="exit-list-title" tabindex="-1">出口凭据</h2><span id="exit-credential-count" class="sharing-credential-count"></span></header>
-            <div class="sharing-table-scroll"><table class="sharing-table"><thead id="exit-table-head"></thead><tbody id="exit-credential-rows"></tbody></table><p id="exit-empty" class="sharing-empty">暂无凭据</p></div>
-          </section>
+          <div class="sharing-statistics">
+            <div class="sharing-table-scroll"><table class="sharing-table" aria-labelledby="exit-section-title"><thead id="exit-table-head"></thead><tbody id="exit-credential-rows"></tbody></table><p id="exit-empty" class="sharing-empty">暂无凭据</p></div>
+          </div>
         </div>
       </section>
     </div>

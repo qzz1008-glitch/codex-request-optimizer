@@ -77,9 +77,8 @@ globalThis.InspectorSharing=(()=>{
   }
   function renderList(kind){
     const rows=shownRows(kind),quota=kind==="quota";
-    get(kind+"-list-title").textContent=tr(quota?"额度凭据":"出口凭据");
     get(kind+"-credential-count").textContent=number(rows.length);
-    get(kind+"-table-head").innerHTML=`<tr>${(quota?["名称","已用 / 额度","本周 / 累计用量","期限","状态","操作"]:["名称","上传 / 下载流量","连接次数","期限","状态","操作"]).map(value=>`<th>${label(value)}</th>`).join("")}</tr>`;
+    get(kind+"-table-head").innerHTML=`<tr>${(quota?["凭据名称","已用 / 额度","本周 / 累计用量","期限","状态","操作"]:["凭据名称","上传 / 下载流量","连接次数","期限","状态","操作"]).map(value=>`<th>${label(value)}</th>`).join("")}</tr>`;
     get(kind+"-credential-rows").innerHTML=rows.map(row=>{const d=data(row),out=row.direction==="out";
       return `<tr class="${isActive(row)?"current":""}"><td>${fieldValue(row,"label",`<strong title="${esc(row.label)}">${esc(row.label)}</strong>`)}<small class="sharing-direction">${label(out?"借出":"借入")}</small></td><td>${quota?quotaUsage(row):`${esc(bytes(d.totals?.sent_bytes))}<small> / ${esc(bytes(d.totals?.received_bytes))}</small>`}</td><td>${esc(quota?money(d.week_cost_nanos,[row]):number(d.totals?.requests))}${quota?`<small> / ${esc(money(d.totals?.cost_nanos,[row]))}</small>`:""}</td><td><span class="sharing-expiry-cell">${fieldValue(row,"expires_at",esc(d.expires_at===undefined?"—":date(d.expires_at)))}${quota?weeklyValue(row):""}</span></td><td class="sharing-row-status">${out?`<button type="button" class="sharing-cell-value" data-action="toggle" data-id="${row.id}" title="${label(lending(row)?"停用":"启用")}">${label(status(row))}</button>`:label(status(row))}</td><td><div class="sharing-row-actions">${out?`<button type="button" class="sharing-copy-button" data-action="copy" data-id="${row.id}" data-copied="${copiedKey===row.id}" title="${label("复制凭据")}" aria-label="${label("复制凭据")}">${copyCaption("凭据")}</button>${quota?`<button type="button" data-action="reset" data-id="${row.id}">${label("重置")}</button>`:""}`:`<button type="button" data-action="use" data-id="${row.id}" ${isActive(row)?"disabled":""}>${label(isActive(row)?"使用中":"使用")}</button>`}<button type="button" class="sharing-row-delete" data-action="delete" data-id="${row.id}" title="${label("删除凭据")}">${label("删除")}</button></div></td></tr>`;
     }).join("");
@@ -172,7 +171,7 @@ globalThis.InspectorSharing=(()=>{
   function closeDelete(renderNow=true){
     if(!deleting)return;
     const draft=deleting;deleting=null;get("sharing-delete-dialog").close();get("sharing-delete-message").hidden=true;
-    if(renderNow&&current){render(current);const target=get("sharing-cards").querySelector(`[data-action="delete"][data-id="${draft.id}"]`)||get(draft.kind+"-credential-rows").querySelector("[data-action=delete]")||get(draft.kind+"-list-title");target.focus();}
+    if(renderNow&&current){render(current);const target=get("sharing-cards").querySelector(`[data-action="delete"][data-id="${draft.id}"]`)||get(draft.kind+"-credential-rows").querySelector("[data-action=delete]")||get(draft.kind+"-section-title");target.focus();}
   }
   get("sharing-delete-cancel").addEventListener("click",()=>{if(!busy)closeDelete();});
   get("sharing-delete-dialog").addEventListener("cancel",event=>{event.preventDefault();if(!busy)closeDelete();});
