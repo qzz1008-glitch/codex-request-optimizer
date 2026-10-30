@@ -60,6 +60,8 @@ const uiI18n = (() => {
     "连接次数":"Connections",
     "凭据":"Credential",
     "凭据类型":"Credential type",
+    "额度凭据":"Quota credentials",
+    "出口凭据":"Exit credentials",
     "同类型凭据名称已存在，请使用其他名称。":"A credential of this type already has that name. Choose another name.",
     "请输入凭据名称。":"Enter a credential name.",
     "本期 / 额度":"Period / budget",

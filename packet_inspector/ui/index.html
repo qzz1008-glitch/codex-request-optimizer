@@ -101,14 +101,18 @@
     <p id="sharing-message" class="sharing-message" role="status" hidden></p>
     <div id="sharing-cards" class="sharing-layout">
       <aside id="sharing-config" class="sharing-config" aria-label="共享配置"></aside>
-      <section class="sharing-statistics" aria-labelledby="sharing-stat-title">
-        <header class="sharing-stat-header"><h2 id="sharing-stat-title">额度 · 借出</h2><span id="sharing-stat-count"></span></header>
-        <div id="sharing-summary" class="sharing-summary"></div>
-        <div id="sharing-chart" class="sharing-chart" aria-label="最近用量统计"></div>
-        <div class="sharing-table-scroll"><table class="sharing-table"><thead id="sharing-table-head"></thead><tbody id="sharing-credential-rows"></tbody></table></div>
-        <p id="sharing-empty" class="sharing-empty">暂无凭据</p>
-        <p id="sharing-stat-note" class="sharing-stat-note"></p>
-      </section>
+      <div id="sharing-lists" class="sharing-lists">
+        <section class="sharing-statistics" aria-labelledby="quota-list-title">
+          <header class="sharing-stat-header"><h2 id="quota-list-title">额度凭据</h2><span id="quota-credential-count" class="sharing-credential-count"></span></header>
+          <div class="sharing-table-scroll"><table class="sharing-table"><thead id="quota-table-head"></thead><tbody id="quota-credential-rows"></tbody></table><p id="quota-empty" class="sharing-empty">暂无凭据</p></div>
+          <p id="quota-stat-note" class="sharing-stat-note"></p>
+        </section>
+        <section class="sharing-statistics" aria-labelledby="exit-list-title">
+          <header class="sharing-stat-header"><h2 id="exit-list-title">出口凭据</h2><span id="exit-credential-count" class="sharing-credential-count"></span></header>
+          <div class="sharing-table-scroll"><table class="sharing-table"><thead id="exit-table-head"></thead><tbody id="exit-credential-rows"></tbody></table><p id="exit-empty" class="sharing-empty">暂无凭据</p></div>
+          <p id="exit-stat-note" class="sharing-stat-note"></p>
+        </section>
+      </div>
     </div>
     <div id="sharing-link-area" class="sharing-issued" hidden><label for="sharing-link">新凭据</label><input id="sharing-link" type="text" readonly spellcheck="false"><button id="sharing-copy" type="button">复制凭据</button><button id="sharing-link-close" type="button" aria-label="关闭">×</button></div>
     <dialog id="sharing-credential-dialog" aria-labelledby="credential-edit-title">
