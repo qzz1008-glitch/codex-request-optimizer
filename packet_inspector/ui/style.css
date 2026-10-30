@@ -238,7 +238,7 @@ code.session-id{font-family:Consolas,"Cascadia Mono",monospace;font-size:11px;wo
 /* Settings share one type scale, label column and control size. */
 #settings-dialog{
   --muted:#526174;
-  --settings-label-width:200px;
+  --settings-label-width:180px;
   --settings-inline-label-width:184px;
   --settings-number-width:128px;
   --settings-context-width:152px;
