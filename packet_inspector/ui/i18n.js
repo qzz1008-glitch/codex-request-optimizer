@@ -57,6 +57,7 @@ const uiI18n = (() => {
     "累计下载":"Total downloaded",
     "连接次数":"Connections",
     "凭据":"Credential",
+    "凭据类型":"Credential type",
     "本期 / 额度":"Period / budget",
     "本周 / 累计":"Week / all time",
     "上传 / 下载":"Upload / download",
