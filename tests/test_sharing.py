@@ -1,6 +1,7 @@
 """Isolated LAN fixtures: dummy authorization, no real models or native config."""
 import base64
 import http.client
+import io
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 from pathlib import Path
@@ -24,6 +25,7 @@ from packet_inspector.server import InspectorServer
 from packet_inspector.sharing import SharingError, parse_link, pinned_opener, forwarding_headers
 from packet_inspector.sharing_auth import NativeAuthorization
 from packet_inspector.sharing_config import SharedProvider, SHARED_PROVIDER
+from packet_inspector.sharing_role import MachineSharingRole
 from tests.relay_fixture import HTTP_TIMEOUT, wait_for_idle
 
 
@@ -103,6 +105,55 @@ class ConfigurationTests(unittest.TestCase):
         self.assertEqual(self.config.read_bytes(), original)
 
 
+    def test_active_and_image_profiles_share_the_connection_and_restore_only_owned_fields(self):
+        self.config.write_text('profile="work"\nmodel_provider="root"\n[profiles.work]\nmodel_provider="work-old"\n'
+                               '[profiles.isolated-vision]\nmodel_provider="image-old"\n')
+        layer = self.root / 'isolated-vision.config.toml'
+        layer.write_text('model_provider="image-external"\nmodel="keep"\n'
+                         '[profiles.isolated-vision]\nmodel_provider="image-inline"\n')
+        active = self.root / 'work.config.toml'
+        active.write_text('model_provider="external-work"\n')
+        self.shared.activate('http://127.0.0.1:47844/relay/local/sharing/client')
+        for path in (self.config, layer, active):
+            data = tomllib.loads(path.read_text())
+            self.assertEqual(data['model_provider'], SHARED_PROVIDER)
+            for values in data.get('profiles', {}).values():
+                self.assertEqual(values['model_provider'], SHARED_PROVIDER)
+        layer.write_text(layer.read_text().replace('model="keep"', 'model="changed"'))
+        active.write_text('model_provider="user-new-choice"\n')
+        self.shared.restore()
+        data = tomllib.loads(self.config.read_text())
+        self.assertEqual(data['model_provider'], 'root')
+        self.assertEqual(data['profiles']['isolated-vision']['model_provider'], 'image-old')
+        restored = tomllib.loads(layer.read_text())
+        self.assertEqual(restored['model_provider'], 'image-external')
+        self.assertEqual(restored['profiles']['isolated-vision']['model_provider'], 'image-inline')
+        self.assertEqual(restored['model'], 'changed')
+        self.assertEqual(tomllib.loads(active.read_text())['model_provider'], 'user-new-choice')
+
+    def test_multifile_activation_failure_rolls_back_and_legacy_recovery_is_supported(self):
+        layer = self.root / 'isolated-vision.config.toml'
+        layer.write_text('model_provider="image"\n')
+        originals = {path: path.read_bytes() for path in (self.config, layer)}
+        write = ConfigLink._write
+        def fail_layer(link, text):
+            if link.config == layer:
+                raise OSError('dummy write failure')
+            return write(link, text)
+        with patch.object(ConfigLink, '_write', fail_layer), self.assertRaises(OSError):
+            self.shared.activate('http://127.0.0.1:47844/relay/local/sharing/client')
+        for path, original in originals.items():
+            self.assertEqual(path.read_bytes(), original)
+        layer.unlink()
+        self.shared.activate('http://127.0.0.1:47844/relay/local/sharing/client')
+        state = json.loads(self.shared.path.read_text())
+        state.pop('layers')
+        state.pop('profiles')
+        self.shared.path.write_text(json.dumps(state))
+        self.shared.restore()
+        self.assertEqual(tomllib.loads(self.config.read_text())['model_provider'], 'original')
+
+
 class AuthorizationTests(unittest.TestCase):
     def test_native_subprocess_protocol_uses_only_native_managed_authorization(self):
         dummy = token(time.time() + 3600)
@@ -164,6 +215,9 @@ class LANSharingTests(unittest.TestCase):
         self.release_stream = threading.Event()
         self.stream_started = threading.Event()
         self.gate_stream = False
+        self.direct_response = None
+        self.response_status = 200
+        self.extra_response_headers = {}
         fixture = self
 
         class Upstream(BaseHTTPRequestHandler):
@@ -173,10 +227,16 @@ class LANSharingTests(unittest.TestCase):
             def do_POST(self):
                 body = self.rfile.read(int(self.headers["Content-Length"]))
                 fixture.received.append((self.path, dict(self.headers), body))
-                self.send_response(200)
-                self.send_header("Content-Type", "text/event-stream")
+                self.send_response(fixture.response_status)
+                self.send_header("Content-Type", "application/json" if fixture.direct_response is not None else "text/event-stream")
                 self.send_header("Set-Cookie", "owner-cookie=never-forward")
+                for key, value in fixture.extra_response_headers.items():
+                    self.send_header(key, value)
                 self.end_headers()
+                if fixture.direct_response is not None:
+                    self.wfile.write(fixture.direct_response)
+                    self.wfile.flush()
+                    return
                 self.wfile.write(b'data: {"type":"response.output_text.delta","delta":"first"}\n\n')
                 self.wfile.flush()
                 fixture.stream_started.set()
@@ -210,7 +270,10 @@ class LANSharingTests(unittest.TestCase):
         root.mkdir()
         config = root / "config.toml"
         config.write_text('model="test"\n', encoding="utf8")
-        return InspectorServer(("127.0.0.1", 0), root / "data", config, self.target)
+        server = InspectorServer(("127.0.0.1", 0), root / "data", config, self.target)
+        # Owner and guest fixtures represent separate machines, even on one CI host.
+        server.sharing.role = MachineSharingRole('CodexSharingTest-' + secrets.token_hex(16))
+        return server
 
     def tearDown(self):
         self.release_stream.set()
@@ -310,6 +373,17 @@ class LANSharingTests(unittest.TestCase):
         self.assertEqual(self.guest.link.config.read_bytes(), original)
         self.assertIsNone(self.guest.sharing.remote)
 
+    def test_older_owner_protocol_is_rejected_before_changing_guest_configuration(self):
+        link = self.start()
+        original = self.guest.link.config.read_bytes()
+        with patch('packet_inspector.sharing.pinned_opener') as opener:
+            opener.return_value.open.return_value = io.BytesIO(b'{"protocol":1,"available":true}')
+            with self.assertRaisesRegex(SharingError, '协议不兼容'):
+                self.guest.sharing.connect(link)
+        self.assertEqual(self.guest.link.config.read_bytes(), original)
+        self.assertFalse(self.guest.sharing.provider.path.exists())
+        self.assertIsNone(self.guest.sharing.remote)
+
     def test_native_model_catalog_is_forwarded_without_using_model_request_limit(self):
         link = self.start(request_limit=1)
         status, body = self.remote_request(link, '/v1/models?client_version=test')
@@ -370,7 +444,155 @@ class LANSharingTests(unittest.TestCase):
                 from packet_inspector.analyzer import decode_body
                 self.assertEqual(decode_body(self.received[-1][2], encoding), expected)
         modes = [call.args[4] for call in prepare.call_args_list]
-        self.assertEqual(modes, ['zstd', 'off', 'zstd', 'off'])
+        self.assertEqual(modes, ['zstd', 'zstd'])
+
+    def test_host_usage_is_true_upstream_usage_before_guest_predictive_rewrite(self):
+        self.guest.sharing.connect(self.start())
+        self.guest.settings.update(packet_size_protection_enabled=True, budget_bytes=50001)
+        client, response, _ = self.request_guest()
+        try:
+            result = response.read()
+            self.assertIn(b'500000', result)
+        finally:
+            client.close()
+        wait_for_idle(self.guest)
+        usage = self.owner.sharing.status()['host']['usage']
+        self.assertEqual(usage['input_tokens'], 37)
+        self.assertEqual(usage['output_tokens'], 2)
+        self.assertEqual(usage['total_tokens'], 39)
+        self.assertEqual(usage['responses'], 1)
+        self.assertEqual(self.guest.store.list()[0]['reported_usage']['input_tokens'], 500000)
+
+    def test_shared_privacy_bypasses_host_capture_diagnostics_and_error_body_storage(self):
+        self.guest.sharing.connect(self.start())
+        self.response_status = 400
+        self.direct_response = b'{"error":{"message":"private-upstream-error-sentinel"}}'
+        self.owner.settings.update(capture_enabled=True, image_isolation_enabled=True,
+                                   packet_size_protection_enabled=True, capacity_retry_enabled=True)
+        with (patch.object(self.owner.store, 'add', side_effect=AssertionError('A captured B')),
+              patch.object(self.owner.retry_journal, 'begin', side_effect=AssertionError('A diagnosed B')),
+              patch.object(self.owner.network_diagnostics, 'request', side_effect=AssertionError('A traced B'))):
+            client, response, _ = self.request_guest(headers={'session_id': 'private-chat-sentinel'},
+                content='private-prompt-sentinel')
+            try:
+                self.assertEqual(response.status, 400)
+                self.assertEqual(response.read(), self.direct_response)
+            finally:
+                client.close()
+        wait_for_idle(self.guest)
+        self.assertEqual(self.owner.store.list(), [])
+        for path in self.owner.data_dir.rglob('*'):
+            if path.is_file():
+                stored = path.read_bytes()
+                for sentinel in (b'private-upstream-error-sentinel', b'private-chat-sentinel', b'private-prompt-sentinel'):
+                    self.assertNotIn(sentinel, stored, path.name)
+        deadline = time.monotonic() + 3
+        while not self.owner.sharing.status()['host']['usage']['missing_responses'] and time.monotonic() < deadline:
+            time.sleep(.01)
+        self.assertEqual(self.owner.sharing.status()['host']['usage']['missing_responses'], 1)
+
+    def test_compact_usage_counts_toward_token_limit_and_stop_preserves_only_totals(self):
+        link = self.start(token_limit=100)
+        self.direct_response = json.dumps({'usage': {'input_tokens': 90, 'output_tokens': 10, 'total_tokens': 100,
+            'input_tokens_details': {'cached_tokens': 60}}}).encode()
+        self.assertEqual(self.remote_request(link, '/v1/responses/compact', b'{}')[0], 200)
+        state = self.owner.sharing.status()['host']
+        self.assertEqual(state['usage']['total_tokens'], 100)
+        self.assertEqual(state['usage']['input_tokens'], 90)
+        self.assertEqual(state['usage']['cached_input_tokens'], 60)
+        self.assertEqual(self.remote_request(link, '/v1/responses', b'{}')[0], 403)
+        self.assertEqual(self.remote_request(link, '/v1/models')[0], 200)
+        self.assertEqual(len(self.received), 1)
+        self.owner.sharing.stop_host()
+        self.assertEqual(self.owner.sharing.status()['host']['usage']['total_tokens'], 100)
+        self.authorization = DummyAuthorization()
+        self.start()
+        self.assertEqual(self.owner.sharing.status()['host']['usage']['total_tokens'], 0)
+
+    def test_upstream_retry_after_reaches_guest_and_host_does_not_retry(self):
+        self.guest.sharing.connect(self.start())
+        self.response_status = 429
+        self.extra_response_headers = {'Retry-After': '196'}
+        self.direct_response = b'{"error":{"message":"Selected model is at capacity. Please try a different model."}}'
+        self.owner.settings.update(capacity_retry_enabled=True, capacity_retry_delay_seconds=99)
+        self.guest.settings.update(capacity_retry_enabled=True, capacity_retry_delay_seconds=30)
+        client, response, _ = self.request_guest()
+        try:
+            self.assertEqual(response.status, 429)
+            self.assertEqual(response.getheader('Retry-After'), '196')
+            self.assertIn(b'Retry-After', response.read())
+        finally:
+            client.close()
+        wait_for_idle(self.guest)
+        self.assertEqual(len(self.received), 1)
+        self.assertEqual(self.owner.sharing.status()['host']['requests'], 1)
+
+    def test_late_completion_does_not_pollute_a_new_sharing_session(self):
+        self.guest.sharing.connect(self.start())
+        self.gate_stream = True
+        client, response, _ = self.request_guest()
+        try:
+            first = response.read1(65536)
+            self.assertIn(b'"delta":"first"', first)
+            prior = self.owner.sharing.host
+            self.owner.sharing.stop_host()
+            self.authorization = DummyAuthorization()
+            self.start()
+            self.release_stream.set()
+            self.assertTrue((first + response.read()).endswith(self.completion))
+        finally:
+            self.release_stream.set()
+            client.close()
+        wait_for_idle(self.guest)
+        self.assertEqual(prior['usage']['total_tokens'], 39)
+        current = self.owner.sharing.status()['host']
+        self.assertEqual(current['usage']['total_tokens'], 0)
+        self.assertEqual(current['requests'], 0)
+
+    def test_token_limit_input_validation_occurs_before_native_authorization(self):
+        for value in (-1, True, 1.5, 1_000_000_000_001, '100'):
+            with self.subTest(value=value), self.assertRaises(SharingError):
+                self.start(token_limit=value)
+        self.assertEqual(self.authorization.calls, 0)
+
+    def test_lending_and_borrowing_are_mutually_exclusive_across_instances_on_one_machine(self):
+        self.guest.sharing.role = MachineSharingRole(self.owner.sharing.role.name)
+        original = self.guest.link.config.read_bytes()
+        link = self.start()
+        with self.assertRaisesRegex(SharingError, '本机已有实例'):
+            self.guest.sharing.connect(link)
+        self.assertEqual(self.guest.link.config.read_bytes(), original)
+        self.assertEqual(self.authorization.calls, 1)
+        self.owner.sharing.stop_host()
+        self.guest.sharing.role.acquire()  # Emulate B already borrowing on this same machine.
+        try:
+            with self.assertRaisesRegex(SharingError, '本机已有实例'):
+                self.start()
+            self.assertIsNone(self.owner.sharing.listener)
+            self.assertEqual(self.authorization.calls, 1)
+        finally:
+            self.guest.sharing.role.close()
+
+    def test_role_is_released_after_failed_start_and_failed_connection(self):
+        with patch.object(self.owner.sharing, '_host_upstream', side_effect=SharingError('dummy failure')):
+            with self.assertRaises(SharingError):
+                self.owner.sharing.start_host('127.0.0.1', free_port())
+        contender = MachineSharingRole(self.owner.sharing.role.name)
+        try:
+            contender.acquire()
+        finally:
+            contender.close()
+        link = self.start()
+        original = self.guest.link.config.read_bytes()
+        bad = link.rsplit('.', 1)[0] + '.' + '0' * 64
+        with self.assertRaises(SharingError):
+            self.guest.sharing.connect(bad)
+        contender = MachineSharingRole(self.guest.sharing.role.name)
+        try:
+            contender.acquire()
+        finally:
+            contender.close()
+        self.assertEqual(self.guest.link.config.read_bytes(), original)
 
     def test_stop_rejects_new_requests_without_truncating_started_stream(self):
         self.guest.sharing.connect(self.start())

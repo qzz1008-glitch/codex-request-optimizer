@@ -98,27 +98,36 @@
     </section>
   </main>
   <main id="sharing-view" class="sharing-workspace" hidden>
-    <div class="sharing-intro"><h1>局域网共享</h1><p>生成一个共享链接，让同事使用你的 Codex 连接；无需交出账号密码。</p></div>
+    <div class="sharing-intro"><h1>局域网共享</h1><p>生成一个共享链接，让同事使用你的 Codex 连接；无需交出账号密码。</p><p>每台机器只能借出或借入，不能同时进行；借入的连接不能再次共享。</p></div>
     <p id="sharing-message" class="sharing-message" role="status" hidden></p>
     <div id="sharing-cards" class="sharing-cards">
       <section class="sharing-card" aria-labelledby="sharing-host-title">
-        <header><h2 id="sharing-host-title">共享当前连接</h2><span id="sharing-host-state" class="sharing-state">未开启</span></header>
+        <header><h2 id="sharing-host-title">A · 提供共享连接</h2><span id="sharing-host-state" class="sharing-state">未开启</span></header>
         <p class="sharing-description">共享 Codex 原生登录连接。授权由 Codex 管理，本软件不保存上游凭据。</p>
         <form id="sharing-host-form">
           <div class="sharing-fields"><label>本机地址<select id="sharing-address" required></select></label><label>端口<input id="sharing-port" type="number" min="1" max="65535" value="47846" required></label></div>
           <div class="sharing-fields"><label>有效时长（小时）<input id="sharing-hours" type="number" min="1" max="24" value="8" required></label><label>转发次数上限<input id="sharing-limit" type="number" min="0" max="100000" value="0" required><small>0 表示不限次数，不代表剩余额度。</small></label></div>
+          <label>本次共享 Token 上限<input id="sharing-token-limit" type="number" min="0" max="1000000000000" step="1" value="0" required><small>0 表示不限。达到已回传用量上限后拒绝新请求，进行中的请求可能使累计值超出上限。</small></label>
           <div class="sharing-actions"><button id="sharing-start" class="primary" type="submit" disabled>开启共享</button><button id="sharing-stop" type="button" hidden>停止共享</button><button id="sharing-rotate" type="button" hidden>更换链接</button></div>
         </form>
         <div id="sharing-link-area" class="sharing-link-area" hidden><label for="sharing-link">共享链接</label><textarea id="sharing-link" rows="3" readonly spellcheck="false" aria-label="共享链接"></textarea><button id="sharing-copy" type="button">复制链接</button></div>
         <p id="sharing-host-detail" class="sharing-detail"></p>
+        <section id="sharing-usage" class="sharing-usage" aria-label="本次共享用量" hidden>
+          <div class="sharing-usage-heading"><span>本次共享累计 Token</span><strong id="sharing-total-tokens">0</strong><small id="sharing-token-budget"></small></div>
+          <dl class="sharing-usage-parts"><div><dt>输入</dt><dd id="sharing-input-tokens">0</dd></div><div><dt>其中已知缓存输入</dt><dd id="sharing-cached-tokens">—</dd></div><div><dt>输出</dt><dd id="sharing-output-tokens">0</dd></div></dl>
+          <p id="sharing-usage-coverage" class="sharing-usage-note"></p>
+          <p class="sharing-usage-note"><span>Pro $200/月未公布固定 Token 配额，此处不能换算订阅余额。</span> <a href="https://learn.chatgpt.com/docs/pricing" target="_blank" rel="noopener noreferrer">官方用量说明</a></p>
+        </section>
+        <p class="sharing-description sharing-roles">A 负责上游授权、网络出口和共享限额，只保留本次共享的汇总数字。B 的对话、工具内容和会话信息不进入 A 的请求记录、图表或诊断日志。</p>
         <p class="sharing-footnote">应用退出后共享停止。停止或更换链接会拒绝新请求，已开始的请求可继续完成。</p>
       </section>
       <section class="sharing-card" aria-labelledby="sharing-client-title">
-        <header><h2 id="sharing-client-title">使用共享连接</h2><span id="sharing-client-state" class="sharing-state">未连接</span></header>
+        <header><h2 id="sharing-client-title">B · 使用共享连接</h2><span id="sharing-client-state" class="sharing-state">未连接</span></header>
         <p class="sharing-description">粘贴同事生成的完整链接。原有连接配置会保留，断开后自动恢复。</p>
         <form id="sharing-client-form"><label for="sharing-remote-link">对方的共享链接</label><input id="sharing-remote-link" type="password" autocomplete="off" spellcheck="false" placeholder="codex-share://…" required><div class="sharing-actions"><button id="sharing-connect" class="primary" type="submit" disabled>连接</button><button id="sharing-disconnect" type="button" hidden>断开共享</button></div></form>
         <p id="sharing-client-detail" class="sharing-detail"></p>
-        <p class="sharing-description">请求压缩、请求大小保护和图片处理沿用本机设置。</p>
+        <p class="sharing-description sharing-roles">B 负责工具执行、图片处理、传输压缩、预测保护、超限保护和原生重试；请求记录只保存在 B。正常生成、原生压缩、超限摘要和图片解析请求统一经过 A。</p>
+        <p class="sharing-description">A 不会再次压缩、改写用量或重试。连接失效时直接报错，不会自动改用 B 的账号。</p>
         <p class="sharing-footnote">双方需处于可互通的局域网，提供方需保持软件运行。请求经提供方转发，请只使用可信的共享连接。</p>
       </section>
     </div>
