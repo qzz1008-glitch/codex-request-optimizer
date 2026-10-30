@@ -17,6 +17,12 @@ from packet_inspector.image_config import ImageToolConfig
 from packet_inspector.image_tool_install import ImageToolInstallation, find_powershell
 
 
+def desktop_cli():
+    directory = Path(os.environ.get("LOCALAPPDATA", "")) / "OpenAI" / "Codex" / "bin"
+    candidates = list(directory.glob("*/codex.exe"))
+    return max(candidates, key=lambda path: path.stat().st_mtime) if candidates else None
+
+
 class ToolMigrationTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
@@ -160,6 +166,89 @@ class ToolMigrationTests(unittest.TestCase):
         self.assertEqual(note.read_text(encoding="utf8"), "keep")
         self.assertFalse((note.parent / "server.ps1").exists())
 
+    def legacy_native_feature(self):
+        self.enable()
+        state = deepcopy(self.manager.state)
+        state["originals"] = [entry for entry in state["originals"] if entry["table"] != "features"]
+        self.manager._save(state)
+        data = tomllib.loads(self.config.read_text(encoding="utf-8"))
+        data["features"]["view_image"] = True
+        self.config.write_text(tomlkit.dumps(data), encoding="utf-8")
+
+    def test_legacy_install_disables_effective_feature_and_records_its_original_value(self):
+        self.legacy_native_feature()
+        registration = deepcopy(self.manager.state["managed_mcp"])
+        with patch.object(self.manager, "_validate"), self.manager.change("optimized") as changed:
+            self.assertTrue(changed)
+        data = tomllib.loads(self.config.read_text(encoding="utf-8"))
+        self.assertIs(data["features"]["view_image"], False)
+        self.assertIs(data["features"]["js_repl"], False)
+        self.assertEqual(data["mcp_servers"]["isolated_vision"], registration)
+        with self.manager.change("native"):
+            pass
+        self.assertIs(tomllib.loads(self.config.read_text(encoding="utf-8"))["features"]["view_image"], True)
+
+    def test_feature_migration_rolls_back_when_caller_settings_fail(self):
+        self.legacy_native_feature()
+        config, state = self.config.read_bytes(), self.manager.path.read_bytes()
+        with patch.object(self.manager, "_validate"), self.assertRaisesRegex(RuntimeError, "settings failed"):
+            with self.manager.change("optimized"):
+                raise RuntimeError("settings failed")
+        self.assertEqual(self.config.read_bytes(), config)
+        self.assertEqual(self.manager.path.read_bytes(), state)
+
+    def test_user_changes_to_managed_feature_are_preserved(self):
+        self.enable()
+        data = tomllib.loads(self.config.read_text(encoding="utf-8"))
+        data["features"]["view_image"] = True
+        self.config.write_text(tomlkit.dumps(data), encoding="utf-8")
+        before = self.config.read_bytes()
+        for mode in ("optimized", "native", "disabled"):
+            with self.subTest(mode=mode), self.assertRaisesRegex(ValueError, "开关已被修改"):
+                with self.manager.change(mode):
+                    pass
+            self.assertEqual(self.config.read_bytes(), before)
+
+    def test_legacy_disabled_mode_migrates_and_restores_the_effective_feature(self):
+        with self.manager.change("disabled"):
+            pass
+        for name in ("native_feature_present", "native_feature", "features_created"):
+            self.manager.state["disabled_original"].pop(name)
+        self.manager._save(self.manager.state)
+        data = tomllib.loads(self.config.read_text(encoding="utf-8"))
+        data["features"]["view_image"] = True
+        self.config.write_text(tomlkit.dumps(data), encoding="utf-8")
+        with self.manager.change("disabled") as changed:
+            self.assertTrue(changed)
+        self.assertIs(tomllib.loads(self.config.read_text(encoding="utf-8"))["features"]["view_image"], False)
+        with self.manager.change("native"):
+            pass
+        self.assertIs(tomllib.loads(self.config.read_text(encoding="utf-8"))["features"]["view_image"], True)
+
+
+@unittest.skipUnless(os.name == "nt" and desktop_cli(), "Installed native Codex CLI")
+class NativeImageFeatureTests(unittest.TestCase):
+    def test_disabled_mode_changes_codex_effective_feature_and_native_restores_it(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config = root / "config.toml"
+            config.write_text('[tools]\nview_image=false\n', encoding="utf-8")
+            manager = ImageToolConfig(ConfigLink(config, root / "link.json"), root,
+                                     lambda: "http://127.0.0.1:9/relay/test")
+            def enabled():
+                result = subprocess.run([str(desktop_cli()), "features", "list"],
+                    env={**os.environ, "CODEX_HOME": str(root)}, cwd=root, capture_output=True,
+                    text=True, encoding="utf-8", timeout=10, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                self.assertEqual(result.returncode, 0, result.stderr[:700])
+                return next(line.split()[-1] for line in result.stdout.splitlines() if line.startswith("view_image "))
+            self.assertEqual(enabled(), "true")
+            with manager.change("disabled"):
+                pass
+            self.assertEqual(enabled(), "false")
+            with manager.change("native"):
+                pass
+            self.assertEqual(enabled(), "true")
+
 
 @unittest.skipUnless(os.name == "nt", "Windows PowerShell stdio tool")
 class StdioRuntimeTests(unittest.TestCase):
@@ -248,7 +337,7 @@ function Find-CodexCli { return 'fake-codex' }
 function Invoke-ToolProcess($Executable, $Arguments, $TimeoutSeconds, $WorkingDirectory, $InputText) {
     $script:ObservedWork = $WorkingDirectory
     if ($Arguments[0] -eq '--profile') {
-        return @{ExitCode=0;Output='[{"name":"isolated_vision"},{"name":"other"}]'}
+        return @{ExitCode=0;Output='[{"name":"isolated_vision","transport":{"type":"stdio","command":"powershell.exe"}},{"name":"codex_app","transport":{"type":"streamable_http","url":"http://127.0.0.1:9/mcp"}}]'}
     }
     $script:ObservedArguments = $Arguments
     $script:ObservedInputText = $InputText
@@ -270,11 +359,26 @@ $arguments = $script:ObservedArguments
         self.assertIn("\n\nRequest: Read the error", report["prompt"])
         self.assertEqual(Path(report["image"]).resolve(), image.resolve())
         self.assertTrue(report["cleaned"])
-        self.assertIn('"isolated_vision"={enabled=false}', report["override"])
-        self.assertIn('"other"={enabled=false}', report["override"])
+        servers = tomllib.loads(report["override"])["mcp_servers"]
+        self.assertEqual(servers, {"isolated_vision": {"enabled": False, "command": "powershell.exe"},
+                                   "codex_app": {"enabled": False, "url": "http://127.0.0.1:9/mcp"}})
         self.assertEqual(report["metadata"], [
             'responses_api_metadata.codex_inspector_request_kind="image_analysis"',
             'responses_api_metadata.codex_inspector_parent_thread_id="01a15d9a-f5e3-73c1-b4e7-87b3c5db9a3c"'])
+        cli = desktop_cli()
+        if cli:
+            # The listed servers intentionally have no definitions in this home.
+            # Codex must accept the actual override generated by the tool.
+            home = self.root / "native-cli-home"
+            home.mkdir()
+            (home / "config.toml").write_text("", encoding="utf-8")
+            result = subprocess.run([str(cli), "-c", report["override"], "mcp", "list", "--json"],
+                env={**os.environ, "CODEX_HOME": str(home)}, cwd=home, capture_output=True,
+                text=True, encoding="utf-8", timeout=10, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            self.assertEqual(result.returncode, 0, result.stderr[:700])
+            listed = json.loads(result.stdout)
+            self.assertEqual({server["name"] for server in listed}, set(servers))
+            self.assertTrue(all(server["enabled"] is False for server in listed))
 
     def test_native_process_quoting_preserves_spaces_quotes_and_unicode(self):
         echo = self.root / "echo.ps1"
