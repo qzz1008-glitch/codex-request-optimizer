@@ -2,7 +2,6 @@
 
 const uiI18n = (() => {
   const english = {
-    "额度与出口独立选择，共享期间需保持软件运行。":"Choose quota and exit independently. Keep the app running while sharing.",
     "仅显示汇总用量，不保存借用方请求。":"Only aggregate usage is shown; borrower requests are not stored.",
     "Token 上限":"Token limit",
     "达到上限后拒绝新请求，进行中的请求可完成。":"New requests are rejected at the limit; started requests may finish.",

@@ -1,7 +1,5 @@
 .sharing-workspace{flex:1;min-height:0;overflow:auto;scrollbar-gutter:stable;padding:28px 32px 36px}
-.sharing-intro,.sharing-cards,.sharing-message{max-width:1120px;margin-left:auto;margin-right:auto}
-.sharing-intro h1{margin:0 0 8px;font-size:21px;font-weight:650}
-.sharing-intro p{color:var(--muted);margin:0 0 24px;line-height:1.7}
+.sharing-cards,.sharing-message{max-width:1120px;margin-left:auto;margin-right:auto}
 .sharing-cards{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:22px;align-items:start}
 .sharing-card{border:1px solid var(--line);background:var(--panel);border-radius:12px;padding:24px;min-width:0}
 .sharing-card header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px}
