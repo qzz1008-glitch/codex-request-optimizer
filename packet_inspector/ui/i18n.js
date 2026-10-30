@@ -483,7 +483,7 @@ const uiI18n = (() => {
     "上游原始输入 Token":"Actual upstream input tokens",
     "向 Codex 报告的输入 Token":"Input tokens reported to Codex",
     "请求大小保护":"Request size protection",
-    "自动选择等级":"Auto-select level",
+    "自动压缩等级":"Auto level",
     "根据请求大小自动选择合适的压缩等级，开启后禁用手动选择。":"Selects a suitable level by request size and disables manual level selection.",
     "请先开启请求大小保护":"Enable request size protection first",
     "当前中转暂不支持按请求大小自动压缩。":"The current relay does not support automatic compression by request size yet.",
