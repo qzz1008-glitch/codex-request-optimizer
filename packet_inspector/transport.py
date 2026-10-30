@@ -1,6 +1,7 @@
 """Optional lossless HTTP body encoding; never parses or rewrites the payload."""
 from urllib.parse import urlsplit
 from typing import NamedTuple
+from .request_types import is_json_image_request
 
 DEFAULT_ZSTD_LEVEL = 3
 MIN_ZSTD_LEVEL = 1
@@ -61,10 +62,11 @@ def prepare_zstd(body, encoding, zstd_level=DEFAULT_ZSTD_LEVEL, *,
 def prepare_request_info(body, headers, method, path, mode, zstd_level=DEFAULT_ZSTD_LEVEL, *,
                          auto_zstd_level=False, budget_bytes=None):
     encoding = next((v for k, v in headers.items() if k.lower() == "content-encoding"), "identity")
-    # /responses also carries modern foreground/background compaction requests.
-    # Other endpoints have not been verified to accept zstd request bodies.
+    # The Responses and JSON Images endpoints accept zstd request bodies.
+    # Keep multipart image uploads and other endpoints byte-for-byte intact.
     eligible = (mode == "zstd" and method == "POST" and body
-                and urlsplit(path).path.rstrip("/").endswith("/responses")
+                and (urlsplit(path).path.rstrip("/").endswith("/responses")
+                     or is_json_image_request(path, headers))
                 and encoding.strip().lower() in {"", "identity", "zstd"})
     if eligible:
         return prepare_zstd(body, encoding, zstd_level,
