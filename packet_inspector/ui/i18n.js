@@ -96,6 +96,7 @@ const uiI18n = (() => {
     "未计价":"Unpriced",
     "出口只统计流量，不读取对话。借入记录显示最近同步值。":"Exits record traffic totals without reading conversations. Borrowed credentials show their last synced values.",
     "当前后台不支持凭据管理，请更新软件。":"Update the application to use credential management.",
+    "当前后台不支持删除凭据，请更新软件后重试。":"This backend does not support deleting credentials. Update the app and try again.",
     "借入中":"Borrowing",
     "借出中":"Lending",
     "出口已共享":"Sharing exit",
