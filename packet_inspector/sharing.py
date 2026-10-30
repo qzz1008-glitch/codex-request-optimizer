@@ -27,7 +27,7 @@ from .sharing_usage import SharedUsageStream, empty_usage
 from .sharing_role import MachineSharingRole
 from .usage_trigger import raw_chunks
 
-PROTOCOL = 2  # Requires the owner's private forwarding path and aggregate-only accounting.
+PROTOCOL = 3  # Private forwarding, aggregate-only accounting and an explicit physical/selected exit.
 POST_PATHS = {"/responses", "/responses/compact"}
 PRIVATE_NETWORKS = tuple(ipaddress.ip_network(n) for n in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"))
 DROP_HEADERS = {"authorization", "proxy-authorization", "cookie", "host", "content-length",
@@ -95,7 +95,7 @@ class NoRedirect(HTTPRedirectHandler):
         return None
 
 
-def pinned_opener(host, port, fingerprint):
+def pinned_tls_context(host, port, fingerprint):
     # Probe TLS without an HTTP request, grant or body. Validate the fingerprint
     # before building an opener that validates this certificate on every request.
     probe = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
@@ -108,7 +108,11 @@ def pinned_opener(host, port, fingerprint):
         raise SharingError("共享方证书不匹配，请重新获取共享链接。")
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
     context.load_verify_locations(cadata=ssl.DER_cert_to_PEM_cert(certificate))
-    return build_opener(ProxyHandler({}), HTTPSHandler(context=context), NoRedirect())
+    return context
+
+
+def pinned_opener(host, port, fingerprint):
+    return build_opener(ProxyHandler({}), HTTPSHandler(context=pinned_tls_context(host, port, fingerprint)), NoRedirect())
 
 
 def tls_context(host):
@@ -142,10 +146,10 @@ def tls_context(host):
 class LANServer(ThreadingHTTPServer):
     daemon_threads = True
 
-    def __init__(self, address, controller, context):
+    def __init__(self, address, controller, context, handler=None):
         self.controller, self.context = controller, context
         self.slots = threading.BoundedSemaphore(8)
-        super().__init__(address, LANHandler)
+        super().__init__(address, handler or LANHandler)
 
     def process_request(self, request, address):
         if not self.slots.acquire(blocking=False):
@@ -236,7 +240,9 @@ class LANHandler(BaseHTTPRequestHandler):
             request = Request(reservation["upstream"] + suffix,
                               data=body if self.command == "POST" else None, headers=headers, method=self.command)
             try:
-                response = controller.server.opener.open(request, timeout=UPSTREAM_READ_TIMEOUT_SECONDS)
+                from .egress_transport import EGRESS_HEADER
+                opener = controller.server.egress.outgoing(self.headers.get(EGRESS_HEADER, ""))
+                response = opener.open(request, timeout=UPSTREAM_READ_TIMEOUT_SECONDS)
             except HTTPError as exc:
                 response = exc
             if self.command == "POST":
@@ -438,10 +444,12 @@ class Sharing:
 
     def connect(self, link):
         with self.guard:
-            if self.listener or self.remote:
+            if self.listener:
                 raise SharingError("请先断开或停止当前共享连接。")
             host, port, token, fingerprint = parse_link(link)
-            self.role.acquire()
+            replacing = self.remote is not None
+            if not replacing:
+                self.role.acquire()
             try:
                 opener = pinned_opener(host, port, fingerprint)
                 upstream = f"https://{host}:{port}/v1"
@@ -451,12 +459,14 @@ class Sharing:
                 if result.get("protocol") != PROTOCOL or result.get("available") is not True:
                     raise SharingError("共享协议不兼容，请双方更新软件。")
                 settings = self.server.settings
-                self.provider.activate(self.client_endpoint, settings["capacity_retry_max_retries"]
-                                       if settings["capacity_retry_enabled"] else None)
+                if not replacing:
+                    self.provider.activate(self.client_endpoint, settings["capacity_retry_max_retries"]
+                                           if settings["capacity_retry_enabled"] else None)
                 self.remote = {"host": host, "port": port, "upstream": upstream, "opener": opener, "token": token}
                 self.recovered = False
-                self.server.connection_reload_required = True
-                return {**self.status(), "reload_required": True}
+                if not replacing:
+                    self.server.connection_reload_required = True
+                return {**self.status(), "reload_required": not replacing}
             except SharingError:
                 raise
             except (OSError, ValueError):
@@ -497,7 +507,9 @@ class Sharing:
             client = {"active": bool(self.remote)}
             if self.remote:
                 client.update(address=self.remote["host"], port=self.remote["port"])
+            egress = getattr(self.server, "egress", None)
             return {"supported": True, "protocol": PROTOCOL, "host": host, "client": client, "addresses": self.addresses,
+                    "egress": egress.status() if egress is not None else {"supported": False},
                     "recovery_error": self.recovery_error, "recovered": self.recovered}
 
     def close(self):

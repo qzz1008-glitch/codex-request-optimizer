@@ -20,6 +20,7 @@ from urllib.parse import urlsplit
 from urllib.request import Request
 
 from packet_inspector.config_link import ConfigLink
+from packet_inspector.egress_transport import EGRESS_HEADER, parse_egress_link
 from packet_inspector.providers import ProviderManager
 from packet_inspector.server import InspectorServer
 from packet_inspector.sharing import SharingError, parse_link, pinned_opener, forwarding_headers
@@ -218,6 +219,7 @@ class LANSharingTests(unittest.TestCase):
         self.direct_response = None
         self.response_status = 200
         self.extra_response_headers = {}
+        self.extra_relays = []
         fixture = self
 
         class Upstream(BaseHTTPRequestHandler):
@@ -277,7 +279,7 @@ class LANSharingTests(unittest.TestCase):
 
     def tearDown(self):
         self.release_stream.set()
-        for server in (self.guest, self.owner):
+        for server in (*reversed(self.extra_relays), self.guest, self.owner):
             wait_for_idle(server)
             server.shutdown()
             server.server_close()
@@ -300,12 +302,145 @@ class LANSharingTests(unittest.TestCase):
         with response:
             return response.status, response.read()
 
-    def request_guest(self, path="/responses", headers=None, content="dummy prompt"):
-        client = http.client.HTTPConnection("127.0.0.1", self.guest.port, timeout=HTTP_TIMEOUT)
-        target = urlsplit(self.guest.sharing.client_endpoint).path
+    def request_guest(self, path="/responses", headers=None, content="dummy prompt", guest=None):
+        guest = guest or self.guest
+        client = http.client.HTTPConnection("127.0.0.1", guest.port, timeout=HTTP_TIMEOUT)
+        target = urlsplit(guest.sharing.client_endpoint).path
         body = json.dumps({"model": "test", "input": [{"role": "user", "content": content}]}).encode()
         client.request("POST", target + path, body, {"Content-Type": "application/json", **(headers or {})})
         return client, client.getresponse(), body
+
+    def extra_relay(self, name):
+        relay = self.make_relay(name)
+        threading.Thread(target=relay.serve_forever, kwargs={"poll_interval": .05}, daemon=True).start()
+        self.extra_relays.append(relay)
+        return relay
+
+    def consume(self, **kwargs):
+        client, response, _ = self.request_guest(**kwargs)
+        try:
+            result = response.read()
+            self.assertEqual(response.status, 200, result)
+        finally:
+            client.close()
+
+    def test_one_quota_source_is_replaced_atomically_without_rewriting_provider(self):
+        original = self.guest.link.config.read_bytes()
+        first = self.start()
+        self.guest.sharing.connect(first)
+        connected = self.guest.link.config.read_bytes()
+        other = self.extra_relay("another-owner")
+        other.sharing.authorization_factory = DummyAuthorization
+        with patch.object(other.sharing, "_host_upstream", return_value=self.target):
+            second = other.sharing.start_host("127.0.0.1", free_port())["link"]
+        with self.assertRaises(SharingError):
+            self.guest.sharing.connect(second.rsplit(".", 1)[0] + "." + "0" * 64)
+        self.assertEqual(self.guest.sharing.remote["port"], parse_link(first)[1])
+        self.consume()
+        with patch.object(self.guest.sharing.provider, "activate", side_effect=AssertionError("Replacement rewrote native config")):
+            result = self.guest.sharing.connect(second)
+        self.assertFalse(result["reload_required"])
+        self.assertEqual(self.guest.link.config.read_bytes(), connected)
+        self.consume()
+        wait_for_idle(self.owner, self.guest, other)
+        self.assertEqual(self.owner.sharing.status()["host"]["requests"], 1)
+        self.assertEqual(other.sharing.status()["host"]["requests"], 1)
+        with self.assertRaises(SharingError):
+            self.guest.sharing.start_host("127.0.0.1", free_port())
+        self.guest.sharing.disconnect()
+        self.assertEqual(tomllib.loads(self.guest.link.config.read_text()), tomllib.loads(original.decode()))
+
+    def test_multiple_borrowers_share_one_owner_and_only_aggregate_usage_is_kept(self):
+        link = self.start()
+        second = self.extra_relay("another-borrower")
+        self.guest.sharing.connect(link)
+        second.sharing.connect(link)
+        self.consume(content="private-first-borrower")
+        self.consume(guest=second, content="private-second-borrower")
+        wait_for_idle(self.owner, self.guest, second)
+        host = self.owner.sharing.status()["host"]
+        self.assertEqual(host["requests"], 2)
+        self.assertEqual(host["usage"]["total_tokens"], 78)
+        self.assertEqual(self.owner.store.list(), [])
+        self.assertTrue(self.guest.sharing.status()["client"]["active"])
+        self.assertTrue(second.sharing.status()["client"]["active"])
+
+    def test_quota_provider_uses_borrower_exit_selection_instead_of_its_own_peer(self):
+        self.guest.sharing.connect(self.start())
+        foreign = "codex-exit://127.0.0.1:47847/#" + secrets.token_urlsafe(32) + "." + "a" * 64
+        owner_routes = []
+        physical = self.owner.opener
+        def delegated(link, **_options):
+            owner_routes.append(link)
+            return physical
+        self.owner.egress.opener_factory = delegated
+        # An owner can use another exit for its own traffic. Borrowers choosing
+        # the owner's exit still receive the owner's physical network.
+        self.owner.egress.mode = "peer"
+        self.owner.egress.peer_opener = None
+        self.consume()
+        self.assertEqual(owner_routes, [])
+        self.guest.egress.select("local")
+        self.consume()
+        callback = owner_routes[-1]
+        self.assertEqual(parse_egress_link(callback)[1], self.guest.egress.listener.server_port)
+        # A local physical exit can be shared while this machine borrows quota.
+        self.assertTrue(self.guest.egress.status()["host"]["active"])
+        class Selected:
+            def close(self):
+                pass
+        self.guest.egress.opener_factory = lambda *_args, **_kwargs: Selected()
+        self.guest.egress.select("peer", foreign)
+        self.consume()
+        self.assertEqual(owner_routes, [callback, foreign])
+        with patch.object(self.guest.egress, "opener_factory", side_effect=SharingError("unreachable")):
+            with self.assertRaises(SharingError):
+                self.guest.egress.select("peer", foreign.replace("47847", "47848"))
+        self.assertEqual(self.guest.egress.peer_link, foreign)
+        self.consume()
+        self.assertEqual(owner_routes[-1], foreign)
+        for _path, headers, _body in self.received:
+            self.assertFalse(any(key.lower() == EGRESS_HEADER.lower() for key in headers))
+        for path in self.guest.data_dir.rglob("*"):
+            if path.is_file():
+                self.assertNotIn(foreign.encode(), path.read_bytes())
+
+    def test_own_quota_can_choose_one_shared_exit_without_borrowing_quota(self):
+        logical = "https://api.openai.com/v1"
+        self.guest.settings.update(upstream=logical, auto_detect_providers=False)
+        self.guest.sharing.authorization_factory = DummyAuthorization
+        with patch.object(self.guest.sharing, "_host_upstream", return_value=logical):
+            self.guest.sharing.start_host("127.0.0.1", free_port())
+        calls = []
+        physical = self.guest.local_opener
+        target = self.target
+        class MappedExit:
+            def open(self, request, **kwargs):
+                calls.append(request.full_url)
+                mapped = Request(target + urlsplit(request.full_url).path, data=request.data,
+                                 headers=dict(request.header_items()), method=request.get_method())
+                return physical.open(mapped, **kwargs)
+            def close(self):
+                pass
+        self.guest.egress.opener_factory = lambda *_args, **_kwargs: MappedExit()
+        foreign = "codex-exit://127.0.0.1:47847/#" + secrets.token_urlsafe(32) + "." + "a" * 64
+        self.guest.egress.select("peer", foreign)
+        self.guest.egress.start("127.0.0.1", 0)
+        with patch.object(self.guest.opener, "open", side_effect=AssertionError("Ignored selected exit")):
+            client = http.client.HTTPConnection("127.0.0.1", self.guest.port, timeout=HTTP_TIMEOUT)
+            try:
+                client.request("POST", "/relay/" + self.guest.settings["relay_token"] + "/responses",
+                               b'{"model":"test","input":[]}',
+                               {"Content-Type": "application/json", "Authorization": "Bearer dummy-own-account"})
+                response = client.getresponse()
+                self.assertEqual(response.status, 200, response.read())
+            finally:
+                client.close()
+        self.assertEqual(calls, [logical + "/responses"])
+        self.assertIsNone(self.guest.sharing.remote)
+        self.assertIsNotNone(self.guest.sharing.listener)
+        self.assertTrue(self.guest.egress.status()["host"]["active"])
+        self.assertEqual(self.received[-1][1]["Authorization"], "Bearer dummy-own-account")
 
     def test_streams_immediately_and_substitutes_only_owner_authorization(self):
         link = self.start()
@@ -671,6 +806,20 @@ class LANSharingTests(unittest.TestCase):
         self.upstream.RequestHandlerClass = FakeModel
         self.upstream.requests, self.upstream.fail = [], False
         self.guest.sharing.connect(self.start())
+        foreign = "codex-exit://127.0.0.1:47847/#" + secrets.token_urlsafe(32) + "." + "b" * 64
+        class Selected:
+            def close(self):
+                pass
+        self.guest.egress.opener_factory = lambda *_args, **_kwargs: Selected()
+        self.guest.egress.select("peer", foreign)
+        routes = []
+        def delegated(link, **_kwargs):
+            routes.append(link)
+            # A setting changed during preparation must not split this request's
+            # summaries and generation across different network exits.
+            self.guest.egress.select("provider")
+            return self.owner.opener
+        self.owner.egress.opener_factory = delegated
         self.guest.settings.update(packet_size_protection_enabled=True, budget_bytes=4000, zstd_level=3)
         client = http.client.HTTPConnection('127.0.0.1', self.guest.port, timeout=HTTP_TIMEOUT)
         try:
@@ -687,6 +836,7 @@ class LANSharingTests(unittest.TestCase):
         self.assertGreaterEqual(len(self.upstream.requests), 2)
         self.assertTrue(any(compact for _, compact, _ in self.upstream.requests))
         self.assertTrue(all(size <= 4000 for size, _, _ in self.upstream.requests))
+        self.assertEqual(routes, [foreign] * len(self.upstream.requests))
 
     def test_control_api_validates_origin_and_returns_no_grant_in_status(self):
         def call(method, data=None, origin=None):

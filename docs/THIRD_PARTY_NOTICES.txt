@@ -28,6 +28,10 @@ https://github.com/facebook/zstd
 TOML Kit: MIT License.
 https://github.com/python-poetry/tomlkit
 
+urllib3: MIT License.
+Used for HTTPS CONNECT with independently verified proxy and upstream TLS.
+https://github.com/urllib3/urllib3
+
 cryptography: Apache License 2.0 or BSD 3-Clause License.
 Used to create temporary certificates for encrypted LAN sharing.
 https://github.com/pyca/cryptography
