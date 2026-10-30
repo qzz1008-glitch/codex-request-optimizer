@@ -28,7 +28,7 @@ from .sharing_role import MachineSharingRole
 from .sharing_credentials import CLIENT_HEADER, CredentialVault
 from .usage_trigger import raw_chunks
 
-PROTOCOL = 4  # One-client credentials, durable aggregate-only accounting, independent exit.
+PROTOCOL = 4  # Reusable credentials, durable aggregate-only accounting, independent exit.
 POST_PATHS = {"/responses", "/responses/compact"}
 PRIVATE_NETWORKS = tuple(ipaddress.ip_network(n) for n in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"))
 DROP_HEADERS = {"authorization", "proxy-authorization", "cookie", "host", "content-length",

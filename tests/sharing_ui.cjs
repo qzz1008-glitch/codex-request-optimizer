@@ -7,7 +7,7 @@ class Element{
 }
 const elements=new Map(),node=id=>{if(!elements.has(id))elements.set(id,new Element());return elements.get(id);};
 const idle={supported:true,protocol:4,credentials_supported:true,host:{active:false,running:false},client:{active:false},egress:{supported:true,host:{active:false},selection:{mode:"provider"}},credentials:[]};
-const outgoing={id:"q1",kind:"quota",direction:"out",label:"Colleague <name>",enabled:true,bound:true,expires_at:null,budget_nanos:10e9,period_cost_nanos:2e9,week_cost_nanos:3e9,weekly_reset:true,totals:{cost_nanos:4e9,input_tokens:1234,output_tokens:66,cached_input_tokens:500,missing_responses:1,unpriced_responses:2},daily:{}};
+const outgoing={id:"q1",kind:"quota",direction:"out",label:"Colleague <name>",enabled:true,expires_at:null,budget_nanos:10e9,period_cost_nanos:2e9,week_cost_nanos:3e9,weekly_reset:true,totals:{cost_nanos:4e9,input_tokens:1234,output_tokens:66,cached_input_tokens:500,missing_responses:1,unpriced_responses:2},daily:{}};
 const incoming={id:"q2",kind:"quota",direction:"in",label:"Saved provider",snapshot:{...outgoing,expires_at:Date.now()/1000+86400}};
 const exitIncoming={id:"e1",kind:"exit",direction:"in",label:"Exit provider",snapshot:{expires_at:null,enabled:true,totals:{sent_bytes:30000,received_bytes:20000,requests:2},daily:{}}};
 const host={...idle,host:{active:true,running:true},credentials:[outgoing,incoming,exitIncoming]};
@@ -20,7 +20,7 @@ const click=(target,dataset)=>{const button=new Element();button.dataset=dataset
 const submit=id=>node(id).handlers.submit({preventDefault(){}});
 (async()=>{
  context.InspectorSharing.setActive(true);await flush();assert.equal(node("sharing-cards").hidden,false);
- assert.match(node("sharing-config").innerHTML,/quota-issue/);assert.match(node("sharing-config").innerHTML,/exit-issue/);assert.doesNotMatch(node("sharing-config").innerHTML,/sharing-port|egress-port|Token 上限/);
+ assert.match(node("sharing-config").innerHTML,/quota-issue/);assert.match(node("sharing-config").innerHTML,/exit-issue/);assert.doesNotMatch(node("sharing-config").innerHTML,/sharing-port|egress-port|Token 上限|binding-note|一台机器/);
  node("quota-label").value="Alice";node("quota-budget").value="10";node("quota-weekly").checked=true;
  let release;pending.push(new Promise(resolve=>{release=resolve;}));submit("quota-issue");submit("quota-issue");
  assert.equal(requests.filter(r=>r.data?.action==="credential_issue").length,1);assert.equal(node("quota-generate").attributes["aria-busy"],"true");
@@ -38,9 +38,9 @@ const submit=id=>node(id).handlers.submit({preventDefault(){}});
  click("sharing-config",{kind:"quota",view:"out"});click("sharing-credential-rows",{action:"edit",id:"q1"});assert.equal(node("sharing-credential-dialog").open,true);assert.equal(node("credential-edit-budget").value,10);assert.equal(node("credential-edit-expiry").value,"");
  node("credential-edit-budget").value="25";pending.push({status:200,data:host});await submit("credential-edit-form");assert.equal(requests.at(-1).data.budget,"25");assert.equal(requests.at(-1).data.expires_at,null);assert.equal(node("sharing-credential-dialog").open,false);
  pending.push({status:200,data:host});await click("sharing-credential-rows",{action:"reset",id:"q1"});assert.equal(requests.at(-1).data.action,"credential_reset");
- const before=requests.length;pending.push({status:400,data:{error:"此凭据已绑定另一位同事"}});await click("sharing-credential-rows",{action:"use",id:"q2"});assert.equal(requests.length,before+1);assert.match(node("sharing-message").textContent,/另一位同事/);
+ const before=requests.length;pending.push({status:400,data:{error:"此凭据的本期额度已用完。"}});await click("sharing-credential-rows",{action:"use",id:"q2"});assert.equal(requests.length,before+1);assert.match(node("sharing-message").textContent,/额度已用完/);
  context.InspectorSharing.setActive(false);assert.equal(node("sharing-link").value,"");assert.equal(node("sharing-link-area").hidden,true);assert.equal(interval,null);
  pending.push({status:200,data:{...idle,protocol:3,credentials_supported:false}});context.InspectorSharing.setActive(true);await flush();assert.equal(node("sharing-cards").hidden,true);assert.match(node("sharing-message").textContent,/更新软件/);context.InspectorSharing.setActive(false);
  assert.doesNotMatch(fs.readFileSync("packet_inspector/ui/sharing.js","utf8"),/localStorage|sessionStorage/);
- console.log(JSON.stringify({sharing_ui:"passed",checks:["two_resource_cards","one_client_credentials","history_selection","expiry_and_weekly_reset","live_statistics","privacy","old_backend_guard"]}));
+ console.log(JSON.stringify({sharing_ui:"passed",checks:["two_resource_cards","reusable_credentials","history_selection","expiry_and_weekly_reset","live_statistics","privacy","old_backend_guard"]}));
 })().catch(error=>{console.error(error);process.exitCode=1;});

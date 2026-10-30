@@ -43,24 +43,49 @@ class CredentialVaultTests(unittest.TestCase):
         identifier, token = self.vault.issue("quota", "colleague", **kwargs)
         return identifier, "Bearer " + token
 
-    def test_one_client_binding_is_atomic_and_not_an_ip_binding(self):
-        identifier, token = self.grant()
-        def attempt(client):
-            try:
-                self.vault.authenticate("quota", token, client)
-                return client
-            except SharingError:
-                return None
+    def test_multiple_clients_share_one_budget_and_atomic_usage_totals(self):
+        identifier, token = self.grant(budget="0.01")
         with concurrent.futures.ThreadPoolExecutor(2) as pool:
-            accepted = list(pool.map(attempt, ["a" * 64, "b" * 64]))
-        self.assertEqual(sum(value is not None for value in accepted), 1)
-        winner = next(value for value in accepted if value)
-        self.vault.authenticate("quota", token, winner)
-        self.assertTrue(self.vault.rows()[0]["bound"])
-        self.assertNotIn("client_hash", json.dumps(self.vault.rows()))
+            reservations = list(pool.map(lambda client: self.vault.authenticate("quota", token, client, spend=True),
+                                         ["a" * 64, "b" * 64]))
+            self.assertEqual({value["credential_id"] for value in reservations}, {identifier})
+            list(pool.map(lambda value: self.vault.record(value, dict(model="gpt-6.1-sol", input_tokens=2500)), reservations))
+        row = self.vault.rows()[0]
+        self.assertEqual(row["period_cost_nanos"], 10_000_000)
+        self.assertEqual(row["totals"]["input_tokens"], 5000)
+        self.assertEqual(row["totals"]["requests"], 2)
+        self.assertTrue(row["exhausted"])
+        self.assertNotIn("bound", row)
+        self.assertNotIn("client_hash", row)
+        self.vault.authenticate("quota", token)  # A client ID is no longer required.
         for client in ("", "ip:192.168.1.2", "x" * 64):
+            self.vault.authenticate("quota", token, client)
+            with self.assertRaisesRegex(SharingError, "本期额度已用完"):
+                self.vault.authenticate("quota", token, client, spend=True)
+        for invalid in (None, "", "Basic token", "Bearer unknown"):
             with self.assertRaises(SharingError):
-                self.vault.authenticate("quota", token, client)
+                self.vault.authenticate("quota", invalid)
+
+    def test_legacy_binding_is_removed_without_changing_grants_or_usage(self):
+        identifier, token = self.grant(budget="10", expires_at=time.time() + 86400)
+        reservation = self.vault.authenticate("quota", token, "a" * 64, spend=True)
+        self.vault.record(reservation, dict(model="gpt-6.1-sol", input_tokens=2500))
+        incoming = self.vault.import_link("quota", "codex-share://127.0.0.1:1/#grant.fingerprint", "saved")
+        with self.vault.connection() as db:
+            original = json.loads(db.execute("SELECT data FROM credentials WHERE id=?", (identifier,)).fetchone()[0])
+            self.vault._save(db, identifier, {**original, "bound": True, "client_hash": "a" * 64})
+            saved = json.loads(db.execute("SELECT data FROM credentials WHERE id=?", (incoming,)).fetchone()[0])
+            saved["snapshot"] = {"bound": True, "client_hash": "b" * 64, "budget_nanos": 123}
+            self.vault._save(db, incoming, saved)
+        upgraded = CredentialVault(self.root)
+        with upgraded.connection() as db:
+            self.assertEqual(json.loads(db.execute("SELECT data FROM credentials WHERE id=?", (identifier,)).fetchone()[0]), original)
+            snapshot = json.loads(db.execute("SELECT data FROM credentials WHERE id=?", (incoming,)).fetchone()[0])["snapshot"]
+            self.assertEqual(snapshot, {"budget_nanos": 123})
+        self.assertEqual(upgraded.get_secret(identifier), token[7:])
+        self.assertEqual(upgraded.get_secret(incoming), "codex-share://127.0.0.1:1/#grant.fingerprint")
+        upgraded.authenticate("quota", token, "b" * 64, spend=True)
+        upgraded.authenticate("quota", token, spend=True)
 
     def test_budget_live_edits_manual_reset_and_late_completion(self):
         identifier, token = self.grant(budget="0.01")
