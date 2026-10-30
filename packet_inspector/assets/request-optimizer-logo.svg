@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 256 256" role="img" aria-labelledby="logo-title">
   <title id="logo-title">Codex Request Optimizer</title>
   <defs>
-    <linearGradient id="input-flow" gradientUnits="userSpaceOnUse" x1="8" y1="128" x2="114" y2="128">
+    <linearGradient id="input-flow" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="100" y2="0">
       <stop offset="0" stop-color="#5B66D5"/>
       <stop offset="1" stop-color="#4D87D3"/>
     </linearGradient>
@@ -9,20 +9,20 @@
       <stop offset="0" stop-color="#7789C1"/>
       <stop offset="1" stop-color="#409EAD"/>
     </linearGradient>
-    <linearGradient id="output-flow" gradientUnits="userSpaceOnUse" x1="160" y1="128" x2="240" y2="128">
+    <linearGradient id="output-flow" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="100" y2="0">
       <stop offset="0" stop-color="#3098B5"/>
       <stop offset="1" stop-color="#1DA99C"/>
     </linearGradient>
   </defs>
-  <g id="input-arrow" transform="matrix(0.9 0 0 0.9 12.8 12.8)">
-    <path fill="url(#input-flow)" d="M 16 108 L 60 108 C 62.21 108 64 106.21 64 104 L 64 84 C 64 80.42 68.68 78.62 71.18 81.18 L 111.04 121.04 C 114.88 124.88 114.88 131.12 111.04 134.96 L 71.18 174.82 C 68.68 177.38 64 175.58 64 172 L 64 152 C 64 149.79 62.21 148 60 148 L 16 148 C 11.58 148 8 144.42 8 140 L 8 116 C 8 111.58 11.58 108 16 108 Z"/>
+  <g id="input-arrow" transform="matrix(0.96 0 0 0.96 20 128)">
+    <path fill="none" stroke="url(#input-flow)" stroke-width="12" stroke-linecap="round" stroke-linejoin="round" d="M 8 0 L 92 0 M 65 -26 C 74 -18 84 -8 92 0 C 84 8 74 18 65 26"/>
   </g>
   <!-- Mirrored single-cubic centerlines: M16 32 C88 32 160 164 232 164; M16 224 C88 224 160 92 232 92. -->
   <g id="funnel-outline">
     <path id="funnel-cross-lower" fill="url(#funnel-flow)" d="M 16 232 C 26.22 232 36.24 229.58 45.9 225.55 C 55.56 221.53 64.91 215.92 74.09 209.32 C 83.27 202.73 92.27 195.15 101.18 187.1 C 110.1 179.05 118.93 170.53 127.72 162.05 C 136.51 153.57 145.25 145.13 153.99 137.24 C 162.72 129.35 171.44 122.01 180.14 115.74 C 188.85 109.47 197.54 104.27 206.2 100.66 C 214.85 97.04 223.46 95 232 95 C 233.66 95 235 93.66 235 92 C 235 90.34 233.66 89 232 89 C 222.54 89 213.15 91.09 203.8 94.69 C 194.46 98.29 185.15 103.4 175.86 109.51 C 166.56 115.61 157.28 122.71 148.01 130.29 C 138.75 137.87 129.49 145.93 120.28 153.95 C 111.07 161.97 101.9 169.95 92.82 177.37 C 83.73 184.79 74.73 191.64 65.91 197.43 C 57.09 203.21 48.44 207.91 40.1 211.1 C 31.76 214.3 23.78 216 16 216 C 11.58 216 8 219.58 8 224 C 8 228.42 11.58 232 16 232 Z"/>
     <path id="funnel-cross-upper" fill="url(#funnel-flow)" d="M 16 24 C 26.22 24 36.24 26.42 45.9 30.45 C 55.56 34.47 64.91 40.08 74.09 46.68 C 83.27 53.27 92.27 60.85 101.18 68.9 C 110.1 76.95 118.93 85.47 127.72 93.95 C 136.51 102.43 145.25 110.87 153.99 118.76 C 162.72 126.65 171.44 133.99 180.14 140.26 C 188.85 146.53 197.54 151.73 206.2 155.34 C 214.85 158.96 223.46 161 232 161 C 233.66 161 235 162.34 235 164 C 235 165.66 233.66 167 232 167 C 222.54 167 213.15 164.91 203.8 161.31 C 194.46 157.71 185.15 152.6 175.86 146.49 C 166.56 140.39 157.28 133.29 148.01 125.71 C 138.75 118.13 129.49 110.07 120.28 102.05 C 111.07 94.03 101.9 86.05 92.82 78.63 C 83.73 71.21 74.73 64.36 65.91 58.57 C 57.09 52.79 48.44 48.09 40.1 44.9 C 31.76 41.7 23.78 40 16 40 C 11.58 40 8 36.42 8 32 C 8 27.58 11.58 24 16 24 Z"/>
   </g>
-  <g id="output-arrow" transform="matrix(0.625 0 0 0.625 98 48)">
-    <path fill="url(#output-flow)" d="M 166 116 L 204 116 C 206.21 116 208 114.21 208 112 L 208 104 C 208 100.42 212.68 98.62 215.18 101.18 L 237.8 123.8 C 240.12 126.12 240.12 129.88 237.8 132.2 L 215.18 154.82 C 212.68 157.38 208 155.58 208 152 L 208 144 C 208 141.79 206.21 140 204 140 L 166 140 C 162.69 140 160 137.31 160 134 L 160 122 C 160 118.69 162.69 116 166 116 Z"/>
+  <g id="output-arrow" transform="matrix(0.5 0 0 0.5 198 128)">
+    <path fill="none" stroke="url(#output-flow)" stroke-width="12" stroke-linecap="round" stroke-linejoin="round" d="M 8 0 L 92 0 M 65 -26 C 74 -18 84 -8 92 0 C 84 8 74 18 65 26"/>
   </g>
 </svg>
