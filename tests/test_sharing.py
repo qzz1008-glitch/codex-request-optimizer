@@ -452,10 +452,60 @@ class LANSharingTests(unittest.TestCase):
         self.assertEqual(saved["label"], "provider history")
         self.guest.sharing.connect(identifier=saved["id"])
         self.assertEqual(self.guest.sharing.status()["client"]["active_id"], saved["id"])
-        self.local_api("/api/sharing", {"action": "credential_edit", "id": identifier, "enabled": False})
-        self.assertEqual(self.remote_request(link)[0], 403)
+        _, disabled = self.local_api("/api/sharing", {"action": "credential_edit", "id": identifier, "enabled": False})
+        self.assertFalse(disabled["host"]["running"])
         self.assertNotIn(link, json.dumps(self.owner.sharing.status()))
         self.assertEqual(self.owner.store.list(), [])
+
+    def test_credential_rows_control_lending_and_release_the_role_after_the_last_is_disabled(self):
+        self.owner.settings["sharing_port"] = free_port()
+        with patch("packet_inspector.sharing.automatic_address", return_value="127.0.0.1"), patch.object(
+                self.owner.sharing, "_host_upstream", return_value=self.target):
+            _, first = self.local_api("/api/sharing", {"action": "credential_issue", "kind": "quota", "label": "first"})
+            _, second = self.local_api("/api/sharing", {"action": "credential_issue", "kind": "quota", "label": "second"})
+            first_id, second_id = first["issued_id"], second["issued_id"]
+            status, one_disabled = self.local_api("/api/sharing", {"action": "credential_edit", "id": first_id, "enabled": False})
+            self.assertEqual(status, 200)
+            self.assertTrue(one_disabled["host"]["running"])
+            self.assertEqual(self.remote_request(first["link"])[0], 403)
+            self.assertEqual(self.remote_request(second["link"])[0], 200)
+            _, all_disabled = self.local_api("/api/sharing", {"action": "credential_edit", "id": second_id, "enabled": False})
+            self.assertFalse(all_disabled["host"]["running"])
+            with patch.object(self.owner.sharing, "ensure_service", side_effect=AssertionError("Invalid edit started lending")):
+                status, _ = self.local_api("/api/sharing", {"action": "credential_edit", "id": first_id,
+                    "enabled": True, "expires_at": -1})
+                self.assertEqual(status, 400)
+            status, resumed = self.local_api("/api/sharing", {"action": "credential_edit", "id": first_id, "enabled": True})
+            self.assertEqual(status, 200)
+            self.assertTrue(resumed["host"]["running"])
+            self.assertEqual(self.remote_request(first["link"])[0], 200)
+            self.assertEqual(self.remote_request(second["link"])[0], 403)
+            self.local_api("/api/sharing", {"action": "credential_edit", "id": first_id, "enabled": False})
+        other = self.extra_relay("another-quota-owner")
+        other.sharing.authorization_factory = DummyAuthorization
+        with patch.object(other.sharing, "_host_upstream", return_value=self.target):
+            link = other.sharing.start_host("127.0.0.1", free_port())["link"]
+        self.owner.sharing.connect(link)
+        self.assertTrue(self.owner.sharing.status()["client"]["active"])
+        status, _ = self.local_api("/api/sharing", {"action": "credential_edit", "id": first_id, "enabled": True})
+        self.assertEqual(status, 400)
+        self.assertFalse(next(row for row in self.owner.sharing.vault.rows() if row["id"] == first_id)["enabled"])
+
+    def test_exit_row_controls_preserve_other_grants_and_internal_callback(self):
+        with patch("packet_inspector.shared_egress.automatic_address", return_value="127.0.0.1"):
+            _, first = self.local_api("/api/sharing", {"action": "credential_issue", "kind": "exit", "label": "first"})
+            _, second = self.local_api("/api/sharing", {"action": "credential_issue", "kind": "exit", "label": "second"})
+            first_id, second_id = first["issued_id"], second["issued_id"]
+            _, one_disabled = self.local_api("/api/sharing", {"action": "credential_edit", "id": first_id, "enabled": False})
+            self.assertTrue(one_disabled["egress"]["host"]["active"])
+            _, all_disabled = self.local_api("/api/sharing", {"action": "credential_edit", "id": second_id, "enabled": False})
+            self.assertFalse(all_disabled["egress"]["host"]["active"])
+            status, resumed = self.local_api("/api/sharing", {"action": "credential_edit", "id": first_id, "enabled": True})
+            self.assertEqual(status, 200)
+            self.assertTrue(resumed["egress"]["host"]["active"])
+            self.owner.egress.issue(internal=True)
+            _, disabled = self.local_api("/api/sharing", {"action": "credential_edit", "id": first_id, "enabled": False})
+            self.assertTrue(disabled["egress"]["host"]["active"], "The internal callback still needs its listener")
 
     def test_saved_quota_links_survive_listener_restart_without_rebinding(self):
         link = self.start()

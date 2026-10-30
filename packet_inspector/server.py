@@ -722,7 +722,19 @@ class Handler(BaseHTTPRequestHandler):
                         else:
                             raise ValueError("invalid credential kind")
                     elif action in {"credential_edit", "credential_reset"}:
-                        self.server.sharing.vault.update(data.get("id"), data, reset=action == "credential_reset")
+                        vault = self.server.sharing.vault
+                        reset = action == "credential_reset"
+                        draft = vault.update(data.get("id"), data, reset=reset, dry_run=True)
+                        controller = self.server.sharing if draft["kind"] == "quota" else self.server.egress
+                        if data.get("enabled") is True:
+                            controller.ensure_service()
+                        vault.update(data.get("id"), data, reset=reset)
+                        if not any(row["kind"] == draft["kind"] and row["direction"] == "out"
+                                   and row["enabled"] and not row["expired"] for row in vault.rows()):
+                            if draft["kind"] == "quota":
+                                self.server.sharing.stop_host()
+                            else:
+                                self.server.egress.stop()
                         result = self.server.sharing.status()
                     elif action == "credential_copy":
                         rows = self.server.sharing.vault.rows()

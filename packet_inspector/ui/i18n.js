@@ -24,8 +24,6 @@ const uiI18n = (() => {
     "借出":"Lend",
     "借入":"Borrow",
     "生成凭据":"Generate credential",
-    "暂停借出":"Pause lending",
-    "恢复借出":"Resume lending",
     "对方的凭据":"Credential from the provider",
     "保存并借入":"Save and use",
     "使用本机额度":"Use local quota",
