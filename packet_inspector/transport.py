@@ -7,6 +7,9 @@ DEFAULT_ZSTD_LEVEL = 3
 MIN_ZSTD_LEVEL = 1
 MAX_ZSTD_LEVEL = 22
 AUTO_ZSTD_HIGH_LEVEL = 16
+# Offline image JSON benchmark: levels 1-22, seven fixtures, three rounds.
+# Higher levels save very little on already-encoded image data.
+AUTO_IMAGE_ZSTD_LEVEL = 6
 
 
 class PreparedRequest(NamedTuple):
@@ -36,9 +39,11 @@ def select_zstd_level(encoding, zstd_level=DEFAULT_ZSTD_LEVEL, *,
 
 
 def prepare_zstd(body, encoding, zstd_level=DEFAULT_ZSTD_LEVEL, *,
-                 auto_zstd_level=False, budget_bytes=None):
+                 auto_zstd_level=False, budget_bytes=None, image_request=False):
     level = select_zstd_level(encoding, zstd_level,
                               auto_zstd_level=auto_zstd_level, budget_bytes=budget_bytes)
+    if image_request and auto_zstd_level:
+        level = AUTO_IMAGE_ZSTD_LEVEL
     if level is None:
         return PreparedRequest(body, encoding or "identity")
     import zstandard
@@ -70,7 +75,8 @@ def prepare_request_info(body, headers, method, path, mode, zstd_level=DEFAULT_Z
                 and encoding.strip().lower() in {"", "identity", "zstd"})
     if eligible:
         return prepare_zstd(body, encoding, zstd_level,
-                            auto_zstd_level=auto_zstd_level, budget_bytes=budget_bytes)
+                            auto_zstd_level=auto_zstd_level, budget_bytes=budget_bytes,
+                            image_request=is_json_image_request(path, headers))
     return PreparedRequest(body, encoding or "identity")
 
 

@@ -38,6 +38,8 @@ The request list and token chart show input tokens before overflow summarization
 Reduce request upload size while preserving the original content and meaning.
 
 - Losslessly compress conversation requests and JSON image generation/edit requests while preserving image content and quality. The request list and filters distinguish these three operations.
+- Smart compression for image requests uses **level 6**, selected by an offline benchmark. Manual mode always uses the selected level; runtime requests do not probe different levels.
+- Optionally enable reference image downscaling when transport compression still leaves a request over the limit. This can reduce detail. It is off by default, preserves original files and transparency, runs at most two passes from the original images, and supports explicitly identified edit masks.
 - Choose from **compression levels 1–22**, with compressed-size and local processing-time estimates to help compare them.
 - View separate estimates for original requests below 1.5 MB and those at or above 1.5 MB, with colors showing relative results within each group.
 - Further optimize existing zstd requests, replacing them only when the compressed body is smaller.

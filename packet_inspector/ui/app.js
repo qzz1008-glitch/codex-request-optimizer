@@ -941,6 +941,8 @@ function fillSettings() {
   $("capacity-retry-count").disabled=settingsSaving||s.capacity_retry_mode!=="native"||!Number.isInteger(s.capacity_retry_max_retries);
   $("capacity-retry-delay").disabled=settingsSaving||s.capacity_retry_mode!=="native"||!Number.isInteger(s.capacity_retry_delay_seconds);
   fillImageAnalysisMode();
+  if(!settingsEditing)$("image-upload-optimization").checked=state.status.image_upload_optimization_enabled===true;
+  $("image-upload-optimization").disabled=settingsSaving||typeof state.status.image_upload_optimization_enabled!=="boolean";
   $("startup-hint").textContent=t(s.start_on_login_supported?(s.startup_state_known===false?"无法读取开机启动状态，请重新保存设置。":"登录 Windows 后自动启动。"):"开机启动仅支持已安装的 Windows 版本。");
   $("runtime-settings-message").hidden=!!s.capacity_retry_supported;
   $("runtime-settings-message").textContent=s.capacity_retry_supported?"":t("当前中转暂不支持此功能。");
@@ -970,6 +972,7 @@ function fillImageAnalysisMode() {
 }
 function fillZstdLevel() {
   const s=state.status,input=$("zstd-level"),supported=Number.isInteger(s.zstd_level);
+  $("auto-zstd-level-hint").textContent=Number.isInteger(s.auto_image_zstd_level)?t("对话按大小选档，图片请求使用{level}级；开启后禁用手动选择。").replace("{level}",s.auto_image_zstd_level):t("根据请求大小自动选择合适的压缩等级，开启后禁用手动选择。");
   const selected=settingsEditing?Number(input.value):(s.zstd_level??3);
   const automatic=$("packet-size-protection").checked&&$("auto-zstd-level").checked;
   $("compression-settings").classList.toggle("is-automatic",automatic);
@@ -1311,6 +1314,7 @@ function readSettingsDraft() {
     capacity_retry_max_retries:$("capacity-retry-count").value,
     capacity_retry_delay_seconds:$("capacity-retry-delay").value,
     image_analysis_mode:selectedImageAnalysisMode(),
+    image_upload_optimization_enabled:$("image-upload-optimization").checked,
     image_save_dir:$("image-save-dir").value,
     log_dir:$("log-dir").value,
     cache_dir:$("cache-dir").value,
@@ -1389,6 +1393,7 @@ async function saveSettings() {
     ["zstd_level","zstd_level",Number(draft.zstd_level),Number.isInteger(s.zstd_level)],
     ["packet_size_protection_enabled","packet_size_protection_enabled",draft.packet_size_protection_enabled,protectionSupported],
     ["auto_zstd_level_enabled","auto_zstd_level_enabled",draft.auto_zstd_level_enabled,typeof s.auto_zstd_level_enabled==="boolean"],
+    ["image_upload_optimization_enabled","image_upload_optimization_enabled",draft.image_upload_optimization_enabled,typeof s.image_upload_optimization_enabled==="boolean"],
     ["budget","budget_bytes",Math.round(Number(draft.budget)*1000),protectionSupported],
     ["start_on_login","start_on_login",draft.start_on_login,s.start_on_login_supported],
     ["capacity_retry_enabled","capacity_retry_enabled",draft.capacity_retry_enabled,s.capacity_retry_supported],
@@ -1549,15 +1554,17 @@ async function selectPacket(id,refresh=false,expectedListRequest=null) {
 }
 function renderProtectionPanelState() {
   const panel=$("packet-protection-panel");if(!panel)return;
-  const enabled={size:state.status?.packet_size_protection_enabled===true,retry:state.status?.capacity_retry_enabled===true};
-  const disabled=!enabled.size&&!enabled.retry;
+  const enabled={size:state.status?.packet_size_protection_enabled===true,retry:state.status?.capacity_retry_enabled===true,
+    image:state.status?.image_upload_optimization_enabled===true};
+  const rows=[...panel.querySelectorAll("[data-protection]")];
+  const disabled=!rows.some(row=>enabled[row.dataset.protection]);
   panel.classList.toggle("protection-disabled",disabled);
   panel.setAttribute("aria-disabled",String(disabled));
   panel.title=disabled?t("可在设置中开启请求保护"):"";
-  for(const row of panel.querySelectorAll("[data-protection]")) {
+  for(const row of rows) {
     const inactive=!enabled[row.dataset.protection];
     row.classList.toggle("protection-inactive",inactive);
-    row.title=inactive?t(row.dataset.protection==="retry"?"可在设置中开启重试保护":"可在设置中开启请求大小保护"):"";
+    row.title=inactive?t(row.dataset.protection==="retry"?"可在设置中开启重试保护":row.dataset.protection==="image"?"可在设置中开启参考图缩小":"可在设置中开启请求大小保护"):"";
   }
 }
 function renderCompression(m) {
@@ -1573,6 +1580,12 @@ function renderCompression(m) {
   fact(sizes,t("压缩方式"),encoding==="identity"?t("不压缩"):encoding||"—");
   const level=hasTransport?m.transport_zstd_level:summaryTriggered?null:m.relay_zstd_level;
   fact(sizes,t("压缩等级"),Number.isInteger(level)&&level>=1&&level<=22?level:"—");
+  if(m.image_upload_optimized) {
+    fact(sizes,t("缩图前转发请求"),bytes(m.image_upload_before_bytes));
+    for(const [index,image] of (m.image_upload_images||[]).entries()) {
+      fact(sizes,image.mask?t("编辑蒙版"):t("参考图 {index}").replace("{index}",index+1),`${image.original_width}×${image.original_height} → ${image.width}×${image.height}`);
+    }
+  }
   if(original>0 && compressed!==null)fact(sizes,t("减小比例"),(100*(1-compressed/original)).toFixed(1)+"%").title=t("包含图片处理和传输压缩带来的大小变化，按超限摘要处理前的正文计算。");
   if(summaryTriggered) {
     const estimate=requestTokenUsage(m), actual=m.upstream_usage?.input_tokens;
@@ -1591,6 +1604,9 @@ function renderCompression(m) {
   const summaryFailed=typeof m.relay_error==="string"&&m.relay_error.startsWith("overflow_");
   fact(steps,t("超限保护"),summaryFailed?t("处理失败"):triggerStatus(summaryTriggered)).dataset.protection="size";
   fact(steps,t("重试保护"),triggerStatus(m.native_retry_advised===true||capacityRetryCount(m)>0)).dataset.protection="retry";
+  if(m.request_kind==="image_edit"||m.request_kind==="image_generation"||/\/images\/(?:edits|generations)\/*(?:\?.*)?$/.test(m.path||"")) {
+    fact(steps,t("参考图缩小"),triggerStatus(m.image_upload_optimized===true)).dataset.protection="image";
+  }
   root.append(steps);reconcileContent($("compression-content"),root);renderProtectionPanelState();
 }
 function bars(title, rows, total,bodyAvailable=true) {
