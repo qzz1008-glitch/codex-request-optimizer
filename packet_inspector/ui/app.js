@@ -1582,9 +1582,6 @@ function renderCompression(m) {
   fact(sizes,t("压缩等级"),Number.isInteger(level)&&level>=1&&level<=22?level:"—");
   if(m.image_upload_optimized) {
     fact(sizes,t("缩图前转发请求"),bytes(m.image_upload_before_bytes));
-    for(const [index,image] of (m.image_upload_images||[]).entries()) {
-      fact(sizes,image.mask?t("编辑蒙版"):t("参考图 {index}").replace("{index}",index+1),`${image.original_width}×${image.original_height} → ${image.width}×${image.height}`);
-    }
   }
   if(original>0 && compressed!==null)fact(sizes,t("减小比例"),(100*(1-compressed/original)).toFixed(1)+"%").title=t("包含图片处理和传输压缩带来的大小变化，按超限摘要处理前的正文计算。");
   if(summaryTriggered) {
@@ -1593,6 +1590,16 @@ function renderCompression(m) {
     fact(sizes,t("上游实际输入 Token"),Number.isSafeInteger(actual)&&actual>=0?nf.format(actual):"—");
   }
   root.append(sizes);
+  if(m.image_upload_optimized&&Array.isArray(m.image_upload_images)&&m.image_upload_images.length) {
+    const resolutions=panel(t("图片分辨率"));
+    const resolution=(width,height)=>Number.isSafeInteger(width)&&width>0&&Number.isSafeInteger(height)&&height>0?`${width} × ${height}`:"—";
+    for(const [index,image] of m.image_upload_images.entries()) {
+      const name=image.mask?t("编辑蒙版"):t("参考图 {index}").replace("{index}",index+1);
+      fact(resolutions,name+" · "+t("压缩前"),resolution(image.original_width,image.original_height));
+      fact(resolutions,name+" · "+t("压缩后"),resolution(image.width,image.height));
+    }
+    root.append(resolutions);
+  }
   const steps=panel(t("请求保护"));steps.id="packet-protection-panel";steps.classList.add("packet-protection-panel");
   const triggerStatus=triggered=>triggered?t("已触发"):m.source==="live"?t("未触发"):t("暂无记录");
   const predictiveArmed=Number.isSafeInteger(m.usage_override_request_bytes)&&m.usage_override_request_bytes>0;
