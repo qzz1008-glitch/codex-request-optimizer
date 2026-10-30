@@ -29,7 +29,7 @@ const uiI18n = (() => {
     "保存并借入":"Save and use",
     "使用本机额度":"Use local quota",
     "额度方出口":"Quota provider exit",
-    "每张凭据仅供一位同事使用。":"Each credential is for one colleague.",
+    "一张凭据仅供一台机器使用。":"Each credential is for one machine only.",
     "借出的出口始终使用本机网络。":"Shared exits always use this computer’s physical network.",
     "统计范围":"Statistics scope",
     "连接不可用":"Connection unavailable",
