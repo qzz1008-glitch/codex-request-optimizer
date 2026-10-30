@@ -34,7 +34,8 @@ from .response_summary import ResponseSummary
 from .session_summary import SessionSummaries
 from .storage import DEFAULT_STORAGE_BYTES, Store
 from .storage_paths import resolve_directory, path_settings
-from .transport import AUTO_IMAGE_ZSTD_LEVEL, DEFAULT_ZSTD_LEVEL, PreparedRequest, prepare_request_info, validate_zstd_level
+from .transport import (AUTO_IMAGE_ZSTD_LEVEL, DEFAULT_IMAGE_ZSTD_LEVEL, DEFAULT_ZSTD_LEVEL,
+                        PreparedRequest, prepare_request_info, validate_zstd_level)
 from .request_types import is_json_image_request
 from .image_upload import optimize_image_request
 from .compression_policy import CompressionPolicy, INITIAL_HIGH_BYTES, is_main_request
@@ -117,6 +118,7 @@ def retention_settings(saved):
 def protection_settings(saved, *, default_enabled=False):
     values = dict(saved)
     values.pop("request_compression", None)  # Legacy analysis/optimization modes.
+    values.pop("image_upload_optimization_enabled", None)
     if "packet_size_protection_enabled" not in values:
         legacy = ("overflow_compaction_enabled", "native_compact_trigger_enabled")
         values["packet_size_protection_enabled"] = (any(values.get(key) is True for key in legacy)
@@ -147,24 +149,24 @@ class InspectorServer(ThreadingHTTPServer):
                          "capture_enabled": True, "budget_bytes": DEFAULT_BUDGET_BYTES,
                          "max_packets": 2000,
                          "zstd_level": DEFAULT_ZSTD_LEVEL,
+                         "image_zstd_level": DEFAULT_IMAGE_ZSTD_LEVEL,
                          "packet_size_protection_enabled": False,
                          "ui_language": "zh",
                          "start_on_login": False, "capacity_retry_enabled": False,
                          "capacity_retry_max_retries": DEFAULT_RETRIES,
                          "capacity_retry_delay_seconds": DEFAULT_DELAY_SECONDS,
                          "image_isolation_enabled": False, "image_analysis_mode": "native", "image_save_dir": "",
-                         "image_upload_optimization_enabled": False,
                          "auto_detect_providers": True, "provider_routes": {},
                           "log_dir": "", "cache_dir": "",
                          **protection_settings(saved)}
         self.settings.pop("ui_token", None)
         self.settings["image_analysis_mode"] = image_mode(saved)
         self.settings["image_isolation_enabled"] = self.settings["image_analysis_mode"] == "optimized"
-        self.settings["image_upload_optimization_enabled"] = saved.get("image_upload_optimization_enabled") is True
-        try:
-            self.settings["zstd_level"] = validate_zstd_level(self.settings["zstd_level"])
-        except ValueError:
-            self.settings["zstd_level"] = DEFAULT_ZSTD_LEVEL
+        for key, default in (("zstd_level", DEFAULT_ZSTD_LEVEL), ("image_zstd_level", DEFAULT_IMAGE_ZSTD_LEVEL)):
+            try:
+                self.settings[key] = validate_zstd_level(self.settings[key])
+            except ValueError:
+                self.settings[key] = default
         limit = self.settings["capacity_retry_max_retries"]
         self.settings["capacity_retry_max_retries"] = (
             min(limit, MAX_RETRIES) if isinstance(limit, int) and not isinstance(limit, bool) and limit >= 1
@@ -496,6 +498,7 @@ class InspectorServer(ThreadingHTTPServer):
                 "connection_policy": 1, "connection_reload_required": self.connection_reload_required,
                 "trend_packets_supported": True,
                 "zstd_level": self.settings["zstd_level"],
+                "image_zstd_level": self.settings["image_zstd_level"],
                 "auto_zstd_level_enabled": self.settings["auto_zstd_level_enabled"],
                 "auto_image_zstd_level": AUTO_IMAGE_ZSTD_LEVEL,
                 "ui_language": self.settings["ui_language"],
@@ -526,7 +529,6 @@ class InspectorServer(ThreadingHTTPServer):
                                           or resolve_directory(self.data_dir, self.settings["cache_dir"]) != self.cache_dir),
                 "image_isolation_enabled": self.settings["image_isolation_enabled"],
                 "image_analysis_mode": self.settings["image_analysis_mode"],
-                "image_upload_optimization_enabled": self.settings["image_upload_optimization_enabled"],
                 "image_isolation_supported": True, "image_tool": self.image_config.status(),
                 "image_save_dir": str(self.image_isolation.directory),
                 "image_save_dir_default": str(self.default_image_save_dir), "image_save_dir_supported": True,
@@ -813,8 +815,9 @@ class Handler(BaseHTTPRequestHandler):
                     image_isolation = ImageIsolation(self.server.data_dir, candidate["image_save_dir"])
                 if "request_compression" in data:
                     raise ValueError("仅支持接入和断开；接入后由本软件管理 zstd 压缩。")
-                if "zstd_level" in data:
-                    candidate["zstd_level"] = validate_zstd_level(data["zstd_level"])
+                for key in ("zstd_level", "image_zstd_level"):
+                    if key in data:
+                        candidate[key] = validate_zstd_level(data[key])
                 if "ui_language" in data:
                     if not isinstance(data["ui_language"], str) or data["ui_language"] not in {"zh", "en"}:
                         raise ValueError("invalid interface language")
@@ -838,7 +841,7 @@ class Handler(BaseHTTPRequestHandler):
                 if not candidate["packet_size_protection_enabled"]:
                     candidate["auto_zstd_level_enabled"] = False
                 for key in ("capture_enabled",
-                            "start_on_login", "capacity_retry_enabled", "image_upload_optimization_enabled"):
+                            "start_on_login", "capacity_retry_enabled"):
                     if key in data:
                         if not isinstance(data[key], bool):
                             raise ValueError("invalid boolean setting: " + key)
@@ -1118,17 +1121,16 @@ class Handler(BaseHTTPRequestHandler):
             # Disconnected clients may briefly retain an old relay URL until
             # ChatGPT restarts. Keep forwarding them without extra zstd work.
             compression = "zstd" if self.server.settings["auto_detect_providers"] or shared_client else "off"
-            zstd_level = self.server.settings["zstd_level"]
+            json_image = is_json_image_request(suffix, self.headers)
+            zstd_level = self.server.settings["image_zstd_level" if json_image else "zstd_level"]
             protection_enabled = self.server.settings["packet_size_protection_enabled"]
             budget = self.server.settings["budget_bytes"]
             image_enabled = self.server.settings["image_isolation_enabled"]
-            image_upload_enabled = self.server.settings["image_upload_optimization_enabled"]
             image_isolation = self.server.image_isolation
             image_configured = self.server.image_config.state.get("enabled", False)
             image_worker = self.server.image_config.is_worker(self.headers.get(WORKER_HEADER, ""))
             auto_zstd_level = (protection_enabled and self.server.settings["auto_zstd_level_enabled"]
                                and compression == "zstd" and not image_worker)
-            json_image = is_json_image_request(suffix, self.headers)
             auto_eligible = (auto_zstd_level and self.command == "POST"
                              and not json_image and urlsplit(suffix).path.rstrip("/").endswith("/responses")
                              and self.headers.get("Content-Encoding", "identity").strip().lower() in {"", "identity", "zstd"})
@@ -1233,7 +1235,7 @@ class Handler(BaseHTTPRequestHandler):
                 encoded = prepare_request_info(body, headers, self.command, suffix, compression, zstd_level,
                                                 auto_zstd_level=auto_zstd_level, budget_bytes=budget)
                 outbound_body, outbound_encoding, applied_zstd_level = encoded
-            if image_upload_enabled and json_image and self.command == "POST" and compression == "zstd":
+            if protection_enabled and json_image and self.command == "POST" and compression == "zstd":
                 prepared_image, upload_meta = optimize_image_request(body, headers, suffix,
                     PreparedRequest(outbound_body, outbound_encoding, applied_zstd_level), budget_bytes=budget,
                     zstd_level=AUTO_IMAGE_ZSTD_LEVEL if auto_zstd_level else zstd_level)
