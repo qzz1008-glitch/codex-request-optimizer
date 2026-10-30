@@ -795,25 +795,25 @@ class LANSharingTests(unittest.TestCase):
         self.assertEqual(self.owner.sharing.status()['host']['usage']['missing_responses'], 1)
 
     def test_compact_spend_counts_toward_dollar_budget_and_tokens_do_not_limit_requests(self):
-        link = self.start(budget='0.01')
+        link = self.start(budget='1')
         self.direct_response = json.dumps({'model': 'gpt-6.1-sol', 'usage': {
-            'input_tokens': 1000, 'output_tokens': 100, 'total_tokens': 1100,
-            'input_tokens_details': {'cached_tokens': 500}}}).encode()
+            'input_tokens': 100000, 'output_tokens': 10000, 'total_tokens': 110000,
+            'input_tokens_details': {'cached_tokens': 50000}}}).encode()
         for _ in range(5):
             self.assertEqual(self.remote_request(link, '/v1/responses/compact', b'{}')[0], 200)
         state = self.owner.sharing.status()['host']
         self.assertNotIn('token_limit', state)
-        self.assertEqual(state['usage']['total_tokens'], 5500)
-        self.assertEqual(state['usage']['input_tokens'], 5000)
-        self.assertEqual(state['usage']['cached_input_tokens'], 2500)
+        self.assertEqual(state['usage']['total_tokens'], 550000)
+        self.assertEqual(state['usage']['input_tokens'], 500000)
+        self.assertEqual(state['usage']['cached_input_tokens'], 250000)
         credential = next(row for row in self.owner.sharing.status()['credentials'] if row['direction'] == 'out')
-        self.assertEqual(credential['budget_nanos'], 10_000_000)
-        self.assertEqual(credential['period_cost_nanos'], 10_250_000)
+        self.assertEqual(credential['budget_nanos'], 1_000_000_000)
+        self.assertEqual(credential['period_cost_nanos'], 1_025_000_000)
         self.assertEqual(self.remote_request(link, '/v1/responses', b'{}')[0], 403)
         self.assertEqual(self.remote_request(link, '/v1/models')[0], 200)
         self.assertEqual(len(self.received), 5)
         self.owner.sharing.stop_host()
-        self.assertEqual(self.owner.sharing.status()['host']['usage']['total_tokens'], 5500)
+        self.assertEqual(self.owner.sharing.status()['host']['usage']['total_tokens'], 550000)
         self.authorization = DummyAuthorization()
         self.start()
         self.assertEqual(self.owner.sharing.status()['host']['usage']['total_tokens'], 0)
@@ -859,9 +859,11 @@ class LANSharingTests(unittest.TestCase):
         self.assertEqual(current['requests'], 0)
 
     def test_dollar_budget_validation_occurs_before_native_authorization(self):
-        for value in (-1, True, 1_000_001, 'NaN', 'invalid', None):
+        for value in (-1, 0, 0.99, True, 1_000_001, 'NaN', 'invalid', None):
             with self.subTest(value=value), self.assertRaises(SharingError):
                 self.start(budget=value)
+        with self.assertRaises(SharingError):
+            self.owner.sharing.issue(expires_at=time.time() + 3600)
         self.assertEqual(self.authorization.calls, 0)
 
     def test_original_start_api_uses_dollars_and_rejects_the_retired_token_limit(self):

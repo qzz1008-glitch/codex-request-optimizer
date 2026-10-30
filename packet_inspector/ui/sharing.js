@@ -8,6 +8,7 @@ globalThis.InspectorSharing=(()=>{
   const bytes=n=>{n=Number(n||0);return n<1000?`${number(n)} B`:n<1e6?`${(n/1000).toFixed(1)} KB`:`${(n/1e6).toFixed(2)} MB`;};
   const date=n=>n?new Date(n*1000).toLocaleString(undefined,{month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit"}):tr("无期限");
   const localDate=n=>{const d=new Date(n);return new Date(d.getTime()-d.getTimezoneOffset()*60000).toISOString().slice(0,16);};
+  const minimumExpiry=()=>localDate(Math.ceil((Date.now()+864e5)/60000)*60000);
   let active=false,busy=false,current=null,timer=null,controller=null,resource="quota",focusId="",recoveryShown=false;
   const views={quota:"out",exit:"out"};
   const message=(value,error=false)=>{const box=get("sharing-message");box.textContent=tr(value);box.hidden=!value;box.classList.toggle("error",error);const local=get("credential-edit-message");local.textContent=error?tr(value):"";local.hidden=!error;};
@@ -21,7 +22,7 @@ globalThis.InspectorSharing=(()=>{
       <div class="sharing-switch" role="group" aria-label="${label(title)}"><button type="button" data-view="out" data-kind="${kind}" aria-pressed="true">${label("借出")}</button><button type="button" data-view="in" data-kind="${kind}" aria-pressed="false">${label("借入")}</button></div></header>
       <form id="${kind}-issue" class="sharing-form"><label>${label("名称")}<input id="${kind}-label" maxlength="80" required autocomplete="off"></label>
         ${expiryField(kind+"-expiry")}
-        ${kind==="quota"?`<label><span id="quota-budget-label">${label("额度")}</span><span class="sharing-amount-field"><input id="quota-budget" type="number" value="0" min="0" max="1000000" step="0.01" required aria-labelledby="quota-budget-label" aria-describedby="quota-budget-unit" title="${label("0 表示不限。")}"><span id="quota-budget-unit" class="sharing-amount-unit">${label("美元")}</span></span></label><label class="sharing-check"><input id="quota-weekly" type="checkbox">${label("每周刷新额度")}</label>`:""}
+        ${kind==="quota"?`<label><span class="sharing-budget-label"><span id="quota-budget-label">${label("额度")}</span><button id="quota-billing-help" class="sharing-billing-help" type="button" aria-label="${label("计费说明")}" title="${label("计费说明")}">?</button></span><span class="sharing-amount-field"><input id="quota-budget" type="number" value="1" min="1" max="1000000" step="0.01" required aria-labelledby="quota-budget-label" aria-describedby="quota-budget-unit" title="${label("最低 1 美元。")}"><span id="quota-budget-unit" class="sharing-amount-unit">${label("美元")}</span></span></label><label class="sharing-check"><input id="quota-weekly" type="checkbox">${label("每周刷新额度")}</label>`:""}
       </form>
       <form id="${kind}-borrow" class="sharing-form" hidden><label>${label("名称")}<input id="${kind}-borrow-label" maxlength="80" required autocomplete="off"></label><label>${label("对方的凭据")}<input id="${kind}-borrow-link" type="password" autocomplete="off" spellcheck="false" required placeholder="${kind==="quota"?"codex-share":"codex-exit"}://…"></label></form>
       <div class="sharing-actions"><button class="primary" type="submit" form="${kind}-issue" id="${kind}-generate">${label("生成凭据")}</button><button class="primary" type="submit" form="${kind}-borrow" id="${kind}-activate" hidden>${label("保存并借入")}</button></div>
@@ -41,16 +42,17 @@ globalThis.InspectorSharing=(()=>{
     get(id).value=picker.dataset.originalValue;get(id).disabled=true;get(id).setCustomValidity("");picker.hidden=true;get(id+"-custom").setAttribute("aria-expanded","false");if(focus)get(id+"-custom").focus();return true;
   }
   function closeExpiryPickers(){for(const id of expiryIds)closeExpiryPicker(id);}
-  function resetIssue(kind){closeExpiryPicker(kind+"-expiry");get(kind+"-label").value="";setExpiry(kind+"-expiry","week");if(kind==="quota"){get("quota-budget").value="0";get("quota-weekly").checked=false;}}
+  function resetIssue(kind){closeExpiryPicker(kind+"-expiry");get(kind+"-label").value="";setExpiry(kind+"-expiry","week");if(kind==="quota"){get("quota-budget").value="1";get("quota-weekly").checked=false;}}
   function applyExpiry(id){
     const input=get(id);input.setCustomValidity("");if(!input.reportValidity())return;
-    const value=input.value;try{expiryTime(value);}catch(error){input.setCustomValidity(error.message);input.reportValidity();return;}
+    const value=input.value;try{expiryTime(value,id);}catch(error){input.setCustomValidity(error.message);input.reportValidity();return;}
     closeExpiryPicker(id,true);setExpiry(id,"custom",value);
   }
   for(const id of expiryIds){setExpiry(id,"week");get(id+"-picker").hidden=true;get(id).disabled=true;get(id).addEventListener("input",()=>get(id).setCustomValidity(""));}
   get("sharing-stat-count").innerHTML=`<select id="sharing-stat-filter" aria-label="${label("统计范围")}"></select>`;
-  function expiryTime(value){const n=value?new Date(value).getTime()/1000:NaN;if(!Number.isFinite(n)||n<=Date.now()/1000)throw new Error(tr("请选择未来的到期时间，或选择无期限。"));return n;}
-  function expiry(id){const mode=get(id+"-field").dataset.mode;return mode==="none"?null:mode==="week"?Math.floor(Date.now()/1000)+7*86400:expiryTime(get(id).value);}
+  function expiryTime(value,id){const original=get("credential-edit-form").dataset.originalExpiry;if(id==="credential-edit-expiry"&&original&&value===localDate(Number(original)*1000))return Number(original);const n=value?new Date(value).getTime()/1000:NaN;if(!Number.isFinite(n)||n<Date.now()/1000+86400)throw new Error(tr("期限至少为一天，也可选择无期限。"));return n;}
+  function expiry(id){const mode=get(id+"-field").dataset.mode;return mode==="none"?null:mode==="week"?Math.floor(Date.now()/1000)+7*86400:expiryTime(get(id).value,id);}
+  function budget(id){const value=get(id).value,n=Number(value),original=get("credential-edit-form").dataset.originalBudget;if(!Number.isFinite(n)||n<1||n>1000000){if(!(id==="credential-edit-budget"&&original!==undefined&&n===Number(original)))throw new Error(tr("额度应为 1 到 1,000,000 美元。"));}return value;}
   async function request(data,signal){
     const response=await fetch("/api/sharing",{method:data?"POST":"GET",cache:"no-store",headers:data?{"Content-Type":"application/json"}:{},body:data?JSON.stringify(data):undefined,signal});
     if(response.status===404)throw new Error(tr("当前后台不支持共享，请更新软件后使用。"));
@@ -107,18 +109,18 @@ globalThis.InspectorSharing=(()=>{
       render(result);if(result.reload_required===true)message("已切换额度来源。请重新加载 Codex 配置或重启 ChatGPT 应用。");else message(success||"已更新，新请求使用当前设置。");return result;
     }catch(error){message(error.message,true);}finally{busy=false;button?.setAttribute("aria-busy","false");if(button)button.disabled=false;if(current)render(current);}}
   async function refresh(){if(!active||document.hidden||busy)return;controller?.abort();const task=new AbortController();controller=task;try{const value=await request(null,task.signal);if(active&&!task.signal.aborted)render(value);}catch(error){if(error.name!=="AbortError")message(error.message,true);}finally{if(controller===task)controller=null;}}
-  function edit(row){closeExpiryPickers();get("credential-edit-message").hidden=true;get("credential-edit-id").value=row.id;get("credential-edit-label").value=row.label;setExpiry("credential-edit-expiry",row.expires_at?"custom":"none",row.expires_at?localDate(row.expires_at*1000):"");get("credential-edit-budget").value=Number(row.budget_nanos||0)/1e9;get("credential-edit-weekly").checked=row.weekly_reset===true;get("credential-edit-quota").hidden=row.kind!=="quota";get("sharing-credential-dialog").showModal();}
+  function edit(row){closeExpiryPickers();get("credential-edit-message").hidden=true;get("credential-edit-id").value=row.id;get("credential-edit-label").value=row.label;get("credential-edit-form").dataset.originalExpiry=String(row.expires_at??"");get("credential-edit-form").dataset.originalBudget=String(Number(row.budget_nanos||0)/1e9);setExpiry("credential-edit-expiry",row.expires_at?"custom":"none",row.expires_at?localDate(row.expires_at*1000):"");get("credential-edit-budget").value=Number(row.budget_nanos||0)/1e9;get("credential-edit-budget").min=Math.min(1,Number(row.budget_nanos||0)/1e9);get("credential-edit-budget").step="any";get("credential-edit-weekly").checked=row.weekly_reset===true;get("credential-edit-quota").hidden=row.kind!=="quota";get("sharing-credential-dialog").showModal();}
   async function copy(value){try{await navigator.clipboard.writeText(value);message("凭据已复制。");}catch(_){get("sharing-link").value=value;get("sharing-link-area").hidden=false;get("sharing-link").focus();get("sharing-link").select();message("请复制已选中的凭据。");}}
   get("sharing-config").addEventListener("click",event=>{const button=event.target.closest("button");if(!button||busy)return;const {kind,view,action:command}=button.dataset;
     if(view){closeExpiryPickers();views[kind]=view;resource=kind;focusId="";if(current)render(current);return;}
     if(command==="local"||command==="provider")action(button,kind==="quota"?{action:"client_disconnect"}:{action:"egress_select",mode:command==="provider"?"provider":"local"});
   });
   for(const kind of ["quota","exit"]){
-    get(kind+"-issue").addEventListener("submit",async event=>{event.preventDefault();resource=kind;try{const result=await action(get(kind+"-generate"),{action:"credential_issue",kind,label:get(kind+"-label").value.trim(),expires_at:expiry(kind+"-expiry"),...(kind==="quota"?{budget:get("quota-budget").value,weekly_reset:get("quota-weekly").checked}:{})},"凭据已生成。");if(result)resetIssue(kind);}catch(error){message(error.message,true);}});
+    get(kind+"-issue").addEventListener("submit",async event=>{event.preventDefault();resource=kind;try{const result=await action(get(kind+"-generate"),{action:"credential_issue",kind,label:get(kind+"-label").value.trim(),expires_at:expiry(kind+"-expiry"),...(kind==="quota"?{budget:budget("quota-budget"),weekly_reset:get("quota-weekly").checked}:{})},"凭据已生成。");if(result)resetIssue(kind);}catch(error){message(error.message,true);}});
     get(kind+"-borrow").addEventListener("submit",async event=>{event.preventDefault();resource=kind;const result=await action(get(kind+"-activate"),{action:"credential_use",kind,label:get(kind+"-borrow-label").value.trim(),link:get(kind+"-borrow-link").value.trim()});if(result)get(kind+"-borrow-link").value="";});
   }
   get("sharing-view").addEventListener("click",event=>{const button=event.target.closest("[data-expiry-target]");if(!button||busy)return;const {expiryTarget:id,expiryMode:mode,expiryAction:command}=button.dataset;
-    if(mode==="custom"){const picker=get(id+"-picker");if(closeExpiryPicker(id,true))return;closeExpiryPickers();picker.dataset.originalValue=get(id).value;get(id).value||=localDate(Date.now()+7*864e5);get(id).disabled=false;picker.hidden=false;get(id+"-custom").setAttribute("aria-expanded","true");get(id).focus();}
+    if(mode==="custom"){const picker=get(id+"-picker");if(closeExpiryPicker(id,true))return;closeExpiryPickers();picker.dataset.originalValue=get(id).value;get(id).value||=localDate(Date.now()+7*864e5);const original=get("credential-edit-form").dataset.originalExpiry;get(id).min=id==="credential-edit-expiry"&&original?localDate(Math.min(Number(original)*1000,Date.parse(minimumExpiry()))):minimumExpiry();get(id).disabled=false;picker.hidden=false;get(id+"-custom").setAttribute("aria-expanded","true");get(id).focus();}
     else if(mode){closeExpiryPickers();setExpiry(id,mode);}else if(command==="apply")applyExpiry(id);else if(command==="cancel")closeExpiryPicker(id,true);
   });
   document.addEventListener("click",event=>{if(!event.target.closest(".sharing-expiry"))closeExpiryPickers();});
@@ -130,10 +132,12 @@ globalThis.InspectorSharing=(()=>{
     if(command==="toggle")await action(button,{action:"credential_edit",id:row.id,enabled:!lending(row)});
     if(command==="use")await action(button,{action:"credential_use",kind:row.kind,id:row.id});
   });
-  get("credential-edit-form").addEventListener("submit",async event=>{event.preventDefault();try{const result=await action(get("credential-edit-save"),{action:"credential_edit",id:get("credential-edit-id").value,label:get("credential-edit-label").value,expires_at:expiry("credential-edit-expiry"),budget:get("credential-edit-budget").value,weekly_reset:get("credential-edit-weekly").checked});if(result)get("sharing-credential-dialog").close();}catch(error){message(error.message,true);}});
+  get("credential-edit-form").addEventListener("submit",async event=>{event.preventDefault();try{const result=await action(get("credential-edit-save"),{action:"credential_edit",id:get("credential-edit-id").value,label:get("credential-edit-label").value,expires_at:expiry("credential-edit-expiry"),budget:budget("credential-edit-budget"),weekly_reset:get("credential-edit-weekly").checked});if(result)get("sharing-credential-dialog").close();}catch(error){message(error.message,true);}});
+  for(const id of ["quota-billing-help","credential-edit-billing-help"])get(id).onclick=()=>get("sharing-billing-dialog").showModal();
+  get("sharing-billing-close").onclick=()=>get("sharing-billing-dialog").close();
   get("credential-edit-cancel").onclick=()=>get("sharing-credential-dialog").close();get("sharing-copy").onclick=()=>copy(get("sharing-link").value);get("sharing-link-close").onclick=()=>{get("sharing-link").value="";get("sharing-link-area").hidden=true;};
   document.addEventListener("visibilitychange",()=>{if(document.hidden)controller?.abort();else if(active)refresh();});
-  function setActive(value){active=value;clearInterval(timer);timer=null;if(!active){closeExpiryPickers();controller?.abort();if(get("sharing-credential-dialog").open)get("sharing-credential-dialog").close();get("sharing-link").value="";get("sharing-link-area").hidden=true;return;}message("");refresh();timer=setInterval(refresh,3000);}
+  function setActive(value){active=value;clearInterval(timer);timer=null;if(!active){closeExpiryPickers();controller?.abort();if(get("sharing-billing-dialog").open)get("sharing-billing-dialog").close();if(get("sharing-credential-dialog").open)get("sharing-credential-dialog").close();get("sharing-link").value="";get("sharing-link-area").hidden=true;return;}message("");refresh();timer=setInterval(refresh,3000);}
   return {setActive};
 })();
 if(typeof workspaceView!=="undefined"&&workspaceView==="sharing")globalThis.InspectorSharing.setActive(true);

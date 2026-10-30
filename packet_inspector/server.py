@@ -714,7 +714,7 @@ class Handler(BaseHTTPRequestHandler):
                     if action == "credential_issue":
                         if data.get("kind") == "quota":
                             result = self.server.sharing.issue(label=data.get("label", ""),
-                                expires_at=data.get("expires_at"), budget=data.get("budget", 0),
+                                expires_at=data.get("expires_at"), budget=data.get("budget", 1),
                                 weekly_reset=data.get("weekly_reset", False))
                         elif data.get("kind") == "exit":
                             issued = self.server.egress.issue(label=data.get("label", ""), expires_at=data.get("expires_at"))
@@ -762,7 +762,7 @@ class Handler(BaseHTTPRequestHandler):
                         if "token_limit" in data:
                             raise SharingError("共享额度现按美元设置，请更新客户端。")
                         result = self.server.sharing.start_host(data.get("address"), data.get("port"),
-                            data.get("hours", 8), budget=data.get("budget", 0))
+                            data.get("hours", 24), budget=data.get("budget", 1))
                     elif action == "host_stop":
                         result = self.server.sharing.stop_host()
                     elif action == "host_rotate":
@@ -773,7 +773,7 @@ class Handler(BaseHTTPRequestHandler):
                         result = self.server.sharing.disconnect()
                     elif action in {"egress_start", "egress_stop", "egress_rotate", "egress_select", "egress_link"}:
                         if action == "egress_start":
-                            exit_result = self.server.egress.start(data.get("address"), data.get("port"), data.get("hours", 8))
+                            exit_result = self.server.egress.start(data.get("address"), data.get("port"), data.get("hours", 24))
                         elif action == "egress_stop":
                             exit_result = self.server.egress.stop()
                         elif action == "egress_rotate":
