@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import tomllib
 import unittest
@@ -244,12 +245,13 @@ $results = @(foreach ($value in @('""" + parent.upper() + """','""" + other + ""
         path = str(image).replace("'", "''")
         report = self.powershell("""
 function Find-CodexCli { return 'fake-codex' }
-function Invoke-ToolProcess($Executable, $Arguments, $TimeoutSeconds, $WorkingDirectory) {
+function Invoke-ToolProcess($Executable, $Arguments, $TimeoutSeconds, $WorkingDirectory, $InputText) {
     $script:ObservedWork = $WorkingDirectory
     if ($Arguments[0] -eq '--profile') {
         return @{ExitCode=0;Output='[{"name":"isolated_vision"},{"name":"other"}]'}
     }
     $script:ObservedArguments = $Arguments
+    $script:ObservedInputText = $InputText
     $result = $Arguments[[array]::IndexOf($Arguments,'--output-last-message')+1]
     [IO.File]::WriteAllText($result,'Visible error text',[Text.Encoding]::UTF8)
     return @{ExitCode=0;Output=''}
@@ -258,11 +260,14 @@ $value = Invoke-ImageAnalysis ([pscustomobject]@{path='""" + path + """';instruc
 $arguments = $script:ObservedArguments
 @{answer=$value;ephemeral=('--ephemeral' -in $arguments);image=$arguments[[array]::IndexOf($arguments,'--image')+1];
   override=$arguments[[array]::IndexOf($arguments,'-c')+1];
+  prompt=$script:ObservedInputText;stdinPrompt=('-' -in $arguments);
   metadata=@($arguments | Where-Object {$_ -like 'responses_api_metadata.*'});
   cleaned=(-not(Test-Path -LiteralPath $script:ObservedWork))} | ConvertTo-Json -Compress
 """)
         self.assertEqual(report["answer"], "Visible error text")
         self.assertTrue(report["ephemeral"])
+        self.assertTrue(report["stdinPrompt"])
+        self.assertIn("\n\nRequest: Read the error", report["prompt"])
         self.assertEqual(Path(report["image"]).resolve(), image.resolve())
         self.assertTrue(report["cleaned"])
         self.assertIn('"isolated_vision"={enabled=false}', report["override"])
@@ -283,6 +288,58 @@ $arguments = $script:ObservedArguments
             "@{code=$result.ExitCode;values=@(foreach($value in $values){[string]$value})} | ConvertTo-Json -Depth 5 -Compress\n")
         self.assertEqual(report["code"], 0)
         self.assertEqual(report["values"], expected)
+
+    def test_batch_cli_receives_multiline_prompt_on_stdin_and_keeps_image_argument(self):
+        echo = self.root / "echo.py"
+        echo.write_text("import json,sys\nfrom pathlib import Path\n"
+                        "args=sys.argv[1:]\n"
+                        "if args[0]=='--profile':\n print('[]')\n sys.exit(0)\n"
+                        "if '--image' not in args:\n sys.stderr.write('Image argument was lost')\n sys.exit(1)\n"
+                        "report={'args':args, 'stdin':sys.stdin.buffer.read().decode('utf-8')}\n"
+                        "Path(args[args.index('--output-last-message')+1]).write_text(json.dumps(report), encoding='utf-8')\n",
+                        encoding="utf-8")
+        wrapper = self.root / "codex.cmd"
+        wrapper.write_text('@echo off\r\n"%CODEX_TEST_PYTHON%" "%CODEX_TEST_ECHO%" %*\r\n', encoding="ascii")
+        image = self.root / "synthetic image.png"
+        image.write_bytes(b"synthetic-image-fixture")
+        instruction = "Read synthetic text.\n\n中文 'quotes' & pipes | %PATH%"
+        request = json.dumps({"path": str(image), "instruction": instruction}, ensure_ascii=False)
+        report = self.powershell("$env:CODEX_TEST_PYTHON='" + sys.executable.replace("'", "''") + "'\n"
+                                 "$env:CODEX_TEST_ECHO='" + str(echo).replace("'", "''") + "'\n"
+                                 "$env:CODEX_CLI_PATH='" + str(wrapper).replace("'", "''") + "'\n"
+                                 "$request=ConvertFrom-Json -InputObject '" + request.replace("'", "''") + "'\n"
+                                 "Invoke-ImageAnalysis $request $null\n")
+        arguments = report["args"]
+        self.assertEqual(arguments[arguments.index("--image") + 1], str(image.resolve()))
+        self.assertIn("-", arguments)
+        self.assertIn('responses_api_metadata.codex_inspector_request_kind="image_analysis"', arguments)
+        self.assertTrue(report["stdin"].endswith("\n\nRequest: " + instruction))
+        self.assertFalse(any(instruction in argument for argument in arguments))
+
+    def test_analysis_failure_returns_bounded_redacted_stderr(self):
+        image = self.root / "synthetic.png"
+        image.write_bytes(b"synthetic-image-fixture")
+        path = str(image).replace("'", "''")
+        report = self.powershell("""
+function Find-CodexCli { return 'fake-codex' }
+function Invoke-ToolProcess($Executable, $Arguments, $TimeoutSeconds, $WorkingDirectory, $InputText) {
+    if ($Arguments[0] -eq '--profile') { return @{ExitCode=0;Output='[]'} }
+    return @{ExitCode=1;Output='';Error=(('prefix ' * 250) +
+        'Windows sandbox failed: CreateProcessWithLogonW failed: 1385; Bearer fake-secret sk-test-secret ' +
+        'http://127.0.0.1/relay/private-token/p/test?access_token=secret&other=ok ' +
+        'data:image/png;base64,AAAA')}
+}
+$reply=Invoke-McpRequest ([pscustomobject]@{jsonrpc='2.0';id=1;method='initialize';params=@{protocolVersion='2025-06-18'}})
+$reply=Invoke-McpRequest ([pscustomobject]@{jsonrpc='2.0';id=2;method='tools/call';params=@{name='analyze_image';
+    arguments=[pscustomobject]@{path='""" + path + """';instruction='Read synthetic text'}}})
+@{error=$reply.result.isError;detail=$reply.result.content[0].text} | ConvertTo-Json -Compress
+""")
+        self.assertTrue(report["error"])
+        self.assertIn("CreateProcessWithLogonW failed: 1385", report["detail"])
+        self.assertIn("exit code 1", report["detail"])
+        self.assertLessEqual(len(report["detail"]), 1400)
+        for private in ("fake-secret", "sk-test-secret", "private-token", "access_token=secret", "data:image"):
+            self.assertNotIn(private, report["detail"])
 
 
 if __name__ == "__main__":

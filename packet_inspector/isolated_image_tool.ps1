@@ -28,7 +28,7 @@ function Quote-ProcessArgument([string]$Value) {
     return '"' + [regex]::Replace([regex]::Replace($Value, '(\\*)"', '$1$1\"'), '(\\+)$', '$1$1') + '"'
 }
 
-function Invoke-ToolProcess([string]$Executable, [string[]]$Arguments, [int]$TimeoutSeconds, [string]$WorkingDirectory) {
+function Invoke-ToolProcess([string]$Executable, [string[]]$Arguments, [int]$TimeoutSeconds, [string]$WorkingDirectory, [string]$InputText = $null) {
     $start = New-Object System.Diagnostics.ProcessStartInfo
     $start.FileName = $Executable
     $start.Arguments = (($Arguments | ForEach-Object { Quote-ProcessArgument $_ }) -join ' ')
@@ -44,18 +44,33 @@ function Invoke-ToolProcess([string]$Executable, [string[]]$Arguments, [int]$Tim
     $process.StartInfo = $start
     try {
         if (-not $process.Start()) { throw 'Unable to start image analysis process.' }
-        $process.StandardInput.Close()
         $stdout = $process.StandardOutput.ReadToEndAsync()
         $stderr = $process.StandardError.ReadToEndAsync()
+        if ($InputText) { $process.StandardInput.Write($InputText) }
+        $process.StandardInput.Close()
         if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
             $process.Kill()
             $process.WaitForExit()
             throw 'Independent image analysis timed out.'
         }
         $output = $stdout.GetAwaiter().GetResult()
-        $null = $stderr.GetAwaiter().GetResult()
-        return @{ ExitCode = $process.ExitCode; Output = $output }
+        $errorOutput = $stderr.GetAwaiter().GetResult()
+        return @{ ExitCode = $process.ExitCode; Output = $output; Error = $errorOutput }
     } finally { $process.Dispose() }
+}
+
+function Get-ToolFailureDetail($Result) {
+    $detail = [string]$Result.Error
+    $detail = [regex]::Replace($detail, '(?i)data:image/[^\s;,]+;base64,[A-Za-z0-9+/=\r\n]+', '[image data omitted]')
+    $detail = [regex]::Replace($detail, '[A-Za-z0-9+/]{512,}={0,2}', '[opaque data omitted]')
+    $detail = [regex]::Replace($detail, '(?i)\b(Bearer|Basic)\s+[^\s,"'']+', '$1 [redacted]')
+    $detail = [regex]::Replace($detail, '(?i)\bsk-[A-Za-z0-9_-]+', '[redacted]')
+    $detail = [regex]::Replace($detail, '(?i)(/relay/)[^/\s]+', '$1[redacted]')
+    $detail = [regex]::Replace($detail, '(?i)([?&](?:api_key|access_token|refresh_token|token|key|signature)=)[^&\s]+', '$1[redacted]')
+    $detail = $detail.Trim()
+    if ($detail.Length -gt 1000) { $detail = '[stderr truncated] ' + $detail.Substring($detail.Length - 1000) }
+    if ($detail) { return ("`n" + $detail) }
+    return ''
 }
 
 function Get-ImageParentThreadId($Metadata) {
@@ -109,7 +124,8 @@ function Invoke-ImageAnalysis($Arguments, [string]$ParentThreadId) {
         }
         # Query configuration only; no model or MCP server is contacted here.
         $listed = Invoke-ToolProcess $cli @('--profile','isolated-vision','mcp','list','--json') 20 $work
-        if ($listed.ExitCode -ne 0) { throw 'Unable to read the independent Codex tool configuration.' }
+        if ($listed.ExitCode -ne 0) { throw ('Unable to read the independent Codex tool configuration (exit code ' +
+            $listed.ExitCode + ').' + (Get-ToolFailureDetail $listed)) }
         $servers = ConvertFrom-Json -InputObject $listed.Output
         $entries = @(foreach ($server in $servers) {
             if ($server.name -is [string]) { ($server.name | ConvertTo-Json -Compress) + '={enabled=false}' }
@@ -128,10 +144,12 @@ function Invoke-ImageAnalysis($Arguments, [string]$ParentThreadId) {
             $cliArguments += @('-c',('responses_api_metadata.codex_inspector_parent_thread_id="' +
                 $ParentThreadId.ToLowerInvariant() + '"'))
         }
-        $cliArguments += @($prompt,'--image',$upload)
-        $result = Invoke-ToolProcess $cli $cliArguments 240 $work
+        # Keep multiline/user text out of Windows batch-wrapper command lines.
+        $cliArguments += @('-','--image',$upload)
+        $result = Invoke-ToolProcess $cli $cliArguments 240 $work $prompt
         if ($result.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $resultPath -PathType Leaf)) {
-            throw ('Independent Codex image analysis failed (exit code ' + $result.ExitCode + ').')
+            throw ('Independent Codex image analysis failed (exit code ' + $result.ExitCode + ').' +
+                (Get-ToolFailureDetail $result))
         }
         $answer = [IO.File]::ReadAllText($resultPath, [Text.Encoding]::UTF8).Trim()
         if (-not $answer) { throw 'Independent image analysis returned no text.' }
@@ -160,7 +178,7 @@ function Invoke-McpRequest($Message) {
         $script:Initialized = $true
         $version = $Message.params.protocolVersion
         if ($version -notin @('2025-03-26','2025-06-18','2025-11-25')) { $version = '2025-06-18' }
-        $reply.result = @{protocolVersion=$version; capabilities=@{tools=@{}}; serverInfo=@{name='codex-isolated-vision';version='2.0.0'}}
+        $reply.result = @{protocolVersion=$version; capabilities=@{tools=@{}}; serverInfo=@{name='codex-isolated-vision';version='2.0.1'}}
     } elseif (-not $script:Initialized) {
         $reply.error = @{code=-32000;message='Initialize the image tool first.'}
     } elseif ($Message.method -eq 'ping') {
