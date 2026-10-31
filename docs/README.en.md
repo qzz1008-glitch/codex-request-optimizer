@@ -30,9 +30,10 @@ Existing Codex configurations in WSL can also be connected as a validation featu
 
 ## ⚙️ Implementation overview
 
-A local Python relay connects through Codex's standard provider configuration, using zstd for lossless transport compression, SQLite for records, and WebView2 for the desktop interface. Codex manages the separate image-analysis tool.
-
-Request records stay on the local machine. Captured records omit authentication values; JSON views and downloads use redacted copies.
+- **Connection and forwarding**: Codex's standard provider configuration routes requests through a local Python relay. Processed requests continue to the original upstream service.
+- **Compression and protection**: zstd provides lossless transport compression. Actual upload size determines whether predictive or overflow protection is triggered to control request size.
+- **Image analysis**: Codex starts and manages a separate image tool through the standard MCP stdio interface. A separate session analyzes images and returns text results to the main session.
+- **Interface and records**: WebView2 provides the desktop interface, while SQLite stores request records locally. Captured records omit authentication values; JSON views and downloads use redacted copies.
 
 ## 📄 License
 
