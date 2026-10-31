@@ -245,6 +245,10 @@ class LANHandler(BaseHTTPRequestHandler):
         if not allowed_request(self.command, suffix):
             self.reply(405, {"error": "sharing_method_not_allowed"})
             return
+        from .egress_transport import EGRESS_HEADER, MISSING_EXIT_ROUTE_MESSAGE
+        if not self.headers.get(EGRESS_HEADER, "").strip():
+            self.reply_error(403, "sharing_exit_metadata_missing", MISSING_EXIT_ROUTE_MESSAGE)
+            return
         try:
             size = int(self.headers.get("Content-Length", "0" if self.command == "GET" else "-1"))
             if size < 0 or size > MAX_BODY or self.headers.get("Transfer-Encoding"):
@@ -275,7 +279,6 @@ class LANHandler(BaseHTTPRequestHandler):
             request = Request(reservation["upstream"] + suffix,
                               data=body if self.command == "POST" else None, headers=headers, method=self.command)
             try:
-                from .egress_transport import EGRESS_HEADER
                 opener = controller.server.egress.outgoing(self.headers.get(EGRESS_HEADER, ""), client_id=client)
                 response = opener.open(request, timeout=UPSTREAM_READ_TIMEOUT_SECONDS)
             except HTTPError as exc:
@@ -554,7 +557,7 @@ class Sharing:
                 else:
                     with egress.guard:
                         if egress.peer_id == identifier:
-                            egress.select("provider")
+                            egress.select("local")
             self.vault.delete(identifier)
             if row["direction"] == "out":
                 controller = self if row["kind"] == "quota" else egress
