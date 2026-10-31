@@ -10,6 +10,8 @@ const uiI18n = (() => {
     "共享时长不在允许范围。":"The sharing duration is outside the allowed range.",
     "上次共享已结束，已恢复原连接。请重新加载 Codex 配置。":"The previous share ended and the original connection was restored. Reload Codex configuration.",
     "共享配置":"Sharing configuration",
+    "共享额度":"Shared quota",
+    "共享网络":"Shared network",
     "额度 · 借出":"Quota · Lend",
     "最近用量统计":"Recent usage",
     "复制凭据":"Copy credential",
