@@ -71,7 +71,8 @@ globalThis.InspectorRestartNotice = {
       if(result.restart_notice)adopt(result.restart_notice);
       else {
         const wslChanged=targets.some(row=>row.changed);
-        if(result.local_reload_required??(result.loopback_proxy?.changed||result.reload_required&&!wslChanged))mark("connection");
+        const nativeChanged=!!(result.loopback_proxy?.changed||result.backup||result.backups?.length);
+        if(result.local_reload_required??(nativeChanged||result.reload_required&&!wslChanged))mark("connection");
         for(const row of targets)if(row.changed)mark("wsl","wsl",String(row.distribution||""));
       }
       save();render();

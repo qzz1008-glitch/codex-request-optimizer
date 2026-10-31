@@ -64,6 +64,11 @@ async function run() {
   assert.equal(await page.locator('#restart-notice-open').getAttribute('data-visible'),'false');
   await load(page,{connection_reload_required:true});
   assert.equal(await page.locator('#restart-notice-open').getAttribute('data-visible'),'false','legacy sticky flags stay acknowledged after refresh');cases++;
+  await page.evaluate(()=>notice.connection('activate',{reload_required:true,backups:['config.toml.bak'],
+    wsl:{targets:[{distribution:'Ubuntu',changed:true,active:true}]}}));
+  assert((await page.locator('#restart-notice-title').textContent()).includes('ChatGPT'));
+  await page.evaluate(()=>notice.acknowledge('chatgpt'));
+  assert.equal(await page.locator('#restart-notice-open').textContent(),'待重新连接','old workers can report simultaneous Windows and WSL changes');cases++;
 
   await load(page,{data_dir:'wsl'});
   await page.evaluate(()=>notice.connection('activate',{reload_required:true,local_reload_required:false,wsl:{targets:[{distribution:'Ubuntu',active:true,changed:true}],
