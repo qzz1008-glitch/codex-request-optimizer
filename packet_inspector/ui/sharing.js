@@ -32,11 +32,11 @@ globalThis.InspectorSharing=(()=>{
   const editingExpiry=id=>id==="sharing-inline-expiry"&&editing?.field==="expires_at";
   const resetWeekdays=["周一","周二","周三","周四","周五","周六","周日"];
   const weeklyPickerOpen=()=>globalThis.CSS?.supports?.("selector(select:open)")&&get("sharing-cards").querySelector(".sharing-weekly-select:open");
-  const weeklyLabel=value=>value===null||value===""?tr("不刷新"):tr(resetWeekdays[value])+" 00:00";
+  const weeklyLabel=(value,includeTime=false)=>value===null||value===""?tr("不刷新"):tr(resetWeekdays[value])+(includeTime?" 00:00":"");
   function syncWeeklyLabel(input){const display=input.parentElement?.querySelector(".sharing-weekly-value");if(display)display.textContent=weeklyLabel(input.value);}
-  function weeklyOptions(value=null){
+  function weeklyOptions(value=null,includeTime=true){
     const selected=value===null?"":String(value);
-    return [["",esc(weeklyLabel(null))],...resetWeekdays.map((_,index)=>[String(index),esc(weeklyLabel(index))])].map(([key,text])=>`<option value="${key}"${key===selected?" selected":""}>${text}</option>`).join("");
+    return [["",esc(weeklyLabel(null))],...resetWeekdays.map((_,index)=>[String(index),esc(weeklyLabel(index,includeTime))])].map(([key,text])=>`<option value="${key}"${key===selected?" selected":""}>${text}</option>`).join("");
   }
   function weeklyDay(row){const d=data(row);return typeof d.weekly_reset!=="boolean"?undefined:d.weekly_reset?(d.weekly_reset_day??0):null;}
   function weeklySettings(value){
@@ -68,7 +68,6 @@ globalThis.InspectorSharing=(()=>{
       </form>
       <form id="${kind}-borrow" class="sharing-form" hidden><label>${label("名称")}<input id="${kind}-borrow-label" maxlength="80" required autocomplete="off"></label><label>${label("凭据")}<input id="${kind}-borrow-link" type="password" autocomplete="off" spellcheck="false" required placeholder="${kind==="quota"?"codex-share":"codex-exit"}://…"></label></form>
       <div class="sharing-actions"><button class="primary sharing-copy-button" type="submit" form="${kind}-issue" id="${kind}-generate">${label("生成凭据")}</button><button class="primary" type="submit" form="${kind}-borrow" id="${kind}-activate" hidden>${label("保存凭据")}</button></div>
-      ${kind==="quota"?`<button id="quota-local" class="sharing-local" type="button" data-action="local" data-kind="quota">${label("使用本机额度")}</button>`:""}
     </div>`;
   }
   for(const kind of ["quota","exit"])get(kind+"-config").innerHTML=card(kind);
@@ -196,7 +195,7 @@ globalThis.InspectorSharing=(()=>{
   function weeklyValue(row){
     const value=weeklyDay(row);
     if(value===undefined)return `<small title="${label("由提供方管理")}">—</small>`;
-    return `<span class="sharing-weekly-control"><span class="sharing-weekly-value" aria-hidden="true">${esc(weeklyLabel(value))}</span><select class="sharing-weekly-select" data-action="weekly" data-id="${row.id}" aria-label="${label("每周刷新")}" title="${label(row.direction==="in"?"由提供方管理":"按提供方本机时间，在所选当天零点刷新。")}"${row.direction==="in"?" disabled":""}>${weeklyOptions(value)}</select></span>`;
+    return `<span class="sharing-weekly-control"><span class="sharing-weekly-value" aria-hidden="true">${esc(weeklyLabel(value))}</span><select class="sharing-weekly-select" data-action="weekly" data-id="${row.id}" aria-label="${label("每周刷新")}" title="${label(row.direction==="in"?"由提供方管理":"按提供方本机时间，在所选当天零点刷新。")}"${row.direction==="in"?" disabled":""}>${weeklyOptions(value,false)}</select></span>`;
   }
   function quotaUsage(row){
     const d=data(row),used=d.period_cost_nanos,budget=d.budget_nanos,knownUsed=Number.isFinite(used)&&used>=0,knownBudget=Number.isFinite(budget)&&budget>=0;
@@ -222,7 +221,6 @@ globalThis.InspectorSharing=(()=>{
       for(const button of get("sharing-cards").querySelectorAll(`[data-view][data-kind="${kind}"]`))button.setAttribute("aria-pressed",String(button.dataset.view===views[kind]));
       get(kind+"-generate").disabled=busy||(kind==="quota"&&borrowing);get(kind+"-activate").disabled=busy||(kind==="quota"&&hosting);
     }
-    get("quota-local").hidden=!borrowing;get("quota-local").disabled=busy;
     for(const kind of ["quota","exit"])renderList(kind);
     if(recentScroll){const row=get("sharing-cards").querySelector(`[data-credential-id="${recentId}"]`);if(row){row.scrollIntoView({block:"nearest",inline:"nearest"});recentScroll=false;}}
     if(busy)for(const kind of ["quota","exit"])for(const input of get(kind+"-credential-rows").querySelectorAll("button,input,select"))input.disabled=true;
@@ -406,7 +404,6 @@ globalThis.InspectorSharing=(()=>{
   }
   get("sharing-cards").addEventListener("click",async event=>{const button=event.target.closest("[data-view],[data-action]");if(!button||busy)return;const {kind,view,action:command}=button.dataset;
     if(view){closeInline(false);views[kind]=view;if(current)render(current);return;}
-    if(command==="local"&&kind==="quota"){await action(button,{action:"client_disconnect"});return;}
     const row=(current?.credentials||[]).find(row=>row.id===button.dataset.id);if(!row)return;
     if(command==="weekly")return;
     if(command==="delete"){openDelete(row);return;}

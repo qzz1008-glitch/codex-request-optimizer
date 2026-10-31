@@ -216,7 +216,7 @@ class Updates:
                 temporary.unlink(missing_ok=True)
         started = time.time()
         atomic_json(self.state_path, {**cached, "state": "upgrading", "upgrade_started": started})
-        subprocess.Popen([str(executable), *(["--upgrade"] if asset_name == ASSET else []), "--quiet", "--data-dir", str(self.directory.resolve()),
+        subprocess.Popen([str(executable), *(["--upgrade"] if asset_name == ASSET else ["--quiet"]), "--data-dir", str(self.directory.resolve()),
                           "--config", str(self.config.resolve()), "--port", str(self.port)],
                          env={**os.environ, "PYINSTALLER_RESET_ENVIRONMENT": "1"},
                          creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))

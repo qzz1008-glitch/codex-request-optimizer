@@ -65,6 +65,35 @@ class UpgradeTests(unittest.TestCase):
                          ["installation_refresh", "desktop_refresh"])
         self.engine._stop_candidate.assert_not_called()
 
+    def test_progress_reaches_complete_only_after_cleanup_and_result_are_saved(self):
+        atomic_json(self.data / "router-state.json", {"active": "1" * 32, "token": "fixture-control"})
+        self.engine._wait_entry = Mock(return_value={"worker_id": "2" * 32, "desktop_refresh_supported": True})
+        events = []
+        def progress(message):
+            events.append(self.engine.completed_steps)
+            if self.engine.completed_steps == self.engine.total_steps:
+                result = json.loads((self.data / "upgrade-result.json").read_text(encoding="utf8"))
+                self.assertEqual(result["state"], "complete")
+                self.assertIn("cleanup", result)
+        self.engine.progress = progress
+        with patch("packet_inspector.upgrade.local_json", side_effect=self.health):
+            self.engine.run()
+        self.assertEqual(list(dict.fromkeys(events)), list(range(self.engine.total_steps + 1)))
+        self.assertEqual(events, sorted(events))
+
+    def test_cleanup_failure_keeps_progress_below_complete(self):
+        atomic_json(self.data / "router-state.json", {"active": "1" * 32, "token": "fixture-control"})
+        self.engine._wait_entry = Mock(return_value={"worker_id": "2" * 32})
+        events = []
+        self.engine.progress = lambda message: events.append(self.engine.completed_steps)
+        with patch("packet_inspector.upgrade.local_json", side_effect=self.health), \
+                patch("packet_inspector.upgrade_cleanup.cleanup_versions", side_effect=OSError("fixture cleanup failure")):
+            with self.assertRaisesRegex(OSError, "fixture cleanup failure"):
+                self.engine.run()
+        self.assertNotIn(self.engine.total_steps, events)
+        self.assertEqual(events[-1], self.engine.total_steps - 1)
+        self.assertEqual(json.loads((self.data / "upgrade-result.json").read_text(encoding="utf8"))["state"], "failed")
+
     def test_failed_native_refresh_rolls_back_before_retiring_the_old_tray(self):
         atomic_json(self.data / "router-state.json", {"active": "1" * 32, "token": "fixture-control"})
         self.engine._wait_entry = Mock(return_value={"worker_id": "2" * 32, "desktop_refresh_supported": True})
