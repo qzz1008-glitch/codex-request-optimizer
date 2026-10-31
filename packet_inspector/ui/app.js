@@ -538,10 +538,11 @@ async function selectSession(value) {
   renderSessions();renderList();
   await loadPackets();
 }
-function message(text, error=false) { uiI18n.text($("notice"),text); $("notice").className = "notice"+(error?" error":""); $("notice").hidden = false; }
+function message(text, error=false) { uiI18n.text($("notice-text"),text); $("notice").className = "notice"+(error?" error":""); $("notice").hidden = false; }
 function fail(err) { message(err.message || String(err), true); }
 async function api(path, data, signal) { const r = await fetch(path, {method:data === undefined ? "GET" : "POST",headers:data === undefined ? {} : {"Content-Type":"application/json"},body:data === undefined ? undefined : JSON.stringify(data),signal}); const value = await r.json(); if (!r.ok) throw Object.assign(Error(value.error || ("HTTP "+r.status)),{status:r.status}); return value; }
 function action(id, fn) { $(id).addEventListener("click", () => Promise.resolve().then(fn).catch(fail)); }
+action("notice-dismiss",()=>{$("notice").hidden=true;});
 function tokenVersion(packet) { return [packet.state,packet.status,packet.duration_ms,packet.method,packet.path,packet.is_compaction,packet.request_kind,packet.overflow_compaction_calls,packet.overflow_cache_hit,packet.request_token_estimate?.state,packet.request_token_estimate?.input_tokens].join(":"); }
 function cancelTokenRead() {
   clearTimeout(tokenTimer);tokenTimer=null;
@@ -933,8 +934,7 @@ function renderStatus(fill=false) {
   renderConnectPrompt();
   if(s.connection_reload_required&&!connectionRestartNotified&&!linkSaving&&!connectSaving&&!compressionSaving&&!exitSaving&&!document.querySelector("dialog[open]")) {
     connectionRestartNotified=true;
-    $("settings-restart-items").replaceChildren(el("li","",t("Codex 接入与原生压缩")));
-    $("settings-restart-dialog").showModal();
+    showConfigurationFeedback([t("Codex 接入与原生压缩")]);
   }
 }
 function storageLimitSettings(status) {
@@ -1105,6 +1105,22 @@ function renderCompressionMode() {
   setText($("compression-confirm-apply"),t(compressionTarget==="disconnected"?(compressionSaving?"正在取消接入…":"确认断开"):(compressionSaving?"正在切换…":"确认断开")));
   if(!connected&&!compressionSaving&&$("compression-confirm-dialog").open)cancelCompressionChange();
 }
+function showConfigurationFeedback(items,{summary="",reloadRequired=true}={}) {
+  uiI18n.text($("settings-restart-title"),reloadRequired?"重启 ChatGPT App 后生效":"操作已完成");
+  uiI18n.text($("settings-restart-description"),reloadRequired?"设置已保存。以下配置仍需重启 ChatGPT App 后生效：":"配置无需更改，无需重启。");
+  uiI18n.text($("settings-restart-summary"),summary);$("settings-restart-summary").hidden=!summary;
+  $("settings-restart-items").replaceChildren(...items.map(label=>el("li","",label)));
+  $("settings-restart-items").hidden=!items.length;
+  if(!$("settings-restart-dialog").open)$("settings-restart-dialog").showModal();
+}
+function showConnectionFeedback(which,result={}) {
+  connectionRestartNotified=true;
+  const reloadRequired=result.reload_required??!!state.status?.connection_reload_required;
+  const items=reloadRequired?[t("Codex 接入与原生压缩")]:[];
+  if(result.loopback_proxy?.changed)items.push(t("本机代理例外"));
+  showConfigurationFeedback(items,{reloadRequired,
+    summary:()=>(which==="activate"?t("已接入。"):t("已恢复原配置。"))+(result.loopback_proxy?.changed?t("已修复本机代理例外。"):"")});
+}
 function requestCompressionChange(mode) {
   if(mode==="connected")return requestConnection("header");
   const s=state.status,dialog=$("compression-confirm-dialog");
@@ -1132,10 +1148,8 @@ async function confirmCompressionChange() {
   try {
     const result=await applyLinkAction("restore");
     $("compression-confirm-dialog").close();compressionTarget=null;
-    connectionRestartNotified=true;
-    if(result.reload_required){$("settings-restart-items").replaceChildren(el("li","",t("Codex 接入与原生压缩")));$("settings-restart-dialog").showModal();}
+    showConnectionFeedback("restore",result);
     renderStatus();
-    message("已断开并开启 Codex 原生压缩。重启 ChatGPT App 生效。");
   } catch(error) {
     uiI18n.text($("compression-confirm-message"),error.message);
     $("compression-confirm-message").hidden=false;
@@ -1184,13 +1198,7 @@ async function confirmConnection() {
     const result=await linkAction("activate");
     if(!state.status.profile.active)throw Error("接入未完成，请检查 Codex 配置后重试。");
     $("connect-confirm-dialog").close();connectSource=null;
-    if(result?.reload_required) {
-      connectionRestartNotified=true;
-      const items=[el("li","",t("Codex 接入与原生压缩"))];
-      if(result.loopback_proxy?.changed)items.push(el("li","",t("本机代理例外")));
-      $("settings-restart-items").replaceChildren(...items);
-      $("settings-restart-dialog").showModal();
-    }
+    showConnectionFeedback("activate",result);
   } catch(error) {
     uiI18n.text($("connect-confirm-message"),error.message);$("connect-confirm-message").hidden=false;
   } finally {connectSaving=false;renderConnectionActions();renderConnectPrompt();}
@@ -1423,9 +1431,8 @@ function finishSettingsSave() {
   const items=[...settingsRestartChanges.keys()].map(field=>t(labels[field]));
   if(state.status.entry_port?.pending)items.unshift(t("入口端口"));
   if(!items.length){closeSettings();return;}
-  $("settings-restart-items").replaceChildren(...items.map(label=>el("li","",label)));
   setSettingsMessage("设置已保存。");
-  $("settings-restart-dialog").showModal();
+  showConfigurationFeedback(items);
   if(settingsRestartChanges.has("capacity_retry"))connectionRestartNotified=true;
 }
 async function saveSettings() {
@@ -2195,7 +2202,6 @@ async function linkAction(which) {
   linkSaving=which;renderConnectionActions();updateSettingsSaveState(false);
   try {
     const result=await applyLinkAction(which);renderStatus(true);
-    message(()=>(which==="activate"?t("已接入。"):t("已恢复原配置。"))+(result.loopback_proxy?.changed?t("已修复本机代理例外。"):"")+(result.reload_required?t("重启 ChatGPT App 生效。"):t("配置无需更改，无需重启。")));
     return result;
   } finally {linkSaving="";renderConnectionActions();updateSettingsSaveState(false);}
 }
