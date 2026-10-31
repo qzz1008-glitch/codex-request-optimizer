@@ -2,30 +2,28 @@
 
 适用于 Windows x64（64 位）。
 
-本次更新新增局域网额度与网络共享，并完善图片请求优化、压缩策略、记录浏览和网络错误诊断。
+本次更新增加 WSL 接入验证支持，并改进连接恢复、安装升级、响应兼容性和操作反馈。
 
-- **额度与网络独立共享**：可分别借出或借入 Codex 额度、网络出口，自由组合自己的额度与同事的网络，或同事的额度与自己的网络。支持多张具名凭据、历史列表和拖动排序；未启用借入出口时默认使用本机网络。
-- **共享凭据与额度管理**：按凭据设置有效期、美元参考费用上限和每周刷新日，查看累计用量，并可调整本期已用额度。额度凭据绑定单个客户端，支持停用与删除；连接校验证书指纹，本机敏感配置使用 Windows 用户加密保护。参考费用不代表 ChatGPT 订阅的实际扣费或余额。
-- **图片请求传输与大小保护**：识别图片生成、图片编辑请求，对其 JSON 进行 zstd 无损传输压缩；图片压缩等级独立设置，默认 6 级。开启请求大小保护后，仍超限的输入图片可按比例缩小，并显示处理前后分辨率；缩图可能损失细节，原文件保留。
-- **压缩策略与独立图片解析**：优化对话请求的自动压缩档位及等级选择提示，完善工具结果中内嵌图片的隔离处理，修复 Windows 下独立解析的命令传参与工具配置兼容性。
-- **记录与趋势**：可配置的请求记录上限提高到 100,000 条；趋势图聚焦对话与原生上下文压缩请求，避免图片生成、编辑流量混入对话趋势。
-- **桌面界面**：改进共享凭据表格、行内编辑、日期选择和操作反馈，更新 Logo，并修复托盘图标在不同 DPI 下的显示；双击托盘图标打开主窗口。
-- **错误诊断**：请求详情显示更具体的网络失败原因，区分代理 CONNECT、TLS、上传和等待响应阶段，保留网关状态及关联诊断信息；诊断记录自动按时间、条数和大小回收。
+- **WSL 接入（验证版）**：检测正在运行的本机 WSL 发行版，验证连通后接入同一个 Windows 中转；断开时恢复相关配置。支持读取 WSL 会话名称和父子关系，修复探测及历史记录发现问题。
+- **连接检查与恢复**：已接入的软件在启动和升级后自动检查连接、补齐必要设置，统一 Windows 与 WSL 配置变更后的重启提示。
+- **Codex 与响应兼容性**：改进已安装 Codex CLI 的自动发现，兼容更多 Responses 事件与用量字段，修复部分请求完成状态、Token 统计和容量重试诊断的识别问题。
+- **托盘与安装升级**：托盘菜单新增“重启服务”；安装与升级窗口采用居中的步骤进度界面，显示实际执行状态。
+- **操作反馈与共享界面**：操作状态显示在对应控件附近；优化共享凭据启停位置、按钮布局和每周刷新列显示，并在更新设置中加入仓库链接。
+- **文档整理**：精简中英文 README，保留核心功能、简短使用步骤和实现概览，详细说明归入使用指南。
 
-发布文件仅包含 **CodexPacketInspector.exe**、**README.md**、**LICENSE** 和 **THIRD_PARTY_NOTICES.txt**。双击主程序即可安装或升级，也可在设置中检查更新。升级保留已有记录、设置及开发版／正式版模式；正常升级时，新请求交给新版服务，处理中请求由原服务继续完成。应用重启后，共享需手动重新开启，未失效的原有凭据可继续使用。
+发布文件仅包含 **CodexPacketInspector.exe**、**README.md**、**LICENSE** 和 **THIRD_PARTY_NOTICES.txt**。双击主程序即可安装或升级，也可在设置中检查更新。升级保留已有记录、设置及开发版／正式版模式；正常升级时，新请求交给新版服务，处理中请求由原服务继续完成。配置变更后按界面提示重启 ChatGPT App；首次验证 WSL 接入时，请先启动相应发行版。
 
 ## English
 
 For Windows x64 (64-bit).
 
-This release adds LAN quota and network sharing and improves image request optimization, compression policies, record browsing, and network error diagnostics.
+This release adds experimental WSL connection support and improves connection recovery, installation and upgrades, response compatibility, and action feedback.
 
-- **Independent quota and network sharing**: lend or borrow Codex quota and network exits separately. Combine your own quota with a colleague's network, or a colleague's quota with your own network. Manage multiple named credentials, saved history, and drag-and-drop ordering. Your local network is used when no borrowed exit is enabled.
-- **Sharing credentials and quota controls**: set expiry dates, reference spending limits in USD, and weekly reset days per credential. View cumulative usage and adjust usage for the current period. Quota credentials bind to a single client and can be disabled or deleted. Connections verify certificate fingerprints, and sensitive local settings use Windows user encryption. Reference costs do not represent actual ChatGPT subscription charges or balances.
-- **Image request transport and size protection**: recognize image generation and editing requests and apply lossless zstd compression to their JSON. Image compression has its own level setting, defaulting to level 6. With request size protection enabled, oversized input images can be resized proportionally, with before-and-after resolutions shown. Resizing may lose detail; original files are retained.
-- **Compression policies and isolated image analysis**: refine automatic compression phases and level-selection guidance for conversation requests. Improve isolation of inline images in tool results and fix command argument handling and tool configuration compatibility for isolated analysis on Windows.
-- **Records and trends**: raise the configurable request record limit to 100,000. Trend charts focus on conversation and native context-compaction requests, keeping image generation and editing traffic out of conversation trends.
-- **Desktop interface**: improve sharing credential tables, inline editing, date selection, and action feedback. Update the logo and fix tray icon rendering at different DPI settings. Double-click the tray icon to open the main window.
-- **Error diagnostics**: show more specific network failure causes in request details, distinguishing proxy CONNECT, TLS, upload, and response-wait stages. Preserve gateway status and related diagnostic information. Diagnostic records are automatically pruned by age, count, and size.
+- **WSL connection (experimental)**: detect running local WSL distributions and connect them to the same Windows relay after a connectivity check. Restore the relevant configuration on disconnect. Read WSL session names and parent-child relationships, with fixes for probing and history discovery.
+- **Connection checks and recovery**: automatically check existing connections and restore required settings after startup or upgrades. Unify restart prompts after Windows and WSL configuration changes.
+- **Codex and response compatibility**: improve discovery of installed Codex CLI runtimes and support more Responses events and usage fields. Fix recognition issues affecting completion status, token statistics, and capacity-retry diagnostics.
+- **Tray and installation**: add “Restart service” to the tray menu. Use a centered installation and upgrade window with step-by-step progress reflecting actual execution status.
+- **Action feedback and sharing interface**: show action status beside the relevant controls. Improve sharing credential activation controls, button layouts, and weekly refresh columns, and add a repository link to update settings.
+- **Documentation**: simplify both READMEs to focus on core features, brief usage steps, and an implementation overview. Keep detailed instructions in the usage guide.
 
-Release assets contain only **CodexPacketInspector.exe**, **README.md**, **LICENSE**, and **THIRD_PARTY_NOTICES.txt**. Run the EXE to install or upgrade, or check for updates in Settings. Upgrades preserve records, settings, and the installed development or release mode. During a normal upgrade, the new service handles new requests while the previous service finishes requests already in progress. Sharing must be enabled manually after an application restart; existing credentials that have not expired or been revoked can still be used.
+Release assets contain only **CodexPacketInspector.exe**, **README.md**, **LICENSE**, and **THIRD_PARTY_NOTICES.txt**. Run the EXE to install or upgrade, or check for updates in Settings. Upgrades preserve records, settings, and the installed development or release mode. During a normal upgrade, the new service handles new requests while the previous service finishes requests already in progress. Restart ChatGPT App when prompted after configuration changes. Start the relevant WSL distribution before trying WSL connection support for the first time.
