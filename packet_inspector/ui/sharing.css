@@ -73,6 +73,7 @@
 .sharing-network-table .sharing-row-actions{justify-content:flex-end}
 .sharing-table tbody tr:hover:not(.sharing-recent) td{background:color-mix(in srgb,var(--bg) 65%,var(--panel))}
 .sharing-table .sharing-cell-value{display:inline;min-height:0;padding:0;border:0;border-radius:3px;background:transparent;color:var(--ink);font:inherit;line-height:inherit;vertical-align:baseline;text-decoration:underline dotted color-mix(in srgb,var(--ink) 35%,var(--line));text-underline-offset:3px;cursor:pointer}
+.sharing-table .sharing-cell-value[data-field=label]{text-align:left}
 .sharing-table .sharing-cell-value:hover,.sharing-table .sharing-cell-value[aria-expanded=true]{color:var(--accent);text-decoration-color:currentColor}.sharing-cell-value:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
 .sharing-value{color:var(--sharing-value-color);font-size:12px;font-weight:500}.sharing-upload,.sharing-used{--sharing-value-color:var(--accent)}.sharing-download,.sharing-limit{--sharing-value-color:var(--green)}.sharing-value-separator{color:var(--muted);font-size:12px;font-weight:500}
 .sharing-table .sharing-cell-value:is([data-field=used],[data-field=budget]){display:inline-flex;align-items:center;min-height:22px;padding:0 5px;border:1px solid color-mix(in srgb,var(--sharing-value-color) 20%,var(--line));border-radius:4px;background:color-mix(in srgb,var(--sharing-value-color) 6%,var(--panel));color:var(--sharing-value-color);font-size:12px;font-weight:500;text-decoration:none}
