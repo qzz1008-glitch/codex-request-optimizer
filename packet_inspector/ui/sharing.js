@@ -28,11 +28,11 @@ globalThis.InspectorSharing=(()=>{
   const resetWeekdays=["周一","周二","周三","周四","周五","周六","周日"];
   function weeklyOptions(value=null){
     const selected=value===null?"":String(value);
-    return [["",label("不启用")],...resetWeekdays.map((day,index)=>[String(index),label(day)+" 00:00"])].map(([key,text])=>`<option value="${key}"${key===selected?" selected":""}>${text}</option>`).join("");
+    return [["",label("不刷新")],...resetWeekdays.map((day,index)=>[String(index),label(day)+" 00:00"])].map(([key,text])=>`<option value="${key}"${key===selected?" selected":""}>${text}</option>`).join("");
   }
   function weeklyDay(row){const d=data(row);return typeof d.weekly_reset!=="boolean"?undefined:d.weekly_reset?(d.weekly_reset_day??0):null;}
   function weeklySettings(value){
-    if(value!==""&&!/^[0-6]$/.test(value))throw Error(tr("请选择周一至周日，或不启用每周刷新。"));
+    if(value!==""&&!/^[0-6]$/.test(value))throw Error(tr("请选择周一至周日，或选择不刷新。"));
     const day=value===""?null:Number(value);
     if(day!==null&&day!==0&&!current?.weekly_reset_days_supported)throw Error(tr("当前后台不支持选择刷新日期，请更新软件。"));
     return {weekly_reset:day!==null,...(current?.weekly_reset_days_supported?{weekly_reset_day:day}:{})};
