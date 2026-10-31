@@ -22,6 +22,7 @@ from .transport import DEFAULT_ZSTD_LEVEL, PreparedRequest, prepare_request_info
 from .maintenance import SQLiteReclaimer
 from .locking import file_lock
 from .request_context import is_delegation_notice
+from .response_events import decode_sse, EVENT_BOUNDARY
 
 
 CHECKPOINT_PROMPT = """You are performing a CONTEXT CHECKPOINT COMPACTION. Create a handoff summary for another LLM that will resume the task.
@@ -207,22 +208,19 @@ class CheckpointStream:
         if self.received > MAX_SUMMARY_BYTES:
             raise OverflowFailure("overflow_compaction_response_limit", "压缩响应超过本地大小限制。", 502)
         self.pending += chunk
-        while b"\n" in self.pending:
-            line, self.pending = self.pending.split(b"\n", 1)
-            self._line(line.rstrip(b"\r"))
+        while boundary := EVENT_BOUNDARY.search(self.pending):
+            frame, self.pending = self.pending[:boundary.start()], self.pending[boundary.end():]
+            self._frame(frame)
 
-    def _line(self, line):
-        if not line.startswith(b"data:"):
-            return
-        data = line[5:].strip()
-        if data == b"[DONE]":
-            return
+    def _frame(self, frame):
         try:
-            event = json.loads(data)
+            event = decode_sse(frame)
         except (ValueError, UnicodeError):
             raise OverflowFailure("overflow_compaction_invalid_response", "压缩响应不是有效的 Responses 事件。", 502) from None
         kind = event.get("type") if isinstance(event, dict) else None
-        if kind in {"error", "response.failed", "response.incomplete"}:
+        if not isinstance(kind, str):
+            return
+        if kind in {"error", "response.failed", "response.incomplete", "response.cancelled"}:
             if self.on_error:
                 try:
                     self.on_error(event)
@@ -234,7 +232,7 @@ class CheckpointStream:
 
     def finish(self):
         if self.pending:
-            self._line(self.pending.rstrip(b"\r"))
+            self._frame(self.pending)
         value = self.completed
         if not isinstance(value, dict) or value.get("status") != "completed" or not isinstance(value.get("output"), list):
             raise OverflowFailure("overflow_compaction_incomplete", "上游没有返回完整压缩结果；原请求未发送。", 502)

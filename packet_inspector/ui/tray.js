@@ -2,7 +2,7 @@
 (() => {
   let visible=false,timer=null,controller=null,sequence=0,busy=false,stateSync=0;
   let legacyScope=null,legacyScopeAt=0;
-  const buttons=[document.getElementById("tray-open"),document.getElementById("tray-exit")];
+  const buttons=[document.getElementById("tray-open"),document.getElementById("tray-restart"),document.getElementById("tray-exit")];
   uiI18n.floatingFeedback();
   const api=()=>window.pywebview?.api;
   const setText=(node,text)=>{if(node.textContent!==text)node.textContent=text;};
@@ -107,7 +107,7 @@
     catch(_) {setText(error,t("无法完成操作，请稍后重试。"));error.hidden=false;}
     finally {busy=false;for(const button of buttons)button.disabled=false;}
   }
-  buttons[0].addEventListener("click",()=>action("open_main"));buttons[1].addEventListener("click",()=>action("exit_app"));
+  buttons[0].addEventListener("click",()=>action("open_main"));buttons[1].addEventListener("click",()=>action("restart_service"));buttons[2].addEventListener("click",()=>action("exit_app"));
   document.addEventListener("keydown",event=>{
     if(event.key==="Escape"&&hostOptions().dismiss_escape){event.preventDefault();api()?.dismiss();}
     if(event.key==="ArrowDown"||event.key==="ArrowUp"){
