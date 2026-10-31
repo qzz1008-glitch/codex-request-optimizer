@@ -46,7 +46,7 @@
 .sharing-stat-note{font-size:11px;color:var(--muted);line-height:1.7;margin:15px 0 0}
 .sharing-credential-count{color:var(--muted);font-size:12px;font-variant-numeric:tabular-nums}
 .sharing-stat-note{flex:none;margin-top:12px}
-.sharing-table-scroll{flex:1;min-height:0;overflow:auto;scrollbar-gutter:stable}.sharing-table{width:max-content;border-collapse:collapse;font-size:12px;table-layout:auto}
+.sharing-table-scroll{flex:1;min-height:0;overflow:auto;scrollbar-gutter:stable}.sharing-table{width:100%;border-collapse:collapse;font-size:12px;table-layout:auto}.sharing-table th.sharing-column-compact{width:1%}
 .sharing-table th{position:sticky;top:0;z-index:1;background:var(--panel);font-weight:600;text-align:left;font-size:11px;color:color-mix(in srgb,var(--ink) 70%,var(--muted));padding:0 9px 12px;border-bottom:1px solid var(--line);white-space:nowrap}
 .sharing-table td{padding:10px 9px;border-bottom:1px solid var(--line);vertical-align:middle;white-space:nowrap;overflow-wrap:normal;line-height:1.4;font-variant-numeric:tabular-nums}
 .sharing-table th:first-child{padding-left:20px}.sharing-table td:first-child{padding-left:0}
@@ -54,8 +54,9 @@
 .sharing-table tbody tr:hover:not(.sharing-recent) td{background:color-mix(in srgb,var(--bg) 65%,var(--panel))}
 .sharing-table .sharing-cell-value{display:inline;min-height:0;padding:0;border:0;border-radius:3px;background:transparent;color:var(--ink);font:inherit;line-height:inherit;vertical-align:baseline;text-decoration:underline dotted color-mix(in srgb,var(--ink) 35%,var(--line));text-underline-offset:3px;cursor:pointer}
 .sharing-table .sharing-cell-value:hover,.sharing-table .sharing-cell-value[aria-expanded=true]{color:var(--accent);text-decoration-color:currentColor}.sharing-cell-value:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
-.sharing-table .sharing-cell-value:is([data-field=used],[data-field=budget]){display:inline-flex;align-items:center;min-height:22px;padding:0 5px;border:1px solid color-mix(in srgb,var(--accent) 20%,var(--line));border-radius:4px;background:color-mix(in srgb,var(--accent) 6%,var(--panel));color:var(--accent);font-size:12px;font-weight:600;text-decoration:none}
-.sharing-table .sharing-cell-value:is([data-field=used],[data-field=budget]):hover{background:color-mix(in srgb,var(--accent) 12%,var(--panel));border-color:color-mix(in srgb,var(--accent) 45%,var(--line))}
+.sharing-value{color:var(--sharing-value-color);font-size:12px;font-weight:500}.sharing-upload,.sharing-used{--sharing-value-color:var(--accent)}.sharing-download,.sharing-limit{--sharing-value-color:var(--green)}.sharing-value-separator{color:var(--muted);font-size:12px;font-weight:500}
+.sharing-table .sharing-cell-value:is([data-field=used],[data-field=budget]){display:inline-flex;align-items:center;min-height:22px;padding:0 5px;border:1px solid color-mix(in srgb,var(--sharing-value-color) 20%,var(--line));border-radius:4px;background:color-mix(in srgb,var(--sharing-value-color) 6%,var(--panel));color:var(--sharing-value-color);font-size:12px;font-weight:500;text-decoration:none}
+.sharing-table .sharing-cell-value:is([data-field=used],[data-field=budget]):hover{background:color-mix(in srgb,var(--sharing-value-color) 12%,var(--panel));border-color:color-mix(in srgb,var(--sharing-value-color) 45%,var(--line))}
 .sharing-row-status .sharing-cell-value{display:inline-flex;align-items:center;min-height:26px;padding:3px 7px;border:1px solid color-mix(in srgb,var(--accent) 22%,var(--line));border-radius:5px;background:color-mix(in srgb,var(--accent) 7%,var(--panel));color:var(--accent);font-size:11px;font-weight:600;text-decoration:none}
 .sharing-row-status .sharing-cell-value[data-state=enabled]{color:var(--green);background:color-mix(in srgb,var(--green) 8%,var(--panel));border-color:color-mix(in srgb,var(--green) 25%,var(--line))}
 .sharing-row-status .sharing-cell-value[data-state=warn]{color:color-mix(in srgb,var(--warn) 85%,var(--ink));background:color-mix(in srgb,var(--warn) 7%,var(--panel));border-color:color-mix(in srgb,var(--warn) 25%,var(--line))}
