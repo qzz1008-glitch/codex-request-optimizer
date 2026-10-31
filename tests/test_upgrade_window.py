@@ -44,19 +44,15 @@ class UpgradeWindowTests(unittest.TestCase):
         # the UI thread before a later test starts any background workers.
         gc.collect()
 
-    def test_running_install_cannot_be_closed_or_open_another_application(self):
-        opener = Mock()
-        view = UpgradeWindow(self.window, 6, open_app=opener)
+    def test_running_install_cannot_be_closed(self):
+        view = UpgradeWindow(self.window, 6)
         view.update_progress(3, "新版服务已就绪，正在准备切换…")
         view.update_progress(2, "正在启动新版服务并检查运行状态…")
         self.assertEqual(view.percentage.cget("text"), "50%")
         view.close()
-        view.open_application()
         self.assertTrue(self.window.winfo_exists())
-        opener.assert_not_called()
-        self.assertEqual(str(view.close_button.cget("state")), "disabled")
 
-    def test_failure_keeps_the_error_selectable_and_does_not_offer_to_open(self):
+    def test_failure_keeps_the_error_selectable_and_can_be_closed(self):
         view = UpgradeWindow(self.window, 6, "en")
         view.update_progress(4, "正在更新托盘、快捷方式和启动入口…")
         view.finish(False, "升级包校验失败。")
@@ -64,28 +60,18 @@ class UpgradeWindowTests(unittest.TestCase):
         self.assertEqual(view.percentage.cget("text"), "67%")
         self.assertEqual(view.detail.get("1.0", "end-1c"), "The update package failed verification.")
         self.assertEqual(str(view.detail.cget("state")), "disabled")
-        self.assertEqual(str(view.open_button.cget("state")), "disabled")
-        self.assertEqual(str(view.close_button.cget("state")), "normal")
+        view.close()
+        self.assertFalse(exists(self.window))
 
-    def test_success_opens_the_application_and_closes_the_installer(self):
-        opener = Mock()
-        view = UpgradeWindow(self.window, 6, "zh", "v0.7.9", "v0.8.0", opener)
+    def test_success_reaches_full_progress_and_can_be_closed(self):
+        view = UpgradeWindow(self.window, 6, "zh", "v0.7.9", "v0.8.0")
         view.finish(True)
         self.assertEqual(view.percentage.cget("text"), "100%")
         self.assertEqual(view.heading.cget("text"), "升级已完成")
-        view.open_application()
-        opener.assert_called_once_with()
+        view.close()
         self.assertFalse(exists(self.window))
 
-    def test_launch_failure_is_displayed_in_the_same_window(self):
-        view = UpgradeWindow(self.window, 6, "en", open_app=Mock(side_effect=OSError("fixture launch failure")))
-        view.finish(True)
-        view.open_application()
-        self.assertTrue(self.window.winfo_exists())
-        self.assertEqual(view.detail.get("1.0", "end-1c"), "Could not open the optimizer: fixture launch failure")
-        self.assertEqual(view.state, "complete")
-
-    def test_bilingual_headings_and_actions_fit_at_common_display_scales(self):
+    def test_bilingual_headings_and_versions_fit_at_common_display_scales(self):
         for scale in (1, 1.5, 2):
             for language in ("zh", "en"):
                 with self.subTest(scale=scale, language=language):
@@ -96,7 +82,6 @@ class UpgradeWindowTests(unittest.TestCase):
                         view.finish(success, "fixture")
                         self.window.update_idletasks()
                         self.assertLessEqual(view.heading.winfo_reqwidth(), view.u(480))
-                    self.assertLessEqual(view.close_button.master.winfo_reqwidth(), view.u(480))
                     self.assertLessEqual(view.version_label.master.winfo_reqwidth(), view.u(480))
                     # Height can grow to accommodate the native font rather than clipping controls.
                     self.assertLessEqual(self.window.winfo_reqheight(), view.u(440))

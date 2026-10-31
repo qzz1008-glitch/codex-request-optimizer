@@ -15,15 +15,14 @@ from tkinter import ttk
 from .app_icon import APP_ICON
 
 
-COLORS = {"paper": "#ffffff", "footer": "#f7f8fa", "ink": "#1e293b", "muted": "#748093",
-          "line": "#e3e7ed", "accent": "#315fd7", "hover": "#274fb9", "soft": "#edf2fc",
+COLORS = {"paper": "#ffffff", "ink": "#1e293b", "muted": "#748093",
+          "line": "#e3e7ed", "accent": "#315fd7", "soft": "#edf2fc",
           "success": "#247558", "error": "#bc3d37"}
 ENGLISH = {
     "安装与升级": "Install & update", "Codex 请求优化器": "Codex Request Optimizer",
     "正在安装更新": "Installing update", "升级已完成": "Update complete", "升级未完成": "Update interrupted",
-    "安装进度": "Installation progress", "按安装步骤显示进度": "Progress follows installation steps",
     "校验与准备": "Prepare", "安装新版": "Install", "切换服务": "Switch", "完成": "Finish",
-    "关闭": "Close", "打开优化器": "Open optimizer", "新版已就绪。": "The new version is ready.",
+    "新版已就绪。": "The new version is ready.",
     "正在打开新版应用…": "Opening the updated application…",
     "无法打开优化器：": "Could not open the optimizer: ",
     "正在校验升级包…": "Verifying the update package…",
@@ -119,9 +118,9 @@ def _work_area(window):
 class UpgradeWindow:
     """All widget changes stay on Tk's main thread; only completed work fills the bar."""
 
-    def __init__(self, window, total_steps, language="zh", current="", target="", open_app=None):
+    def __init__(self, window, total_steps, language="zh", current="", target=""):
         self.window, self.total_steps, self.language = window, total_steps, language
-        self.completed, self.state, self.open_app = 0, "running", open_app
+        self.completed, self.state = 0, "running"
         self.scale = window.winfo_fpixels("1i") / 96
         self.font = "Segoe UI" if language == "en" else "Microsoft YaHei UI"
         window.title(self.t("Codex 请求优化器") + " · " + self.t("安装与升级"))
@@ -133,26 +132,10 @@ class UpgradeWindow:
             pass
         style = ttk.Style(window)
         style.theme_use("clam")
-        for name, primary in (("Upgrade.TButton", False), ("Upgrade.Primary.TButton", True)):
-            style.configure(name, font=(self.font, 10), padding=(self.u(16), self.u(8)), relief="flat", borderwidth=1,
-                            background=COLORS["accent"] if primary else COLORS["paper"],
-                            foreground="white" if primary else COLORS["ink"],
-                            bordercolor=COLORS["accent"] if primary else COLORS["line"], focuscolor="white" if primary else COLORS["accent"])
-            style.map(name, background=[("disabled", "#edf0f4"), ("active", COLORS["hover"] if primary else "#edf0f4")],
-                      foreground=[("disabled", "#a0a9b7")], bordercolor=[("disabled", COLORS["line"])])
         style.layout("Upgrade.Vertical.TScrollbar", [("Vertical.Scrollbar.trough", {"sticky": "ns", "children": [
             ("Vertical.Scrollbar.thumb", {"sticky": "nswe", "expand": "1"})]})])
         style.configure("Upgrade.Vertical.TScrollbar", width=self.u(6), borderwidth=0, arrowsize=0,
                         background=COLORS["line"], troughcolor=COLORS["paper"], bordercolor=COLORS["paper"])
-        footer = tk.Frame(window, bg=COLORS["footer"])
-        footer.pack(side="bottom", fill="x")
-        tk.Frame(footer, bg=COLORS["line"], height=1).pack(fill="x")
-        actions = tk.Frame(footer, bg=COLORS["footer"])
-        actions.pack(fill="x", padx=self.u(28), pady=self.u(12))
-        self.open_button = ttk.Button(actions, text=self.t("打开优化器"), style="Upgrade.Primary.TButton", command=self.open_application, state="disabled")
-        self.open_button.pack(side="right")
-        self.close_button = ttk.Button(actions, text=self.t("关闭"), style="Upgrade.TButton", command=self.close, state="disabled")
-        self.close_button.pack(side="right", padx=(0, self.u(8)))
         body = tk.Frame(window, bg=COLORS["paper"])
         body.pack(fill="both", expand=True, padx=self.u(28), pady=(self.u(24), self.u(14)))
         self.label(body, "Codex 请求优化器", size=10, color="muted").pack(anchor="w")
@@ -170,7 +153,6 @@ class UpgradeWindow:
         self.timeline.pack(fill="x", pady=(self.u(16), self.u(10)))
         progress_heading = tk.Frame(body, bg=COLORS["paper"])
         progress_heading.pack(fill="x")
-        self.label(progress_heading, "安装进度", size=9, color="muted").pack(side="left")
         self.percentage = self.label(progress_heading, "0%", size=10, weight="bold")
         self.percentage.pack(side="right")
         self.bar = tk.Canvas(body, bg=COLORS["paper"], height=self.u(8), highlightthickness=0)
@@ -186,8 +168,6 @@ class UpgradeWindow:
         self.scrollbar = ttk.Scrollbar(details, orient="vertical", style="Upgrade.Vertical.TScrollbar", command=self.detail.yview)
         self.scrollbar.grid(row=0, column=1, sticky="ns", padx=(self.u(4), 0))
         self.detail.configure(yscrollcommand=self.scroll_detail)
-        self.hint = self.label(body, "按安装步骤显示进度", size=8, color="muted")
-        self.hint.pack(anchor="w", pady=(self.u(6), 0))
         for canvas in (self.timeline, self.bar):
             canvas.bind("<Configure>", lambda _event: self.draw_progress())
         window.protocol("WM_DELETE_WINDOW", self.close)
@@ -284,23 +264,11 @@ class UpgradeWindow:
     def finish(self, success, detail=""):
         self.state = "complete" if success else "failed"
         self.heading.configure(text=self.t("升级已完成" if success else "升级未完成"))
-        self.close_button.configure(state="normal")
         if success:
-            self.open_button.configure(state="normal")
             self.update_progress(self.total_steps, detail or "新版已就绪。")
         else:
             self.set_detail(detail, error=True)
             self.draw_progress()
-        self.close_button.focus_set()
-
-    def open_application(self):
-        if self.state != "complete" or self.open_app is None:
-            return
-        try:
-            self.open_app()
-            self.window.destroy()
-        except Exception as exc:
-            self.set_detail(self.t("无法打开优化器：") + self.t(str(exc)), error=True)
 
     def close(self):
         if self.state != "running":
@@ -316,7 +284,7 @@ def run_upgrade_window(engine, *, open_after=False):
             pass
     window = tk.Tk()
     window.withdraw()
-    view = UpgradeWindow(window, engine.total_steps, *window_metadata(engine), open_app=engine._open_window)
+    view = UpgradeWindow(window, engine.total_steps, *window_metadata(engine))
     events = queue.Queue()
     engine.progress = lambda message: events.put(("progress", engine.completed_steps, message))
     def work():
