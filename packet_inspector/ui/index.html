@@ -20,7 +20,8 @@
       <button id="view-sharing" type="button" title="共享" aria-label="共享" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6" cy="12" r="3"/><circle cx="18" cy="5" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8.6 10.5 6.8-4M8.6 13.5l6.8 4"/></svg></button>
     </div>
     <div class="header-actions">
-      <div class="header-compression"><div id="request-compression" class="language-toggle compression-toggle" role="group" aria-label="Codex 接入" aria-describedby="compression-hint"><button id="compression-disconnect" type="button" data-compression="disconnected" aria-pressed="false" disabled>断开</button><button id="compression-connect" type="button" data-compression="connected" aria-pressed="false" disabled>接入</button></div><span id="compression-hint" hidden></span><div id="connection-inline-feedback" class="inline-feedback connection-inline-feedback" data-feedback-inline role="status" aria-live="polite"></div></div>
+      <button id="restart-notice-open" class="restart-notice-badge" type="button" data-visible="false" tabindex="-1" aria-label="查看待生效配置与接入详情">待重启</button>
+      <div class="header-compression"><div id="request-compression" class="language-toggle compression-toggle" role="group" aria-label="Codex 接入" aria-describedby="compression-hint"><button id="compression-disconnect" type="button" data-compression="disconnected" aria-pressed="false" disabled>断开</button><button id="compression-connect" type="button" data-compression="connected" aria-pressed="false" disabled>接入</button></div><span id="compression-hint" hidden></span></div>
       <button id="settings-open" class="settings-button" type="button" title="设置" aria-label="设置"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9.5 3-.6 2.3-1.7 1-2.3-.6-2.5 4.3 1.7 1.7v2l-1.7 1.7 2.5 4.3 2.3-.6 1.7 1 .6 2.3h5l.6-2.3 1.7-1 2.3.6 2.5-4.3-1.7-1.7v-2l1.7-1.7-2.5-4.3-2.3.6-1.7-1L14.5 3z"/><circle cx="12" cy="12.7" r="3"/></svg></button>
     </div>
     <div id="window-controls" class="window-controls" role="group" aria-label="窗口操作" hidden>
@@ -162,11 +163,17 @@
   </dialog>
   <dialog id="settings-dialog" data-validation-feedback="settings-message" aria-labelledby="settings-title">
     <div class="dialog-heading"><div><h2 id="settings-title">设置</h2></div><button id="settings-close" type="button" aria-label="关闭设置">✕</button></div>
+    <section id="restart-notice" class="restart-notice" data-state="ready" data-feedback-inline tabindex="-1" aria-live="polite" aria-labelledby="restart-notice-title">
+      <div class="restart-notice-heading"><strong id="restart-notice-title">配置生效状态</strong><div class="restart-notice-actions"><button id="restart-notice-chatgpt" type="button" hidden>我已重启</button><button id="restart-notice-wsl" type="button" hidden>我已重新连接</button></div></div>
+      <ul id="restart-notice-items" class="restart-notice-items" aria-label="待生效项目"></ul>
+      <p id="restart-notice-message" class="restart-notice-message">暂无待生效项目；新请求使用已保存的配置。</p>
+    </section>
     <div class="settings-content">
     <div class="settings-language-row" data-settings-field="language"><span>语言</span><div id="language-toggle" class="language-toggle" role="group" aria-label="语言"><button id="language-zh" type="button" data-language="zh" aria-pressed="true" lang="zh-CN">中文</button><button id="language-en" type="button" data-language="en" aria-pressed="false" lang="en">English</button></div></div>
-    <section><h3>Codex 接入</h3>
+    <section id="connection-settings"><h3>Codex 接入 <span id="connection-pending-label" class="connection-pending-label" hidden>待重启</span></h3>
       <div class="entry-port-row" data-settings-field="entry_port"><label for="entry-port">入口端口</label><input id="entry-port" type="number" min="1024" max="65535" step="1" value="47844" required aria-describedby="link-status"><span id="link-status" class="entry-port-status" role="status" aria-live="polite" hidden></span></div>
       <p id="entry-port-message" data-feedback-source data-feedback-target="settings-inline-feedback" class="help" role="status" hidden></p>
+      <details id="connection-details" class="connection-details"><summary>接入详情</summary><ul id="connection-details-list"></ul></details>
     </section>
     <section id="sharing-settings"><h3>局域网共享</h3>
       <div class="entry-port-row" data-settings-field="sharing_port"><label for="sharing-port">额度端口</label><input id="sharing-port" type="number" min="1" max="65535" step="1" value="47846" required></div>
@@ -268,12 +275,6 @@
     <p id="zstd-level-note" class="help muted">基于120条请求、每级3轮测试估算，大小相对原始未压缩包，耗时为单次压缩中位数。</p>
     <div class="zstd-level-scroll"><table class="zstd-level-table"><colgroup><col class="zstd-level-col"><col><col><col class="zstd-time-col"></colgroup><thead><tr><th scope="col" rowspan="2">等级</th><th scope="colgroup" colspan="2" class="zstd-size-heading">请求大小变化</th><th scope="col" rowspan="2" class="num">压缩耗时</th></tr><tr><th scope="col" class="num">原始请求＜1.5 MB</th><th scope="col" class="num">原始请求≥1.5 MB</th></tr></thead><tbody id="zstd-level-options"></tbody></table></div>
   </dialog>
-  <div id="settings-restart-feedback" class="configuration-result" data-feedback-source data-feedback-target="connection-inline-feedback" data-feedback-priority="40" role="status" hidden>
-    <span id="settings-restart-summary" hidden></span>
-    <span id="settings-restart-title">重启 ChatGPT App 后生效</span>
-    <ul id="settings-restart-items" class="configuration-items"></ul>
-    <span id="settings-restart-description" hidden>设置已保存。以下配置仍需重启 ChatGPT App 后生效：</span>
-  </div>
   </div>
 </body>
 </html>

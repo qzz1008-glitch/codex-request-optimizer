@@ -70,7 +70,9 @@ class EntryPortTests(unittest.TestCase):
         self.assertTrue(status["entry_port_supported"])
         code, result = self.api("/api/entry-port", {"port": desired}, port=self.ui.port)
         self.assertEqual(code, 200)
-        self.assertEqual(result, {"current_port": self.server.port, "configured_port": desired, "pending": True})
+        self.assertEqual({k: result[k] for k in ("current_port", "configured_port", "pending")},
+                         {"current_port": self.server.port, "configured_port": desired, "pending": True})
+        self.assertEqual(result["restart_notice"]["items"][0]["key"], "entry_port")
         self.assertEqual(configured_port(self.data), desired)
         self.assertEqual(self.server.settings_path.read_bytes(), before_settings)
         self.assertEqual(self.config.read_bytes(), before_config)

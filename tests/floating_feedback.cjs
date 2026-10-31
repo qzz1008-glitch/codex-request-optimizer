@@ -15,6 +15,7 @@ async function load(tray=false){
  await page.addScriptTag({content:read('i18n.js')});
  await page.evaluate(()=>{
   window.t=value=>uiI18n.t(value);window.feedback=uiI18n.floatingFeedback();
+  const storage=new Map();Object.defineProperty(window,'localStorage',{value:{getItem:key=>storage.get(key),setItem:(key,value)=>storage.set(key,value)}});
   window.feedbackText=(id,value,error=false)=>{const node=document.getElementById(id);uiI18n.text(node,value);node.hidden=!value;node.classList.toggle('error',error);};
  });
  return page;
@@ -28,10 +29,11 @@ async function run(){
  await page.addScriptTag({content:[
   "window.$=id=>document.getElementById(id);window.state={status:{version:'1.0.0',entry_port:{pending:false}}};",
   "window.updateStatus=null;window.updateBusy=false;window.settingsSaving=false;window.updateAction='';window.updateFeedbackVisible=true;",
-  "window.settingsRestartChanges=new Map();window.connectionRestartNotified=false;window.closeZstdLevelPicker=()=>{};window.discardSettingsDraft=()=>{};",
+  "window.closeZstdLevelPicker=()=>{};window.discardSettingsDraft=()=>{};",
   "function el(tag,cls,value){const node=document.createElement(tag);node.className=cls;node.textContent=value;return node;}",
   extract('function renderUpdates()','async function loadUpdates()'),
-  extract('function showConfigurationFeedback(','function showConnectionFeedback('),
+  extract('globalThis.InspectorRestartNotice = {','\nconst $ ='),
+  "window.restartNotices=InspectorRestartNotice.create({status:()=>state.status,request:async()=>{},openSettings:async()=>{}});",
   extract('function setSettingsMessage(','function renderSettingsSaveProgress('),
   extract('function finishSettingsSave()','async function saveSettings()'),
   extract('function closeSettings()','action("settings-close"'),
@@ -70,11 +72,12 @@ async function run(){
   assert((await page.locator('#settings-inline-feedback').textContent()).includes(id));
   assert.deepEqual(await geometry(page,settingsIds),beforeSave);await page.evaluate(id=>feedbackText(id,''),id);cases++;
  }
- await page.evaluate(()=>showConfigurationFeedback(['自动压缩阈值'],{summary:'已接入。'}));await noPopup(page);
- assert((await page.locator('#settings-inline-feedback').textContent()).includes('自动压缩阈值'));
+ await page.evaluate(()=>restartNotices.change('compact_tokens',null,250000));await noPopup(page);
+ assert((await page.locator('#restart-notice').textContent()).includes('自动压缩阈值'));
  assert.equal(await page.locator('#settings-restart-dialog').count(),0);assert.deepEqual(await geometry(page,settingsIds),beforeSave);
  await page.evaluate(()=>closeSettings());await noPopup(page);
- assert((await page.locator('#connection-inline-feedback').textContent()).includes('重启 ChatGPT App'));cases++;
+ assert.equal(await page.locator('#restart-notice-open').getAttribute('data-visible'),'true');
+ assert.equal(await page.locator('#connection-inline-feedback').count(),0);cases++;
  for(const id of ['compression-confirm-dialog','connect-confirm-dialog','exit-confirm-dialog']){
   await page.evaluate(id=>document.getElementById(id).showModal(),id);const before=await geometry(page,[id]),messageId=id.replace('-dialog','-message');
   await page.evaluate(id=>feedbackText(id,'Synthetic confirmation error '.repeat(25),true),messageId);await noPopup(page);
@@ -91,7 +94,7 @@ async function run(){
  assert.equal(await page.locator('#app-inline-feedback').textContent(),'Synthetic content failure');
  assert.deepEqual(await geometry(page,['records-view','app-inline-feedback']),beforeFailure);cases++;
  await page.evaluate(()=>{
-  document.getElementById('settings-restart-feedback').hidden=true;document.getElementById('settings-dialog').showModal();document.getElementById('settings-message').textContent='';
+  document.getElementById('settings-dialog').showModal();document.getElementById('settings-message').textContent='';
   document.addEventListener('invalid',event=>{window.invalidPrevented=event.defaultPrevented;},true);
   const input=document.getElementById('entry-port');input.value='1';input.reportValidity();
  });

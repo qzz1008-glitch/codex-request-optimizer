@@ -28,6 +28,7 @@ from .config_link import ConfigLink, validate_upstream
 from .providers import ProviderManager, config_paths
 from .wsl_connection import WslConnection
 from .entry_port import ConfiguredPortParser, port_status, save_port
+from .restart_notice import RestartNotices
 from .updates import Updates
 from .token_window import TokenWindows
 from .response_usage import packet_usage
@@ -149,6 +150,7 @@ class InspectorServer(ThreadingHTTPServer):
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.settings_path = self.data_dir / "settings.json"
         self.link = ConfigLink(Path(config_path), self.data_dir / "codex-link.json")
+        self.restart_notices = RestartNotices(self.data_dir, config_path)
         self.guard = threading.RLock()
         settings_exist = self.settings_path.exists()
         saved = json.loads(self.settings_path.read_text(encoding="utf8")) if settings_exist else {}
@@ -204,6 +206,8 @@ class InspectorServer(ThreadingHTTPServer):
         self.provider_sync_error = ""
         self.provider_sync_result = {}
         self.connection_reload_required = bool(self.sharing.recovered)
+        if self.sharing.recovered:
+            self.restart_notices.mark("sharing")
         self.provider_next_scan = 0
         self.upgrade_draining = False
         self.wsl = WslConnection(self.data_dir)
@@ -335,12 +339,14 @@ class InspectorServer(ThreadingHTTPServer):
             return {"enabled": False}
         return self.sync_providers()
 
-    def sync_providers(self):
+    def sync_providers(self, *, notify_restart=True):
         with self.provider_guard:
             if self.sharing.remote:
                 changed = self.sharing.provider.set_retry(self.settings["capacity_retry_max_retries"]
                     if self.settings["capacity_retry_enabled"] else None)
                 self.connection_reload_required |= changed
+                if changed and notify_restart:
+                    self.restart_notices.mark("connection")
                 self.provider_fingerprint = self._provider_fingerprint()
                 self.provider_next_scan = time.monotonic() + 30
                 self.provider_sync_error = ""
@@ -366,6 +372,8 @@ class InspectorServer(ThreadingHTTPServer):
             self.provider_sync_error = ""
             self.provider_sync_result = result
             self.connection_reload_required |= result.get("reload_required", False)
+            if result.get("reload_required") and notify_restart:
+                self.restart_notices.mark("connection")
             self.provider_next_scan = time.monotonic() + 30
             return result
 
@@ -376,11 +384,13 @@ class InspectorServer(ThreadingHTTPServer):
             previous = self.settings["auto_detect_providers"]
             before = self._diagnostic_profile() if connected else {}
             proxy_repair = None
+            result = None
             try:
                 if connected:
                     proxy_repair = repair_loopback_proxy()
                     self.save_settings({**self.settings, "auto_detect_providers": True})
-                    result = self.sync_providers()
+                    result = self.sync_providers(notify_restart=False)
+                    result["local_reload_required"] = bool(result.get("reload_required") or proxy_repair["changed"])
                     result = {**result, "wsl": self.wsl.apply(True, self.endpoint, self.settings["upstream"],
                         self.settings["provider_routes"],
                         lambda routes: self.save_settings({**self.settings, "provider_routes": routes}),
@@ -393,6 +403,7 @@ class InspectorServer(ThreadingHTTPServer):
                     self.connection_reload_required |= result["reload_required"]
                     self.network_diagnostics.connection(before, self._diagnostic_profile(),
                         self.settings["provider_routes"], self.settings, result=result)
+                    self._record_connection_notice(result)
                     return result
                 state = self.link._state()
                 if not state:
@@ -402,16 +413,22 @@ class InspectorServer(ThreadingHTTPServer):
                     # chat IDs retain a direct, native-compression-capable route.
                     if not state.get("connection_policy"):
                         self.save_settings({**self.settings, "auto_detect_providers": True})
-                        self.sync_providers()
+                        self.sync_providers(notify_restart=False)
                     result = self.link.restore()
+                result["local_reload_required"] = bool(result.get("reload_required"))
                 result["wsl"] = self.wsl.apply(False, self.endpoint, self.settings["upstream"],
                     self.settings["provider_routes"],
                     lambda routes: self.save_settings({**self.settings, "provider_routes": routes}))
                 result["reload_required"] = bool(result.get("reload_required") or result["wsl"]["reload_required"])
                 self.save_settings({**self.settings, "auto_detect_providers": False})
                 self.connection_reload_required |= result.get("reload_required", False)
+                self._record_connection_notice(result)
                 return result
             except Exception as exc:
+                if result and result.get("local_reload_required"):
+                    self._record_connection_notice(result)
+                elif proxy_repair and proxy_repair.get("changed"):
+                    self.restart_notices.mark("connection")
                 if connected:
                     self.network_diagnostics.connection(before, self._diagnostic_profile(),
                         self.settings["provider_routes"], self.settings,
@@ -424,6 +441,14 @@ class InspectorServer(ThreadingHTTPServer):
                     keep_active = previous if not connected or proxy_repair is not None else False
                 self.save_settings({**self.settings, "auto_detect_providers": keep_active})
                 raise
+
+    def _record_connection_notice(self, result):
+        if result.get("local_reload_required"):
+            self.restart_notices.mark("connection")
+        for target in result.get("wsl", {}).get("targets", []):
+            if target.get("changed"):
+                self.restart_notices.mark("wsl", target="wsl", scope=str(target.get("distribution", ""))[:160])
+        result["restart_notice"] = self.restart_notices.snapshot()
 
     def _diagnostic_profile(self):
         try:
@@ -515,6 +540,7 @@ class InspectorServer(ThreadingHTTPServer):
         return {"version": VERSION, "ui_version": VERSION, "capture_enabled": self.settings["capture_enabled"],
                 "connection_state": "connected" if profile.get("active") else "disconnected",
                 "connection_policy": 1, "connection_reload_required": self.connection_reload_required,
+                "restart_notice": self.restart_notices.snapshot(),
                 "trend_packets_supported": True,
                 "zstd_level": self.settings["zstd_level"],
                 "image_zstd_level": self.settings["image_zstd_level"],
@@ -733,6 +759,16 @@ class Handler(BaseHTTPRequestHandler):
         one = lambda k, default="": query.get(k, [default])[0]
         if path == "/api/status" and self.command == "GET":
             self._json(200, self.server.status())
+        elif path == "/api/restart-notice" and self.command == "GET":
+            self._json(200, self.server.restart_notices.snapshot())
+        elif path == "/api/restart-notice" and self.command == "POST":
+            data = json.loads(self._body(8192))
+            if not isinstance(data, dict):
+                raise ValueError("invalid restart notice acknowledgement")
+            with self.server.provider_guard, self.server.guard:
+                result = self.server.restart_notices.acknowledge(data.get("target"), data.get("revision"),
+                    port_pending=port_status(self.server.data_dir, self.server.public_port)["pending"])
+            self._json(200, result)
         elif path == "/api/sharing" and self.command == "GET":
             self.server.sharing.refresh_peers()
             self._json(200, self.server.sharing.status())
@@ -829,6 +865,7 @@ class Handler(BaseHTTPRequestHandler):
                             result["egress_link"] = exit_result["link"]
                     else:
                         raise ValueError("invalid sharing action")
+                result["restart_notice"] = self.server.restart_notices.snapshot()
                 self._json(200, result)
             except SharingError as exc:
                 self._json(400, {"error": str(exc)})
@@ -877,7 +914,11 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/context-settings" and self.command == "POST":
             data = json.loads(self._body(8192))
             with self.server.guard:
+                previous = self.server.link.context_settings()
                 result = self.server.link.save_context_settings(data)
+                for field in ("context_tokens", "compact_tokens"):
+                    self.server.restart_notices.change(field, previous[field], result[field])
+                result["restart_notice"] = self.server.restart_notices.snapshot()
             self._json(200, result)
         elif path == "/api/packet-filters" and self.command == "GET":
             self._json(200, self.server.store.filter_options())
@@ -897,7 +938,10 @@ class Handler(BaseHTTPRequestHandler):
             if not isinstance(data, dict):
                 raise ValueError("invalid entry port settings")
             with self.server.guard:
+                previous = port_status(self.server.data_dir, self.server.public_port)
                 result = save_port(self.server.data_dir, self.server.public_port, data.get("port"))
+                self.server.restart_notices.change("entry_port", previous["configured_port"], result["configured_port"])
+                result["restart_notice"] = self.server.restart_notices.snapshot()
             self._json(200, result)
         elif path == "/api/settings" and self.command == "POST":
             data = json.loads(self._body(8192))
@@ -988,7 +1032,7 @@ class Handler(BaseHTTPRequestHandler):
                     try:
                         retry_keys = ("capacity_retry_enabled", "capacity_retry_max_retries")
                         if any(candidate[key] != previous[key] for key in retry_keys) and self.server.connection_profile()["active"]:
-                            self.server.sync_providers()
+                            self.server.sync_providers(notify_restart=False)
                             retry_config_applied = True
                         if "start_on_login" in data and (
                                 candidate["start_on_login"] != previous["start_on_login"] or not self.server.startup_state_known):
@@ -1000,11 +1044,17 @@ class Handler(BaseHTTPRequestHandler):
                         self.server.save_settings(previous)
                         if retry_config_applied:
                             try:
-                                self.server.sync_providers()
+                                self.server.sync_providers(notify_restart=False)
                             except Exception:
                                 pass  # sync_providers retains the configuration error in status.
                         raise
                 self.server.image_isolation = image_isolation
+                self.server.restart_notices.change("image_analysis_mode", previous["image_analysis_mode"],
+                                                   candidate["image_analysis_mode"])
+                if retry_config_applied:
+                    self.server.restart_notices.change("capacity_retry",
+                        previous["capacity_retry_max_retries"] if previous["capacity_retry_enabled"] else None,
+                        candidate["capacity_retry_max_retries"] if candidate["capacity_retry_enabled"] else None)
                 self.server.store.configure_limits(candidate["max_storage_bytes"],
                                                    candidate["max_packets"])
                 if candidate["auto_zstd_level_enabled"] != previous["auto_zstd_level_enabled"]:

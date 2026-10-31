@@ -10,7 +10,7 @@ assert(!html.includes('id="header-connect"'));
 function fixture(connected) {
   const elements = new Map();
   function element(id) {
-    if (!elements.has(id)) elements.set(id, {id, attrs:{}, dataset:{}, open:false, hidden:id==='settings-restart-feedback', textContent:'',
+    if (!elements.has(id)) elements.set(id, {id, attrs:{}, dataset:{}, open:false, hidden:true, textContent:'',
       setAttribute(key,value){this.attrs[key]=value;}, showModal(){this.open=true;}, close(){this.open=false;},
       replaceChildren(...values){this.children=values;}});
     return elements.get(id);
@@ -21,7 +21,8 @@ function fixture(connected) {
     state:{status:{profile:{active:connected,can_restore:connected}}},
     compressionSaving:false,settingsSaving:false,settingsOpening:false,settingsEditing:false,
     exitSaving:false,connectSaving:false,connectChecking:false,linkSaving:'',compressionTarget:null,
-    compressionRevision:0,connectionRestartNotified:false,connectSource:'header',
+    compressionRevision:0,connectSource:'header',
+    restartNotices:{connection:(which,result)=>calls.push(['result',which,result])},
     $:element,t:value=>value,setText:(el,value)=>{el.textContent=value;},
     uiI18n:{text:(node,value)=>{node.textContent=typeof value==='function'?value():value;}},
     el:(tag,cls,text)=>({tag,text}),
@@ -48,28 +49,23 @@ function fixture(connected) {
   assert.deepEqual(calls,[['connect-prompt','header']]);
   await context.confirmConnection();
   assert.equal(context.state.status.profile.active,true);
-  assert.equal(element('settings-restart-feedback').hidden,false);
-  assert.equal(context.connectionRestartNotified,true);
+  assert.equal(calls.find(call=>call[0]==='result')[1],'activate');
 
-  ({context,element}=fixture(false));
+  ({context,element,calls}=fixture(false));
   context.linkAction=async()=>{
     context.state.status.profile={active:true,can_restore:true};
     return {reload_required:true,loopback_proxy:{state:'repaired',changed:true}};
   };
   await context.confirmConnection();
-  assert.equal(element('settings-restart-feedback').hidden,false);
-  assert.deepEqual(element('settings-restart-items').children.map(item=>item.text),['Codex 接入与原生压缩','本机代理例外']);
-  assert.equal(element('settings-restart-summary').textContent,'已接入。已修复本机代理例外。');
+  assert.equal(calls.find(call=>call[0]==='result')[2].loopback_proxy.changed,true);
 
-  ({context,element}=fixture(false));
+  ({context,element,calls}=fixture(false));
   context.linkAction=async()=>{
     context.state.status.profile={active:true,can_restore:true};
     return {reload_required:true,warnings:[{file:'config.toml',provider:'optional',reason:'unsupported_upstream',detail:'非本机的上游必须使用 HTTPS'}]};
   };
   await context.confirmConnection();
-  assert.equal(element('settings-restart-feedback').hidden,false);
-  assert.equal(element('settings-restart-feedback').dataset.feedbackTarget,'connection-inline-feedback');
-  assert.equal(element('settings-restart-summary').textContent,'已接入。\n未接管 optional（config.toml）：非本机的上游必须使用 HTTPS。');
+  assert.equal(calls.find(call=>call[0]==='result')[2].warnings[0].provider,'optional');
   assert.equal(element('connect-confirm-message').hidden,true);
 
   ({context,element,calls}=fixture(false));
@@ -79,27 +75,15 @@ function fixture(connected) {
     return {reload_required:false};
   };
   await context.confirmConnection();
-  assert.equal(element('settings-restart-feedback').hidden,false);
-  assert.equal(element('settings-restart-title').textContent,'操作已完成');
-  assert.equal(element('settings-restart-description').textContent,'配置无需更改，无需重启。');
-  assert.equal(element('settings-restart-items').hidden,true);
+  assert.equal(calls.find(call=>call[0]==='result')[2].reload_required,false,'An unchanged connection must not require another restart');
   assert.equal(calls.some(call=>call[0]==='message'),false,'Success belongs in the inline result');
-  assert.equal(element('settings-restart-feedback').dataset.feedbackTarget,'connection-inline-feedback');
-  element('settings-dialog').open=true;
-  context.showConfigurationFeedback(['自动压缩阈值']);
-  assert.equal(element('settings-restart-feedback').dataset.feedbackTarget,'settings-inline-feedback');
-  assert.equal(element('settings-restart-summary').hidden,true,'Later settings saves clear the connection summary');
-  assert.equal(element('settings-restart-title').textContent,'重启 ChatGPT App 后生效');
-  assert.equal(element('settings-restart-items').hidden,false);
-  context.showConnectionFeedback('activate',{});
-  assert.equal(element('settings-restart-title').textContent,'重启 ChatGPT App 后生效','Older responses fall back to the actual configuration status');
 
   ({context,element,calls}=fixture(false));
   context.linkAction=async()=>{throw Error('接入失败');};
   await context.confirmConnection();
   assert.equal(element('connect-confirm-message').textContent,'接入失败');
   assert.equal(element('connect-confirm-message').hidden,false);
-  assert.equal(element('settings-restart-feedback').hidden,true);
+  assert.equal(calls.some(call=>call[0]==='result'),false);
   assert.equal(calls.some(call=>call[0]==='message'),false,'Connection failures stay in the confirmation');
 
   ({context,element,calls}=fixture(false));
@@ -125,16 +109,16 @@ function fixture(connected) {
   assert.deepEqual(calls.filter(call=>call[0]==='link'),[['link','restore']]);
   assert.equal(context.state.status.profile.active,false);
   assert.equal(element('compression-confirm-dialog').open,false);
-  assert.equal(element('settings-restart-feedback').hidden,false);
+  assert.equal(calls.find(call=>call[0]==='result')[1],'restore');
   assert.equal(context.compressionSaving,false);
   assert.equal(calls.some(call=>call[0]==='message'),false,'Disconnect must not create a banner');
 
-  ({context,element,buttons}=fixture(true));
+  ({context,element,buttons,calls}=fixture(true));
   context.showConnectionFeedback('activate',{reload_required:true,wsl:{targets:[{distribution:'Ubuntu',active:true,changed:true}],
     warnings:[{distribution:'HCE',reason:'relay_unreachable',detail:'bash: connection refused'}]}});
-  assert(element('settings-restart-summary').textContent.includes('WSL Ubuntu 已接入。'));
-  assert(element('settings-restart-summary').textContent.includes('bash: connection refused'));
-  assert(element('settings-restart-items').children.some(item=>item.text.includes('WSL')));
+  const result=calls.find(call=>call[0]==='result')[2];
+  assert.equal(result.wsl.targets[0].distribution,'Ubuntu');
+  assert.equal(result.wsl.warnings[0].detail,'bash: connection refused','WSL diagnostics stay structured');
 
   ({context,buttons}=fixture(true));
   context.state.status.provider_sync_error='OSError';
