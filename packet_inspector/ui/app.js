@@ -112,6 +112,7 @@ globalThis.InspectorRestartNotice = {
       const failure=error||backendError||storageError,active=items.length>0||!!failure;
       const nextKey=JSON.stringify([ledger.revision,items,details,s?.provider_warnings,s?.profile?.active,s?.wsl_connection,s?.connection_resume,portPending,failure,working,!!busy(),uiI18n.language]);
       if(nextKey===renderKey)return;renderKey=nextKey;
+      card.hidden=!active;
       card.dataset.state=active?"pending":"ready";
       badge.dataset.visible=String(active||warning);badge.tabIndex=active||warning?0:-1;
       badge.textContent=t(items.length?(chatgpt||optimizer?"待重启":"待重新连接"):"接入提醒");
@@ -150,7 +151,7 @@ globalThis.InspectorRestartNotice = {
     $("restart-notice-open").addEventListener("click",async()=>{
       await openSettings();render();
       if(!ledger.items.length&&!status()?.storage_paths_pending&&!status()?.entry_port?.pending)$("connection-details").open=true;
-      $("restart-notice").focus();
+      const card=$("restart-notice");(card.hidden?$("connection-details").querySelector("summary"):card).focus();
     });
     for(const target of ["chatgpt","wsl"])$("restart-notice-"+target).addEventListener("click",()=>acknowledge(target));
     return {ingest,adopt,change,connection,sharing,render,acknowledge};
