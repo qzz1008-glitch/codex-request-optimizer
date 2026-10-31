@@ -12,6 +12,7 @@ from .sharing_credentials import CLIENT_HEADER
 
 EGRESS_HEADER = "X-Inspector-Shared-Egress"
 EGRESS_PROTOCOL = 2
+MISSING_EXIT_ROUTE_MESSAGE = "共享出口信息不完整，请更新借用方软件后重试。"
 UPSTREAM_HOSTS = frozenset({"chatgpt.com", "api.openai.com"})
 
 
