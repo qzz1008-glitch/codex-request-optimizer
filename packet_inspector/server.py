@@ -26,6 +26,7 @@ from .analyzer import (MAX_BODY, clean_text, describe_node, encode, inspect_requ
                        classify_request, decode_body, thread_identity, resolve, safe_path, search_body)
 from .config_link import ConfigLink, validate_upstream
 from .providers import ProviderManager, config_paths
+from .wsl_connection import WslConnection
 from .entry_port import ConfiguredPortParser, port_status, save_port
 from .updates import Updates
 from .token_window import TokenWindows
@@ -205,8 +206,9 @@ class InspectorServer(ThreadingHTTPServer):
         self.connection_reload_required = bool(self.sharing.recovered)
         self.provider_next_scan = 0
         self.upgrade_draining = False
+        self.wsl = WslConnection(self.data_dir)
         self.token_windows = TokenWindows()
-        self.session_summaries = SessionSummaries(self.token_windows)
+        self.session_summaries = SessionSummaries(self.token_windows, extra_labels=self.wsl.labels)
         self.cache_dir = resolve_directory(self.data_dir, self.settings["cache_dir"])
         self.log_dir = resolve_directory(self.data_dir, self.settings["log_dir"])
         self.cache_dir.mkdir(parents=True, exist_ok=True)
@@ -379,8 +381,15 @@ class InspectorServer(ThreadingHTTPServer):
                     proxy_repair = repair_loopback_proxy()
                     self.save_settings({**self.settings, "auto_detect_providers": True})
                     result = self.sync_providers()
+                    result = {**result, "wsl": self.wsl.apply(True, self.endpoint, self.settings["upstream"],
+                        self.settings["provider_routes"],
+                        lambda routes: self.save_settings({**self.settings, "provider_routes": routes}),
+                        retry_limit=self.settings["capacity_retry_max_retries"]
+                        if self.settings["capacity_retry_enabled"] else None)}
+                    result["changed"] = bool(result.get("changed") or result["wsl"]["changed"])
                     result["loopback_proxy"] = proxy_repair
-                    result["reload_required"] = bool(result.get("reload_required") or proxy_repair["changed"])
+                    result["reload_required"] = bool(result.get("reload_required") or proxy_repair["changed"]
+                                                     or result["wsl"]["reload_required"])
                     self.connection_reload_required |= result["reload_required"]
                     self.network_diagnostics.connection(before, self._diagnostic_profile(),
                         self.settings["provider_routes"], self.settings, result=result)
@@ -395,6 +404,9 @@ class InspectorServer(ThreadingHTTPServer):
                         self.save_settings({**self.settings, "auto_detect_providers": True})
                         self.sync_providers()
                     result = self.link.restore()
+                result["wsl"] = self.wsl.apply(False, self.endpoint, self.settings["upstream"],
+                    self.settings["provider_routes"], lambda routes: None)
+                result["reload_required"] = bool(result.get("reload_required") or result["wsl"]["reload_required"])
                 self.save_settings({**self.settings, "auto_detect_providers": False})
                 self.connection_reload_required |= result.get("reload_required", False)
                 return result
@@ -560,6 +572,7 @@ class InspectorServer(ThreadingHTTPServer):
                 "provider_count": self.provider_sync_result.get("provider_count", len({r["provider"] for r in self.settings["provider_routes"].values()})),
                 "provider_sync_error": self.provider_sync_error,
                 "provider_warnings": self.provider_sync_result.get("warnings", []),
+                "wsl_connection": {**self.wsl.result, "metadata_error": self.wsl.metadata_error},
                 "desktop_tray": bool(getattr(self, "desktop_tray", False)),
                 "desktop_refresh_supported": self.presentation is not None,
                 "desktop_integration_error": self.presentation.error if self.presentation else "",
@@ -701,6 +714,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/health" and self.command == "GET":
             self._json(200, {"ok": True, "app": "codex-packet-inspector", "version": VERSION,
                              "worker_id": self.server.worker_id})
+            return
+        if path == "/api/wsl-probe" and self.command == "GET":
+            self._json(200, {"instance": hashlib.sha256(self.server.endpoint.encode()).hexdigest()})
             return
         try:
             self._api(path)
