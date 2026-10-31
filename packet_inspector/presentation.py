@@ -74,6 +74,10 @@ class WorkerPresentation:
             import ctypes
             ctypes.windll.user32.MessageBoxW(0, "无法打开退出确认，中转服务继续运行。请稍后重试。", "Codex 请求优化器", 0x40)
 
+    def _restart_service(self):
+        from .service_restart import restart_from_tray
+        return restart_from_tray(self.server.data_dir)
+
     def _ensure_tray(self):
         if not self.enabled:
             return
@@ -86,7 +90,8 @@ class WorkerPresentation:
         if factory is None:
             from .tray import NativeTray
             factory = NativeTray
-        self.tray = factory(self._open_window, self._exit, status_reader=self.server.tray_status, show_panel=self._show_panel).start()
+        self.tray = factory(self._open_window, self._exit, status_reader=self.server.tray_status,
+                            show_panel=self._show_panel, restart_service=self._restart_service).start()
         self.server.desktop_tray = True
 
     def _stop_tray(self):

@@ -132,6 +132,9 @@ class PanelAPI:
     def exit_app(self):
         return self._panel.exit_app()
 
+    def restart_service(self):
+        return self._panel.restart_service()
+
 
 class TrayPanel:
     MIN_WIDTH = 192
@@ -381,6 +384,11 @@ class TrayPanel:
             self.visible = True
             self._present()
             return {"ok": False}
+
+    def restart_service(self):
+        from .service_restart import restart_from_tray
+        self.dismiss()
+        return restart_from_tray(self.data_dir)
 
     def destroy(self):
         already_closed = self._closed.is_set()

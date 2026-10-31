@@ -74,14 +74,15 @@ class LaunchRoutingTests(unittest.TestCase):
         callbacks = {}
         tray = SimpleNamespace(start=lambda: tray, stop=lambda: None)
 
-        def native_tray(open_window, exit_app, *, status_reader=None, show_panel=None):
-            callbacks.update(open=open_window, exit=exit_app, status_reader=status_reader, show_panel=show_panel)
+        def native_tray(open_window, exit_app, *, status_reader=None, show_panel=None, restart_service=None):
+            callbacks.update(open=open_window, exit=exit_app, status_reader=status_reader, show_panel=show_panel, restart=restart_service)
             return tray
 
         def service(arguments, on_started):
             server = SimpleNamespace(port=47844, tray_status=Mock(return_value={}))
             on_started(server)
             callbacks["exit"]()
+            callbacks["restart"]()
             with patch("packet_inspector.window_lifecycle.tray_panel_ready", return_value=False), \
                     patch("packet_inspector.window_lifecycle.tray_panel_host_running", return_value=False):
                 self.assertFalse(callbacks["show_panel"]())
@@ -98,9 +99,11 @@ class LaunchRoutingTests(unittest.TestCase):
                 patch("packet_inspector.tray.NativeTray", side_effect=native_tray), \
                 patch("packet_inspector.desktop.start_process") as start, \
                 patch("packet_inspector.exit_flow.request_exit") as request, \
+                patch("packet_inspector.service_restart.restart_from_tray") as restart, \
                 patch("packet_inspector.desktop.local_api") as api:
             self.assertEqual(launch.main(["--background", "--tray", *self.arguments]), 0)
         request.assert_called_once_with(self.data, callbacks["open"])
+        restart.assert_called_once_with(self.data)
         commands = [call.args[0] for call in start.call_args_list]
         self.assertFalse(any("--tray-panel" in command for command in commands))
         self.assertTrue(any("--tray-preload" in command for command in commands))

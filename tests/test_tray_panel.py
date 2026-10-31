@@ -220,7 +220,7 @@ class TrayPanelTests(unittest.TestCase):
         self.load()
         self.resize_panel_window.reset_mock()
         methods = {name for name in dir(PanelAPI) if not name.startswith("_")}
-        self.assertEqual(methods, {"panel_ready", "panel_state", "configure_window", "resize_panel", "dismiss", "open_main", "exit_app"})
+        self.assertEqual(methods, {"panel_ready", "panel_state", "configure_window", "resize_panel", "dismiss", "open_main", "exit_app", "restart_service"})
         for values in ((True, 200), (400, float("nan")), ("400", 200)):
             self.assertFalse(self.panel.resize_panel(*values))
         self.assertTrue(self.panel.resize_panel(9999, 9999))
@@ -247,6 +247,15 @@ class TrayPanelTests(unittest.TestCase):
         tray.user.PostMessageW.assert_called_once_with(123, NATIVE_MENU_MESSAGE, 0, 0)
         self.assertEqual(popup_position((1910, 1050), (0, 0, 1920, 1080), (344, 264)), (1566, 786))
         self.assertEqual(popup_position((-1910, 20), (-1920, 0, 0, 1040), (344, 264)), (-1910, 20))
+
+
+    def test_restart_dismisses_the_panel_and_uses_the_fixed_confirmation_action(self):
+        self.load()
+        with patch("packet_inspector.service_restart.restart_from_tray", return_value={"ok": True, "cancelled": True}) as restart:
+            self.assertEqual(PanelAPI(self.panel).restart_service(), {"ok": True, "cancelled": True})
+            restart.assert_called_once_with(self.root)
+        self.assertFalse(self.panel.visible)
+        self.open_main.assert_not_called()
 
 
 if __name__ == "__main__":
