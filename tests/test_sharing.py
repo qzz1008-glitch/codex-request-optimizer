@@ -77,6 +77,35 @@ class ConfigurationTests(unittest.TestCase):
         self.shared.restore()
         self.assertNotIn(SHARED_PROVIDER, tomllib.loads(self.config.read_text())["model_providers"])
 
+    def test_credential_names_are_escaped_and_renamed_without_changing_the_route(self):
+        endpoint = "http://127.0.0.1:47844/relay/local/sharing/client"
+        self.shared.activate(endpoint, 10, label='团队 "A" \\ quota')
+        provider = tomllib.loads(self.config.read_text(encoding="utf8"))["model_providers"][SHARED_PROVIDER]
+        self.assertEqual(provider["name"], '共享 · 团队 "A" \\ quota')
+        self.assertTrue(self.shared.set_label("第二份凭据"))
+        self.assertFalse(self.shared.set_label("第二份凭据"))
+        self.shared.set_retry(25)
+        renamed = tomllib.loads(self.config.read_text(encoding="utf8"))["model_providers"][SHARED_PROVIDER]
+        self.assertEqual(renamed, {**provider, "name": "共享 · 第二份凭据", "stream_max_retries": 25})
+        self.shared.restore()
+        self.assertNotIn(SHARED_PROVIDER, tomllib.loads(self.config.read_text(encoding="utf8"))["model_providers"])
+
+    def test_interrupted_provider_rename_restores_both_possible_config_states(self):
+        write = ConfigLink._write
+        for applied in (False, True):
+            with self.subTest(config_written=applied):
+                self.shared.activate("http://127.0.0.1:47844/relay/local/sharing/client", label="first")
+                def interrupted(link, text):
+                    if applied:
+                        write(link, text)
+                    raise OSError("interrupted rename")
+                with patch.object(ConfigLink, "_write", interrupted), self.assertRaises(OSError):
+                    self.shared.set_label("second")
+                self.shared.restore()
+                restored = tomllib.loads(self.config.read_text())
+                self.assertEqual(restored["model_provider"], "original")
+                self.assertNotIn(SHARED_PROVIDER, restored["model_providers"])
+
     def test_crash_recovery_and_concurrent_provider_selection(self):
         self.shared.activate("http://127.0.0.1:47844/relay/local/sharing/client")
         document = tomlkit.parse(self.config.read_text())
@@ -398,7 +427,7 @@ class LANSharingTests(unittest.TestCase):
                 self.assertEqual(status, 400)
                 self.assertEqual(self.owner.settings, previous)
 
-    def test_one_quota_source_is_replaced_atomically_without_rewriting_provider(self):
+    def test_one_quota_source_is_replaced_atomically_updating_only_provider_name(self):
         original = self.guest.link.config.read_bytes()
         first = self.start()
         self.guest.sharing.connect(first)
@@ -414,7 +443,11 @@ class LANSharingTests(unittest.TestCase):
         with patch.object(self.guest.sharing.provider, "activate", side_effect=AssertionError("Replacement rewrote native config")):
             result = self.guest.sharing.connect(second)
         self.assertFalse(result["reload_required"])
-        self.assertEqual(self.guest.link.config.read_bytes(), connected)
+        current = tomllib.loads(self.guest.link.config.read_text(encoding="utf8"))
+        previous = tomllib.loads(connected.decode())
+        self.assertNotEqual(current["model_providers"][SHARED_PROVIDER]["name"], previous["model_providers"][SHARED_PROVIDER]["name"])
+        previous["model_providers"][SHARED_PROVIDER]["name"] = current["model_providers"][SHARED_PROVIDER]["name"]
+        self.assertEqual(current, previous)
         self.consume()
         wait_for_idle(self.owner, self.guest, other)
         self.assertEqual(self.owner.sharing.status()["host"]["requests"], 1)
@@ -508,6 +541,37 @@ class LANSharingTests(unittest.TestCase):
         self.assertFalse(disabled["host"]["running"])
         self.assertNotIn(link, json.dumps(self.owner.sharing.status()))
         self.assertEqual(self.owner.store.list(), [])
+
+    def test_active_provider_name_follows_selected_credential_and_local_alias(self):
+        source = self.extra_relay("named-quota-provider")
+        source.sharing.authorization_factory = DummyAuthorization
+        with patch.object(source.sharing, "_host_upstream", return_value=self.target):
+            first = source.sharing.issue(address="127.0.0.1", port=free_port(), label="first")
+            second = source.sharing.issue(label="second")
+        original = self.owner.link.config.read_bytes()
+        self.owner.sharing.connect(first["link"], label="同事 A")
+        first_id = self.owner.sharing.remote["credential_id"]
+        provider = lambda: tomllib.loads(self.owner.link.config.read_text(encoding="utf8"))["model_providers"][SHARED_PROVIDER]
+        self.assertEqual(provider()["name"], "共享 · 同事 A")
+        self.owner.sharing.connect(second["link"])
+        second_id = self.owner.sharing.remote["credential_id"]
+        saved = next(row for row in self.owner.sharing.vault.rows() if row["id"] == second_id)
+        self.assertEqual(provider()["name"], "共享 · " + saved["label"])
+        before = self.owner.link.config.read_bytes()
+        self.assertEqual(self.local_api("/api/sharing", {"action": "credential_edit", "id": first_id, "label": "同事 B"})[0], 200)
+        self.assertEqual(self.owner.link.config.read_bytes(), before)
+        self.owner.sharing.connect(identifier=first_id)
+        self.assertEqual(provider()["name"], "共享 · 同事 B")
+        endpoint = provider()["base_url"]
+        self.assertEqual(self.local_api("/api/sharing", {"action": "credential_edit", "id": first_id, "label": "团队新名称"})[0], 200)
+        self.assertEqual(provider()["name"], "共享 · 团队新名称")
+        self.assertEqual(provider()["base_url"], endpoint)
+        with patch.object(self.owner.sharing.vault, "_save", side_effect=OSError("storage unavailable")):
+            self.assertEqual(self.local_api("/api/sharing", {"action": "credential_edit", "id": first_id, "label": "写入失败"})[0], 500)
+        self.assertEqual(provider()["name"], "共享 · 团队新名称")
+        self.assertEqual(next(row for row in self.owner.sharing.vault.rows() if row["id"] == first_id)["label"], "团队新名称")
+        self.owner.sharing.disconnect()
+        self.assertEqual(tomllib.loads(self.owner.link.config.read_text(encoding="utf8")), tomllib.loads(original.decode()))
 
     def test_local_alias_edits_do_not_change_listeners_config_or_provider_limits(self):
         original_config = self.owner.link.config.read_bytes()
@@ -948,15 +1012,15 @@ class LANSharingTests(unittest.TestCase):
 
     def test_guest_config_restores_and_never_contains_grants_or_owner_credentials(self):
         link = self.start()
-        original = tomllib.loads(self.guest.link.config.read_text())
+        original = tomllib.loads(self.guest.link.config.read_text(encoding="utf8"))
         self.guest.sharing.connect(link)
         self.assertTrue(self.guest.connection_profile()["active"])
         for path in (self.guest.link.config, self.guest.sharing.provider.path):
-            content = path.read_text()
+            content = path.read_text(encoding="utf8")
             self.assertNotIn(parse_link(link)[2], content)
             self.assertNotIn("dummy-owner", content)
         self.guest.sharing.disconnect()
-        self.assertEqual(tomllib.loads(self.guest.link.config.read_text()), original)
+        self.assertEqual(tomllib.loads(self.guest.link.config.read_text(encoding="utf8")), original)
         self.assertIsNone(self.guest.sharing.remote)
 
     def test_guest_retry_updates_do_not_capture_or_change_original_providers(self):
@@ -964,15 +1028,15 @@ class LANSharingTests(unittest.TestCase):
         self.guest.settings.update(capacity_retry_enabled=True, capacity_retry_max_retries=10,
                                    auto_detect_providers=False)
         self.guest.sharing.connect(self.start())
-        document = tomllib.loads(self.guest.link.config.read_text())
+        document = tomllib.loads(self.guest.link.config.read_text(encoding="utf8"))
         self.assertEqual(document["model_providers"][SHARED_PROVIDER]["stream_max_retries"], 10)
         self.guest.settings["capacity_retry_max_retries"] = 25
         self.guest.sync_providers()
-        document = tomllib.loads(self.guest.link.config.read_text())
+        document = tomllib.loads(self.guest.link.config.read_text(encoding="utf8"))
         self.assertEqual(document["model_providers"][SHARED_PROVIDER]["stream_max_retries"], 25)
         self.assertEqual(document["model_providers"]["original"], {"base_url": "https://original.invalid/v1"})
         self.guest.sharing.disconnect()
-        document = tomllib.loads(self.guest.link.config.read_text())
+        document = tomllib.loads(self.guest.link.config.read_text(encoding="utf8"))
         self.assertNotIn(SHARED_PROVIDER, document["model_providers"])
         self.assertEqual(document["model_provider"], "original")
 

@@ -575,6 +575,22 @@ class Sharing:
                         egress.stop()
             return {**self.status(), "reload_required": reload_required}
 
+    def rename_credential(self, identifier, label):
+        with self.guard:
+            row = next((row for row in self.vault.rows() if row["id"] == identifier), None)
+            if not row or row["direction"] != "in":
+                raise SharingError("凭据不存在。")
+            changes = {"label": label}
+            draft = self.vault.update(identifier, changes, dry_run=True)
+            active = row["kind"] == "quota" and self.remote and self.remote["credential_id"] == identifier
+            changed = active and self.provider.set_label(draft["label"])
+            try:
+                self.vault.update(identifier, changes)
+            except Exception:
+                if changed:
+                    self.provider.set_label(row["label"])
+                raise
+
     def connect(self, link=None, *, label="", identifier=None):
         with self.guard:
             if self.listener:
@@ -595,10 +611,13 @@ class Sharing:
                 if result.get("protocol") != PROTOCOL or result.get("available") is not True:
                     raise SharingError("共享协议不兼容，请双方更新软件。")
                 saved_id = self.vault.import_link("quota", link, label, result.get("credential", {}))
+                saved = next(row for row in self.vault.rows() if row["id"] == saved_id)
                 settings = self.server.settings
                 if not replacing:
                     self.provider.activate(self.client_endpoint, settings["capacity_retry_max_retries"]
-                                           if settings["capacity_retry_enabled"] else None)
+                                           if settings["capacity_retry_enabled"] else None, label=saved["label"])
+                else:
+                    self.provider.set_label(saved["label"])
                 self.remote = {"host": host, "port": port, "upstream": upstream, "opener": opener, "token": token,
                                "credential_id": saved_id}
                 self.recovered = False

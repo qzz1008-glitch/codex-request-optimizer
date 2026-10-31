@@ -13,13 +13,13 @@ class SharedProvider:
     def __init__(self, link, state_path):
         self.link, self.path = link, state_path
 
-    def activate(self, endpoint, retry_limit=None):
+    def activate(self, endpoint, retry_limit=None, *, label=""):
         if self.path.exists():
             self.restore()
         text, data = self.link._read()
         if SHARED_PROVIDER in data.get("model_providers", {}):
             raise SharingError("共享 provider 名称已被占用，请先检查 Codex 配置。")
-        provider = {"name": "Codex shared connection", "base_url": endpoint, "wire_api": "responses",
+        provider = {"name": self._name(label), "base_url": endpoint, "wire_api": "responses",
                     "requires_openai_auth": False, "supports_websockets": False}
         if retry_limit is not None:
             provider.update(stream_max_retries=retry_limit, request_max_retries=0)
@@ -59,10 +59,7 @@ class SharedProvider:
                 layer["profiles"][item["name"]]["model_provider"] = SHARED_PROVIDER
             plans.append((path, before, tomlkit.dumps(layer)))
         state["layers"] = layers
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        staging = self.path.with_suffix(".new")
-        staging.write_text(json.dumps(state), encoding="utf8")
-        staging.replace(self.path)
+        self._write_state(state)
         try:
             from .providers import _write_plans
             _write_plans(self.link, plans)
@@ -98,7 +95,7 @@ class SharedProvider:
                 changed = True
         providers = document.get("model_providers", {})
         current = providers.get(SHARED_PROVIDER, {})
-        if self._owned(current, state["provider"]):
+        if self._owned_state(current, state):
             del providers[SHARED_PROVIDER]
             changed = True
         plans = [(self.link.config, text, tomlkit.dumps(document))] if changed else []
@@ -132,12 +129,49 @@ class SharedProvider:
         return ({k: v for k, v in current.items() if k not in RETRY_KEYS}
                 == {k: v for k, v in applied.items() if k not in RETRY_KEYS})
 
+    @classmethod
+    def _owned_state(cls, current, state):
+        return any(cls._owned(current, applied) for applied in
+                   (state["provider"], state.get("pending_provider")) if isinstance(applied, dict))
+
+    @staticmethod
+    def _name(label):
+        return "共享" + (f" · {label}" if label else "")
+
+    def _write_state(self, state):
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        staging = self.path.with_suffix(".new")
+        staging.write_text(json.dumps(state), encoding="utf8")
+        staging.replace(self.path)
+
+    def set_label(self, label):
+        state = json.loads(self.path.read_text(encoding="utf8"))
+        text, _ = self.link._read()
+        document = tomlkit.parse(text)
+        provider = document.get("model_providers", {}).get(SHARED_PROVIDER, {})
+        if not self._owned_state(provider, state):
+            raise SharingError("共享 provider 已被修改，请断开后重新连接。")
+        name = self._name(label)
+        if provider.get("name") == name:
+            return False
+        state["provider"] = dict(provider)
+        provider["name"] = name
+        # Either side of an interrupted rename must remain recoverable.
+        state["pending_provider"] = dict(provider)
+        self._write_state(state)
+        if self.link._read()[0] != text:
+            raise SharingError("Codex 配置已发生变化，请重试。")
+        self.link._write(tomlkit.dumps(document))
+        state["provider"] = state.pop("pending_provider")
+        self._write_state(state)
+        return True
+
     def set_retry(self, limit):
         state = json.loads(self.path.read_text(encoding="utf8"))
         text, _ = self.link._read()
         document = tomlkit.parse(text)
         provider = document.get("model_providers", {}).get(SHARED_PROVIDER, {})
-        if not self._owned(provider, state["provider"]):
+        if not self._owned_state(provider, state):
             raise SharingError("共享 provider 已被修改，请断开后重新连接。")
         before = dict(provider)
         if limit is None:
