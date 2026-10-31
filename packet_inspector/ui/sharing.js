@@ -205,7 +205,7 @@ globalThis.InspectorSharing=(()=>{
     try{const result=await request(dataValue),{link,...state}=result;
       const identifier=dataValue.action==="credential_issue"?result.issued_id:dataValue.action==="credential_use"&&dataValue.link?(dataValue.kind==="quota"?result.client?.active_id:result.egress?.selection?.active_id):null;
       highlightCredential(identifier,state);
-      render(state);if(link)await copy(link,dataValue.action==="credential_issue"?dataValue.kind+"-generate":"sharing-copy-"+dataValue.id);else if(result.reload_required===true)message(dataValue.action==="credential_delete"?"已删除凭据。请重新加载 Codex 配置或重启 ChatGPT 应用。":"已切换额度来源。请重新加载 Codex 配置或重启 ChatGPT 应用。");else message(success===null?"":success||"已更新，新请求使用当前设置。");return result;
+      render(state);if(link)await copy(link,dataValue.action==="credential_issue"?dataValue.kind+"-generate":"sharing-copy-"+dataValue.id);else if(success!==null&&result.reload_required===true)message(dataValue.action==="credential_delete"?"已删除凭据。请重新加载 Codex 配置或重启 ChatGPT 应用。":"已切换额度来源。请重新加载 Codex 配置或重启 ChatGPT 应用。");else message(success===null?"":success||"已更新，新请求使用当前设置。");return result;
     }catch(error){message(error.message,true);}finally{busy=false;button?.setAttribute("aria-busy","false");if(button)button.disabled=false;if(current)render(current);}}
   async function refresh(){if(!active||document.hidden||busy||editing||deleting||calendar||dragging)return;controller?.abort();const task=new AbortController();controller=task;try{const value=await request(null,task.signal);if(active&&!task.signal.aborted)render(value);}catch(error){if(error.name!=="AbortError")message(error.message,true);}finally{if(controller===task)controller=null;}}
   function finishDrag(restore=true){
@@ -375,7 +375,7 @@ globalThis.InspectorSharing=(()=>{
     if(command==="weekly")return;
     if(command==="delete"){openDelete(row);return;}
     if(command==="field"){openInline(row,button.dataset.field,button);return;}if(editing)closeInline(false);if(command==="copy"){await action(button,{action:"credential_copy",id:row.id});return;}
-    if(command==="toggle")await action(button,{action:"credential_edit",id:row.id,enabled:!lending(row)});
+    if(command==="toggle")await action(button,{action:"credential_edit",id:row.id,enabled:!lending(row)},null);
     if(command==="use")await action(button,{action:"credential_use",kind:row.kind,id:row.id});
   });
   get("sharing-cards").addEventListener("change",async event=>{
