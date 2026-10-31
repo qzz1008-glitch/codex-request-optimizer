@@ -694,6 +694,7 @@ class Sharing:
             return {"supported": True, "protocol": PROTOCOL, "host": host, "client": client, "addresses": self.addresses,
                     "automatic_address_supported": True, "credentials_supported": True,
                     "weekly_reset_days_supported": True,
+                    "used_quota_edit_supported": True,
                     "credentials": self.vault.rows() if not self.closed else [],
                     "egress": egress.status() if egress is not None else {"supported": False},
                     "recovery_error": self.recovery_error, "recovered": self.recovered}

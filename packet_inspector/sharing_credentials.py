@@ -365,6 +365,13 @@ class CredentialVault:
                 if data["kind"] == "quota" and limit != data["budget_nanos"]:
                     limit = budget_nanos(changes["budget"])
                 data["budget_nanos"] = limit if data["kind"] == "quota" else 0
+            if "used" in changes:
+                if data["kind"] != "quota":
+                    raise SharingError("只能修改额度凭据的已用额度。")
+                try:
+                    data["period_cost_nanos"] = budget_nanos(changes["used"], minimum=0)
+                except ValueError:
+                    raise SharingError("已用额度应为 0 到 1,000,000 美元。") from None
             if "enabled" in changes:
                 if type(changes["enabled"]) is not bool:
                     raise SharingError("凭据设置无效。")

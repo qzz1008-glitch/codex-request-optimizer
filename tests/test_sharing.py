@@ -480,6 +480,7 @@ class LANSharingTests(unittest.TestCase):
                 "label": "first colleague", "budget": "10", "weekly_reset": True, "weekly_reset_day": 4, "expires_at": None})
         self.assertEqual(status, 200)
         self.assertTrue(issued["weekly_reset_days_supported"])
+        self.assertTrue(issued["used_quota_edit_supported"])
         identifier, link = issued["issued_id"], issued["link"]
         self.assertEqual(next(row for row in issued["credentials"] if row["id"] == identifier)["weekly_reset_day"], 4)
         self.guest.sharing.connect(link, label="provider history")
@@ -489,10 +490,11 @@ class LANSharingTests(unittest.TestCase):
         self.consume()
         wait_for_idle(self.owner, self.guest)
         status, edited = self.local_api("/api/sharing", {"action": "credential_edit", "id": identifier,
-            "budget": "25", "weekly_reset": False, "expires_at": time.time() + 7 * 86400})
+            "budget": "25", "used": "1.25", "weekly_reset": False, "expires_at": time.time() + 7 * 86400})
         self.assertEqual(status, 200)
         row = next(row for row in edited["credentials"] if row["id"] == identifier)
         self.assertEqual(row["budget_nanos"], 25_000_000_000)
+        self.assertEqual(row["period_cost_nanos"], 1_250_000_000)
         self.assertFalse(row["weekly_reset"])
         self.assertIsNone(row["weekly_reset_day"])
         self.assertEqual(row["totals"]["unpriced_responses"], 2)  # Dummy model has no published rate.

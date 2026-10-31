@@ -237,6 +237,45 @@ class CredentialVaultTests(unittest.TestCase):
             upgraded.issue("exit", "同事")
         upgraded.update(second, {"label": "another name"})
 
+    def test_editing_used_quota_preserves_history_and_counts_inflight_requests(self):
+        identifier, token = self.grant(budget=10, weekly_reset_day=4)
+        reservation = self.vault.authenticate("quota", token, "a" * 64, spend=True)
+        self.vault.record(reservation, dict(model="gpt-6.1-sol", input_tokens=10))
+        before = self.vault.snapshot(reservation)
+        draft = self.vault.update(identifier, {"used": "5.25"}, dry_run=True)
+        self.assertEqual(draft["period_cost_nanos"], 5_250_000_000)
+        self.assertEqual(self.vault.snapshot(reservation)["period_cost_nanos"], 20_000)
+        edited = self.vault.update(identifier, {"used": "5.25"})
+        for key in ("totals", "daily", "period_started_at", "weekly_reset_day", "budget_nanos"):
+            self.assertEqual(edited[key], before[key])
+        self.vault.record(reservation, dict(model="gpt-6.1-sol", input_tokens=10))
+        self.assertEqual(self.vault.snapshot(reservation)["period_cost_nanos"], 5_250_020_000)
+        self.vault.update(identifier, {"used": "10"})
+        with self.assertRaisesRegex(SharingError, "本期额度已用完"):
+            self.vault.authenticate("quota", token, "a" * 64, spend=True)
+        self.vault.update(identifier, {"used": "0"})
+        self.assertEqual(self.vault.snapshot(reservation)["period_cost_nanos"], 0)
+        self.assertFalse(self.vault.snapshot(reservation)["exhausted"])
+        current = self.vault.authenticate("quota", token, "a" * 64, spend=True)
+        self.assertEqual(current["period_id"], reservation["period_id"])
+        self.assertEqual(self.vault.snapshot(current)["totals"]["cost_nanos"], 40_000)
+
+    def test_used_quota_validates_amounts_and_only_changes_locally_issued_quota(self):
+        identifier, token = self.grant(budget=10)
+        reservation = self.vault.authenticate("quota", token, "a" * 64)
+        self.vault.update(identifier, {"used": "0.123456789"})
+        for value in (-1, None, "", "nan", "inf", True, False, "bad", 1_000_001):
+            with self.subTest(value=value), self.assertRaisesRegex(SharingError, "已用额度应为 0"):
+                self.vault.update(identifier, {"budget": 99, "used": value})
+        row = self.vault.snapshot(reservation)
+        self.assertEqual(row["period_cost_nanos"], 123_456_789)
+        self.assertEqual(row["budget_nanos"], 10_000_000_000)
+        incoming = self.vault.import_link("quota", "codex-share://synthetic/#other", "incoming")
+        exit_id, _ = self.vault.issue("exit", "network")
+        for other in (incoming, exit_id):
+            with self.subTest(identifier=other), self.assertRaises(SharingError):
+                self.vault.update(other, {"used": "1"})
+
     def test_one_client_shares_a_budget_across_concurrent_requests(self):
         identifier, token = self.grant(budget="1")
         with concurrent.futures.ThreadPoolExecutor(2) as pool:
