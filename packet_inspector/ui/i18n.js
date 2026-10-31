@@ -2,6 +2,13 @@
 
 const uiI18n = (() => {
   const english = {
+    "WSL Codex 配置：重新连接 WSL 会话后生效":"WSL Codex configuration: reconnect the WSL session to apply",
+    "WSL 无法访问本机中转，未修改配置。":"WSL cannot reach the local relay. Its configuration was not changed.",
+    "WSL 连接到其他服务，未修改配置。":"WSL reached a different service. Its configuration was not changed.",
+    "WSL 配置待恢复，请启动该发行版后再次接入并断开。":"WSL restoration is pending. Start the distribution, then connect and disconnect again.",
+    "WSL 操作失败，请查看接入诊断。":"The WSL operation failed. Check the connection diagnostics.",
+    "WSL {distribution} 已接入。":"WSL {distribution} connected.",
+    "WSL {distribution} 已恢复。":"WSL {distribution} restored.",
     "美元":"USD",
     "最低 1 美元。":"Minimum USD 1.",
     "额度应为 1 到 1,000,000 美元。":"The budget must be between USD 1 and USD 1,000,000.",

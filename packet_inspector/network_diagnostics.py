@@ -328,6 +328,7 @@ class NetworkDiagnostics:
                                     "capacity_retry_enabled", "image_analysis_mode")},
                       "configuration_changed": bool((result or {}).get("changed")),
                       "loopback_proxy": repair,
+                      "wsl": (result or {}).get("wsl"),
                       "probe_status": "not_started" if error else "running"}
             if error:
                 record["exception"] = exception_detail(error)

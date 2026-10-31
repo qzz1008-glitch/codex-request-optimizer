@@ -59,8 +59,9 @@ def subagent_title(source, name=None, nickname=None):
 
 
 class SessionSummaries:
-    def __init__(self, token_windows):
+    def __init__(self, token_windows, *, extra_labels=None):
         self.tokens = token_windows
+        self.extra_labels = extra_labels
         self._cursor = 0
         self._token_states = {}
         self._request_labels = OrderedDict()
@@ -123,6 +124,11 @@ class SessionSummaries:
                 resolved.update(row[0] for row in rows)
             except (OSError, sqlite3.Error):
                 continue
+        if self.extra_labels:
+            missing = [thread for thread in ids if thread not in resolved]
+            for thread, label in self.extra_labels(missing).items():
+                if thread in missing:
+                    found.setdefault(thread, {}).update(label)
         return found
 
     def _index_labels(self, ids):

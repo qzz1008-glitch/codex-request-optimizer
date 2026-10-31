@@ -140,6 +140,12 @@ To check proxies and the 1 MB upload limit on another PC, copy the standalone [T
 
 To inspect session providers and configuration sources, copy [Collect-CodexRouting.cmd](../scripts/windows/Collect-CodexRouting.cmd), keep ChatGPT running, and double-click the script. It uses native read-only APIs to extract recent session providers and current on-disk configuration layers, and records routing overrides visible in process startup arguments. It excludes conversation bodies, authentication values, and complete MCP environments, and sends no messages or model requests. Results are saved in a `CodexConfigReport-*` folder beside the script. The collector starts a separate diagnostic process; its results do not represent the existing window's in-memory configuration. Existing process arguments are not replayed, and native startup may generate its own logs or cache.
 
+### WSL connection (validation build)
+
+Keep the app installed on Windows. Connecting checks running regular WSL distributions and reads `CODEX_HOME` from the default user's login environment, falling back to `~/.codex`. After finding an existing configuration and verifying access to the same Windows relay, it backs up and updates provider routing and native transport compression. Linux tools, plugins and other settings are preserved. Disconnect restores the managed settings while keeping subsequent user edits. Stopped distributions are not started automatically; pending restoration is reported explicitly.
+
+WSL session names and parent relationships are queried read-only inside Linux and briefly cached for the shared session list. This build requires an existing `python3` in WSL and supports the default user of running local distributions. It creates no tunnel and changes no WSL network or firewall settings. Failed connectivity checks leave WSL configuration untouched. For the first validation, start WSL, disconnect and reconnect the inspector, then restart ChatGPT and reconnect the WSL session as prompted.
+
 ### Online updates
 
 Check for updates in Settings, or download and run the new EXE. Upgrades preserve records, settings, and the installed development or release mode. The new service handles new requests while the previous service finishes requests already in progress.
