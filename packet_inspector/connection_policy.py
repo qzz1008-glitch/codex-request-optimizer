@@ -17,7 +17,7 @@ def codex_auth(provider):
             and not any(provider.get(key) for key in ("env_key", "experimental_bearer_token", "auth", "aws")))
 
 
-def standardize(document, data, base, original_upstream, native_upstream, *, primary=False):
+def standardize(document, data, base, original_upstream, native_upstream, *, primary=False, excluded=()):
     """Keep old IDs as aliases and select one stable ID for Codex-account chats.
 
     An existing reserved ID with different connection/auth settings cannot be
@@ -25,7 +25,7 @@ def standardize(document, data, base, original_upstream, native_upstream, *, pri
     """
     providers = data.get("model_providers", {})
     for provider_id, provider in providers.items():
-        if not isinstance(provider, dict):
+        if provider_id in excluded or not isinstance(provider, dict):
             continue
         effective = {**base.get("model_providers", {}).get(provider_id, {}), **provider}
         if codex_auth(effective):

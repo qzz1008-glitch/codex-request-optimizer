@@ -396,7 +396,7 @@ globalThis.InspectorSharing=(()=>{
   async function copy(value,anchor){try{await navigator.clipboard.writeText(value);showCopied(anchor);}catch(_){message("复制失败，请点击右侧“凭据”重试。",true);}}
   for(const kind of ["quota","exit"]){
     get(kind+"-issue").addEventListener("submit",async event=>{event.preventDefault();feedbackKind=kind;try{const result=await action(get(kind+"-generate"),{action:"credential_issue",kind,label:credentialName(kind,get(kind+"-label").value),expires_at:expiry(kind+"-expiry"),...(kind==="quota"?{budget:budget("quota-budget"),...weeklySettings(get("quota-weekly").value)}:{})},null);if(result)resetIssue(kind);}catch(error){message(error.message,true);}});
-    get(kind+"-borrow").addEventListener("submit",async event=>{event.preventDefault();const result=await action(get(kind+"-activate"),{action:"credential_use",kind,label:get(kind+"-borrow-label").value.trim(),link:get(kind+"-borrow-link").value.trim()});if(result)get(kind+"-borrow-link").value="";});
+    get(kind+"-borrow").addEventListener("submit",async event=>{event.preventDefault();const result=await action(get(kind+"-activate"),{action:"credential_use",kind,label:get(kind+"-borrow-label").value.trim(),link:get(kind+"-borrow-link").value.trim()});if(result){get(kind+"-borrow-label").value="";get(kind+"-borrow-link").value="";}});
   }
   get("sharing-cards").addEventListener("click",async event=>{const button=event.target.closest("[data-view],[data-action]");if(!button||busy)return;const {kind,view,action:command}=button.dataset;
     if(view){closeInline(false);views[kind]=view;if(current)render(current);return;}
