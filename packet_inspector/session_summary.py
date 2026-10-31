@@ -12,6 +12,7 @@ import zlib
 from .request_context import (IMAGE_ANALYST_PREFIXES, last_user_text, temporary_kind_from_metadata,
                               temporary_request_kind, request_session_context, session_id)
 from .response_usage import packet_usage
+from .native_state import read_state, state_databases
 from .token_estimate import estimate_usage, overflow_applied
 
 MAX_SESSIONS = 300
@@ -68,12 +69,13 @@ class SessionSummaries:
     def _labels(self, ids):
         if not ids:
             return {}
-        databases = sorted(self.tokens.home.glob("state_*.sqlite"),
-                           key=lambda p: int(p.stem[6:]) if p.stem[6:].isdigit() else -1, reverse=True)
-        for database in databases[:3]:
+        found, resolved, parent_candidates = {}, set(), {}
+        for database in state_databases(self.tokens.home):
+            remaining = [thread for thread in ids if thread not in resolved]
+            if not remaining:
+                break
             try:
-                with closing(sqlite3.connect(database.as_uri() + "?mode=ro", uri=True, timeout=.2)) as db:
-                    db.execute("PRAGMA query_only=ON")
+                with read_state(database) as db:
                     columns = {r[1] for r in db.execute("PRAGMA table_info(threads)")}
                     if "id" not in columns:
                         continue
@@ -84,10 +86,10 @@ class SessionSummaries:
                     extras = ["substr(" + column + ",1," + str(limit) + ")" if column in columns else "NULL"
                               for column, limit in (("name", 512), ("agent_nickname", 128), ("source", 8192))]
                     rows = db.execute("SELECT id," + title + "," + updated + "," + ",".join(extras) + " FROM threads WHERE id IN (" +
-                                      ",".join("?" for _ in ids) + ")", ids).fetchall()
+                                      ",".join("?" for _ in remaining) + ")", remaining).fetchall()
                     try:
                         edges = db.execute("SELECT child_thread_id,min(parent_thread_id) FROM thread_spawn_edges WHERE child_thread_id IN (" +
-                                           ",".join("?" for _ in ids) + ") GROUP BY child_thread_id HAVING count(DISTINCT parent_thread_id)=1", ids).fetchall()
+                                           ",".join("?" for _ in remaining) + ") GROUP BY child_thread_id HAVING count(DISTINCT parent_thread_id)=1", remaining).fetchall()
                     except sqlite3.OperationalError:
                         edges = []
                 # Codex App stores its display name separately from the initial-message title.
@@ -104,12 +106,24 @@ class SessionSummaries:
                     if parent and parent != row[0]:
                         parents.setdefault(row[0], set()).add(parent)
                 for child, candidates in parents.items():
-                    if len(candidates) == 1:
-                        labels.setdefault(child, {}).update(parent_thread_id=candidates.pop(), session_kind="subagent")
-                return labels
+                    known = parent_candidates.setdefault(child, set())
+                    known.update(candidates)
+                    if len(known) == 1:
+                        labels.setdefault(child, {}).update(parent_thread_id=next(iter(known)), session_kind="subagent")
+                    else:
+                        # A new index can contain an edge before its thread row
+                        # migrates. Conflicting older evidence is not a parent.
+                        found.get(child, {}).pop("parent_thread_id", None)
+                for thread, label in labels.items():
+                    # A newer row is authoritative, even if its title was
+                    # deliberately cleared. Only absent threads use old indexes.
+                    target = found.setdefault(thread, {})
+                    for key, value in label.items():
+                        target.setdefault(key, value)
+                resolved.update(row[0] for row in rows)
             except (OSError, sqlite3.Error):
                 continue
-        return {}
+        return found
 
     def _index_labels(self, ids):
         if not ids:

@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from collections import OrderedDict
-from contextlib import closing
 from datetime import datetime
 import json
 import math
@@ -14,6 +13,7 @@ import threading
 import time
 from urllib.parse import urlsplit
 from .response_usage import packet_usage
+from .native_state import read_state, state_databases
 from .token_estimate import estimate_usage, overflow_applied, unavailable
 
 READ_BUDGET = 8 * 1024 * 1024
@@ -63,12 +63,9 @@ class TokenWindows:
     def _rollout(self, thread):
         if not isinstance(thread, str) or not re.fullmatch(r"[0-9a-fA-F-]{36}", thread):
             return None
-        databases = sorted(self.home.glob("state_*.sqlite"),
-                           key=lambda p: int(p.stem[6:]) if p.stem[6:].isdigit() else -1, reverse=True)
-        for database in databases[:3]:
+        for database in state_databases(self.home):
             try:
-                with closing(sqlite3.connect(database.as_uri() + "?mode=ro", uri=True, timeout=.2)) as db:
-                    db.execute("PRAGMA query_only=ON")
+                with read_state(database) as db:
                     columns = {r[1] for r in db.execute("PRAGMA table_info(threads)")}
                     if not {"id", "rollout_path"} <= columns:
                         continue

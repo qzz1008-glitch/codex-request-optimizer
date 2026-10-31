@@ -107,14 +107,14 @@ class TrayMenuTests(unittest.TestCase):
                 "recorded_requests": 1234, "protected_requests": 12,
                 "compaction_samples": 2, "average_compact_input_tokens": 234567, **fields}
 
-    def test_requested_layout_has_three_readonly_counters_and_only_open_and_exit_actions(self):
-        tray = NativeTray(Mock(), Mock())
+    def test_requested_layout_has_three_readonly_counters_and_fixed_tray_actions(self):
+        tray = NativeTray(Mock(), Mock(), restart_service=Mock())
         tray.update_status(self.snapshot())
         items = tray.menu_items()
         self.assertEqual([item[1] for item in items], ["已接入 · 中转正常", None,
             "记录请求：1,234 个", "触发保护：12 次", "平均上下文：234,567 Token", None,
-            "打开主窗口", None, "退出程序"])
-        self.assertEqual([identity for identity, text, flags in items if not flags], [1, 2])
+            "打开主窗口", "重启服务", None, "退出程序"])
+        self.assertEqual([identity for identity, text, flags in items if not flags], [1, 3, 2])
         self.assertTrue(all(flags == 0x3 for identity, text, flags in items if identity >= 100))
 
     def test_language_connection_and_missing_values_are_independent_of_the_average(self):

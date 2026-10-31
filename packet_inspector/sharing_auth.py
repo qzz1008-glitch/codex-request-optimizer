@@ -6,10 +6,11 @@ import json
 import os
 from pathlib import Path
 import queue
-import shutil
 import subprocess
 import threading
 import time
+
+from .codex_runtime import find_codex_cli
 
 
 class SharingError(RuntimeError):
@@ -22,11 +23,7 @@ class SharingError(RuntimeError):
 
 
 def native_command():
-    executable = shutil.which("codex.exe") or shutil.which("codex")
-    if not executable and os.name == "nt":
-        root = Path(os.environ.get("LOCALAPPDATA", "")) / "OpenAI/Codex/bin"
-        candidates = sorted(root.glob("*/codex.exe"), key=lambda p: p.stat().st_mtime, reverse=True)
-        executable = str(candidates[0]) if candidates else None
+    executable = find_codex_cli()
     if not executable:
         raise SharingError("未找到 Codex 本机程序，请先安装或更新 Codex。")
     return [executable, "app-server", "-c", 'model_provider="openai"']
