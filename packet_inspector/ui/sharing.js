@@ -10,12 +10,13 @@ globalThis.InspectorSharing=(()=>{
   const date=n=>n===null?tr("无期限"):Number.isFinite(n)?localHour(n*1000).slice(0,13).replace("T"," ")+tr("时"):"—";
   const futureHour=days=>{const d=new Date(Date.now()+days*864e5);if(d.getMinutes()||d.getSeconds()||d.getMilliseconds())d.setHours(d.getHours()+1,0,0,0);return localHour(d.getTime());};
   const minimumExpiry=()=>futureHour(1),defaultExpiry=()=>futureHour(7);
-  let active=false,busy=false,current=null,timer=null,controller=null,recoveryShown=false,editing=null,deleting=null,copiedKey=null,copyTimer=null;
+  let active=false,busy=false,current=null,timer=null,controller=null,recoveryShown=false,editing=null,deleting=null,copiedKey=null,copyTimer=null,calendar=null;
   const views={quota:"out",exit:"out"};
   const message=(value,error=false)=>{const box=get("sharing-message");box.textContent=tr(value);box.hidden=!value;box.classList.toggle("error",error);for(const id of ["sharing-inline-message","sharing-delete-message"]){const local=get(id);local.textContent=error?tr(value):"";local.hidden=!error;}};
   const expiryIds=["quota-expiry","exit-expiry","sharing-inline-expiry"];
   function expiryControl(id,labelId){
-    return `<div class="sharing-expiry-control" role="group" aria-labelledby="${labelId}"><input id="${id}" type="hidden"><input id="${id}-date" type="date" required aria-labelledby="${labelId}"><span class="sharing-expiry-hour"><select id="${id}-hour" required aria-label="${label("小时")}">${Array.from({length:24},(_,n)=>{const h=String(n).padStart(2,"0");return `<option value="${h}">${h}</option>`;}).join("")}</select><span aria-hidden="true">${label("时")}</span></span><label class="sharing-expiry-unlimited"><input id="${id}-unlimited" type="checkbox">${label("无期限")}</label></div>`;
+    return `<div class="sharing-expiry-control" role="group" aria-labelledby="${labelId}"><input id="${id}" type="hidden"><button id="${id}-date" class="sharing-expiry-date" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="${id}-calendar" aria-labelledby="${labelId} ${id}-display"><span id="${id}-display"></span><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><rect x="2.5" y="3.5" width="11" height="10" rx="1.5"/><path d="M5 2v3m6-3v3M3 7h10"/></svg></button><span class="sharing-expiry-hour"><select id="${id}-hour" required aria-label="${label("小时")}">${Array.from({length:24},(_,n)=>{const h=String(n).padStart(2,"0");return `<option value="${h}">${h}</option>`;}).join("")}</select><span aria-hidden="true">${label("时")}</span></span>
+      <div id="${id}-calendar" class="sharing-calendar" role="dialog" aria-labelledby="${id}-month" hidden><div class="sharing-calendar-header"><button id="${id}-previous" type="button" data-month="-1" aria-label="${label("上个月")}">‹</button><strong id="${id}-month" aria-live="polite"></strong><button type="button" data-month="1" aria-label="${label("下个月")}">›</button></div><div id="${id}-weekdays" class="sharing-calendar-weekdays" aria-hidden="true"></div><div id="${id}-days" class="sharing-calendar-days" role="group" aria-labelledby="${id}-month"></div><div class="sharing-calendar-footer"><label class="sharing-expiry-unlimited"><input id="${id}-unlimited" type="checkbox">${label("无期限")}</label></div></div></div>`;
   }
   function expiryField(id){
     return `<div class="sharing-expiry"><label id="${id}-label" for="${id}-date">${label("期限")}</label>${expiryControl(id,id+"-label")}</div>`;
@@ -38,13 +39,14 @@ globalThis.InspectorSharing=(()=>{
   get("sharing-inline-expiry-container").innerHTML=expiryControl("sharing-inline-expiry","sharing-inline-label");
   function disableExpiry(id,disabled=false){
     get(id+"-unlimited").disabled=disabled;
-    for(const part of ["date","hour"])get(id+"-"+part).disabled=disabled||get(id+"-unlimited").checked;
+    get(id+"-date").disabled=disabled;get(id+"-hour").disabled=disabled||get(id+"-unlimited").checked;
   }
   function setExpiry(id,value){
     const input=get(id),finite=value??input.dataset.finiteValue??defaultExpiry();
     input.dataset.finiteValue=finite;input.value=value??"";input.dataset.unlimited=String(value===null);
     const original=id==="sharing-inline-expiry"&&editing?.field==="expires_at"&&Number.isFinite(editing.original)?editing.original*1000:Infinity;
-    get(id+"-date").value=finite.slice(0,10);get(id+"-date").min=localHour(Math.min(original,new Date(minimumExpiry()).getTime())).slice(0,10);
+    get(id+"-date").value=finite.slice(0,10);input.dataset.minimumDay=localHour(Math.min(original,new Date(minimumExpiry()).getTime())).slice(0,10);
+    get(id+"-display").textContent=value===null?tr("无期限"):finite.slice(0,10);
     get(id+"-hour").value=finite.slice(11,13);get(id+"-unlimited").checked=value===null;disableExpiry(id);
   }
   function syncExpiry(id){
@@ -54,10 +56,59 @@ globalThis.InspectorSharing=(()=>{
     input.dataset.unlimited=String(get(id+"-unlimited").checked);
   }
   function resetIssue(kind){get(kind+"-label").value="";setExpiry(kind+"-expiry",defaultExpiry());if(kind==="quota"){get("quota-budget").value="1";get("quota-weekly").checked=false;}}
+  function closeCalendar(focus=true){
+    if(!calendar)return;
+    const id=calendar.id;calendar=null;get(id+"-calendar").hidden=true;get(id+"-date").setAttribute("aria-expanded","false");if(focus)get(id+"-date").focus();
+  }
+  function positionCalendar(){
+    if(!calendar)return;
+    const box=get(calendar.id+"-calendar"),anchor=get(calendar.id+"-date").getBoundingClientRect(),rect=box.getBoundingClientRect(),margin=12;
+    box.style.left=Math.max(margin,Math.min(anchor.left,innerWidth-rect.width-margin))+"px";
+    box.style.top=(anchor.bottom+6+rect.height<=innerHeight-margin?anchor.bottom+6:Math.max(margin,anchor.top-rect.height-6))+"px";
+  }
+  function renderCalendar(focus=false){
+    if(!calendar)return;
+    const {id,month}=calendar,locale=document.documentElement?.lang||"zh-CN",year=month.getFullYear(),index=month.getMonth(),minimum=get(id).dataset.minimumDay;
+    get(id+"-month").textContent=new Intl.DateTimeFormat(locale,{year:"numeric",month:"long"}).format(month);
+    get(id+"-weekdays").innerHTML=Array.from({length:7},(_,n)=>`<span>${esc(new Intl.DateTimeFormat(locale,{weekday:"short"}).format(new Date(2023,0,1+n)))}</span>`).join("");
+    const today=localHour(Date.now()).slice(0,10),selected=get(id+"-unlimited").checked?null:get(id+"-date").value;
+    const days=Array.from({length:new Date(year,index,1).getDay()},()=>'<span aria-hidden="true"></span>');
+    for(let n=1;n<=new Date(year,index+1,0).getDate();n++){
+      const day=localHour(new Date(year,index,n,12).getTime()).slice(0,10);
+      days.push(`<button type="button" data-day="${day}" ${day<minimum?"disabled":""} tabindex="${day===calendar.focused?"0":"-1"}" aria-label="${day}" aria-pressed="${day===selected}" ${day===today?'aria-current="date"':""}>${n}</button>`);
+    }
+    get(id+"-days").innerHTML=days.join("");get(id+"-previous").disabled=localHour(new Date(year,index,0,12).getTime()).slice(0,10)<minimum;
+    positionCalendar();if(focus)get(id+"-days").querySelector(`[data-day="${calendar.focused}"]`)?.focus();
+  }
+  function openCalendar(id){
+    if(busy||get(id+"-date").disabled)return;
+    if(calendar?.id===id){closeCalendar();return;}
+    closeCalendar(false);controller?.abort();
+    const day=get(id+"-date").value,focused=day<get(id).dataset.minimumDay?get(id).dataset.minimumDay:day;
+    calendar={id,month:new Date(focused+"T12:00"),focused};get(id+"-date").setAttribute("aria-expanded","true");get(id+"-calendar").hidden=false;renderCalendar(true);
+  }
   for(const id of expiryIds){
-    setExpiry(id,defaultExpiry());
-    for(const part of ["date","hour"])for(const event of ["input","change"])get(id+"-"+part).addEventListener(event,()=>{syncExpiry(id);get("sharing-inline-message").hidden=true;});
-    get(id+"-unlimited").addEventListener("change",()=>{setExpiry(id,get(id+"-unlimited").checked?null:get(id).dataset.finiteValue||defaultExpiry());get("sharing-inline-message").hidden=true;});
+    setExpiry(id,defaultExpiry());get(id+"-calendar").hidden=true;
+    for(const event of ["input","change"])get(id+"-hour").addEventListener(event,()=>{syncExpiry(id);get("sharing-inline-message").hidden=true;});
+    get(id+"-date").addEventListener("click",()=>openCalendar(id));
+    get(id+"-unlimited").addEventListener("change",()=>{setExpiry(id,get(id+"-unlimited").checked?null:get(id).dataset.finiteValue||defaultExpiry());get("sharing-inline-message").hidden=true;closeCalendar();});
+    get(id+"-calendar").addEventListener("click",event=>{
+      const button=event.target.closest("[data-month],[data-day]");if(!button||button.disabled||busy||calendar?.id!==id)return;
+      if(button.dataset.month){calendar.month=new Date(calendar.month.getFullYear(),calendar.month.getMonth()+Number(button.dataset.month),1,12);calendar.focused=localHour(calendar.month.getTime()).slice(0,10);if(calendar.focused<get(id).dataset.minimumDay)calendar.focused=get(id).dataset.minimumDay;renderCalendar();return;}
+      if(button.dataset.day<get(id).dataset.minimumDay)return;
+      setExpiry(id,button.dataset.day+"T"+get(id+"-hour").value+":00");get("sharing-inline-message").hidden=true;closeCalendar();
+    });
+    get(id+"-calendar").addEventListener("keydown",event=>{
+      if(!calendar||calendar.id!==id||busy)return;
+      if(event.key==="Escape"){event.preventDefault();event.stopPropagation();closeCalendar();return;}
+      const offsets={ArrowLeft:-1,ArrowRight:1,ArrowUp:-7,ArrowDown:7},day=new Date(calendar.focused+"T12:00");
+      if(event.key in offsets)day.setDate(day.getDate()+offsets[event.key]);
+      else if(event.key==="Home"||event.key==="End")day.setDate(day.getDate()-day.getDay()+(event.key==="End"?6:0));
+      else if(event.key==="PageUp"||event.key==="PageDown"){const n=day.getDate();day.setDate(1);day.setMonth(day.getMonth()+(event.key==="PageUp"?-1:1));day.setDate(Math.min(n,new Date(day.getFullYear(),day.getMonth()+1,0).getDate()));}
+      else return;
+      event.preventDefault();let value=localHour(day.getTime()).slice(0,10);if(value<get(id).dataset.minimumDay)value=get(id).dataset.minimumDay;
+      calendar.focused=value;calendar.month=new Date(value+"T12:00");renderCalendar(true);
+    });
   }
   // Keep legacy minute/second precision when the displayed hour has not changed.
   function expiryTime(value,original){if(Number.isFinite(original)&&value===localHour(original*1000))return original;const n=value?new Date(value).getTime()/1000:NaN;if(!Number.isFinite(n)||n<Date.now()/1000+86400)throw new Error(tr("期限至少为一天，也可选择无期限。"));return n;}
@@ -126,7 +177,7 @@ globalThis.InspectorSharing=(()=>{
     try{const result=await request(dataValue),{link,...state}=result;
       render(state);if(link)await copy(link,dataValue.action==="credential_issue"?dataValue.kind+"-generate":dataValue.id);else if(result.reload_required===true)message(dataValue.action==="credential_delete"?"已删除凭据。请重新加载 Codex 配置或重启 ChatGPT 应用。":"已切换额度来源。请重新加载 Codex 配置或重启 ChatGPT 应用。");else message(success===null?"":success||"已更新，新请求使用当前设置。");return result;
     }catch(error){message(error.message,true);}finally{busy=false;button?.setAttribute("aria-busy","false");if(button)button.disabled=false;if(current)render(current);}}
-  async function refresh(){if(!active||document.hidden||busy||editing||deleting)return;controller?.abort();const task=new AbortController();controller=task;try{const value=await request(null,task.signal);if(active&&!task.signal.aborted)render(value);}catch(error){if(error.name!=="AbortError")message(error.message,true);}finally{if(controller===task)controller=null;}}
+  async function refresh(){if(!active||document.hidden||busy||editing||deleting||calendar)return;controller?.abort();const task=new AbortController();controller=task;try{const value=await request(null,task.signal);if(active&&!task.signal.aborted)render(value);}catch(error){if(error.name!=="AbortError")message(error.message,true);}finally{if(controller===task)controller=null;}}
   function positionInline(){
     if(!editing)return;
     const box=get("sharing-inline-editor"),anchor=editing.anchor.getBoundingClientRect(),rect=box.getBoundingClientRect(),margin=12;
@@ -135,6 +186,7 @@ globalThis.InspectorSharing=(()=>{
     box.style.left=left+"px";box.style.top=top+"px";
   }
   function closeInline(renderNow=true){
+    closeCalendar(false);
     if(!editing)return;
     const draft=editing;draft.anchor.setAttribute("aria-expanded","false");editing=null;get("sharing-inline-editor").hidden=true;
     get("sharing-inline-message").hidden=true;if(renderNow&&current){render(current);get("sharing-cards").querySelector(`[data-action="field"][data-id="${draft.id}"][data-field="${draft.field}"]`)?.focus();}
@@ -159,7 +211,7 @@ globalThis.InspectorSharing=(()=>{
     disableExpiry("sharing-inline-expiry",!isDate);
     get("sharing-inline-save").textContent=tr(isDate?"确定":"保存");
     box.dataset.field=field;box.hidden=false;positionInline();
-    (isDate?get("sharing-inline-expiry"+(original===null?"-unlimited":"-date")):input).focus();if(field==="label")input.select();
+    (isDate?get("sharing-inline-expiry-date"):input).focus();if(field==="label")input.select();
   }
   get("sharing-inline-value").addEventListener("input",()=>{get("sharing-inline-value").setCustomValidity("");get("sharing-inline-message").hidden=true;});
   get("sharing-inline-cancel").addEventListener("click",()=>{if(!busy)closeInline();});
@@ -180,10 +232,11 @@ globalThis.InspectorSharing=(()=>{
     }catch(error){message(error.message,true);positionInline();}
   }
   get("sharing-inline-editor").addEventListener("submit",async event=>{event.preventDefault();await saveInline();});
-  document.addEventListener("pointerdown",event=>{if(editing&&!busy&&!get("sharing-inline-editor").contains(event.target)&&!event.target.closest("[data-action=field]"))closeInline(false);});
-  document.addEventListener("keydown",event=>{if(editing&&!busy&&event.key==="Escape"){event.preventDefault();closeInline();}});
-  globalThis.addEventListener("resize",positionInline);
-  document.addEventListener("scroll",positionInline,true);
+  document.addEventListener("pointerdown",event=>{if(calendar&&!busy&&!get(calendar.id+"-calendar").contains(event.target)&&!get(calendar.id+"-date").contains(event.target))closeCalendar(false);if(editing&&!busy&&!get("sharing-inline-editor").contains(event.target)&&!event.target.closest("[data-action=field]"))closeInline(false);});
+  document.addEventListener("keydown",event=>{if(!busy&&event.key==="Escape"){if(calendar){event.preventDefault();closeCalendar();}else if(editing){event.preventDefault();closeInline();}}});
+  const positionEditors=()=>{positionInline();positionCalendar();};
+  globalThis.addEventListener("resize",positionEditors);
+  document.addEventListener("scroll",positionEditors,true);
   function openDelete(row){
     controller?.abort();closeInline(false);message("");deleting={id:row.id,kind:row.kind};
     get("sharing-delete-name").textContent=[tr(row.kind==="quota"?"额度":"出口"),tr(row.direction==="out"?"借出":"借入"),row.label].join(" · ");

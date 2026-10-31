@@ -19,6 +19,8 @@ const uiI18n = (() => {
     "期限":"Expiry",
     "小时":"Hour",
     "时":"h",
+    "上个月":"Previous month",
+    "下个月":"Next month",
     "一周":"One week",
     "无期限":"No expiry",
     "设为无期限":"Set no expiry",
