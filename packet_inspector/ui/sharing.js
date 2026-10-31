@@ -48,7 +48,6 @@ globalThis.InspectorSharing=(()=>{
       <form id="${kind}-borrow" class="sharing-form" hidden><label>${label("名称")}<input id="${kind}-borrow-label" maxlength="80" required autocomplete="off"></label><label>${label("凭据")}<input id="${kind}-borrow-link" type="password" autocomplete="off" spellcheck="false" required placeholder="${kind==="quota"?"codex-share":"codex-exit"}://…"></label></form>
       <div class="sharing-actions"><button class="primary sharing-copy-button" type="submit" form="${kind}-issue" id="${kind}-generate">${label("生成凭据")}</button><button class="primary" type="submit" form="${kind}-borrow" id="${kind}-activate" hidden>${label("保存凭据")}</button></div>
       ${kind==="quota"?`<button id="quota-local" class="sharing-local" type="button" data-action="local" data-kind="quota">${label("使用本机额度")}</button>`:`<div id="exit-local" class="sharing-exit-source"><button type="button" data-action="local" data-kind="exit">${label("本机出口")}</button></div>`}
-      <p class="sharing-card-note">${label(kind==="quota"?"每张额度凭据仅供一台机器使用。":"每张出口凭据仅供一台机器使用，始终通过本机网络转发。")}</p>
     </div>`;
   }
   for(const kind of ["quota","exit"])get(kind+"-config").innerHTML=card(kind);
