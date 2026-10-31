@@ -311,7 +311,7 @@ class SharedEgress:
             with self.guard:
                 if self.mode == "peer" and self.peer_link:
                     if self.peer_opener is None:
-                        raise SharingError("借入出口未就绪，请重新借入出口或选择本机出口。")
+                        raise SharingError("借入出口未就绪，请重新启用或停用该凭据。")
                     return self.peer_opener
             return self.server.opener
         raise SharingError(MISSING_EXIT_ROUTE_MESSAGE, code="sharing_exit_metadata_missing")
