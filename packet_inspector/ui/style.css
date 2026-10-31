@@ -588,3 +588,7 @@ dialog{width:min(760px,calc(var(--desktop-width) - 80px));max-height:calc(var(--
 #settings-dialog #settings-restore{grid-column:2}
 #settings-dialog #settings-save{grid-column:3}
 #settings-dialog #link-status[hidden]{display:block!important;visibility:hidden}
+
+#service-restart-dialog{width:min(460px,calc(100vw - 48px))}
+#service-restart-dialog h2{font-size:20px}
+#service-restart-dialog .button-row{justify-content:flex-end}

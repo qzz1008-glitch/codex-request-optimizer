@@ -76,7 +76,7 @@ class WorkerPresentation:
 
     def _restart_service(self):
         from .service_restart import restart_from_tray
-        return restart_from_tray(self.server.data_dir)
+        return restart_from_tray(self.server.data_dir, self._open_window)
 
     def _ensure_tray(self):
         if not self.enabled:

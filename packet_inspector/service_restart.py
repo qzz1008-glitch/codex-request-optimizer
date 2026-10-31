@@ -1,18 +1,20 @@
-"""Confirm a tray restart, then let the existing entry recover its active worker."""
+"""Hand tray restarts to the desktop's styled confirmation dialog."""
 from __future__ import annotations
 
-import ctypes
 from http.client import HTTPException
 import json
 from pathlib import Path
+import re
+import secrets
+import threading
+import time
 
 from .router import control_worker, worker_info
 
 
-def _dialog(message, title, *, confirm=False):
-    # Default to No; closing the dialog never authorizes a restart.
-    flags = 0x10000 | (0x04 | 0x30 | 0x100 if confirm else 0x10)
-    return ctypes.windll.user32.MessageBoxW(0, message, title, flags) == 6
+REQUEST_FILE = "desktop-service-restart.json"
+REQUEST_TTL = 300
+STATE_ERROR = "无法读取中转服务状态，请稍后重新点击“重启服务”。"
 
 
 def _target(data_dir):
@@ -26,31 +28,102 @@ def _target(data_dir):
     return identity, pid
 
 
-def restart_from_tray(data_dir):
-    """Fixed local action shared by both tray menus; never changes configuration."""
+def restart_from_tray(data_dir, open_window):
+    """Queue an intent and show the main window; never restart from a tray click."""
     folder = Path(data_dir)
+    folder.mkdir(parents=True, exist_ok=True)
+    intent = {"id": secrets.token_hex(16), "created": time.time()}
     try:
-        english = json.loads((folder / "settings.json").read_text(encoding="utf8")).get("ui_language") == "en"
-    except (OSError, ValueError, AttributeError):
-        english = False
-    title = "Restart service" if english else "重启服务"
-    message = ("Restart the relay service?\n\nRequest forwarding will briefly stop, and requests in progress may fail. "
-               "You can continue chatting once the service recovers."
-               if english else "是否重启中转服务？\n\n重启期间将短暂中断请求转发，正在进行的请求可能失败。服务恢复后可继续对话。")
+        intent["worker_id"], intent["pid"] = _target(folder)
+    except (OSError, ValueError, KeyError, TypeError):
+        intent["error"] = STATE_ERROR
+    path = folder / REQUEST_FILE
+    temporary = path.with_name(path.name + "." + intent["id"] + ".tmp")
     try:
-        identity, pid = _target(folder)
-        if not _dialog(message, title, confirm=True):
-            return {"ok": True, "cancelled": True}
-        # An upgrade or another restart during confirmation invalidates this action.
-        if _target(folder) != (identity, pid):
-            raise ValueError("restart target changed")
+        temporary.write_text(json.dumps(intent), encoding="utf8")
+        temporary.replace(path)
+        open_window()
+    except Exception:
+        try:
+            if json.loads(path.read_text(encoding="utf8")).get("id") == intent["id"]:
+                path.unlink(missing_ok=True)
+        except (OSError, ValueError, AttributeError):
+            pass
+        raise
+    finally:
+        temporary.unlink(missing_ok=True)
+    return {"ok": True, "requested": True}
+
+
+class RestartRequests:
+    def __init__(self, data_dir):
+        self.folder = Path(data_dir)
+        self.path = self.folder / REQUEST_FILE
+        self.lock = threading.Lock()
+        self.pending = None
+        self.busy = False
+
+    def current(self):
+        with self.lock:
+            claimed = self.path.with_name(self.path.name + "." + secrets.token_hex(8) + ".tmp")
+            try:
+                self.path.replace(claimed)
+                with claimed.open("r", encoding="utf8") as stream:
+                    raw = stream.read(1025)
+                value = json.loads(raw) if len(raw) <= 1024 else None
+                if (isinstance(value, dict) and isinstance(value.get("id"), str)
+                        and re.fullmatch(r"[0-9a-f]{32}", value["id"])
+                        and type(value.get("created")) in (int, float)
+                        and -5 <= time.time() - value["created"] <= REQUEST_TTL
+                        and (value.get("error") == STATE_ERROR
+                             or isinstance(value.get("worker_id"), str)
+                             and re.fullmatch(r"[0-9a-f]{32}", value["worker_id"])
+                             and type(value.get("pid")) is int and value["pid"] > 0)):
+                    if self.pending is None:
+                        self.pending = value
+            except (OSError, ValueError, UnicodeError):
+                pass
+            finally:
+                try:
+                    claimed.unlink(missing_ok=True)
+                except OSError:
+                    pass
+            if self.pending and not self.busy and time.time() - self.pending["created"] > REQUEST_TTL:
+                self.pending = None
+            return {"id": self.pending["id"], "error": self.pending.get("error", "")} if self.pending else None
+
+    def begin(self, request_id):
+        with self.lock:
+            if not self.pending or request_id != self.pending["id"] or time.time() - self.pending["created"] > REQUEST_TTL:
+                raise ValueError("重启请求已失效，请重新从托盘点击“重启服务”。")
+            if self.busy:
+                raise ValueError("正在处理重启请求，请稍候。")
+            self.busy = True
+            return dict(self.pending)
+
+    def finish(self, *, completed):
+        with self.lock:
+            self.busy = False
+            if completed:
+                self.pending = None
+
+
+def perform_restart(data_dir, intent):
+    """Only a confirmed desktop intent may restart the same worker instance."""
+    if intent.get("error"):
+        raise ValueError(STATE_ERROR)
+    folder = Path(data_dir)
+    identity, pid = intent["worker_id"], intent["pid"]
+    try:
+        current = _target(folder)
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise ValueError(STATE_ERROR) from exc
+    if current != (identity, pid):
+        raise ValueError("服务状态已变化，请重新从托盘点击“重启服务”。")
+    try:
         result = control_worker(folder, identity, "restart", expected_pid=pid)
         if not isinstance(result, dict) or result.get("restarting") is not True:
-            raise ValueError("restart not acknowledged")
-        return {"ok": True, "restarting": True}
-    except (OSError, ValueError, KeyError, TypeError, HTTPException):
-        message = ("Could not confirm the service restart. Please try again shortly. "
-                   "If the service remains unavailable, quit and reopen this application."
-                   if english else "未能确认服务重启，请稍后重试。若仍无法使用，请退出并重新打开本软件。")
-        _dialog(message, title)
-        return {"ok": False, "error": message}
+            raise ValueError("未能确认服务重启，请稍后重试。")
+    except (OSError, ValueError, KeyError, TypeError, HTTPException) as exc:
+        raise ValueError("未能确认服务重启，请稍后重试。") from exc
+    return {"ok": True, "restarting": True}

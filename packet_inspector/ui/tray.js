@@ -100,10 +100,15 @@
     } catch(_) {}
   }
   async function action(name) {
-    if(busy||!api()?.[name])return;
-    busy=true;for(const button of buttons)button.disabled=true;
+    if(busy)return;
     const error=document.getElementById("tray-error");error.hidden=true;
-    try {const result=await api()[name]();if(result?.ok===false)throw Error(result.error);}
+    const bridge=api();
+    if(typeof bridge?.[name]!=="function") {
+      setText(error,t("托盘窗口需要更新，请升级并重新打开本软件。"));error.title=error.textContent;error.hidden=false;
+      return;
+    }
+    busy=true;for(const button of buttons)button.disabled=true;
+    try {const result=await bridge[name]();if(result?.ok===false)throw Error(result.error);}
     catch(_) {setText(error,t("无法完成操作，请稍后重试。"));error.title=error.textContent;error.hidden=false;}
     finally {busy=false;for(const button of buttons)button.disabled=false;}
   }

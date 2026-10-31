@@ -2,6 +2,14 @@
 
 const uiI18n = (() => {
   const english = {
+    "重启期间将短暂中断请求转发，正在进行的请求可能失败。":"Request forwarding will briefly stop. Requests in progress may fail.",
+    "服务恢复后可继续对话，未完成的请求可重新发送。":"Continue chatting once the service recovers. You can resend unfinished requests.",
+    "正在重启…":"Restarting…",
+    "无法读取中转服务状态，请稍后重新点击“重启服务”。":"Could not read the relay status. Click Restart service again shortly.",
+    "重启请求已失效，请重新从托盘点击“重启服务”。":"The restart request expired. Select Restart service from the tray again.",
+    "正在处理重启请求，请稍候。":"A restart request is being processed. Please wait.",
+    "服务状态已变化，请重新从托盘点击“重启服务”。":"The service instance changed. Select Restart service from the tray again.",
+    "未能确认服务重启，请稍后重试。":"Could not confirm the service restart. Please try again shortly.",
     "接入同步":"Connection synchronization",
     "查看待生效配置与接入详情":"View pending changes and connection details",
     "待生效项目":"Pending changes",
@@ -499,6 +507,7 @@ const uiI18n = (() => {
     "次":"times",
     "打开主窗口":"Open main window",
     "无法完成操作，请稍后重试。":"Unable to complete the action. Please try again.",
+    "托盘窗口需要更新，请升级并重新打开本软件。":"The tray window needs updating. Upgrade and reopen this application.",
     "窗口操作":"Window controls",
     "开发版":"Dev",
     "最小化":"Minimize",

@@ -388,7 +388,12 @@ class TrayPanel:
     def restart_service(self):
         from .service_restart import restart_from_tray
         self.dismiss()
-        return restart_from_tray(self.data_dir)
+        try:
+            return restart_from_tray(self.data_dir, self.show_main)
+        except (OSError, ValueError):
+            self.visible = True
+            self._present()
+            return {"ok": False}
 
     def destroy(self):
         already_closed = self._closed.is_set()

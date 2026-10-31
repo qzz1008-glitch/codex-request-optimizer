@@ -61,7 +61,7 @@ def main(argv=None):
 
             def restart_service():
                 from packet_inspector.service_restart import restart_from_tray
-                return restart_from_tray(options.data_dir)
+                return restart_from_tray(options.data_dir, open_window)
 
             panel_launch_guard = threading.Lock()
             panel_process = None
