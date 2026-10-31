@@ -37,7 +37,7 @@ const uiI18n = (() => {
     "借出":"Lend",
     "借入":"Borrow",
     "生成凭据":"Generate credential",
-    "保存并借入":"Save and use",
+    "保存凭据":"Save credential",
     "使用本机额度":"Use local quota",
     "请选择本机出口或借入出口。":"Choose this computer's exit or a borrowed exit.",
     "借入出口未就绪，请重新借入出口或选择本机出口。":"The borrowed exit is not ready. Reconnect it or choose this computer's exit.",
