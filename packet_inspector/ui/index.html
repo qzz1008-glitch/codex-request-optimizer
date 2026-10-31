@@ -153,6 +153,12 @@
     <p id="connect-confirm-message" data-feedback-inline class="help error confirmation-feedback" role="alert" hidden></p>
     <div class="button-row"><button id="connect-confirm-cancel" type="button" autofocus>暂不接入</button><button id="connect-confirm-apply" class="primary" type="button">确认接入</button></div>
   </dialog>
+  <dialog id="connection-resume-dialog" aria-labelledby="connection-resume-title" aria-describedby="connection-resume-description">
+    <h2 id="connection-resume-title">接入配置已自动同步</h2>
+    <p id="connection-resume-description"></p>
+    <pre id="connection-resume-details" class="help muted"></pre>
+    <div class="button-row"><button id="connection-resume-close" type="button" autofocus>知道了</button><button id="connection-resume-retry" class="primary" type="button" hidden>重新检查</button></div>
+  </dialog>
   <dialog id="exit-confirm-dialog" aria-labelledby="exit-confirm-title" aria-describedby="exit-confirm-description exit-confirm-hint">
     <h2 id="exit-confirm-title">退出程序</h2>
     <p id="exit-confirm-description">当前仍处于接入状态。退出后中转服务将停止，Codex 将无法通过当前出口发送请求。</p>

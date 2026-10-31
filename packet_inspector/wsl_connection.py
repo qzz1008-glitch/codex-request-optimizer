@@ -293,6 +293,7 @@ class WslConnection:
 
     def apply(self, connected, endpoint, upstream, routes, publish, *, retry_limit=None):
         with self._lock:
+            routes = dict(routes)
             result = {"targets": [], "warnings": [], "changed": False, "reload_required": False}
             self.result = result
             try:
@@ -307,6 +308,7 @@ class WslConnection:
             result["warnings"].extend(warnings)
             if connected:
                 candidates = detected
+                result["deferred"] = [target for _, target in self._targets() if target["distribution"] not in running][:16]
             else:
                 candidates = []
                 for directory, target in self._targets():
@@ -319,9 +321,9 @@ class WslConnection:
                 try:
                     link = ConfigLink(config, directory / "link.json")
                     def publish_routes(updated):
-                        routes.clear()
-                        routes.update(updated)
+                        nonlocal routes
                         publish(updated)
+                        routes = updated
                     if connected:
                         own = urlsplit(endpoint)
                         marker = hashlib.sha256(endpoint.encode()).hexdigest()

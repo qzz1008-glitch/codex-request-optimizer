@@ -27,6 +27,7 @@ from .analyzer import (MAX_BODY, clean_text, describe_node, encode, inspect_requ
 from .config_link import ConfigLink, validate_upstream
 from .providers import ProviderManager, config_paths
 from .wsl_connection import WslConnection
+from .connection_resume import ConnectionResume
 from .entry_port import ConfiguredPortParser, port_status, save_port
 from .updates import Updates
 from .token_window import TokenWindows
@@ -249,6 +250,7 @@ class InspectorServer(ThreadingHTTPServer):
                 # An optional Windows setting must not prevent the relay from starting.
                 self.startup_state_known = False
         self.analysis_stop = threading.Event()
+        self.connection_resume = ConnectionResume(self)
         self.analysis_thread = threading.Thread(target=self._classify_pending, daemon=True)
         self.analysis_thread.start()
 
@@ -257,7 +259,12 @@ class InspectorServer(ThreadingHTTPServer):
         while not self.analysis_stop.is_set():
             with self.maintenance_guard:
                 processed = self._maintenance_step() if self.maintenance_enabled else 0
+            self.connection_resume.step()
             self.analysis_stop.wait(0.02 if processed else 2)
+
+    def service_actions(self):
+        super().service_actions()
+        self.connection_resume.ready = True
 
     def _maintenance_step(self):
         try:
@@ -300,6 +307,7 @@ class InspectorServer(ThreadingHTTPServer):
                     self.auto_sync_providers()
                 self.worker_state = "active"
                 self.maintenance_enabled = bool(data.get("maintenance", True))
+                self.connection_resume.schedule()
             elif action == "maintenance":
                 self.maintenance_enabled = self.worker_state == "active" and bool(data.get("enabled"))
             elif action == "recover":
@@ -371,6 +379,7 @@ class InspectorServer(ThreadingHTTPServer):
 
     def set_connection(self, connected):
         with self.provider_guard:
+            self.connection_resume.cancel()
             if self.sharing.remote:
                 self.sharing.disconnect()
             previous = self.settings["auto_detect_providers"]
@@ -574,6 +583,7 @@ class InspectorServer(ThreadingHTTPServer):
                 "provider_sync_error": self.provider_sync_error,
                 "provider_warnings": self.provider_sync_result.get("warnings", []),
                 "wsl_connection": {**self.wsl.result, "metadata_error": self.wsl.metadata_error},
+                "connection_resume": self.connection_resume.status(),
                 "desktop_tray": bool(getattr(self, "desktop_tray", False)),
                 "desktop_refresh_supported": self.presentation is not None,
                 "desktop_integration_error": self.presentation.error if self.presentation else "",
@@ -1019,6 +1029,9 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 raise ValueError("invalid link action")
             self._json(200, result)
+        elif path == "/api/connection/resume" and self.command == "POST":
+            self._body(8192)
+            self._json(200, self.server.connection_resume.retry())
         elif path == "/api/providers/sync" and self.command == "POST":
             self._body(8192)
             result = self.server.sync_providers() if self.server.settings["auto_detect_providers"] else {"enabled": False}

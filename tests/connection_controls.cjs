@@ -21,11 +21,12 @@ function fixture(connected) {
     state:{status:{profile:{active:connected,can_restore:connected}}},
     compressionSaving:false,settingsSaving:false,settingsOpening:false,settingsEditing:false,
     exitSaving:false,connectSaving:false,connectChecking:false,linkSaving:'',compressionTarget:null,
-    compressionRevision:0,connectionRestartNotified:false,connectSource:'header',
+    compressionRevision:0,connectionRestartNotified:false,connectSource:'header',connectionResumeSeen:'',connectionResumeRetrying:false,
     $:element,t:value=>value,setText:(el,value)=>{el.textContent=value;},
     uiI18n:{text:(node,value)=>{node.textContent=typeof value==='function'?value():value;}},
     el:(tag,cls,text)=>({tag,text}),
-    document:{querySelectorAll:()=>buttons},
+    document:{querySelectorAll:()=>buttons,querySelector:()=>[...elements.values()].find(value=>value.open)||null},
+    localStorage:{getItem(){return null;},setItem(){}},
     requestConnection:async source=>calls.push(['connect-prompt',source]),
     applyLinkAction:async action=>{calls.push(['link',action]);context.state.status.profile={active:false,can_restore:false};return {reload_required:true};},
     linkAction:async action=>{calls.push(['link',action]);context.state.status.profile={active:true,can_restore:true};return {reload_required:true};},
@@ -143,5 +144,27 @@ function fixture(connected) {
   context.state.status.profile.config_error='unreadable';
   context.renderCompressionMode();
   assert(buttons.every(button=>button.disabled));
-  console.log('Connection controls: confirmations retained and results stay inline.');
+  ({context,element,buttons}=fixture(true));
+  context.state.status.connection_resume={id:'upgrade-1',state:'complete',result:{reload_required:true}};
+  context.renderConnectionResume();
+  assert.equal(element('connection-resume-dialog').open,true,'Automatic changes must produce a visible restart dialog');
+  context.rememberConnectionResume();context.renderConnectionResume();
+  assert.equal(element('connection-resume-dialog').open,false,'An acknowledged event is not shown again');
+  context.state.status.connection_resume={id:'upgrade-2',state:'complete',result:{reload_required:false}};
+  context.renderConnectionResume();
+  assert.equal(element('connection-resume-dialog').open,false,'An unchanged upgrade requires no user action');
+  context.state.status.connection_resume={id:'upgrade-3',state:'attention',result:{wsl:{warnings:[{distribution:'HCE',reason:'relay_unreachable',detail:'connection refused'}]}}};
+  context.renderConnectionResume();
+  assert.equal(element('connection-resume-retry').hidden,false);
+  assert(element('connection-resume-details').textContent.includes('connection refused'));
+  context.api=async(path)=>{assert.equal(path,'/api/connection/resume');return {id:'retry-1',state:'pending'};};
+  await context.retryConnectionResume();
+  context.renderCompressionMode();
+  assert(buttons.every(button=>button.disabled),'Wait for the automatic synchronization before changing connection mode');
+  context.state.status.connection_resume={id:'retry-1',state:'complete',result:{reload_required:false}};
+  context.renderConnectionResume();
+  assert.equal(element('connection-resume-description').textContent,'配置无需更改，无需重启。');
+  assert.equal(element('connection-resume-retry').hidden,true,'A successful retry leaves no stale error or loading state');
+  assert.equal(element('connection-resume-dialog').open,true);
+  console.log('Connection controls: manual confirmations and automatic upgrade synchronization covered.');
 })().catch(error=>{console.error(error);process.exitCode=1;});
