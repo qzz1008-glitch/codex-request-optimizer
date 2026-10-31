@@ -23,6 +23,7 @@ function fixture(connected) {
     exitSaving:false,connectSaving:false,connectChecking:false,linkSaving:'',compressionTarget:null,
     compressionRevision:0,connectionRestartNotified:false,connectSource:'header',
     $:element,t:value=>value,setText:(el,value)=>{el.textContent=value;},
+    uiI18n:{text:(node,value)=>{node.textContent=typeof value==='function'?value():value;}},
     el:(tag,cls,text)=>({tag,text}),
     document:{querySelectorAll:()=>buttons},
     requestConnection:async source=>calls.push(['connect-prompt',source]),
@@ -58,6 +59,44 @@ function fixture(connected) {
   await context.confirmConnection();
   assert.equal(element('settings-restart-dialog').open,true);
   assert.deepEqual(element('settings-restart-items').children.map(item=>item.text),['Codex 接入与原生压缩','本机代理例外']);
+  assert.equal(element('settings-restart-summary').textContent,'已接入。已修复本机代理例外。');
+
+  ({context,element,calls}=fixture(false));
+  context.linkAction=async()=>{
+    context.state.status.profile={active:true,can_restore:true};
+    context.state.status.connection_reload_required=true;
+    return {reload_required:false};
+  };
+  await context.confirmConnection();
+  assert.equal(element('settings-restart-dialog').open,true);
+  assert.equal(element('settings-restart-title').textContent,'操作已完成');
+  assert.equal(element('settings-restart-description').textContent,'配置无需更改，无需重启。');
+  assert.equal(element('settings-restart-items').hidden,true);
+  assert.equal(calls.some(call=>call[0]==='message'),false,'Success belongs in the result dialog');
+  context.showConfigurationFeedback(['自动压缩阈值']);
+  assert.equal(element('settings-restart-summary').hidden,true,'Later settings saves clear the connection summary');
+  assert.equal(element('settings-restart-title').textContent,'重启 ChatGPT App 后生效');
+  assert.equal(element('settings-restart-items').hidden,false);
+  context.showConnectionFeedback('activate',{});
+  assert.equal(element('settings-restart-title').textContent,'重启 ChatGPT App 后生效','Older responses fall back to the actual configuration status');
+
+  ({context,element,calls}=fixture(false));
+  context.linkAction=async()=>{throw Error('接入失败');};
+  await context.confirmConnection();
+  assert.equal(element('connect-confirm-message').textContent,'接入失败');
+  assert.equal(element('connect-confirm-message').hidden,false);
+  assert.equal(element('settings-restart-dialog').open,false);
+  assert.equal(calls.some(call=>call[0]==='message'),false,'Connection failures stay in the confirmation');
+
+  ({context,element,calls}=fixture(false));
+  context.updateSettingsSaveState=()=>{};
+  context.applyLinkAction=async action=>{
+    calls.push(['link',action]);context.state.status.profile={active:true,can_restore:true};
+    return {reload_required:true,loopback_proxy:{changed:true}};
+  };
+  vm.runInContext(source.slice(source.indexOf('async function linkAction(which)'),source.indexOf('$("session-search").addEventListener')),context);
+  await context.linkAction('activate');
+  assert.equal(calls.some(call=>call[0]==='message'),false,'The low-level link action must not create a banner');
 
   ({context,element,buttons,calls}=fixture(true));
   context.renderCompressionMode();
@@ -74,6 +113,7 @@ function fixture(connected) {
   assert.equal(element('compression-confirm-dialog').open,false);
   assert.equal(element('settings-restart-dialog').open,true);
   assert.equal(context.compressionSaving,false);
+  assert.equal(calls.some(call=>call[0]==='message'),false,'Disconnect must not create a banner');
 
   ({context,buttons}=fixture(true));
   context.state.status.provider_sync_error='OSError';

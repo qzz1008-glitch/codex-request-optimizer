@@ -29,7 +29,7 @@
       <button id="window-close" type="button" title="关闭" aria-label="关闭"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="m1.5 1.5 9 9m0-9-9 9"/></svg></button>
     </div>
   </header>
-  <div id="notice" class="notice" role="status" hidden></div>
+  <div id="notice" class="notice" role="alert" hidden><span id="notice-text"></span><button id="notice-dismiss" type="button" aria-label="关闭提示" title="关闭提示">×</button></div>
   <main id="records-view" class="workspace">
     <aside class="sessions-sidebar" aria-label="会话">
       <div class="sidebar-title sessions-title"><h1>会话</h1><input id="session-search" class="session-search" type="search" placeholder="搜索会话" aria-label="搜索会话名称或 session_id" autocomplete="off" spellcheck="false"></div>
@@ -264,8 +264,9 @@
     <p id="zstd-level-note" class="help muted">基于120条请求、每级3轮测试估算，大小相对原始未压缩包，耗时为单次压缩中位数。</p>
     <div class="zstd-level-scroll"><table class="zstd-level-table"><colgroup><col class="zstd-level-col"><col><col><col class="zstd-time-col"></colgroup><thead><tr><th scope="col" rowspan="2">等级</th><th scope="colgroup" colspan="2" class="zstd-size-heading">请求大小变化</th><th scope="col" rowspan="2" class="num">压缩耗时</th></tr><tr><th scope="col" class="num">原始请求＜1.5 MB</th><th scope="col" class="num">原始请求≥1.5 MB</th></tr></thead><tbody id="zstd-level-options"></tbody></table></div>
   </dialog>
-  <dialog id="settings-restart-dialog" aria-labelledby="settings-restart-title" aria-describedby="settings-restart-description">
+  <dialog id="settings-restart-dialog" aria-labelledby="settings-restart-title" aria-describedby="settings-restart-summary settings-restart-description">
     <h2 id="settings-restart-title">重启 ChatGPT App 后生效</h2>
+    <p id="settings-restart-summary" hidden></p>
     <p id="settings-restart-description">设置已保存。以下配置仍需重启 ChatGPT App 后生效：</p>
     <ul id="settings-restart-items"></ul>
     <div class="button-row"><button id="settings-restart-confirm" class="primary" type="button" autofocus>我知道了</button></div>
