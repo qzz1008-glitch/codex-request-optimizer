@@ -22,6 +22,7 @@ from .restart_notice import RestartNotices
 from .updates import Updates
 from .http_io import discard_small_body
 from .exit_flow import ExitError, ExitRequests, perform_exit
+from .service_restart import RestartRequests, perform_restart
 from .storage_paths import resolve_directory
 
 UI_DIR = Path(__file__).with_name("ui")
@@ -89,6 +90,7 @@ class DesktopUI(ThreadingHTTPServer):
         self.updates = None
         self.updates_guard = threading.Lock()
         self.exit_requests = ExitRequests(exit_data_dir) if exit_data_dir is not None else None
+        self.restart_requests = RestartRequests(exit_data_dir) if exit_data_dir is not None else None
         self.window_opened = 0
         self.thread = None
         super().__init__(("127.0.0.1", 0), UIHandler)
@@ -189,6 +191,40 @@ class UIHandler(BaseHTTPRequestHandler):
             self._json(exc.status, {"error": str(exc)})
         except (OSError, ValueError, TypeError, http.client.HTTPException):
             self._json(502, {"error": "退出未完成，请检查中转服务后重试。"})
+        finally:
+            requests.finish(completed=completed)
+
+    def _service_restart(self):
+        requests = self.server.restart_requests
+        if requests is None:
+            self._json(404, {"error": "ui_route_not_found"})
+            return
+        if self.command == "GET":
+            self._json(200, {"request": requests.current()})
+            return
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            if self.headers.get("Transfer-Encoding") or not 0 < length <= 1024:
+                raise ValueError()
+            raw = self.rfile.read(length)
+            data = json.loads(raw) if len(raw) == length else None
+            if not isinstance(data, dict) or data.get("action") not in {"restart", "cancel"}:
+                raise ValueError()
+        except (ValueError, TypeError):
+            self._json(400, {"error": "invalid_ui_request_body"})
+            return
+        try:
+            intent = requests.begin(data.get("request_id"))
+        except ValueError as exc:
+            self._json(409, {"error": str(exc)})
+            return
+        completed = False
+        try:
+            result = {"cancelled": True} if data["action"] == "cancel" else perform_restart(requests.folder, intent)
+            completed = True
+            self._json(200, result)
+        except ValueError as exc:
+            self._json(409, {"error": str(exc)})
         finally:
             requests.finish(completed=completed)
 
@@ -334,6 +370,9 @@ class UIHandler(BaseHTTPRequestHandler):
         if path == "/api/exit" and self.command == "POST":
             self._exit()
             return
+        if path == "/api/service-restart" and self.command in {"GET", "POST"}:
+            self._service_restart()
+            return
         if path == "/api/open-directory" and self.command == "POST":
             self._open_directory()
             return
@@ -441,6 +480,8 @@ class UIHandler(BaseHTTPRequestHandler):
                 status["ui_window_opened"] = self.server.window_opened
                 if self.server.exit_requests is not None:
                     status["ui_exit_request"] = self.server.exit_requests.current()
+                if self.server.restart_requests is not None:
+                    status["ui_restart_request"] = self.server.restart_requests.current()
                 if isinstance(status.get("data_dir"), str):
                     status["entry_port_supported"] = True
                     status["entry_port"] = port_status(status["data_dir"], self.server.relay_port)

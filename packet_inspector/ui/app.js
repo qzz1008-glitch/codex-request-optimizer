@@ -256,6 +256,7 @@ const restartNotices = InspectorRestartNotice.create({status:()=>state.status,re
 globalThis.inspectorRestartNotices=restartNotices;
 let connectionResumeSeen = "", connectionResumeRetrying = false, connectionResumeError = "";
 let exitRequest = null, exitSaving = false, exitFinished = false, exitRevision = 0;
+let serviceRestartRequest = null, serviceRestartSaving = false, serviceRestartRevision = 0, serviceRestartAction = "";
 let connectSource = null, connectSaving = false, connectChecking = false, startupConnectChecked = false;
 let desktopOpenRevision = null;
 let tokenWindow = null, tokenRequest = 0, tokenLoading = false, tokenTimer = null, tokenController = null, tokenPendingRetries = 0;
@@ -1071,8 +1072,14 @@ async function loadPackets(append=false,background=false) {
   }
 }
 async function refreshStatus(fill=false) {
-  const revision=settingsRevision, connectionRevision=linkRevision, modeRevision=compressionRevision, quittingRevision=exitRevision, status=await api("/api/status");
-  if(settingsSaving||compressionSaving||exitSaving||revision!==settingsRevision||connectionRevision!==linkRevision||modeRevision!==compressionRevision||quittingRevision!==exitRevision)return;
+  const revision=settingsRevision, connectionRevision=linkRevision, modeRevision=compressionRevision, quittingRevision=exitRevision, restartRevision=serviceRestartRevision;
+  let status;
+  try {status=await api("/api/status");}
+  catch(error) {
+    try {const result=await api("/api/service-restart");if(restartRevision===serviceRestartRevision)renderServiceRestart(result.request);}catch {}
+    throw error;
+  }
+  if(settingsSaving||compressionSaving||exitSaving||serviceRestartSaving||revision!==settingsRevision||connectionRevision!==linkRevision||modeRevision!==compressionRevision||quittingRevision!==exitRevision||restartRevision!==serviceRestartRevision)return;
   state.status=status;
   if(!settingsEditing&&["zh","en"].includes(status.ui_language)&&uiI18n.language!==status.ui_language)
     await setInterfaceLanguage(status.ui_language);
@@ -1093,6 +1100,7 @@ function renderStatus(fill=false) {
   renderSessions();renderList();
   renderProtectionPanelState();
   renderExitRequest();
+  renderServiceRestart(s.ui_restart_request);
   restartNotices.ingest(s);
   renderConnectionResume();
   renderConnectPrompt();
@@ -1353,7 +1361,7 @@ function renderConnectPrompt() {
   for(const key of ["cancel","apply"])$("connect-confirm-"+key).disabled=connectSaving;
   setText($("connect-confirm-apply"),t(connectSaving?"正在接入…":"确认接入"));
   if(dialog.open&&s.profile?.active&&!connectSaving)cancelConnectPrompt();
-  if(startupConnectChecked||!s.ui_desktop||s.ui_exit_request||exitFinished||connectionResumeBusy())return;
+  if(startupConnectChecked||!s.ui_desktop||s.ui_exit_request||s.ui_restart_request||exitFinished||connectionResumeBusy())return;
   if(s.profile?.config_error||typeof s.profile?.active!=="boolean")return;
   if(s.profile.active){startupConnectChecked=true;return;}
   if(settingsSaving||settingsOpening||settingsEditing||linkSaving||compressionSaving||exitSaving||document.querySelector("dialog[open]"))return;
@@ -1393,7 +1401,7 @@ async function confirmConnection() {
 }
 function renderExitRequest() {
   const s=state.status,dialog=$("exit-confirm-dialog");
-  if(!s||exitFinished)return;
+  if(!s||exitFinished||serviceRestartSaving||$("service-restart-dialog").open)return;
   const id=s.ui_exit_request;
   if(!id) {
     if(!exitSaving){exitRequest=null;if(dialog.open)dialog.close();}
@@ -1436,6 +1444,37 @@ async function confirmExit(which) {
     exitSaving=false;exitRevision++;renderConnectionActions();renderExitRequest();
     if(!exitFinished)try{await refreshStatus();}catch(_){}
   }
+}
+function renderServiceRestart(request=serviceRestartRequest) {
+  const dialog=$("service-restart-dialog");
+  if(!request) {
+    if(!serviceRestartSaving){serviceRestartRequest=null;if(dialog.open)dialog.close();}
+    return;
+  }
+  if(settingsSaving||settingsOpening||compressionSaving||linkSaving||connectSaving||exitSaving||$("exit-confirm-dialog").open)return;
+  if($("connect-confirm-dialog").open)cancelConnectPrompt();
+  const fresh=serviceRestartRequest?.id!==request.id;
+  serviceRestartRequest=request;
+  dialog.setAttribute("aria-busy",String(serviceRestartSaving));
+  $("service-restart-cancel").disabled=serviceRestartSaving;
+  $("service-restart-apply").disabled=serviceRestartSaving||!!request.error;
+  uiI18n.text($("service-restart-apply"),serviceRestartSaving&&serviceRestartAction==="restart"?"正在重启…":"重启服务");
+  if(request.error){uiI18n.text($("service-restart-message"),request.error);$("service-restart-message").hidden=false;}
+  else if(fresh)$("service-restart-message").hidden=true;
+  if(!dialog.open)dialog.showModal();
+}
+async function confirmServiceRestart(action) {
+  if(!serviceRestartRequest||serviceRestartSaving||action==="restart"&&serviceRestartRequest.error)return;
+  serviceRestartSaving=true;serviceRestartAction=action;serviceRestartRevision++;renderServiceRestart();
+  $("service-restart-message").hidden=true;
+  try {
+    const result=await api("/api/service-restart",{request_id:serviceRestartRequest.id,action});
+    if(action==="cancel"?!result.cancelled:!result.restarting)throw Error("未能确认服务重启，请稍后重试。");
+    if(state.status)state.status.ui_restart_request=null;
+    serviceRestartRequest=null;$("service-restart-dialog").close();
+  } catch(error) {
+    uiI18n.text($("service-restart-message"),error.message);$("service-restart-message").hidden=false;
+  } finally {serviceRestartSaving=false;serviceRestartAction="";serviceRestartRevision++;renderServiceRestart();}
 }
 function imageDefaultDirectory() {
   const s=state.status,dataDir=s.data_dir||"",separator=dataDir.includes("\\")?"\\":"/";
@@ -2330,6 +2369,8 @@ $("compression-confirm-dialog").addEventListener("cancel",event=>{event.preventD
 $("compression-confirm-dialog").addEventListener("close",()=>{if(!$("compression-confirm-dialog").open)compressionTarget=null;});
 action("exit-confirm-cancel",()=>confirmExit("cancel"));action("exit-confirm-direct",()=>confirmExit("direct"));action("exit-confirm-restore",()=>confirmExit("restore"));
 $("exit-confirm-dialog").addEventListener("cancel",event=>{event.preventDefault();confirmExit("cancel");});
+action("service-restart-cancel",()=>confirmServiceRestart("cancel"));action("service-restart-apply",()=>confirmServiceRestart("restart"));
+$("service-restart-dialog").addEventListener("cancel",event=>{event.preventDefault();confirmServiceRestart("cancel");});
 action("connect-confirm-cancel",cancelConnectPrompt);action("connect-confirm-apply",confirmConnection);
 action("connection-resume-retry",retryConnectionResume);
 $("connect-confirm-dialog").addEventListener("cancel",event=>{event.preventDefault();cancelConnectPrompt();});
