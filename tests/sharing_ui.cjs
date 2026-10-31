@@ -19,6 +19,9 @@ const timeouts=new Map();let timeoutId=0;
 const context={console,AbortController,Date,Number,Set,Map,innerWidth:1360,innerHeight:960,addEventListener(){},document:{hidden:false,getElementById:node,addEventListener:(type,fn)=>{documentEvents[type]=fn;}},navigator:{clipboard:{writeText:async value=>{if(clipboardError)throw Error("clipboard unavailable");copied=value;copies.push(value);}}},setInterval:fn=>{interval=fn;return 1;},clearInterval:()=>{interval=null;},t:x=>x,
  fetch:async(url,options)=>{requests.push({url,data:options.body?JSON.parse(options.body):null});const r=await(pending.shift()||{status:200,data:idle});return {status:r.status,ok:r.status<400,json:async()=>r.data};}};
 context.setTimeout=fn=>{timeouts.set(++timeoutId,fn);return timeoutId;};context.clearTimeout=id=>timeouts.delete(id);
+let weeklyDropdownOpen=false;
+context.CSS={supports:selector=>selector==="selector(select:open)"};
+node("sharing-cards").querySelector=selector=>selector===".sharing-weekly-select:open"&&weeklyDropdownOpen?node("weekly-open"):null;
 context.globalThis=context;vm.createContext(context);vm.runInContext(fs.readFileSync("packet_inspector/ui/sharing.js","utf8"),context);
 const formMarkup=()=>node("quota-config").innerHTML+node("exit-config").innerHTML;
 const flush=()=>new Promise(resolve=>setImmediate(resolve));
@@ -76,6 +79,7 @@ const visualOrder=kind=>node(kind+"-credential-rows").rows.map(row=>row.querySel
   const id=kind+"-expiry",value=node(id).value,before=requests.length,delta=deadline(value)*1000-Date.now()-7*864e5;
   assert.ok(delta>-2000&&delta<25*3600000);assert.equal(node(id+"-date").value,value);assert.equal(node(id+"-display").textContent,value+" 24:00");assert.match(value,/^\d{4}-\d{2}-\d{2}$/);
   assert.equal(node(id+"-calendar").hidden,true);openCalendar(id);assert.equal(node(id+"-calendar").hidden,false);assert.equal(node(id+"-date").attributes["aria-expanded"],"true");assert.ok(new RegExp(`data-day="${value.slice(0,10)}"[^>]*aria-pressed="true"`).test(node(id+"-days").innerHTML),"The current date is marked in the calendar");
+  openCalendar(id);assert.equal(node(id+"-calendar").hidden,true,"Clicking the same date trigger closes the calendar");assert.equal(node(id+"-date").attributes["aria-expanded"],"false");openCalendar(id);assert.equal(node(id+"-calendar").hidden,false,"A third click reopens the calendar");
   const month=node(id+"-month").textContent;calendarClick(id,{month:"1"});assert.notEqual(node(id+"-month").textContent,month);calendarClick(id,{month:"-1"});assert.equal(node(id+"-month").textContent,month);
   openCalendar(id);openCalendar(id);const following=new Date(value+"T12:00");following.setDate(following.getDate()+1);calendarKey(id,"ArrowRight");assert.ok(new RegExp(`data-day="${day(following.getTime())}"[^>]*tabindex="0"`).test(node(id+"-days").innerHTML),"Arrow keys move focus by one day");calendarKey(id,"Escape");assert.equal(node(id+"-calendar").hidden,true);assert.equal(node(id).value,value,"Browsing the calendar does not change the saved date");
   openCalendar(id);const pollingBefore=requests.length;await interval();assert.equal(requests.length,pollingBefore,"Polling pauses while choosing a date");openCalendar(id);assert.equal(node(id+"-calendar").hidden,true,"Clicking the same date field closes its calendar");
@@ -134,9 +138,20 @@ const visualOrder=kind=>node(kind+"-credential-rows").rows.map(row=>row.querySel
  assert.equal(node("quota-generate").disabled,true,"Stopping a borrowed exit preserves the active quota source");
  node("exit-borrow-link").value="codex-exit://private-value";node("exit-borrow-label").value="C";pending.push({status:200,data:borrowing});await submit("exit-borrow");assert.equal(requests.at(-1).data.kind,"exit");assert.equal(node("exit-borrow-link").value,"");
  node("quota-label").value="draft";const expiryDraft=day(Date.now()+10*864e5);changeExpiry("quota-expiry",expiryDraft);pending.push({status:200,data:host});await interval();assert.equal(node("quota-label").value,"draft","Polling preserves form drafts");assert.equal(node("quota-expiry").value,expiryDraft);assert.equal(node("quota-expiry-date").value,expiryDraft);
+ const beforeWeeklyPolling=requests.length;weeklyDropdownOpen=true;await interval();assert.equal(requests.length,beforeWeeklyPolling,"Polling pauses while the weekly dropdown is open");weeklyDropdownOpen=false;
+ let releaseWeeklyPoll;pending.push(new Promise(resolve=>{releaseWeeklyPoll=resolve;}));const weeklyPoll=interval();await flush();weeklyDropdownOpen=true;
+ const listDuringPicker=node("quota-credential-rows").innerHTML;releaseWeeklyPoll({status:200,data:{...host,credentials:[{...outgoing,label:"Arrived during selection"},incoming,exitIncoming]}});await weeklyPoll;assert.equal(node("quota-credential-rows").innerHTML,listDuringPicker,"An in-flight refresh must not replace an open dropdown");
+ weeklyDropdownOpen=false;pending.push({status:200,data:host});await interval();assert.equal(requests.length,beforeWeeklyPolling+2,"Polling resumes after the dropdown closes");
  click("sharing-cards",{kind:"quota",view:"out"});edit("q1","budget");assert.equal(node("sharing-inline-editor").hidden,false);assert.equal(node("sharing-inline-value").value,10);assert.equal(node("sharing-inline-value").type,"number");
  const beforePolling=requests.length;node("sharing-inline-value").value="25";await interval();assert.equal(requests.length,beforePolling,"Polling pauses while a field is being edited");assert.equal(node("sharing-inline-value").value,"25");
  pending.push({status:200,data:host});await save();assert.equal(JSON.stringify(requests.at(-1).data),JSON.stringify({action:"credential_edit",id:"q1",budget:"25"}));assert.equal(node("sharing-inline-editor").hidden,true);
+ const beforeFieldToggles=requests.length;
+ for(const field of ["label","budget","used","expires_at"]){
+  edit("q1",field);assert.equal(node("sharing-inline-editor").hidden,false);if(field!=="expires_at")node("sharing-inline-value").value="999";
+  edit("q1",field);assert.equal(node("sharing-inline-editor").hidden,true,"Clicking an open field closes its editor");assert.equal(node("sharing-inline-expiry-calendar").hidden,true);
+  edit("q1",field);assert.equal(node("sharing-inline-editor").hidden,false,"A third click reopens the field editor");if(field!=="expires_at")assert.notEqual(node("sharing-inline-value").value,"999","Closing discards the unsaved draft");cancel();
+ }
+ assert.equal(requests.length,beforeFieldToggles,"Toggling field editors sends no updates");
  edit("q1","label");assert.equal(node("sharing-inline-expiry-container").hidden,true);assert.equal(node("sharing-inline-expiry-date").disabled,true);assert.equal(node("sharing-inline-value").hidden,false);node("sharing-inline-value").value="  Renamed colleague  ";pending.push({status:400,data:{error:"同类型凭据名称已存在，请使用其他名称。"}});await save();assert.equal(node("sharing-inline-editor").hidden,false);assert.equal(node("sharing-inline-value").value,"  Renamed colleague  ");assert.match(node("sharing-inline-message").textContent,/同类型凭据名称已存在/);
  assert.equal(node("sharing-inline-expiry-date").disabled,true,"A failed name edit must keep hidden date fields outside native form validation");
  pending.push({status:200,data:host});await save();assert.equal(JSON.stringify(requests.at(-1).data),JSON.stringify({action:"credential_edit",id:"q1",label:"Renamed colleague"}));

@@ -27,6 +27,7 @@ globalThis.InspectorSharing=(()=>{
   const expiryIds=["quota-expiry","exit-expiry","sharing-inline-expiry"];
   const editingExpiry=id=>id==="sharing-inline-expiry"&&editing?.field==="expires_at";
   const resetWeekdays=["周一","周二","周三","周四","周五","周六","周日"];
+  const weeklyPickerOpen=()=>globalThis.CSS?.supports?.("selector(select:open)")&&get("sharing-cards").querySelector(".sharing-weekly-select:open");
   function weeklyOptions(value=null){
     const selected=value===null?"":String(value);
     return [["",label("不刷新")],...resetWeekdays.map((day,index)=>[String(index),label(day)+" 00:00"])].map(([key,text])=>`<option value="${key}"${key===selected?" selected":""}>${text}</option>`).join("");
@@ -202,7 +203,7 @@ globalThis.InspectorSharing=(()=>{
   }
   function render(value){
     if(!value.credentials_supported||value.protocol<4){closeInline(false);closeDelete(false);current=null;get("sharing-cards").hidden=true;message("当前后台不支持凭据管理，请更新软件。",true);return;}
-    current=value;if(editing||deleting||dragging)return;get("sharing-cards").hidden=false;
+    current=value;if(editing||deleting||dragging||weeklyPickerOpen())return;get("sharing-cards").hidden=false;
     const hosting=value.host?.running===true,borrowing=value.client?.active===true;
     for(const kind of ["quota","exit"]){const out=views[kind]==="out";get(kind+"-issue").hidden=!out;get(kind+"-borrow").hidden=out;
       get(kind+"-generate").hidden=!out;get(kind+"-activate").hidden=out;
@@ -221,7 +222,7 @@ globalThis.InspectorSharing=(()=>{
       highlightCredential(identifier,state);
       render(state);if(link)await copy(link,dataValue.action==="credential_issue"?dataValue.kind+"-generate":"sharing-copy-"+dataValue.id);else if(success!==null&&result.reload_required===true)message(dataValue.action==="credential_delete"?"已删除凭据。请重新加载 Codex 配置或重启 ChatGPT 应用。":"已切换额度来源。请重新加载 Codex 配置或重启 ChatGPT 应用。");else message(success===null?"":success||"已更新，新请求使用当前设置。");return result;
     }catch(error){message(error.message,true);}finally{busy=false;button?.setAttribute("aria-busy","false");if(button)button.disabled=false;if(current)render(current);}}
-  async function refresh(){if(!active||document.hidden||busy||editing||deleting||calendar||dragging)return;controller?.abort();const task=new AbortController();controller=task;try{const value=await request(null,task.signal);if(active&&!task.signal.aborted)render(value);}catch(error){if(error.name!=="AbortError")message(error.message,true);}finally{if(controller===task)controller=null;}}
+  async function refresh(){if(!active||document.hidden||busy||editing||deleting||calendar||dragging||weeklyPickerOpen())return;controller?.abort();const task=new AbortController();controller=task;try{const value=await request(null,task.signal);if(active&&!task.signal.aborted)render(value);}catch(error){if(error.name!=="AbortError")message(error.message,true);}finally{if(controller===task)controller=null;}}
   function finishDrag(restore=true){
     if(!dragging)return;
     const draft=dragging;dragging=null;clearTimeout(draft.hideTimer);
@@ -311,6 +312,7 @@ globalThis.InspectorSharing=(()=>{
   }
   function openInline(row,field,anchor){
     if(busy||!["label","budget","used","expires_at"].includes(field)||(row.direction!=="out"&&field!=="label")||(["budget","used"].includes(field)&&row.kind!=="quota"))return;
+    if(editing?.id===row.id&&editing.field===field){closeInline();return;}
     if(field==="used"&&!current?.used_quota_edit_supported){message("当前后台不支持修改已用额度，请更新软件。",true);return;}
     controller?.abort();closeInline(false);message("");
     const original=field==="label"?row.label:field==="budget"?row.budget_nanos/1e9:field==="used"?row.period_cost_nanos/1e9:row.expires_at;
