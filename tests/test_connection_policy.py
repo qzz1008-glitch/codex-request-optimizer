@@ -43,6 +43,22 @@ class ConnectionPolicyTests(unittest.TestCase):
             'base_url="https://chatgpt.com/backend-api/codex"\n'
             'requires_openai_auth=true\nwire_api="responses"\n', encoding="utf8")
 
+    def test_connect_status_disconnect_and_reconnect_with_optional_http_provider(self):
+        self.config.write_text('model="test"\n[model_providers.local]\nbase_url="http://127.0.0.1:8787/v1"\n'
+            '[model_providers.optional]\nbase_url="http://remote.invalid/v1"\nwire_api="responses"\n', encoding="utf8")
+        with InspectorServer(("127.0.0.1", 0), self.root / "data", self.config, "https://chatgpt.com/backend-api/codex") as server:
+            for _ in range(2):
+                result = server.set_connection(True)
+                status = server.status()
+                self.assertTrue(result["active"])
+                self.assertEqual(status["connection_state"], "connected")
+                self.assertFalse(status["profile"].get("config_error"))
+                self.assertFalse(status["provider_sync_error"])
+                self.assertEqual(status["provider_warnings"][0]["provider"], "optional")
+                self.assertEqual(self.data()["model_providers"]["optional"]["base_url"], "http://remote.invalid/v1")
+                server.set_connection(False)
+                self.assertEqual(server.status()["connection_state"], "disconnected")
+
     def test_first_connection_disconnect_and_reconnect_keep_one_stable_identity(self):
         history = self.root / "sessions" / "untouched.jsonl"
         history.parent.mkdir()

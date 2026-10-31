@@ -1121,8 +1121,11 @@ function showConnectionFeedback(which,result={}) {
   const reloadRequired=result.reload_required??!!state.status?.connection_reload_required;
   const items=reloadRequired?[t("Codex 接入与原生压缩")]:[];
   if(result.loopback_proxy?.changed)items.push(t("本机代理例外"));
+  const warnings=which==="activate"&&Array.isArray(result.warnings)?result.warnings.filter(value=>value?.reason==="unsupported_upstream"):[];
   showConfigurationFeedback(items,{reloadRequired,
-    summary:()=>(which==="activate"?t("已接入。"):t("已恢复原配置。"))+(result.loopback_proxy?.changed?t("已修复本机代理例外。"):"")});
+    summary:()=>(which==="activate"?t("已接入。"):t("已恢复原配置。"))+(result.loopback_proxy?.changed?t("已修复本机代理例外。"):"")+
+      warnings.slice(0,5).map(value=>"\n"+t("未接管 {provider}（{file}）：{reason}。").replace("{provider}",value.provider).replace("{file}",value.file).replace("{reason}",t(value.detail||value.reason))).join("")+
+      (warnings.length>5?"\n"+t("另有 {count} 项配置未接管。").replace("{count}",warnings.length-5):"")});
 }
 function requestCompressionChange(mode) {
   if(mode==="connected")return requestConnection("header");
