@@ -173,7 +173,7 @@
     <section id="connection-settings"><h3>Codex 接入 <span id="connection-pending-label" class="connection-pending-label" hidden>待重启</span></h3>
       <div class="entry-port-row" data-settings-field="entry_port"><label for="entry-port">入口端口</label><input id="entry-port" type="number" min="1024" max="65535" step="1" value="47844" required aria-describedby="link-status"><span id="link-status" class="entry-port-status" role="status" aria-live="polite" hidden></span></div>
       <p id="entry-port-message" data-feedback-source data-feedback-target="settings-inline-feedback" class="help" role="status" hidden></p>
-      <details id="connection-details" class="connection-details"><summary>接入详情</summary><ul id="connection-details-list"></ul></details>
+      <details id="connection-details" class="connection-details"><summary>接入详情</summary><div id="connection-resume-controls" class="connection-resume-controls" data-feedback-inline hidden><span id="connection-resume-status" role="status" aria-live="polite"></span><button id="connection-resume-retry" type="button" hidden>重新检查</button></div><ul id="connection-details-list"></ul></details>
     </section>
     <section id="sharing-settings"><h3>局域网共享</h3>
       <div class="entry-port-row" data-settings-field="sharing_port"><label for="sharing-port">额度端口</label><input id="sharing-port" type="number" min="1" max="65535" step="1" value="47846" required></div>

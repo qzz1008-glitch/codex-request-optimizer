@@ -91,10 +91,14 @@ globalThis.InspectorRestartNotice = {
       if(details?.proxy)row(t("本机代理例外"),t("已修复"));
       for(const warning of s?.provider_warnings||details?.warnings||[])
         row(warning.provider||"Provider",(warning.file?warning.file+"\n":"")+t(warning.detail||warning.reason||""),true);
-      for(const target of details?.targets||[])row("WSL · "+target.distribution,t(target.active?"已接入":"已恢复原配置。"));
+      const wsl=s?.wsl_connection||{targets:details?.targets,warnings:details?.wslWarnings};
+      for(const target of wsl.targets||[])row("WSL · "+target.distribution,t(target.active?"已接入":"已恢复原配置。"));
       const reasons={relay_unreachable:"WSL 无法访问本机中转，未修改配置。",relay_instance_mismatch:"WSL 连接到其他服务，未修改配置。",
         config_not_found:"未找到该 WSL 用户的 Codex 配置。",restore_pending:"WSL 配置待恢复，请启动该发行版后再次接入并断开。"};
-      for(const warning of details?.wslWarnings||[])row("WSL · "+warning.distribution,t(reasons[warning.reason]||"WSL 操作失败，请查看接入诊断。")+(warning.detail?"\n"+warning.detail:""),true);
+      for(const warning of wsl.warnings||[])row("WSL · "+warning.distribution,t(reasons[warning.reason]||"WSL 操作失败，请查看接入诊断。")+(warning.detail?"\n"+warning.detail:""),true);
+      const resume=s?.connection_resume;
+      if(resume?.error)row(t("接入同步"),resume.error,true);
+      for(const deferred of resume?.result?.wsl?.deferred||[])row("WSL · "+deferred.distribution,t("WSL 启动后会自动同步。"));
       list.replaceChildren(...rows);
     }
     function render() {
@@ -103,9 +107,9 @@ globalThis.InspectorRestartNotice = {
       if(s?.storage_paths_pending)for(const key of ["log_dir","cache_dir"])
         if(s[key]!==s["active_"+key])items.push({key,target:"optimizer",scope:""});
       const chatgpt=items.some(row=>row.target==="chatgpt"),wsl=items.some(row=>row.target==="wsl"),optimizer=items.some(row=>row.target==="optimizer");
-      const portPending=!!s?.entry_port?.pending,warning=!!(s?.provider_warnings||details?.warnings)?.length||!!details?.wslWarnings?.length;
+      const portPending=!!s?.entry_port?.pending,warning=!!(s?.provider_warnings||details?.warnings)?.length||!!(s?.wsl_connection?.warnings||details?.wslWarnings)?.length||s?.connection_resume?.state==="attention";
       const failure=error||backendError||storageError,active=items.length>0||!!failure;
-      const nextKey=JSON.stringify([ledger.revision,items,details,status()?.provider_warnings,status()?.profile?.active,portPending,failure,working,!!busy(),uiI18n.language]);
+      const nextKey=JSON.stringify([ledger.revision,items,details,s?.provider_warnings,s?.profile?.active,s?.wsl_connection,s?.connection_resume,portPending,failure,working,!!busy(),uiI18n.language]);
       if(nextKey===renderKey)return;renderKey=nextKey;
       card.dataset.state=active?"pending":"ready";
       badge.dataset.visible=String(active||warning);badge.tabIndex=active||warning?0:-1;
