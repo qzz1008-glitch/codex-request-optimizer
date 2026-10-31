@@ -74,7 +74,11 @@ globalThis.InspectorSharing=(()=>{
     input.dataset.finiteValue=finite;input.value=value??"";input.dataset.unlimited=String(value===null);
     if(modified!==undefined)input.dataset.modified=String(modified);
     get(id+"-date").value=finite;input.dataset.minimumDay=minimumExpiry();
-    get(id+"-display").textContent=value===null?tr("无期限"):finite;
+    const original=id==="sharing-inline-expiry"&&editing?.field==="expires_at"?editing.original:undefined;
+    const prior=Number.isFinite(original)&&finite===expiryDay(original)?new Date(original*1000):null;
+    const clock=prior&&(prior.getHours()||prior.getMinutes()||prior.getSeconds()||prior.getMilliseconds())
+      ?String(prior.getHours()).padStart(2,"0")+":"+String(prior.getMinutes()).padStart(2,"0"):"24:00";
+    get(id+"-display").textContent=value===null?tr("无期限"):finite+" "+clock;
     get(id+"-unlimited").checked=value===null;disableExpiry(id);
   }
   function resetIssue(kind){get(kind+"-label").value="";setExpiry(kind+"-expiry",defaultExpiry(),false);if(kind==="quota"){get("quota-budget").value="1";get("quota-weekly").value="";}}
