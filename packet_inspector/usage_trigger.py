@@ -3,11 +3,11 @@ from __future__ import annotations
 
 from itertools import chain
 import json
-import re
 from urllib.parse import urlsplit
 
 from .analyzer import classify_request, decode_body
 from .response_usage import compact_usage, token_values
+from .response_events import EVENT_BOUNDARY as BOUNDARY, response_media_type, sse_fields, sse_payload
 
 DEFAULT_BUDGET_BYTES = 1_000_000
 TOKEN_HEADROOM_BYTES = 50_000
@@ -15,7 +15,6 @@ MIN_BUDGET_BYTES = TOKEN_HEADROOM_BYTES + 1
 TRIGGER_BYTES = DEFAULT_BUDGET_BYTES - TOKEN_HEADROOM_BYTES
 REPORTED_INPUT_TOKENS = 500_000
 MAX_EVENT_BYTES = 4 * 1024 * 1024
-BOUNDARY = re.compile(br"\r?\n\r?\n")
 
 
 def trigger_threshold(budget_bytes):
@@ -61,9 +60,7 @@ class UsageStream:
         self.response, self.record = response, record
         self.rewrite_usage = rewrite
         self.rewrite_response = rewrite
-        self.mode = response.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
-        if self.mode.startswith("application/") and self.mode.endswith("+json"):
-            self.mode = "application/json"
+        self.mode = response_media_type(response.headers)
         encoding = response.headers.get("Content-Encoding", "identity").strip().lower()
         self.enabled = response.status == 200 and encoding in {"", "identity"} and self.mode in {
             "", "text/event-stream", "application/json"}
@@ -74,7 +71,7 @@ class UsageStream:
         if event and value.get("type") != "response.completed":
             return False
         response = value.get("response") if event else value
-        if not isinstance(response, dict) or response.get("status") in {"failed", "incomplete", "cancelled"}:
+        if not isinstance(response, dict) or response.get("status") not in (None, "completed"):
             return False
         usage = response.get("usage")
         if token_values(usage) is None:
@@ -95,22 +92,25 @@ class UsageStream:
     def _frame(self, frame):
         bom = b"\xef\xbb\xbf" if frame.startswith(b"\xef\xbb\xbf") else b""
         lines = frame[len(bom):].splitlines(keepends=True)
-        data = [line[5:].lstrip(b" ").rstrip(b"\r\n") for line in lines if line.startswith(b"data:")]
-        if not data:
-            return frame
         try:
-            value = json.loads(b"\n".join(data))
+            data, event_name = sse_fields(frame)
+            value = sse_payload(data, event_name)
+            original_type = value.get("type") if isinstance(value, dict) else None
         except (ValueError, UnicodeError):
             return frame
         if not self._rewrite(value, event=True):
             return frame
         encoded = json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf8")
         result, inserted = [], False
-        for line in lines:
-            if not line.startswith(b"data:"):
+        event_index = next((i for i in range(len(lines) - 1, -1, -1)
+                            if lines[i].startswith(b"event:")), None)
+        for index, line in enumerate(lines):
+            ending = b"\r\n" if line.endswith(b"\r\n") else b"\n" if line.endswith(b"\n") else b""
+            if index == event_index and event_name == original_type and value.get("type") != original_type:
+                result.append(b"event: " + value["type"].encode("utf8") + ending)
+            elif not line.startswith(b"data:") and line.rstrip(b"\r\n") != b"data":
                 result.append(line)
             elif not inserted:
-                ending = b"\r\n" if line.endswith(b"\r\n") else b"\n" if line.endswith(b"\n") else b""
                 result.append(b"data: " + encoded + ending)
                 inserted = True
         return bom + b"".join(result)

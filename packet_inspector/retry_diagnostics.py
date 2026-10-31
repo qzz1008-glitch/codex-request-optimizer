@@ -11,7 +11,8 @@ import time
 import uuid
 
 from .response_events import (EVENT_BOUNDARY, MAX_OBSERVATION_BYTES, TERMINAL_EVENTS as TERMINALS,
-                             capacity_error, event_shape, notify, stream_event_class)
+                             TERMINAL_STATUSES, capacity_error, event_shape, notify,
+                             response_media_type, sse_fields, sse_payload, stream_event_class)
 from .maintenance import SQLiteReclaimer
 
 RETENTION_DAYS = 30
@@ -265,7 +266,7 @@ class ResponseObservation:
     def __init__(self, trace, headers, on_error=None):
         self.trace = trace
         self.on_error = on_error
-        kind = headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
+        kind = response_media_type(headers)
         self.mode = "sse" if kind == "text/event-stream" else "json" if kind == "application/json" else None
         self.buffer, self.dropping, self.output_seen = bytearray(), False, False
         self.unknown_seen = False
@@ -295,7 +296,7 @@ class ResponseObservation:
             return
         if event_name and not payload.get("type"):
             payload = {**payload, "type": event_name}
-        if not event_type and isinstance(payload.get("status"), str) and payload["status"] in {"completed", "failed", "incomplete"}:
+        if not event_type and isinstance(payload.get("status"), str) and payload["status"] in TERMINAL_STATUSES.values():
             event_type = "response." + payload["status"]
         if event_type in TERMINALS:
             response = payload.get("response")
@@ -339,7 +340,10 @@ class ResponseObservation:
     def _feed(self, chunk):
         self.buffer.extend(chunk)
         if self.mode is None:
-            beginning = bytes(self.buffer).lstrip()
+            prefix = bytes(self.buffer)
+            if len(prefix) < 3 and b"\xef\xbb\xbf".startswith(prefix):
+                return
+            beginning = prefix.removeprefix(b"\xef\xbb\xbf").lstrip()
             if beginning.startswith((b"data:", b"event:", b":", b"id:", b"retry:")):
                 self.mode = "sse"
             elif beginning.startswith(b"{"):
@@ -354,15 +358,14 @@ class ResponseObservation:
                 if len(frame) > MAX_OBSERVATION_BYTES:
                     self.warn("frame_limit")
                 elif not self.dropping:
-                    data = b"\n".join(line[5:].lstrip(b" ") for line in frame.splitlines() if line.startswith(b"data:"))
-                    names = [line[6:].strip().decode("utf8", errors="replace") for line in frame.splitlines() if line.startswith(b"event:")]
-                    terminal_hint = (bool(names and names[-1] in TERMINALS) or
-                                     any(match[1].decode() in TERMINALS for match in TYPE_FIELD.finditer(data)))
-                    if data and data != b"[DONE]" and (terminal_hint or not self.output_seen):
-                        try:
-                            self._payload(json.loads(data), names[-1] if names else "")
-                        except (ValueError, UnicodeError):
-                            self.warn("malformed_event")
+                    try:
+                        data, name = sse_fields(frame)
+                        terminal_hint = (name in TERMINALS or
+                                         any(match[1].decode() in TERMINALS for match in TYPE_FIELD.finditer(data)))
+                        if data and data != b"[DONE]" and (terminal_hint or not self.output_seen):
+                            self._payload(sse_payload(data, name))
+                    except (ValueError, UnicodeError):
+                        self.warn("malformed_event")
                 self.dropping = False
         if len(self.buffer) > MAX_OBSERVATION_BYTES:
             if self.mode == "sse":

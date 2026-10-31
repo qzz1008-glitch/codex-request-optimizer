@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from contextlib import closing
 import json
 from pathlib import Path
 import re
@@ -10,6 +9,8 @@ import shutil
 import sqlite3
 import tomllib
 from urllib.parse import urlsplit
+
+from .native_state import read_state, state_databases
 
 PROVIDER = "codex_packet_inspector"
 BEGIN = "# BEGIN CODEX PACKET INSPECTOR"
@@ -256,11 +257,11 @@ class ConfigLink:
                     return True
             except (OSError, ValueError):
                 return True
-        databases = list(self.config.parent.glob("state_*.sqlite"))
+        databases = state_databases(self.config.parent)
         uncertain = not databases and (self.config.parent / "sessions").is_dir()
         for database in databases:
             try:
-                with closing(sqlite3.connect(database.resolve().as_uri() + "?mode=ro", uri=True, timeout=1)) as connection:
+                with read_state(database, timeout=1) as connection:
                     if connection.execute("SELECT 1 FROM threads WHERE model_provider=? LIMIT 1", (provider_id,)).fetchone():
                         return True
             except (OSError, sqlite3.Error):
