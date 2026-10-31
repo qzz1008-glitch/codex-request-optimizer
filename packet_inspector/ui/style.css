@@ -311,7 +311,7 @@ code.session-id{font-family:Consolas,"Cascadia Mono",monospace;font-size:11px;wo
 #settings-dialog .entry-port-row{display:grid;grid-template-columns:var(--settings-label-width) var(--settings-number-width) minmax(0,1fr);align-items:center;gap:16px;margin:0}
 #settings-dialog .entry-port-row input{width:100%;min-width:0}
 #sharing-settings .entry-port-row+.entry-port-row{margin-top:12px}
-#settings-dialog .entry-port-status{min-width:0;font-size:13px;line-height:20px;color:var(--muted);overflow-wrap:anywhere}
+#settings-dialog .entry-port-status{min-width:0;min-height:20px;font-size:13px;line-height:20px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #settings-dialog .entry-port-status[data-state=active]{color:var(--green)}
 #settings-dialog .entry-port-status:is([data-state=pending],[data-state=unsaved]){color:var(--warn)}
 #settings-dialog .entry-port-status[data-state=error]{color:var(--danger)}
@@ -525,3 +525,20 @@ dialog{width:min(760px,calc(var(--desktop-width) - 80px));max-height:calc(var(--
 .desktop-titlebar .desktop-build:not([hidden]){display:inline-flex;padding:2px 6px;border-radius:4px;background:var(--soft);color:var(--accent);font-size:11px;white-space:nowrap}
 .app-header{position:relative;gap:12px}
 .header-actions{margin-left:auto}
+
+/* Transient feedback must never participate in page or dialog layout. */
+[data-feedback-source]{display:none!important}
+.floating-feedback{
+  position:fixed;inset:auto var(--feedback-right,20px) var(--feedback-bottom,20px) auto;
+  z-index:1000;box-sizing:border-box;width:max-content;
+  max-width:min(var(--feedback-width,480px),calc(100vw - 32px));max-height:min(40vh,320px);
+  margin:0;overflow:auto;font-size:13px;line-height:1.6
+}
+.floating-feedback::backdrop{background:transparent;pointer-events:none}
+.floating-feedback-content{flex:1;min-width:0;overflow-wrap:anywhere}
+.floating-feedback .floating-feedback-content>*{margin:0;padding:0;border:0;border-radius:0;background:transparent;box-shadow:none;color:inherit;font:inherit}
+.floating-feedback .help{margin:0;color:inherit;white-space:normal}
+.floating-feedback>button{position:sticky;top:0}
+#settings-dialog #settings-restore{grid-column:2}
+#settings-dialog #settings-save{grid-column:3}
+#settings-dialog #link-status[hidden]{display:block!important;visibility:hidden}

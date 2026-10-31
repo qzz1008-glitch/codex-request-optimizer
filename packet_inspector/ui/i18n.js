@@ -1058,9 +1058,109 @@ const uiI18n = (() => {
     if(persist)try {localStorage.setItem("packet-inspector-language",language);} catch(_) {}
     if(changed)apply();
   }
+  // Shared by the desktop and tray. Feedback sources stay outside layout;
+  // one top-layer notification mirrors the active source, including save progress.
+  function floatingFeedback() {
+    const sources=[...document.querySelectorAll("[data-feedback-source]")].map(node=>({
+      node,content:node.id==="notice"?node.querySelector("#notice-text"):node,
+      signature:"",timer:null,delay:Number(node.dataset.feedbackDelay)||0
+    }));
+    const popup=document.createElement("div"),content=document.createElement("div"),close=document.createElement("button");
+    popup.className="notice floating-feedback";popup.hidden=true;popup.setAttribute("aria-atomic","true");
+    content.className="floating-feedback-content";close.type="button";close.textContent="×";
+    popup.append(content,close);document.body.append(popup);
+    if(typeof popup.showPopover==="function")popup.setAttribute("popover","manual");
+    let active=null,previousFocus=null,locale=language;
+    function snapshot(entry) {
+      const {node}=entry;
+      if(!node.isConnected)return null;
+      let priority=0;
+      for(let owner=node;owner;owner=owner.parentElement) {
+        if(owner.hidden||(owner.tagName==="DIALOG"&&!owner.open))return null;
+        if(owner.tagName==="DIALOG")priority+=20;
+        if(owner.id==="sharing-inline-editor")priority+=10;
+      }
+      const clone=entry.content.cloneNode(true);
+      for(const hidden of clone.querySelectorAll("[hidden]"))hidden.remove();
+      const value=clone.textContent.trim();
+      if(!value)return null;
+      const error=node.classList.contains("error")||(node.id!=="notice"&&node.getAttribute("role")==="alert")||!!clone.querySelector('.error,[data-state="error"]');
+      return {clone,error,priority:priority+(error?100:0),signature:JSON.stringify([value,error])};
+    }
+    function hide() {
+      try {if(popup.matches(":popover-open"))popup.hidePopover();}catch(_) {}
+      popup.hidden=true;active=null;
+    }
+    function dismiss() {
+      const restore=document.activeElement===close&&previousFocus?.isConnected;
+      hide();if(restore)previousFocus.focus({preventScroll:true});
+    }
+    function place() {
+      const dialogs=[...document.querySelectorAll("dialog[open]")];
+      const dialog=document.activeElement?.closest("dialog[open]")||dialogs.at(-1),host=dialog||document.body;
+      if(popup.parentElement!==host) {
+        try {if(popup.matches(":popover-open"))popup.hidePopover();}catch(_) {}
+        host.append(popup);
+      }
+      const rect=dialog?.getBoundingClientRect(),footer=dialog?.querySelector(".settings-footer,.button-row");
+      popup.style.setProperty("--feedback-right",rect?Math.max(16,innerWidth-rect.right+16)+"px":"20px");
+      popup.style.setProperty("--feedback-bottom",rect?Math.max(16,innerHeight-rect.bottom+(footer?.getBoundingClientRect().height||32)+12)+"px":"20px");
+      popup.style.setProperty("--feedback-width",rect?Math.max(160,rect.width-32)+"px":"480px");
+      if(popup.hasAttribute("popover")) {
+        try {if(!popup.matches(":popover-open"))popup.showPopover();}
+        catch(_) {popup.removeAttribute("popover");} // Older WebViews use the dialog's own layer.
+      }
+    }
+    function present(entry,value) {
+      if(active&&snapshot(active.entry)?.error&&!value.error&&active.entry!==entry)return;
+      if(!active)previousFocus=document.activeElement;
+      const clone=value.clone;
+      for(const node of [clone,...clone.querySelectorAll("[id],[data-feedback-source],[role],[aria-live]")]) {
+        for(const attribute of ["id","data-feedback-source","role","aria-live"])node.removeAttribute(attribute);
+      }
+      content.replaceChildren(clone);
+      popup.classList.toggle("error",value.error);popup.setAttribute("role",value.error?"alert":"status");
+      close.setAttribute("aria-label",t("关闭提示"));close.title=t("关闭提示");
+      active={entry};popup.hidden=false;place();
+    }
+    function refresh() {
+      const translated=locale!==language;locale=language;
+      const candidates=[];
+      for(const entry of sources) {
+        const value=snapshot(entry),signature=value?.signature||"";
+        if(signature===entry.signature)continue;
+        entry.signature=signature;clearTimeout(entry.timer);entry.timer=null;
+        if(!value||translated)continue;
+        if(entry.delay) {
+          entry.timer=setTimeout(()=>{
+            entry.timer=null;const latest=snapshot(entry);
+            if(latest?.signature===signature)present(entry,latest);
+          },entry.delay);
+        }else candidates.push({entry,value});
+      }
+      if(active&&!snapshot(active.entry))hide();
+      candidates.sort((a,b)=>b.value.priority-a.value.priority);
+      if(candidates.length)present(candidates[0].entry,candidates[0].value);
+      else if(active)present(active.entry,snapshot(active.entry));
+    }
+    const observer=new MutationObserver(refresh),owners=new Set();
+    for(const {node} of sources) {
+      observer.observe(node,{subtree:true,childList:true,characterData:true,attributes:true,attributeFilter:["hidden","class","data-state"]});
+      for(let owner=node.parentElement;owner;owner=owner.parentElement)owners.add(owner);
+    }
+    for(const owner of owners)observer.observe(owner,{attributes:true,attributeFilter:["hidden","open"]});
+    observer.observe(document.documentElement,{attributes:true,attributeFilter:["lang"]});
+    close.addEventListener("click",dismiss);
+    document.addEventListener("keydown",event=>{
+      if(event.key==="Escape"&&active){event.preventDefault();event.stopPropagation();dismiss();}
+    },true);
+    globalThis.addEventListener("resize",()=>{if(active)place();});
+    refresh();
+    return {dismiss,refresh};
+  }
   function labels(values) {return new Proxy(values,{get:(target,key)=>typeof target[key]==="string"?t(target[key]):target[key]});}
   apply();
-  return {t,text,apply,setLanguage,labels,get language(){return language;}};
+  return {t,text,apply,setLanguage,labels,floatingFeedback,get language(){return language;}};
 })();
 
 function t(value) {return uiI18n.t(value);}

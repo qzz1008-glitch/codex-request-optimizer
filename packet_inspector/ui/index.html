@@ -29,7 +29,7 @@
       <button id="window-close" type="button" title="关闭" aria-label="关闭"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="m1.5 1.5 9 9m0-9-9 9"/></svg></button>
     </div>
   </header>
-  <div id="notice" class="notice" role="alert" hidden><span id="notice-text"></span><button id="notice-dismiss" type="button" aria-label="关闭提示" title="关闭提示">×</button></div>
+  <div id="notice" data-feedback-source class="notice" role="alert" hidden><span id="notice-text"></span><button id="notice-dismiss" type="button" aria-label="关闭提示" title="关闭提示">×</button></div>
   <main id="records-view" class="workspace">
     <aside class="sessions-sidebar" aria-label="会话">
       <div class="sidebar-title sessions-title"><h1>会话</h1><input id="session-search" class="session-search" type="search" placeholder="搜索会话" aria-label="搜索会话名称或 session_id" autocomplete="off" spellcheck="false"></div>
@@ -52,7 +52,7 @@
           <tbody id="packet-rows"></tbody>
         </table>
         <p id="list-empty" class="muted help" hidden></p>
-        <p id="list-loading" class="list-loading" role="status" hidden>正在加载更多记录…</p>
+        <p id="list-loading" data-feedback-source data-feedback-delay="200" class="list-loading" role="status" hidden>正在加载更多记录…</p>
       </div>
     </aside>
     <section class="detail">
@@ -98,7 +98,7 @@
     </section>
   </main>
   <main id="sharing-view" class="sharing-workspace" hidden>
-    <p id="sharing-message" class="sharing-message" role="status" hidden></p>
+    <p id="sharing-message" data-feedback-source class="sharing-message" role="status" hidden></p>
     <div id="sharing-cards" class="sharing-layout">
       <section class="sharing-section" aria-labelledby="quota-section-title">
         <header class="sharing-section-header"><h2 id="quota-section-title" tabindex="-1">额度</h2><span id="quota-credential-count" class="sharing-credential-count"></span><div class="sharing-switch" role="group" aria-labelledby="quota-section-title"><button type="button" data-view="out" data-kind="quota" aria-pressed="true">借出</button><button type="button" data-view="in" data-kind="quota" aria-pressed="false">借入</button></div></header>
@@ -123,7 +123,7 @@
       <label id="sharing-inline-label" for="sharing-inline-value"></label>
       <input id="sharing-inline-value" required>
       <div id="sharing-inline-expiry-container" hidden></div>
-      <p id="sharing-inline-message" class="sharing-edit-message" role="alert" hidden></p>
+      <p id="sharing-inline-message" data-feedback-source class="sharing-edit-message" role="alert" hidden></p>
       <div class="sharing-inline-footer"><div class="sharing-inline-actions"><button id="sharing-inline-cancel" type="button">取消</button><button id="sharing-inline-save" class="primary" type="submit">保存</button></div></div>
     </form>
   </main>
@@ -132,28 +132,28 @@
     <p id="sharing-delete-name" class="sharing-delete-name"></p>
     <p id="sharing-delete-description"></p>
     <p id="sharing-delete-hint" class="muted help" hidden></p>
-    <p id="sharing-delete-message" class="sharing-edit-message" role="alert" hidden></p>
+    <p id="sharing-delete-message" data-feedback-source class="sharing-edit-message" role="alert" hidden></p>
     <div class="button-row"><button id="sharing-delete-cancel" type="button" autofocus>取消</button><button id="sharing-delete-confirm" class="sharing-delete-button" type="button">确认删除</button></div>
   </dialog>
   <dialog id="compression-confirm-dialog" aria-labelledby="compression-confirm-title" aria-describedby="compression-confirm-description compression-confirm-hint">
     <h2 id="compression-confirm-title">取消接入</h2>
     <p id="compression-confirm-description"></p>
     <p id="compression-confirm-hint" class="muted help">重启 ChatGPT App 生效。</p>
-    <p id="compression-confirm-message" class="help error" role="alert" hidden></p>
+    <p id="compression-confirm-message" data-feedback-source class="help error" role="alert" hidden></p>
     <div class="button-row"><button id="compression-confirm-cancel" type="button" autofocus>保持接入</button><button id="compression-confirm-apply" class="primary" type="button">确认断开</button></div>
   </dialog>
   <dialog id="connect-confirm-dialog" aria-labelledby="connect-confirm-title" aria-describedby="connect-confirm-description connect-confirm-hint">
     <h2 id="connect-confirm-title">接入 Codex</h2>
     <p id="connect-confirm-description">当前尚未接入 Codex。是否接入并启用请求中转？</p>
     <p id="connect-confirm-hint" class="muted help">接入后关闭原生压缩，由本软件管理 zstd。配置变更后需重启 ChatGPT App。</p>
-    <p id="connect-confirm-message" class="help error" role="alert" hidden></p>
+    <p id="connect-confirm-message" data-feedback-source class="help error" role="alert" hidden></p>
     <div class="button-row"><button id="connect-confirm-cancel" type="button" autofocus>暂不接入</button><button id="connect-confirm-apply" class="primary" type="button">确认接入</button></div>
   </dialog>
   <dialog id="exit-confirm-dialog" aria-labelledby="exit-confirm-title" aria-describedby="exit-confirm-description exit-confirm-hint">
     <h2 id="exit-confirm-title">退出程序</h2>
     <p id="exit-confirm-description">当前仍处于接入状态。退出后中转服务将停止，Codex 将无法通过当前出口发送请求。</p>
     <p id="exit-confirm-hint" class="muted help">建议选择“切换并退出”，恢复原出口后重启 ChatGPT App。直接退出会保留接入配置，下次使用前需重新打开本程序。</p>
-    <p id="exit-confirm-message" class="help error" role="alert" hidden></p>
+    <p id="exit-confirm-message" data-feedback-source class="help error" role="alert" hidden></p>
     <div class="button-row"><button id="exit-confirm-cancel" type="button" autofocus>取消</button><button id="exit-confirm-direct" type="button">直接退出</button><button id="exit-confirm-restore" class="primary" type="button">切换并退出</button></div>
   </dialog>
   <dialog id="settings-dialog" aria-labelledby="settings-title">
@@ -162,7 +162,7 @@
     <div class="settings-language-row" data-settings-field="language"><span>语言</span><div id="language-toggle" class="language-toggle" role="group" aria-label="语言"><button id="language-zh" type="button" data-language="zh" aria-pressed="true" lang="zh-CN">中文</button><button id="language-en" type="button" data-language="en" aria-pressed="false" lang="en">English</button></div></div>
     <section><h3>Codex 接入</h3>
       <div class="entry-port-row" data-settings-field="entry_port"><label for="entry-port">入口端口</label><input id="entry-port" type="number" min="1024" max="65535" step="1" value="47844" required aria-describedby="link-status"><span id="link-status" class="entry-port-status" role="status" aria-live="polite" hidden></span></div>
-      <p id="entry-port-message" class="help" role="status" hidden></p>
+      <p id="entry-port-message" data-feedback-source class="help" role="status" hidden></p>
     </section>
     <section id="sharing-settings"><h3>局域网共享</h3>
       <div class="entry-port-row" data-settings-field="sharing_port"><label for="sharing-port">额度端口</label><input id="sharing-port" type="number" min="1" max="65535" step="1" value="47846" required></div>
@@ -182,17 +182,17 @@
           <div class="context-default"><input id="compact-default" type="checkbox" aria-labelledby="compact-label compact-default-label"><span id="compact-default-label">默认</span></div>
         </div>
       </div>
-      <p id="context-message" class="help" role="status" hidden></p>
+      <p id="context-message" data-feedback-source class="help" role="status" hidden></p>
     </section>
     <section id="request-protection-settings"><h3>请求保护</h3>
       <div class="packet-size-controls">
         <div class="overflow-toggle" data-settings-field="packet_size_protection_enabled"><input id="packet-size-protection" type="checkbox" aria-labelledby="packet-size-protection-label"><span id="packet-size-protection-label">请求大小保护</span></div>
         <label class="packet-size-limit" for="budget" data-settings-field="budget"><span id="budget-label">请求大小上限</span><span class="packet-size-value"><input id="budget" type="number" min="50.001" max="134217.728" step="0.001" value="1000" aria-labelledby="budget-label" aria-describedby="budget-unit" required disabled><span id="budget-unit" class="packet-size-unit">KB</span></span></label>
       </div>
-      <p id="packet-size-message" class="help" role="status" hidden></p>
+      <p id="packet-size-message" data-feedback-source class="help" role="status" hidden></p>
       <div class="runtime-setting-row auto-zstd-row" data-settings-field="auto_zstd_level_enabled"><div class="runtime-toggle"><input id="auto-zstd-level" type="checkbox" aria-labelledby="auto-zstd-level-label" aria-describedby="auto-zstd-level-hint" disabled><span id="auto-zstd-level-label">自动压缩等级</span></div><p id="auto-zstd-level-hint" class="help muted runtime-inline-hint">根据请求大小自动选择合适的压缩等级，开启后禁用手动选择。</p></div>
       <div class="runtime-setting-row runtime-retry-row"><div class="runtime-toggle" data-settings-field="capacity_retry_enabled"><input id="capacity-retry" type="checkbox" aria-labelledby="capacity-retry-label"><span id="capacity-retry-label" title="模型容量不足时自动重试">容量不足重试</span></div><div class="capacity-retry-options"><div class="capacity-retry-limit" data-settings-field="capacity_retry_max_retries"><label for="capacity-retry-count">重试次数</label><input id="capacity-retry-count" type="number" min="1" max="99" step="1" value="15" inputmode="numeric" required><span>次</span></div><div class="capacity-retry-limit" data-settings-field="capacity_retry_delay_seconds"><label for="capacity-retry-delay">等待时间</label><input id="capacity-retry-delay" type="number" min="1" max="99" step="1" value="30" inputmode="numeric" required><span>秒</span></div></div></div>
-      <p id="runtime-settings-message" class="help" role="status" hidden></p>
+      <p id="runtime-settings-message" data-feedback-source class="help" role="status" hidden></p>
     </section>
     <section id="compression-settings" aria-labelledby="compression-settings-title" aria-disabled="false">
       <h3 id="compression-settings-title">传输压缩</h3>
@@ -201,7 +201,7 @@
         <input id="zstd-level" type="hidden" value="3" disabled>
         <button id="zstd-level-open" class="zstd-level-trigger" type="button" aria-haspopup="dialog" aria-controls="zstd-level-dialog" aria-describedby="auto-zstd-level-hint" aria-expanded="false" disabled><span id="zstd-level-value">3级</span><svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
       </div>
-      <p id="zstd-level-message" class="help" role="status" hidden></p>
+      <p id="zstd-level-message" data-feedback-source class="help" role="status" hidden></p>
       <div class="zstd-level-control" data-settings-field="image_zstd_level">
         <label for="image-zstd-level-open">图片压缩等级</label>
         <input id="image-zstd-level" type="hidden" value="6" disabled>
@@ -217,7 +217,7 @@
         </fieldset>
         <p id="image-isolation-hint" class="muted help runtime-inline-hint" aria-live="polite">卸载优化工具，恢复原生图片解析</p>
       </div>
-      <p id="image-isolation-message" class="help" role="status" hidden></p>
+      <p id="image-isolation-message" data-feedback-source class="help" role="status" hidden></p>
     </section>
     <section id="storage-location-settings" aria-labelledby="storage-location-title">
       <h3 id="storage-location-title">存储位置</h3>
@@ -232,7 +232,7 @@
       <div class="image-directory-settings" data-settings-field="image_save_dir">
         <label for="image-save-dir">图片目录</label>
         <div class="image-directory-row"><input id="image-save-dir" type="text" spellcheck="false" autocomplete="off"><div class="image-directory-actions"><button id="image-save-dir-open" type="button" aria-label="打开图片目录" disabled>打开</button><button id="image-save-dir-reset" type="button">默认目录</button></div></div>
-        <p id="image-save-dir-message" class="help" role="status" hidden></p>
+        <p id="image-save-dir-message" data-feedback-source class="help" role="status" hidden></p>
       </div>
       <p id="storage-paths-hint" class="help muted" hidden></p>
     </section>
@@ -248,13 +248,13 @@
         </div>
         <div class="updates-details">
           <p id="updates-versions" class="muted help"></p>
-          <span id="updates-message" class="help updates-status" role="status" aria-atomic="true" hidden></span>
+          <span id="updates-message" data-feedback-source class="help updates-status" role="status" aria-atomic="true" hidden></span>
         </div>
       </div>
     </section>
     </div>
     <div class="settings-footer">
-      <div class="settings-feedback"><p id="settings-message" class="help muted" role="status" aria-live="polite"></p><ol id="settings-save-log" class="settings-save-log" aria-label="保存进度" hidden></ol></div>
+      <div class="settings-feedback" data-feedback-source><p id="settings-message" class="help muted" role="status" aria-live="polite"></p><ol id="settings-save-log" class="settings-save-log" aria-label="保存进度" hidden></ol></div>
       <button id="settings-restore" type="button" disabled>恢复</button>
       <button id="settings-save" class="primary" type="button" aria-busy="false" disabled><span class="settings-save-spinner" aria-hidden="true"></span><span id="settings-save-label">保存</span></button>
     </div>
