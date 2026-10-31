@@ -142,7 +142,6 @@ const uiI18n = (() => {
     "使用本机额度时需保持主页面接入。":"With local quota, keep the main page connected.",
     "额度端口":"Quota port",
     "出口端口":"Exit port",
-    "下次开启共享时生效。":"Applies the next time sharing starts.",
     "累计值可能不完整。":"Totals may be incomplete.",
     "使用本机出口，额度由提供方扣除。":"Uses this computer’s exit and the provider’s quota.",
     "已开启，可复制链接分享。":"Sharing started. Copy the link to share.",
