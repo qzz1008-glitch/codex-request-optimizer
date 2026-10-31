@@ -18,6 +18,33 @@ A local request analysis and optimization tool for Codex on Windows x64 (64-bit)
 
 Capacity retries handle: `Selected model is at capacity. Please try a different model.`
 
+## 🖼️ Interface previews
+
+These previews use the real frontend with fictional sample data.
+
+![Request analysis: sessions, request records, and size breakdown](images/records.en.webp)
+
+<details>
+<summary>📈 Trend analysis</summary>
+
+![Trend analysis: token usage and request size over time](images/trends.en.webp)
+
+</details>
+
+<details>
+<summary>🤝 Quota and network sharing</summary>
+
+![Sharing management: independent quota and network credentials](images/sharing.en.webp)
+
+</details>
+
+<details>
+<summary>⚙️ Context, protection, and compression settings</summary>
+
+![Settings: context, request size protection, and transfer compression](images/settings.en.webp)
+
+</details>
+
 ## 🚀 Usage
 
 1. Download `CodexPacketInspector.exe` from [Releases](https://github.com/qzz1008-glitch/codex-request-optimizer/releases) and run it to install. No Python setup is needed.

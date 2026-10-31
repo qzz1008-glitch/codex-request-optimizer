@@ -18,6 +18,33 @@ Codex 的本地请求分析与优化工具，运行于 Windows x64（64 位）�
 
 容量重试针对报错：`Selected model is at capacity. Please try a different model.`
 
+## 🖼️ 界面预览
+
+界面图由真实前端和虚构示例数据生成。
+
+![请求分析：会话列表、请求记录与大小构成](docs/images/records.zh.webp)
+
+<details>
+<summary>📈 趋势分析</summary>
+
+![趋势分析：Token 用量与请求大小变化](docs/images/trends.zh.webp)
+
+</details>
+
+<details>
+<summary>🤝 额度与网络共享</summary>
+
+![共享管理：独立管理额度与网络凭据](docs/images/sharing.zh.webp)
+
+</details>
+
+<details>
+<summary>⚙️ 上下文、保护与压缩设置</summary>
+
+![设置：上下文、请求大小保护与传输压缩选项](docs/images/settings.zh.webp)
+
+</details>
+
 ## 🚀 使用
 
 1. 从 [Releases](https://github.com/qzz1008-glitch/codex-request-optimizer/releases) 下载 `CodexPacketInspector.exe`，双击安装运行，无需 Python。
