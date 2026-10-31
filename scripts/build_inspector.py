@@ -152,8 +152,11 @@ def main(argv=None):
     parser.add_argument("--output-dir",type=Path)
     parser.add_argument("--mode",choices=("dev","release"),default="release")
     parser.add_argument("--portable-dev",action="store_true")
+    parser.add_argument("--release-only",action="store_true",help="omit the companion development EXE from a release build")
     parser.add_argument("--check-source",action="store_true",help="validate the shared source without building")
     args=parser.parse_args(argv)
+    if args.release_only and args.mode!="release":
+        parser.error("--release-only requires --mode release")
     try:
         workspace=Workspace(ROOT)
         with workspace.lock():
@@ -171,7 +174,8 @@ def main(argv=None):
             licenses=collect_licenses(snapshot.source,work)
             executable=compile_executable(snapshot,args.mode,args.portable_dev,work,stage,licenses)
             if args.mode=="release":
-                compile_executable(snapshot,"dev",True,work,stage,licenses)
+                if not args.release_only:
+                    compile_executable(snapshot,"dev",True,work,stage,licenses)
                 package_release(snapshot.source,stage,licenses)
             snapshot.write_manifest(stage/"BUILD-SOURCE.json",args.mode)
             snapshot.assert_unchanged()
