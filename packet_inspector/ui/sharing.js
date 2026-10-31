@@ -32,11 +32,11 @@ globalThis.InspectorSharing=(()=>{
   const editingExpiry=id=>id==="sharing-inline-expiry"&&editing?.field==="expires_at";
   const resetWeekdays=["周一","周二","周三","周四","周五","周六","周日"];
   const weeklyPickerOpen=()=>globalThis.CSS?.supports?.("selector(select:open)")&&get("sharing-cards").querySelector(".sharing-weekly-select:open");
-  const weeklyLabel=value=>value===null||value===""?tr("不刷新"):tr(resetWeekdays[value])+" 00:00";
+  const weeklyLabel=(value,includeTime=false)=>value===null||value===""?tr("不刷新"):tr(resetWeekdays[value])+(includeTime?" 00:00":"");
   function syncWeeklyLabel(input){const display=input.parentElement?.querySelector(".sharing-weekly-value");if(display)display.textContent=weeklyLabel(input.value);}
-  function weeklyOptions(value=null){
+  function weeklyOptions(value=null,includeTime=true){
     const selected=value===null?"":String(value);
-    return [["",esc(weeklyLabel(null))],...resetWeekdays.map((_,index)=>[String(index),esc(weeklyLabel(index))])].map(([key,text])=>`<option value="${key}"${key===selected?" selected":""}>${text}</option>`).join("");
+    return [["",esc(weeklyLabel(null))],...resetWeekdays.map((_,index)=>[String(index),esc(weeklyLabel(index,includeTime))])].map(([key,text])=>`<option value="${key}"${key===selected?" selected":""}>${text}</option>`).join("");
   }
   function weeklyDay(row){const d=data(row);return typeof d.weekly_reset!=="boolean"?undefined:d.weekly_reset?(d.weekly_reset_day??0):null;}
   function weeklySettings(value){
@@ -195,7 +195,7 @@ globalThis.InspectorSharing=(()=>{
   function weeklyValue(row){
     const value=weeklyDay(row);
     if(value===undefined)return `<small title="${label("由提供方管理")}">—</small>`;
-    return `<span class="sharing-weekly-control"><span class="sharing-weekly-value" aria-hidden="true">${esc(weeklyLabel(value))}</span><select class="sharing-weekly-select" data-action="weekly" data-id="${row.id}" aria-label="${label("每周刷新")}" title="${label(row.direction==="in"?"由提供方管理":"按提供方本机时间，在所选当天零点刷新。")}"${row.direction==="in"?" disabled":""}>${weeklyOptions(value)}</select></span>`;
+    return `<span class="sharing-weekly-control"><span class="sharing-weekly-value" aria-hidden="true">${esc(weeklyLabel(value))}</span><select class="sharing-weekly-select" data-action="weekly" data-id="${row.id}" aria-label="${label("每周刷新")}" title="${label(row.direction==="in"?"由提供方管理":"按提供方本机时间，在所选当天零点刷新。")}"${row.direction==="in"?" disabled":""}>${weeklyOptions(value,false)}</select></span>`;
   }
   function quotaUsage(row){
     const d=data(row),used=d.period_cost_nanos,budget=d.budget_nanos,knownUsed=Number.isFinite(used)&&used>=0,knownBudget=Number.isFinite(budget)&&budget>=0;
