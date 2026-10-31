@@ -16,7 +16,7 @@ globalThis.InspectorSharing=(()=>{
     const d=new Date(day+"T00:00");if(!Number.isFinite(d.getTime())||localDay(d.getTime())!==day)return NaN;
     d.setDate(d.getDate()+1);d.setHours(0,0,0,0);return d.getTime()/1000;
   }
-  let active=false,busy=false,current=null,timer=null,controller=null,recoveryShown=false,editing=null,deleting=null,copiedKey=null,copyTimer=null,calendar=null;
+  let active=false,busy=false,current=null,timer=null,controller=null,recoveryShown=false,editing=null,deleting=null,copiedKey=null,copyTimer=null,calendar=null,dragging=null;
   const views={quota:"out",exit:"out"};
   const message=(value,error=false)=>{const box=get("sharing-message");box.textContent=tr(value);box.hidden=!value;box.classList.toggle("error",error);for(const id of ["sharing-inline-message","sharing-delete-message"]){const local=get(id);local.textContent=error?tr(value):"";local.hidden=!error;}};
   const expiryIds=["quota-expiry","exit-expiry","sharing-inline-expiry"];
@@ -129,7 +129,7 @@ globalThis.InspectorSharing=(()=>{
   async function request(data,signal){
     const response=await fetch("/api/sharing",{method:data?"POST":"GET",cache:"no-store",headers:data?{"Content-Type":"application/json"}:{},body:data?JSON.stringify(data):undefined,signal});
     if(response.status===404)throw new Error(tr("当前后台不支持共享，请更新软件后使用。"));
-    const result=await response.json();if(!response.ok){if(data?.action==="credential_delete"&&result.error==="invalid sharing action")throw new Error(tr("当前后台不支持删除凭据，请更新软件后重试。"));throw new Error(tr(result.error||"共享操作失败。"));}return result;
+    const result=await response.json();if(!response.ok){if(data?.action==="credential_delete"&&result.error==="invalid sharing action")throw new Error(tr("当前后台不支持删除凭据，请更新软件后重试。"));if(data?.action==="credential_reorder"&&result.error==="invalid sharing action")throw new Error(tr("当前后台不支持凭据排序，请更新软件后重试。"));throw new Error(tr(result.error||"共享操作失败。"));}return result;
   }
   function shownRows(kind){return (current?.credentials||[]).filter(row=>row.kind===kind&&row.direction===views[kind]&&!row.internal);}
   function data(row){return row.direction==="in"?(row.snapshot||{}):row;}
@@ -140,7 +140,8 @@ globalThis.InspectorSharing=(()=>{
   function status(row){const d=data(row);return isActive(row)?row.online===false?"连接不可用":"使用中":d.expired?"已到期":d.enabled===false||(row.direction==="out"&&!lending(row))?"已停用":d.exhausted?"额度已用完":row.direction==="in"?"未使用":"已启用";}
   function fieldValue(row,field,text){
     if(row.direction!=="out"&&field!=="label")return `<span title="${label("由提供方管理")}">${text}</span>`;
-    return `<button type="button" class="sharing-cell-value${field==="expires_at"?" sharing-expiry-trigger":""}" data-action="field" data-field="${field}" data-id="${row.id}" aria-controls="sharing-inline-editor" aria-expanded="false" title="${label("点击修改")}">${text}</button>`;
+    const handle=field==="label"?`<button type="button" class="sharing-drag-handle" draggable="true" data-drag-id="${row.id}" title="${label("拖动排序")}" aria-label="${label("拖动排序")} · ${esc(row.label)}" aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"><svg viewBox="0 0 12 18" aria-hidden="true"><circle cx="3" cy="4" r="1"/><circle cx="9" cy="4" r="1"/><circle cx="3" cy="9" r="1"/><circle cx="9" cy="9" r="1"/><circle cx="3" cy="14" r="1"/><circle cx="9" cy="14" r="1"/></svg></button>`:"";
+    return handle+`<button type="button" class="sharing-cell-value${field==="expires_at"?" sharing-expiry-trigger":""}" data-action="field" data-field="${field}" data-id="${row.id}" aria-controls="sharing-inline-editor" aria-expanded="false" title="${label("点击修改")}">${text}</button>`;
   }
   function weeklyValue(row){
     const value=data(row).weekly_reset;
@@ -164,7 +165,7 @@ globalThis.InspectorSharing=(()=>{
   }
   function render(value){
     if(!value.credentials_supported||value.protocol<4){closeInline(false);closeDelete(false);current=null;get("sharing-cards").hidden=true;message("当前后台不支持凭据管理，请更新软件。",true);return;}
-    current=value;if(editing||deleting)return;get("sharing-cards").hidden=false;
+    current=value;if(editing||deleting||dragging)return;get("sharing-cards").hidden=false;
     const hosting=value.host?.running===true,borrowing=value.client?.active===true;
     for(const kind of ["quota","exit"]){const out=views[kind]==="out";get(kind+"-issue").hidden=!out;get(kind+"-borrow").hidden=out;
       get(kind+"-generate").hidden=!out;get(kind+"-activate").hidden=out;
@@ -182,7 +183,47 @@ globalThis.InspectorSharing=(()=>{
     try{const result=await request(dataValue),{link,...state}=result;
       render(state);if(link)await copy(link,dataValue.action==="credential_issue"?dataValue.kind+"-generate":dataValue.id);else if(result.reload_required===true)message(dataValue.action==="credential_delete"?"已删除凭据。请重新加载 Codex 配置或重启 ChatGPT 应用。":"已切换额度来源。请重新加载 Codex 配置或重启 ChatGPT 应用。");else message(success===null?"":success||"已更新，新请求使用当前设置。");return result;
     }catch(error){message(error.message,true);}finally{busy=false;button?.setAttribute("aria-busy","false");if(button)button.disabled=false;if(current)render(current);}}
-  async function refresh(){if(!active||document.hidden||busy||editing||deleting||calendar)return;controller?.abort();const task=new AbortController();controller=task;try{const value=await request(null,task.signal);if(active&&!task.signal.aborted)render(value);}catch(error){if(error.name!=="AbortError")message(error.message,true);}finally{if(controller===task)controller=null;}}
+  async function refresh(){if(!active||document.hidden||busy||editing||deleting||calendar||dragging)return;controller?.abort();const task=new AbortController();controller=task;try{const value=await request(null,task.signal);if(active&&!task.signal.aborted)render(value);}catch(error){if(error.name!=="AbortError")message(error.message,true);}finally{if(controller===task)controller=null;}}
+  function clearDrop(){
+    dragging?.target?.classList.remove("sharing-drop-before","sharing-drop-after");if(dragging)dragging.target=null;
+  }
+  function finishDrag(){if(!dragging)return;dragging.source.classList.remove("sharing-dragging");clearDrop();dragging=null;}
+  function dropTarget(event){
+    const element=event.target.closest("tr"),id=element?.querySelector("[data-drag-id]")?.dataset.dragId,row=(current?.credentials||[]).find(row=>row.id===id);
+    return dragging&&row&&row.id!==dragging.id&&row.kind===dragging.kind&&row.direction===dragging.direction?{element,row}:null;
+  }
+  async function moveCredential(identifier,target,after){
+    if(busy)return;
+    const source=(current?.credentials||[]).find(row=>row.id===identifier),destination=(current?.credentials||[]).find(row=>row.id===target);
+    if(!source||!destination||source.internal||destination.internal||source.kind!==destination.kind||source.direction!==destination.direction||source.direction!==views[source.kind]||identifier===target)return;
+    const previous=current,rows=shownRows(source.kind),order=rows.filter(row=>row.id!==identifier);
+    order.splice(order.findIndex(row=>row.id===target)+(after?1:0),0,source);
+    if(rows.every((row,index)=>row.id===order[index].id))return;
+    let index=0;closeInline(false);render({...previous,credentials:previous.credentials.map(row=>row.kind===source.kind&&row.direction===source.direction&&!row.internal?order[index++]:row)});
+    const body=get(source.kind+"-credential-rows");body.setAttribute("aria-busy","true");
+    try{const result=await action(null,{action:"credential_reorder",id:identifier,target_id:target,after},null);if(!result)render(previous);return result;}
+    finally{body.setAttribute("aria-busy","false");body.querySelector(`[data-drag-id="${identifier}"]`)?.focus();}
+  }
+  get("sharing-cards").addEventListener("dragstart",event=>{
+    const handle=event.target.closest("[data-drag-id]"),row=(current?.credentials||[]).find(row=>row.id===handle?.dataset.dragId);
+    if(busy||deleting||!row||row.internal||shownRows(row.kind).length<2){event.preventDefault();return;}
+    controller?.abort();closeInline(false);finishDrag();dragging={id:row.id,kind:row.kind,direction:row.direction,source:handle.closest("tr"),target:null};dragging.source.classList.add("sharing-dragging");
+    event.dataTransfer.effectAllowed="move";event.dataTransfer.setData("application/x-inspector-credential",row.id);
+  });
+  get("sharing-cards").addEventListener("dragover",event=>{
+    const target=dropTarget(event);clearDrop();if(!target)return;
+    event.preventDefault();event.dataTransfer.dropEffect="move";const rect=target.element.getBoundingClientRect(),after=event.clientY>rect.top+rect.height/2;dragging.target=target.element;target.element.classList.add(after?"sharing-drop-after":"sharing-drop-before");
+    const scroll=target.element.closest(".sharing-table-scroll"),bounds=scroll?.getBoundingClientRect();if(bounds){if(event.clientY<bounds.top+24)scroll.scrollBy(0,-12);else if(event.clientY>bounds.bottom-24)scroll.scrollBy(0,12);}
+  });
+  get("sharing-cards").addEventListener("drop",async event=>{
+    const target=dropTarget(event),draft=dragging;if(!target){finishDrag();return;}event.preventDefault();const rect=target.element.getBoundingClientRect(),after=event.clientY>rect.top+rect.height/2;finishDrag();await moveCredential(draft.id,target.row.id,after);
+  });
+  get("sharing-cards").addEventListener("dragend",finishDrag);
+  get("sharing-cards").addEventListener("dragleave",event=>{if(!get("sharing-cards").contains(event.relatedTarget))clearDrop();});
+  get("sharing-cards").addEventListener("keydown",async event=>{
+    const handle=event.target.closest("[data-drag-id]");if(!handle||!event.altKey||!["ArrowUp","ArrowDown"].includes(event.key))return;
+    event.preventDefault();const row=(current?.credentials||[]).find(row=>row.id===handle.dataset.dragId);if(!row)return;const rows=shownRows(row.kind),index=rows.findIndex(item=>item.id===row.id),down=event.key==="ArrowDown",target=rows[index+(down?1:-1)];if(target)await moveCredential(row.id,target.id,down);
+  });
   function positionInline(){
     if(!editing)return;
     const box=get("sharing-inline-editor"),anchor=editing.anchor.getBoundingClientRect(),rect=box.getBoundingClientRect(),margin=12;
@@ -287,7 +328,7 @@ globalThis.InspectorSharing=(()=>{
     await action(input,{action:"credential_edit",id:row.id,weekly_reset:value},null);
   });
   document.addEventListener("visibilitychange",()=>{if(document.hidden)controller?.abort();else if(active)refresh();});
-  function setActive(value){active=value;clearInterval(timer);timer=null;if(!active){controller?.abort();clearCopied();closeInline(false);closeDelete(false);return;}message("");refresh();timer=setInterval(refresh,3000);}
+  function setActive(value){active=value;clearInterval(timer);timer=null;if(!active){controller?.abort();finishDrag();clearCopied();closeInline(false);closeDelete(false);return;}message("");refresh();timer=setInterval(refresh,3000);}
   return {setActive};
 })();
 if(typeof workspaceView!=="undefined"&&workspaceView==="sharing")globalThis.InspectorSharing.setActive(true);

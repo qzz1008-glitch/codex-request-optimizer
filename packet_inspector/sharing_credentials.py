@@ -74,7 +74,8 @@ class CredentialVault:
             db.executescript("""CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value BLOB NOT NULL);
                 CREATE TABLE IF NOT EXISTS credentials (id TEXT PRIMARY KEY, kind TEXT NOT NULL,
                 direction TEXT NOT NULL, digest TEXT, secret BLOB NOT NULL, data TEXT NOT NULL);
-                CREATE UNIQUE INDEX IF NOT EXISTS grants ON credentials(digest) WHERE digest IS NOT NULL;""")
+                CREATE UNIQUE INDEX IF NOT EXISTS grants ON credentials(digest) WHERE digest IS NOT NULL;
+                CREATE TABLE IF NOT EXISTS credential_positions (id TEXT PRIMARY KEY, position INTEGER NOT NULL);""")
             for row in db.execute("SELECT id,data FROM credentials"):
                 data = json.loads(row["data"])
                 records = [data] + ([data["snapshot"]] if isinstance(data.get("snapshot"), dict) else [])
@@ -276,12 +277,38 @@ class CredentialVault:
     def rows(self):
         with self.connection() as db:
             output = []
-            for row in db.execute("SELECT id,data FROM credentials ORDER BY rowid DESC"):
+            for row in db.execute("""SELECT c.id,c.data FROM credentials c
+                    LEFT JOIN credential_positions p ON p.id=c.id
+                    ORDER BY p.position IS NOT NULL, p.position, c.rowid DESC"""):
                 data = json.loads(row["data"])
                 if data["direction"] == "out" and self._roll(data):
                     self._save(db, row["id"], data)
                 output.append(self.public(data))
             return output
+
+    def reorder(self, identifier, target, *, after=False):
+        if not isinstance(identifier, str) or not isinstance(target, str) or type(after) is not bool:
+            raise SharingError("凭据排序参数无效。")
+        with self.connection() as db:
+            records = {row["id"]: json.loads(row["data"]) for row in db.execute(
+                "SELECT id,data FROM credentials WHERE id IN (?,?)", (identifier, target))}
+            source, destination = records.get(identifier), records.get(target)
+            if not source or not destination or source.get("internal") or destination.get("internal"):
+                raise SharingError("凭据不存在。")
+            if (source["kind"], source["direction"]) != (destination["kind"], destination["direction"]):
+                raise SharingError("只能在同一凭据列表内调整顺序。")
+            if identifier == target:
+                return
+            rows = db.execute("""SELECT c.id,c.data FROM credentials c
+                LEFT JOIN credential_positions p ON p.id=c.id WHERE c.kind=? AND c.direction=?
+                ORDER BY p.position IS NOT NULL, p.position, c.rowid DESC""",
+                (source["kind"], source["direction"]))
+            order = [row["id"] for row in rows if not json.loads(row["data"]).get("internal")]
+            order.remove(identifier)
+            order.insert(order.index(target) + int(after), identifier)
+            db.executemany("""INSERT INTO credential_positions (id,position) VALUES (?,?)
+                ON CONFLICT(id) DO UPDATE SET position=excluded.position""",
+                ((key, index) for index, key in enumerate(order)))
 
     def snapshot(self, reservation):
         with self.connection() as db:
@@ -340,6 +367,7 @@ class CredentialVault:
             if not row or json.loads(row[0]).get("internal"):
                 raise SharingError("凭据不存在。")
             db.execute("DELETE FROM credentials WHERE id=?", (identifier,))
+            db.execute("DELETE FROM credential_positions WHERE id=?", (identifier,))
 
     def availability(self, identifier, online):
         with self.connection() as db:

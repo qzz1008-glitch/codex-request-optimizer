@@ -454,6 +454,24 @@ class LANSharingTests(unittest.TestCase):
         self.assertTrue(self.guest.sharing.status()["client"]["active"])
         self.assertTrue(second.sharing.status()["client"]["active"])
 
+    def test_credential_reorder_api_preserves_services_and_rejects_other_lists(self):
+        vault = self.owner.sharing.vault
+        first, _ = vault.issue("quota", "first")
+        second, _ = vault.issue("quota", "second")
+        exit_id, _ = vault.issue("exit", "exit")
+        before = self.owner.sharing.status()
+        status, result = self.local_api("/api/sharing", {"action": "credential_reorder",
+            "id": first, "target_id": second, "after": False})
+        self.assertEqual(status, 200)
+        self.assertEqual([row["id"] for row in result["credentials"] if row["kind"] == "quota"], [first, second])
+        self.assertEqual(result["host"], before["host"])
+        self.assertEqual(result["client"], before["client"])
+        for target, after in [(exit_id, False), (second, "true"), ("missing", False)]:
+            status, _ = self.local_api("/api/sharing", {"action": "credential_reorder",
+                "id": first, "target_id": target, "after": after})
+            self.assertEqual(status, 400)
+        self.assertEqual([row["id"] for row in vault.rows() if row["kind"] == "quota"], [first, second])
+
     def test_credential_api_live_edits_history_selection_and_single_machine_usage(self):
         self.owner.settings["sharing_port"] = free_port()
         with patch("packet_inspector.sharing.automatic_address", return_value="127.0.0.1"), patch.object(
