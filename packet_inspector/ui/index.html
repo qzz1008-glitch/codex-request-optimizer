@@ -163,7 +163,7 @@
   </dialog>
   <dialog id="settings-dialog" data-validation-feedback="settings-message" aria-labelledby="settings-title">
     <div class="dialog-heading"><div><h2 id="settings-title">设置</h2></div><button id="settings-close" type="button" aria-label="关闭设置">✕</button></div>
-    <section id="restart-notice" class="restart-notice" data-state="ready" data-feedback-inline tabindex="-1" aria-live="polite" aria-labelledby="restart-notice-title">
+    <section id="restart-notice" class="restart-notice" data-state="ready" data-feedback-inline tabindex="-1" aria-live="polite" aria-labelledby="restart-notice-title" hidden>
       <div class="restart-notice-heading"><strong id="restart-notice-title">配置生效状态</strong><div class="restart-notice-actions"><button id="restart-notice-chatgpt" type="button" hidden>我已重启</button><button id="restart-notice-wsl" type="button" hidden>我已重新连接</button></div></div>
       <ul id="restart-notice-items" class="restart-notice-items" aria-label="待生效项目"></ul>
       <p id="restart-notice-message" class="restart-notice-message">暂无待生效项目；新请求使用已保存的配置。</p>

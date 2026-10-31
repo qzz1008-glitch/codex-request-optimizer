@@ -38,12 +38,17 @@ async function run() {
   await load(page);
   const headerIds=['request-compression','settings-open'],header=await rects(page,headerIds);
   assert.equal(await page.locator('#restart-notice-open').getAttribute('data-visible'),'false');
+  await page.evaluate(()=>document.getElementById('settings-dialog').showModal());
+  assert.equal(await page.locator('#restart-notice').isVisible(),false,'applied settings have no status card');
+  assert.equal(await page.locator('#restart-notice').evaluate(node=>node.getBoundingClientRect().height),0,'ready status reserves no blank space');
+  await page.evaluate(()=>document.getElementById('settings-dialog').close());
   await page.evaluate(()=>{statusData.connection_reload_required=true;notice.ingest();});
   assert.equal(await page.locator('#restart-notice-open').getAttribute('data-visible'),'true');
   assert.deepEqual(await rects(page,headerIds),header,'pending badges reserve space');
   assert.equal(await page.locator('#connection-inline-feedback').count(),0,'raw text must not return below the connection controls');
   await page.locator('#restart-notice-open').click();
   assert.equal(await page.locator('#settings-dialog').evaluate(node=>node.open),true);
+  assert.equal(await page.locator('#restart-notice').isVisible(),true,'unapplied settings reveal the status card');
   assert((await page.locator('#restart-notice-title').textContent()).includes('ChatGPT'));
   const settingsIds=['settings-dialog','restart-notice','settings-save','settings-restore','context-settings'];
   const settings=await rects(page,settingsIds);
@@ -114,12 +119,14 @@ async function run() {
   });
   await page.evaluate(()=>notice.acknowledge('wsl'));
   assert.equal(await page.locator('#restart-notice-open').getAttribute('data-visible'),'false','old native flags must not resurrect a WSL notice');
+  assert.equal(await page.locator('#restart-notice').isVisible(),false);
+  const syncReady=await rects(page,syncIds);
   await page.evaluate(async()=>{
     statusData.connection_resume={id:'sync-3',state:'attention',result:{}};renderConnectionResume();
     window.api=async()=>{throw Error('Synthetic sync failure');};await retryConnectionResume();
   });
   assert.equal(await page.locator('#connection-resume-status').textContent(),'Synthetic sync failure');
-  assert.deepEqual(await rects(page,syncIds),syncBefore);cases++;
+  assert.deepEqual(await rects(page,syncIds),syncReady);cases++;
 
   await load(page,{data_dir:'backend',connection_reload_required:true,restart_notice:{revision:40,items:[{key:'entry_port',target:'chatgpt',scope:''},{key:'wsl',target:'wsl',scope:'Ubuntu'}]},
     entry_port:{pending:true,current_port:47844,configured_port:47848}});
@@ -161,6 +168,8 @@ async function run() {
   await page.evaluate(()=>notice.ingest());
   assert.equal(await page.locator('#restart-notice-open').getAttribute('data-visible'),'false');
   assert.equal(await page.locator('#restart-notice').getAttribute('data-state'),'ready');cases++;
+  assert.equal(await page.locator('#restart-notice').isVisible(),false,'clearing every pending item hides the entire card');
+  assert.equal(await page.locator('#restart-notice').evaluate(node=>node.getBoundingClientRect().height),0);
   await page.evaluate(()=>{document.getElementById('settings-dialog').close();document.documentElement.classList.add('desktop-titlebar');document.getElementById('window-controls').hidden=false;});
   for(const language of ['zh','en']) {
     await page.setViewportSize({width:1120,height:900});
@@ -169,6 +178,11 @@ async function run() {
     assert(views[0]+views[2]<=badge[0]&&badge[0]+badge[2]<=connect[0]&&connect[0]+connect[2]<=settings[0]&&settings[0]+settings[2]<=controls[0],
       'header controls must fit beside the centered view switch: '+JSON.stringify({language,views,badge,connect,settings,controls}));
   }cases++;
+  await load(page,{data_dir:'warning-only',restart_notice:{revision:1,items:[]},provider_warnings:[{provider:'fixture',detail:'Synthetic connection warning'}]});
+  await page.locator('#restart-notice-open').click();
+  assert.equal(await page.locator('#restart-notice').isVisible(),false);
+  assert.equal(await page.locator('#connection-details').evaluate(node=>node.open),true,'connection details remain accessible without a pending card');
+  assert.equal(await page.evaluate(()=>document.activeElement===document.querySelector('#connection-details>summary')),true);cases++;
   console.log(JSON.stringify({restart_notice:'passed',browser_cases:cases}));
 }
 run().catch(error=>{console.error(error);process.exitCode=1;}).finally(async()=>{if(browser)await browser.close();});
