@@ -189,15 +189,18 @@ def run(*, legacy_host=False):
                 assert not is_visible(panel.window), "hot reload exposed a hidden popup"
                 assert not panel.panel_state()["visible"]
                 result["stage"] = "restart confirmation bridge"
-                with patch("packet_inspector.service_restart._target", return_value=("isolated-worker", 12345)), \
-                        patch("packet_inspector.service_restart._dialog", return_value=False) as confirmation, \
+                with patch("packet_inspector.service_restart._target", return_value=("3" * 32, 12345)), \
                         patch("packet_inspector.service_restart.control_worker") as control:
                     panel.visible = True
                     evaluate("document.getElementById('tray-restart').click();true")
-                    wait_until(lambda: confirmation.call_count == 1)
+                    wait_until(lambda: actions == ["main"])
                     wait_until(lambda: evaluate("!document.getElementById('tray-restart').disabled"))
-                    assert confirmation.call_args.kwargs == {"confirm": True}, "restart skipped its confirmation"
+                    pending = ui.restart_requests.current()
+                    assert pending and not pending["error"], "restart did not hand a confirmation to the desktop"
+                    ui.restart_requests.begin(pending["id"])
+                    ui.restart_requests.finish(completed=True)
                     control.assert_not_called()
+                    actions.clear()
                 assert not panel.visible, "restart did not dismiss the menu before confirmation"
                 panel.visible = True
                 panel.window.destroy()  # Alt+F4 closes a form through the same cancellable event.
@@ -215,7 +218,7 @@ def run(*, legacy_host=False):
                 result.update(passed=True, checks=["hidden startup warmup", f"{expected_width}px layout", "content sizing", "Chinese/English", "responsive before statistics", "record scope",
                                                   "legacy backend scope", "truncated legacy groups", "empty store resets scope",
                                                   "visible polling", "hidden idle", "independent hot reload", "missing restart bridge feedback",
-                                                  "restart confirmation/cancel bridge", "Alt+F4 dismissal", "Open/Exit bridge"])
+                                                  "restart desktop confirmation handoff", "Alt+F4 dismissal", "Open/Exit bridge"])
                 result.pop("stage", None)
             except Exception as exc:
                 result.update(passed=False, error=f"{type(exc).__name__}: {exc}")

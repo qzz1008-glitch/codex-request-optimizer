@@ -2,6 +2,14 @@
 
 const uiI18n = (() => {
   const english = {
+    "重启期间将短暂中断请求转发，正在进行的请求可能失败。":"Request forwarding will briefly stop. Requests in progress may fail.",
+    "服务恢复后可继续对话，未完成的请求可重新发送。":"Continue chatting once the service recovers. You can resend unfinished requests.",
+    "正在重启…":"Restarting…",
+    "无法读取中转服务状态，请稍后重新点击“重启服务”。":"Could not read the relay status. Click Restart service again shortly.",
+    "重启请求已失效，请重新从托盘点击“重启服务”。":"The restart request expired. Select Restart service from the tray again.",
+    "正在处理重启请求，请稍候。":"A restart request is being processed. Please wait.",
+    "服务状态已变化，请重新从托盘点击“重启服务”。":"The service instance changed. Select Restart service from the tray again.",
+    "未能确认服务重启，请稍后重试。":"Could not confirm the service restart. Please try again shortly.",
     "当前未接入，无需同步。":"Disconnected; there is no active connection to synchronize.",
     "WSL 启动后会自动同步。":"WSL will synchronize automatically after it starts.",
     "接入配置已自动同步":"Connection configuration synchronized",

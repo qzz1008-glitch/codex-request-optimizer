@@ -1,5 +1,4 @@
 """Tray confirmation and a real, isolated worker restart through the fixed entry."""
-import ctypes
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import http.client
 import json
@@ -15,7 +14,7 @@ from unittest.mock import Mock, patch
 
 from packet_inspector import VERSION
 from packet_inspector.router import PROTOCOL, RouterServer, atomic_json, control_worker, local_json
-from packet_inspector.service_restart import _dialog, _target, restart_from_tray
+from packet_inspector.service_restart import RestartRequests, _target, perform_restart, restart_from_tray
 
 
 def free_port():
@@ -49,32 +48,36 @@ class RestartConfirmationTests(unittest.TestCase):
         atomic_json(self.runtime, {"pid": 12345, "port": 49123})
 
     def test_cancel_and_window_close_do_not_call_service_control(self):
-        with patch("packet_inspector.service_restart._dialog", return_value=False) as dialog, \
-                patch("packet_inspector.service_restart.control_worker") as control:
-            self.assertEqual(restart_from_tray(self.folder), {"ok": True, "cancelled": True})
+        open_window = Mock()
+        with patch("packet_inspector.service_restart.control_worker") as control:
+            self.assertEqual(restart_from_tray(self.folder, open_window), {"ok": True, "requested": True})
+            requests = RestartRequests(self.folder)
+            pending = requests.current()
+            self.assertIsNotNone(pending)
+            requests.begin(pending["id"])
+            requests.finish(completed=True)
+            self.assertIsNone(requests.current())
         control.assert_not_called()
-        self.assertIn("正在进行的请求可能失败", dialog.call_args.args[0])
-        self.assertEqual(dialog.call_args.kwargs, {"confirm": True})
+        open_window.assert_called_once_with()
 
     def test_confirmation_cannot_restart_a_worker_replaced_while_the_dialog_was_open(self):
-        def dialog(*_args, confirm=False):
-            if confirm:
-                atomic_json(self.runtime, {"pid": 12346, "port": 49123})
-            return confirm
-        with patch("packet_inspector.service_restart._dialog", side_effect=dialog), \
-                patch("packet_inspector.service_restart.control_worker") as control:
-            self.assertFalse(restart_from_tray(self.folder)["ok"])
+        restart_from_tray(self.folder, Mock())
+        requests = RestartRequests(self.folder)
+        intent = requests.begin(requests.current()["id"])
+        atomic_json(self.runtime, {"pid": 12346, "port": 49123})
+        with patch("packet_inspector.service_restart.control_worker") as control:
+            with self.assertRaisesRegex(ValueError, "服务状态已变化"):
+                perform_restart(self.folder, intent)
         control.assert_not_called()
 
-    def test_native_confirmation_defaults_to_no_and_only_yes_authorizes_restart(self):
-        user = Mock()
-        with patch.object(ctypes, "windll", Mock(user32=user), create=True):
-            for result in (0, 2, 7, 6):
-                user.MessageBoxW.return_value = result
-                self.assertEqual(_dialog("message", "title", confirm=True), result == 6)
-            flags = user.MessageBoxW.call_args.args[3]
-            self.assertEqual(flags & 0xF, 4)  # Yes / No
-            self.assertEqual(flags & 0x300, 0x100)  # No is the default button.
+    def test_a_desktop_confirmation_requires_the_current_request_id(self):
+        restart_from_tray(self.folder, Mock())
+        requests = RestartRequests(self.folder)
+        pending = requests.current()
+        with self.assertRaises(ValueError):
+            requests.begin("0" * 32)
+        intent = requests.begin(pending["id"])
+        self.assertEqual((intent["worker_id"], intent["pid"]), (self.identity, 12345))
 
 
 class IsolatedWorkerRestartTests(unittest.TestCase):
@@ -150,8 +153,10 @@ class IsolatedWorkerRestartTests(unittest.TestCase):
                     config_before = config.read_bytes()
                     self.assertEqual(request(private_port, "/__worker__/control", {"action": "restart", "expected_pid": first.pid})[0], 403)
                     self.assertEqual(request(private_port, "/__worker__/control", {"action": "restart", "expected_pid": first.pid + 1}, "synthetic-control")[0], 409)
-                    with patch("packet_inspector.service_restart._dialog", return_value=False):
-                        self.assertEqual(restart_from_tray(folder), {"ok": True, "cancelled": True})
+                    restart_from_tray(folder, Mock())
+                    confirmations = RestartRequests(folder)
+                    confirmations.begin(confirmations.current()["id"])
+                    confirmations.finish(completed=True)
                     self.assertIsNone(first.poll())
                     def hold_request():
                         try:
@@ -163,9 +168,10 @@ class IsolatedWorkerRestartTests(unittest.TestCase):
                     self.assertTrue(holding.wait(5))
                     self.assertGreater(router.status()["relay_requests"], 0)
                     router.start_monitor()
-                    with patch("packet_inspector.service_restart._dialog", return_value=True) as dialog:
-                        self.assertEqual(restart_from_tray(folder), {"ok": True, "restarting": True})
-                    self.assertIn("requests in progress may fail", dialog.call_args.args[0])
+                    restart_from_tray(folder, Mock())
+                    intent = confirmations.begin(confirmations.current()["id"])
+                    self.assertEqual(perform_restart(folder, intent), {"ok": True, "restarting": True})
+                    confirmations.finish(completed=True)
                     self.assertEqual(local_json(router.port, "/health")["app"], "codex-packet-inspector")
                     wait_until(lambda: first.poll() is not None)
                     hold_thread.join(timeout=3)

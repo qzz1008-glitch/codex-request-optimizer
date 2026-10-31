@@ -159,6 +159,13 @@
     <pre id="connection-resume-details" class="help muted"></pre>
     <div class="button-row"><button id="connection-resume-close" type="button" autofocus>知道了</button><button id="connection-resume-retry" class="primary" type="button" hidden>重新检查</button></div>
   </dialog>
+  <dialog id="service-restart-dialog" aria-labelledby="service-restart-title" aria-describedby="service-restart-description service-restart-hint">
+    <h2 id="service-restart-title">重启服务</h2>
+    <p id="service-restart-description">重启期间将短暂中断请求转发，正在进行的请求可能失败。</p>
+    <p id="service-restart-hint" class="muted help">服务恢复后可继续对话，未完成的请求可重新发送。</p>
+    <p id="service-restart-message" data-feedback-inline class="help error confirmation-feedback" role="alert" hidden></p>
+    <div class="button-row"><button id="service-restart-cancel" type="button" autofocus>取消</button><button id="service-restart-apply" class="primary" type="button">重启服务</button></div>
+  </dialog>
   <dialog id="exit-confirm-dialog" aria-labelledby="exit-confirm-title" aria-describedby="exit-confirm-description exit-confirm-hint">
     <h2 id="exit-confirm-title">退出程序</h2>
     <p id="exit-confirm-description">当前仍处于接入状态。退出后中转服务将停止，Codex 将无法通过当前出口发送请求。</p>
