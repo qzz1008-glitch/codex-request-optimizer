@@ -271,6 +271,8 @@ const uiI18n = (() => {
     "接入时自动检查并补齐本机代理例外。":"Connecting checks and repairs proxy exclusions for local addresses.",
     "本机代理例外":"Proxy exclusions for local addresses",
     "已修复本机代理例外。":"Proxy exclusions for local addresses have been repaired.",
+    "操作已完成":"Completed",
+    "关闭提示":"Dismiss notification",
     "无法检查或修复本机代理例外，未完成接入。请查看网络诊断日志。":"Could not check or repair proxy exclusions for local addresses. Connection was not completed. See the network diagnostics log.",
     "超限摘要前输入 Token（估算）":"Estimated input tokens before overflow summarization",
     "输入 Token（估算）":"Input tokens (estimated)",
