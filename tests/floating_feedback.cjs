@@ -53,7 +53,7 @@ async function run() {
   assert(await page.locator('.floating-feedback').evaluate(node=>node.matches(':popover-open')));
   cases++;
 
-  await page.locator('.floating-feedback>button').click();await visible(page,false);
+  await page.keyboard.press('Escape');await visible(page,false);
   await page.evaluate(value=>feedbackText('sharing-message',value,true),error);await settle(page);
   await visible(page,false); // Polling the same error cannot undo dismissal.
   await page.evaluate(()=>uiI18n.setLanguage('en',{persist:false}));await settle(page);await visible(page,false);
@@ -86,9 +86,12 @@ async function run() {
   assert.equal(await page.evaluate(()=>document.activeElement.id),'sharing-delete-cancel','showing feedback must not steal focus');
   await page.evaluate(()=>uiI18n.setLanguage('en',{persist:false}));
   await page.waitForFunction(()=>document.querySelector('.floating-feedback-content').textContent==='Settings saved.');
-  assert.equal(await page.locator('.floating-feedback>button').getAttribute('aria-label'),'Dismiss notification');
-  await page.locator('.floating-feedback>button').click();
+  assert.equal(await page.locator('.floating-feedback button').count(),0,'feedback has no close control');
+  await visible(page,false);
   assert.equal(await page.evaluate(()=>document.activeElement.id),'sharing-delete-cancel');
+  await page.locator('#sharing-delete-cancel').click();
+  await page.evaluate(()=>{document.getElementById('notice').hidden=false;});await visible(page);
+  assert.equal(await page.locator('.floating-feedback-content').innerText(),'Settings saved.','the same feedback can appear again for a new action');
   cases++;
 
   await page.evaluate(()=>{
@@ -133,11 +136,15 @@ async function run() {
 
   const fallback=await load('main',{fallback:true});
   await fallback.evaluate(()=>document.getElementById('settings-dialog').showModal());
+  await fallback.locator('#settings-save').evaluate(node=>{node.disabled=false;});
+  await fallback.locator('#settings-save').click();
   const fallbackBefore=await geometry(fallback,['settings-dialog','settings-save']);
   await fallback.evaluate(()=>feedbackText('context-message','Cannot read context settings',true));await visible(fallback);
   assert.equal(await fallback.locator('.floating-feedback').evaluate(node=>node.parentElement.id),'settings-dialog');
   assert.equal(await fallback.locator('.floating-feedback').evaluate(node=>getComputedStyle(node).position),'fixed');
   assert.deepEqual(await geometry(fallback,['settings-dialog','settings-save']),fallbackBefore);
+  const fallbackToast=await fallback.locator('.floating-feedback').boundingBox(),saveButton=await fallback.locator('#settings-save').boundingBox();
+  assert(Math.abs(fallbackToast.y+fallbackToast.height-saveButton.y)<=12,'dialog feedback should stay near the triggering control');
   cases++;
 
   const sharing=await load('main');
@@ -175,7 +182,23 @@ async function run() {
     assert.deepEqual(await copyGeometry(),copyBefore,'copy success cannot resize the button or the columns');
     assert.equal(await sharing.locator(selector).innerText(),caption);
     assert.equal(await sharing.locator('body').innerText().then(text=>text.includes('synthetic-secret')),false);
-    await sharing.locator('.floating-feedback>button').click();
+    assert.equal(await sharing.locator('.floating-feedback button').count(),0);
+    const toast=await sharing.locator('.floating-feedback').boundingBox(),anchor=await sharing.locator(selector).boundingBox();
+    assert(toast.x<anchor.x+anchor.width&&toast.x+toast.width>anchor.x,'copy feedback must overlap its button horizontally');
+    assert(Math.min(Math.abs(toast.y+toast.height-anchor.y),Math.abs(anchor.y+anchor.height-toast.y))<=12,'copy feedback must stay near the clicked button');
+    if(language==='zh') {
+      const appeared=Date.now();await sharing.waitForTimeout(1000);
+      await sharing.evaluate(()=>{const node=document.getElementById('sharing-message');node.textContent=node.textContent;});
+      await visible(sharing,false);
+      assert(Date.now()-appeared<3000,'unchanged polling must not keep restarting the dismissal timer');
+    }
+    else {
+      // Replacing a brief success with an error cancels the previous timer.
+      await sharing.evaluate(()=>feedbackText('sharing-message','Copy follow-up error',true));
+      await sharing.waitForTimeout(2600);await visible(sharing);
+      assert.equal(await sharing.locator('.floating-feedback-content').innerText(),'Copy follow-up error');
+      await visible(sharing,false);
+    }
     cases++;
   }
 

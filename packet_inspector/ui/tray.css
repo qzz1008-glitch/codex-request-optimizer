@@ -31,9 +31,8 @@ button:focus-visible{outline:2px solid #738dd3;outline-offset:-2px;background:#f
 button:disabled{opacity:.6}
 button svg{height:14px;width:14px;flex:none;color:#657083}
 [data-feedback-source]{display:none!important}
-.floating-feedback{position:fixed;inset:auto 8px 8px;z-index:1000;display:flex;align-items:flex-start;gap:6px;max-width:calc(100vw - 16px);max-height:calc(100vh - 16px);margin:0;padding:10px;border:1px solid #e8c4c1;border-radius:8px;background:#fff5f4;color:#a63e38;box-shadow:0 3px 12px #29313d20;overflow:auto;font-size:11px;line-height:1.5}
+.floating-feedback{position:fixed;inset:auto 8px 8px;z-index:1000;display:flex;align-items:flex-start;gap:6px;max-width:calc(100vw - 16px);max-height:calc(100vh - 16px);margin:0;padding:10px;border:1px solid #f4c9c5;border-radius:8px;background:#fff0ef;color:#bc3d37;box-shadow:0 4px 18px #0002;overflow:auto;font-size:11px;line-height:1.5}
 .floating-feedback::backdrop{background:transparent;pointer-events:none}
 .floating-feedback-content{min-width:0;flex:1;overflow-wrap:anywhere}
 .floating-feedback-content>*{margin:0}
-.floating-feedback>button{flex:none;min-height:20px;width:20px;padding:0;justify-content:center;color:inherit;font-size:16px;line-height:20px}
 [hidden]{display:none!important}

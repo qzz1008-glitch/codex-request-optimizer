@@ -1078,12 +1078,28 @@ const uiI18n = (() => {
       node,content:node.id==="notice"?node.querySelector("#notice-text"):node,
       signature:"",timer:null,delay:Number(node.dataset.feedbackDelay)||0
     }));
-    const popup=document.createElement("div"),content=document.createElement("div"),close=document.createElement("button");
+    const popup=document.createElement("div"),content=document.createElement("div");
     popup.className="notice floating-feedback";popup.hidden=true;popup.setAttribute("aria-atomic","true");
-    content.className="floating-feedback-content";close.type="button";close.textContent="×";
-    popup.append(content,close);document.body.append(popup);
+    content.className="floating-feedback-content";
+    popup.append(content);document.body.append(popup);
     if(typeof popup.showPopover==="function")popup.setAttribute("popover","manual");
-    let active=null,previousFocus=null,locale=language;
+    let active=null,locale=language,expiryTimer=null,interaction=null;
+    function reference(node) {
+      return node?{node,id:node.id,action:node.dataset?.action,key:node.dataset?.id}:null;
+    }
+    function resolve(anchor) {
+      if(!anchor)return null;
+      if(anchor.id)return document.getElementById(anchor.id);
+      if(anchor.node?.isConnected)return anchor.node;
+      return anchor.action&&anchor.key?[...document.querySelectorAll("[data-action][data-id]")].find(node=>node.dataset.action===anchor.action&&node.dataset.id===anchor.key):null;
+    }
+    function findAnchor(entry,value) {
+      if(value.anchorId)return {id:value.anchorId};
+      const trigger=resolve(interaction),scope=entry.node.closest("dialog,main");
+      if(trigger&&Date.now()-interaction.time<30000&&(!scope||scope.contains(trigger)||trigger.closest(".app-header")))return interaction;
+      const owner=entry.node.closest("section,form,.settings-footer");
+      return reference(owner?.querySelector('input:not([type="hidden"]),select,button'));
+    }
     function snapshot(entry) {
       const {node}=entry;
       if(!node.isConnected)return null;
@@ -1098,16 +1114,16 @@ const uiI18n = (() => {
       const value=clone.textContent.trim();
       if(!value)return null;
       const error=node.classList.contains("error")||(node.id!=="notice"&&node.getAttribute("role")==="alert")||!!clone.querySelector('.error,[data-state="error"]');
-      return {clone,error,priority:priority+(error?100:0),signature:JSON.stringify([value,error])};
+      const anchorId=error?"":node.dataset.feedbackAnchor||"",requested=Number(node.dataset.feedbackDuration);
+      const duration=error?6000:Number.isFinite(requested)&&requested>0?Math.max(1000,Math.min(10000,requested)):3000;
+      return {clone,error,anchorId,duration,priority:priority+(error?100:0),signature:JSON.stringify([value,error,anchorId,duration])};
     }
     function hide() {
+      clearTimeout(expiryTimer);expiryTimer=null;
       try {if(popup.matches(":popover-open"))popup.hidePopover();}catch(_) {}
       popup.hidden=true;active=null;
     }
-    function dismiss() {
-      const restore=document.activeElement===close&&previousFocus?.isConnected;
-      hide();if(restore)previousFocus.focus({preventScroll:true});
-    }
+    function dismiss() {hide();}
     function place() {
       const dialogs=[...document.querySelectorAll("dialog[open]")];
       const dialog=document.activeElement?.closest("dialog[open]")||dialogs.at(-1),host=dialog||document.body;
@@ -1116,25 +1132,39 @@ const uiI18n = (() => {
         host.append(popup);
       }
       const rect=dialog?.getBoundingClientRect(),footer=dialog?.querySelector(".settings-footer,.button-row");
+      popup.style.removeProperty("inset");
       popup.style.setProperty("--feedback-right",rect?Math.max(16,innerWidth-rect.right+16)+"px":"20px");
       popup.style.setProperty("--feedback-bottom",rect?Math.max(16,innerHeight-rect.bottom+(footer?.getBoundingClientRect().height||32)+12)+"px":"20px");
-      popup.style.setProperty("--feedback-width",rect?Math.max(160,rect.width-32)+"px":"480px");
+      popup.style.setProperty("--feedback-width",rect?Math.max(160,Math.min(360,rect.width-32))+"px":"360px");
       if(popup.hasAttribute("popover")) {
         try {if(!popup.matches(":popover-open"))popup.showPopover();}
         catch(_) {popup.removeAttribute("popover");} // Older WebViews use the dialog's own layer.
       }
+      const anchor=resolve(active?.anchor);
+      if(anchor?.getClientRects().length) {
+        const target=anchor.getBoundingClientRect(),bounds=popup.getBoundingClientRect(),margin=12;
+        if(target.bottom<=0||target.top>=innerHeight||target.right<=0||target.left>=innerWidth){hide();return;}
+        const left=Math.max(margin,Math.min(target.right-bounds.width,innerWidth-bounds.width-margin));
+        const preferred=target.top-bounds.height-8>=margin?target.top-bounds.height-8:target.bottom+8;
+        const top=Math.max(margin,Math.min(preferred,innerHeight-bounds.height-margin));
+        popup.style.inset=top+"px auto auto "+left+"px";
+      }else if(active?.anchor)hide();
     }
     function present(entry,value) {
-      if(active&&snapshot(active.entry)?.error&&!value.error&&active.entry!==entry)return;
-      if(!active)previousFocus=document.activeElement;
+      if(active&&snapshot(active.entry)?.error&&!value.error&&active.entry!==entry&&!value.anchorId)return;
+      const changed=!active||active.entry!==entry||active.signature!==value.signature;
+      const anchor=changed?findAnchor(entry,value):active.anchor;
       const clone=value.clone;
       for(const node of [clone,...clone.querySelectorAll("[id],[data-feedback-source],[role],[aria-live]")]) {
         for(const attribute of ["id","data-feedback-source","role","aria-live"])node.removeAttribute(attribute);
       }
       content.replaceChildren(clone);
       popup.classList.toggle("error",value.error);popup.setAttribute("role",value.error?"alert":"status");
-      close.setAttribute("aria-label",t("关闭提示"));close.title=t("关闭提示");
-      active={entry};popup.hidden=false;place();
+      active={entry,anchor,signature:value.signature};popup.hidden=false;place();
+      if(changed) {
+        clearTimeout(expiryTimer);
+        if(active)expiryTimer=setTimeout(dismiss,value.duration);
+      }
     }
     function refresh() {
       const translated=locale!==language;locale=language;
@@ -1158,16 +1188,29 @@ const uiI18n = (() => {
     }
     const observer=new MutationObserver(refresh),owners=new Set();
     for(const {node} of sources) {
-      observer.observe(node,{subtree:true,childList:true,characterData:true,attributes:true,attributeFilter:["hidden","class","data-state"]});
+      observer.observe(node,{subtree:true,childList:true,characterData:true,attributes:true,attributeFilter:["hidden","class","data-state","data-feedback-anchor","data-feedback-duration"]});
       for(let owner=node.parentElement;owner;owner=owner.parentElement)owners.add(owner);
     }
     for(const owner of owners)observer.observe(owner,{attributes:true,attributeFilter:["hidden","open"]});
     observer.observe(document.documentElement,{attributes:true,attributeFilter:["lang"]});
-    close.addEventListener("click",dismiss);
+    function remember(event) {
+      const node=event.submitter||event.target?.closest?.('button,input,select,a,[role="button"]');
+      if(node) {
+        interaction={...reference(node),time:Date.now()};
+        // A new action may fail with the same text after its previous toast expired.
+        if(!active) {const notice=document.getElementById("notice");if(notice)notice.hidden=true;}
+      }
+    }
+    document.addEventListener("pointerdown",remember,true);
+    document.addEventListener("submit",remember,true);
+    document.addEventListener("input",remember,true);
+    document.addEventListener("change",remember,true);
     document.addEventListener("keydown",event=>{
       if(event.key==="Escape"&&active){event.preventDefault();event.stopPropagation();dismiss();}
+      else if(event.key==="Enter"||event.key===" ")remember(event);
     },true);
     globalThis.addEventListener("resize",()=>{if(active)place();});
+    document.addEventListener("scroll",()=>{if(active?.anchor)place();},true);
     refresh();
     return {dismiss,refresh};
   }

@@ -531,14 +531,14 @@ dialog{width:min(760px,calc(var(--desktop-width) - 80px));max-height:calc(var(--
 .floating-feedback{
   position:fixed;inset:auto var(--feedback-right,20px) var(--feedback-bottom,20px) auto;
   z-index:1000;box-sizing:border-box;width:max-content;
-  max-width:min(var(--feedback-width,480px),calc(100vw - 32px));max-height:min(40vh,320px);
-  margin:0;overflow:auto;font-size:13px;line-height:1.6
+  max-width:min(var(--feedback-width,360px),calc(100vw - 24px));max-height:min(40vh,320px);
+  margin:0;padding:9px 12px;border-radius:8px;overflow:auto;font-size:13px;line-height:1.6
 }
+.floating-feedback:not(.error){pointer-events:none}
 .floating-feedback::backdrop{background:transparent;pointer-events:none}
 .floating-feedback-content{flex:1;min-width:0;overflow-wrap:anywhere}
 .floating-feedback .floating-feedback-content>*{margin:0;padding:0;border:0;border-radius:0;background:transparent;box-shadow:none;color:inherit;font:inherit}
 .floating-feedback .help{margin:0;color:inherit;white-space:normal}
-.floating-feedback>button{position:sticky;top:0}
 #settings-dialog #settings-restore{grid-column:2}
 #settings-dialog #settings-save{grid-column:3}
 #settings-dialog #link-status[hidden]{display:block!important;visibility:hidden}
