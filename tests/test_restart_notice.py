@@ -146,6 +146,14 @@ class RestartNoticeApiTests(unittest.TestCase):
         self.assertEqual(code, 400)
         self.assertIn("请先重启", error["error"])
 
+    def test_desktop_can_retry_connection_sync_and_rejects_foreign_origin(self):
+        with patch.object(self.server.connection_resume, "retry", return_value={"id": "sync", "state": "pending"}) as retry:
+            code, result = self.api("/api/connection/resume", {}, port=self.ui.port)
+            self.assertEqual((code, result["state"]), (200, "pending"))
+            code, _ = self.api("/api/connection/resume", {}, port=self.ui.port, headers={"Origin": "https://example.invalid"})
+            self.assertEqual(code, 403)
+            retry.assert_called_once()
+
     def test_wsl_only_change_does_not_ask_for_chatgpt_restart(self):
         with patch.object(self.server, "sync_providers", return_value={"active": True, "reload_required": False}), \
              patch.object(self.server.wsl, "apply", return_value={"changed": True, "reload_required": True,
@@ -167,6 +175,9 @@ class RestartNoticeApiTests(unittest.TestCase):
         self.api("/api/restart-notice", {"target": "chatgpt", "revision": result["restart_notice"]["revision"]})
         self.server.sync_providers()
         self.assertEqual(self.keys(self.api("/api/status")[1]), set(), "Sticky legacy flags must not recreate an acknowledged notice")
+        code, result = self.api("/api/settings", {"capacity_retry_delay_seconds": 51})
+        self.assertEqual(code, 200)
+        self.assertEqual(self.keys(result), set(), "Live delay settings do not require a native restart")
 
 
 if __name__ == "__main__":

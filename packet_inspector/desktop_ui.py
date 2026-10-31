@@ -34,7 +34,7 @@ UI_FILES = {"/": ("index.html", "text/html; charset=utf-8"),
             "/tray.html": ("tray.html", "text/html; charset=utf-8"),
             "/tray.js": ("tray.js", "text/javascript; charset=utf-8"),
             "/tray.css": ("tray.css", "text/css; charset=utf-8")}
-POST_PATHS = {"/api/settings", "/api/context-settings", "/api/link", "/api/sharing", "/api/restart-notice"}
+POST_PATHS = {"/api/settings", "/api/context-settings", "/api/link", "/api/sharing", "/api/restart-notice", "/api/connection/resume"}
 GET_PATHS = {"/api/status", "/api/tray-status", "/api/context-settings", "/api/packet-filters", "/api/packets", "/api/sharing", "/api/restart-notice"}
 
 

@@ -250,8 +250,9 @@ const imageZstdLevelEstimates = [
 ];
 let compressionTarget = null, compressionSaving = false, compressionRevision = 0;
 const restartNotices = InspectorRestartNotice.create({status:()=>state.status,request:api,openSettings:()=>openSettings(),
-  busy:()=>settingsSaving||linkSaving||compressionSaving||exitSaving||connectSaving});
+  busy:()=>settingsSaving||linkSaving||compressionSaving||exitSaving||connectSaving||connectionResumeBusy()});
 globalThis.inspectorRestartNotices=restartNotices;
+let connectionResumeSeen = "", connectionResumeRetrying = false, connectionResumeError = "";
 let exitRequest = null, exitSaving = false, exitFinished = false, exitRevision = 0;
 let connectSource = null, connectSaving = false, connectChecking = false, startupConnectChecked = false;
 let desktopOpenRevision = null;
@@ -1090,8 +1091,9 @@ function renderStatus(fill=false) {
   renderSessions();renderList();
   renderProtectionPanelState();
   renderExitRequest();
-  renderConnectPrompt();
   restartNotices.ingest(s);
+  renderConnectionResume();
+  renderConnectPrompt();
 }
 function storageLimitSettings(status) {
   const precise=Number.isSafeInteger(status.max_storage_bytes),legacyUnit=1048576;
@@ -1251,10 +1253,10 @@ function renderCompressionMode() {
   for(const button of document.querySelectorAll("#request-compression button")) {
     const disconnect=button.dataset.compression==="disconnected";
     button.setAttribute("aria-pressed",String(!unknown&&(disconnect?!connected:connected)));
-    button.disabled=compressionSaving||settingsSaving||exitSaving||connectSaving||connectChecking||!!linkSaving||unknown||(disconnect?!connected||!s.profile.can_restore:connected);
+    button.disabled=compressionSaving||settingsSaving||exitSaving||connectSaving||connectChecking||!!linkSaving||connectionResumeBusy()||unknown||(disconnect?!connected||!s.profile.can_restore:connected);
   }
-  $("request-compression").setAttribute("aria-busy",String(compressionSaving));
-  setText($("compression-hint"),t(connected?"由本软件管理 zstd 压缩，保留完整内容。":"直连原上游，由 Codex 管理原生压缩。"));
+  $("request-compression").setAttribute("aria-busy",String(compressionSaving||connectionResumeBusy()));
+  setText($("compression-hint"),t(connectionResumeBusy()?"正在检查接入配置…":connected?"由本软件管理 zstd 压缩，保留完整内容。":"直连原上游，由 Codex 管理原生压缩。"));
   $("request-compression").title=$("compression-hint").textContent;
   $("compression-confirm-dialog").setAttribute("aria-busy",String(compressionSaving));
   for(const id of ["compression-confirm-cancel","compression-confirm-apply"])$(id).disabled=compressionSaving;
@@ -1298,6 +1300,47 @@ async function confirmCompressionChange() {
     $("compression-confirm-message").hidden=false;
   } finally {compressionSaving=false;compressionRevision++;renderConnectionActions();}
 }
+function connectionResumeBusy() {
+  return ["pending","checking"].includes(state.status?.connection_resume?.state);
+}
+function rememberConnectionResume() {
+  const event=state.status?.connection_resume;
+  if(event?.id&&!connectionResumeBusy()) {
+    connectionResumeSeen=event.id;
+    try {localStorage.setItem("connection-resume-seen",event.id);}catch {}
+  }
+}
+function renderConnectionResume() {
+  const event=state.status?.connection_resume,checking=connectionResumeBusy(),attention=event?.state==="attention";
+  if(!connectionResumeSeen)try {connectionResumeSeen=localStorage.getItem("connection-resume-seen")||"";}catch {}
+  if(event?.id&&["complete","attention"].includes(event.state)&&event.id!==connectionResumeSeen)connectionResumeError="";
+  $("connection-resume-controls").hidden=!event||event.state==="idle";
+  const retry=$("connection-resume-retry"),result=event?.result||{};
+  retry.hidden=!attention&&!checking&&!connectionResumeError;
+  retry.disabled=connectionResumeRetrying||checking||settingsSaving||!!linkSaving;
+  const label=checking?"正在检查接入配置…":attention?"接入配置需要处理":state.status?.profile?.active?"接入配置已自动同步":"已断开";
+  if($("connection-resume-status").textContent!==t(connectionResumeError||label))
+    uiI18n.text($("connection-resume-status"),connectionResumeError||label);
+  $("connection-resume-status").classList.toggle("error",!!connectionResumeError||attention);
+  if(!event?.id||!["complete","attention"].includes(event.state))return;
+  if(event.id===connectionResumeSeen)return;
+  if(result.changed||attention||result.restart_notice?.items?.length) {
+    const wslChanged=result.wsl?.targets?.some(row=>row.changed);
+    restartNotices.connection("activate",{...result,
+      local_reload_required:result.local_reload_required??(!!result.changed&&!wslChanged)});
+  }
+  rememberConnectionResume();
+}
+async function retryConnectionResume() {
+  if(connectionResumeRetrying||connectionResumeBusy())return;
+  connectionResumeRetrying=true;connectionResumeError="";renderConnectionResume();
+  try {
+    const event=await api("/api/connection/resume",{});
+    state.status.connection_resume=event;
+    renderConnectionActions();
+  } catch(error) {connectionResumeError=error.message;}
+  finally {connectionResumeRetrying=false;renderConnectionResume();restartNotices.render();}
+}
 function renderConnectPrompt() {
   const s=state.status;if(!s)return;
   const dialog=$("connect-confirm-dialog");
@@ -1308,7 +1351,7 @@ function renderConnectPrompt() {
   for(const key of ["cancel","apply"])$("connect-confirm-"+key).disabled=connectSaving;
   setText($("connect-confirm-apply"),t(connectSaving?"正在接入…":"确认接入"));
   if(dialog.open&&s.profile?.active&&!connectSaving)cancelConnectPrompt();
-  if(startupConnectChecked||!s.ui_desktop||s.ui_exit_request||exitFinished)return;
+  if(startupConnectChecked||!s.ui_desktop||s.ui_exit_request||exitFinished||connectionResumeBusy())return;
   if(s.profile?.config_error||typeof s.profile?.active!=="boolean")return;
   if(s.profile.active){startupConnectChecked=true;return;}
   if(settingsSaving||settingsOpening||settingsEditing||linkSaving||compressionSaving||exitSaving||document.querySelector("dialog[open]"))return;
@@ -2286,6 +2329,7 @@ $("compression-confirm-dialog").addEventListener("close",()=>{if(!$("compression
 action("exit-confirm-cancel",()=>confirmExit("cancel"));action("exit-confirm-direct",()=>confirmExit("direct"));action("exit-confirm-restore",()=>confirmExit("restore"));
 $("exit-confirm-dialog").addEventListener("cancel",event=>{event.preventDefault();confirmExit("cancel");});
 action("connect-confirm-cancel",cancelConnectPrompt);action("connect-confirm-apply",confirmConnection);
+action("connection-resume-retry",retryConnectionResume);
 $("connect-confirm-dialog").addEventListener("cancel",event=>{event.preventDefault();cancelConnectPrompt();});
 function fillPacketProtection() {
   const s=state.status,supported="packet_size_protection_enabled" in s,automatic=$("auto-zstd-level"),autoSupported=typeof s.auto_zstd_level_enabled==="boolean";

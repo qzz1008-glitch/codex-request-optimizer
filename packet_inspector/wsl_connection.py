@@ -32,6 +32,8 @@ IFS= read -r -t 3 -N 4096 response <&3 || true
 printf '%s' "$response"
 '''
 
+LABEL_LAUNCH = 'cd "$1" && exec python3 -I -S -'
+
 # Only requested IDs and display metadata leave Linux; never auth or messages.
 LABEL_SCRIPT = r'''
 import json,sqlite3,sys
@@ -207,8 +209,11 @@ class LocalWsl:
 
     def labels(self, distribution, home, ids):
         # stdin avoids Windows/WSL quoting of a multiline Python -c argument.
+        # WSL inherits the Windows launch directory; a broken /mnt drive must
+        # never enter Python's imports through cwd, PYTHONPATH or site hooks.
         script = LABEL_SCRIPT.replace('request=json.load(sys.stdin)', 'request=' + repr({"home": home, "ids": ids}))
-        text = self.run(["-d", distribution, "--exec", "sh", "-lc", "exec python3 -"], data=script.encode("utf-8"))
+        text = self.run(["-d", distribution, "--exec", "sh", "-lc", LABEL_LAUNCH,
+                         "codex-inspector-labels", home], data=script.encode("utf-8"))
         lines = [line[len("CPI_LABELS="):] for line in text.splitlines() if line.startswith("CPI_LABELS=")]
         if len(lines) != 1:
             raise WslError("metadata_invalid_response")
@@ -293,6 +298,7 @@ class WslConnection:
 
     def apply(self, connected, endpoint, upstream, routes, publish, *, retry_limit=None):
         with self._lock:
+            routes = dict(routes)
             result = {"targets": [], "warnings": [], "changed": False, "reload_required": False}
             self.result = result
             try:
@@ -307,6 +313,7 @@ class WslConnection:
             result["warnings"].extend(warnings)
             if connected:
                 candidates = detected
+                result["deferred"] = [target for _, target in self._targets() if target["distribution"] not in running][:16]
             else:
                 candidates = []
                 for directory, target in self._targets():
@@ -319,9 +326,9 @@ class WslConnection:
                 try:
                     link = ConfigLink(config, directory / "link.json")
                     def publish_routes(updated):
-                        routes.clear()
-                        routes.update(updated)
+                        nonlocal routes
                         publish(updated)
+                        routes = updated
                     if connected:
                         own = urlsplit(endpoint)
                         marker = hashlib.sha256(endpoint.encode()).hexdigest()

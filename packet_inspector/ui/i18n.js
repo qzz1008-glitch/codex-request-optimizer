@@ -2,6 +2,7 @@
 
 const uiI18n = (() => {
   const english = {
+    "接入同步":"Connection synchronization",
     "查看待生效配置与接入详情":"View pending changes and connection details",
     "待生效项目":"Pending changes",
     "配置生效状态":"Configuration status",
@@ -30,6 +31,18 @@ const uiI18n = (() => {
     "待生效记录尚未保存，请稍后重试。":"Pending changes have not been saved. Please try again shortly.",
     "配置又有变更，请确认最新待生效项目后重试。":"Configuration changed again. Review the latest pending changes and try again.",
     "WSL Codex 配置：重新连接 WSL 会话后生效":"WSL Codex configuration: reconnect the WSL session to apply",
+    "当前未接入，无需同步。":"Disconnected; there is no active connection to synchronize.",
+    "WSL 启动后会自动同步。":"WSL will synchronize automatically after it starts.",
+    "接入配置已自动同步":"Connection configuration synchronized",
+    "接入配置需要处理":"Connection configuration needs attention",
+    "正在检查接入配置…":"Checking connection configuration…",
+    "部分配置未能自动同步。请查看详情并重新检查，无需手动断开再接入。":"Some settings could not be synchronized. Review the details and check again; disconnecting and reconnecting is unnecessary.",
+    "已保留原来的接入状态。请完全退出并重新打开 ChatGPT App。":"Your connection choice was preserved. Fully quit and reopen ChatGPT App.",
+    "已变更的配置需重启 ChatGPT App。":"Restart ChatGPT App to apply the changed configuration.",
+    "重新检查":"Check again",
+    "稍后处理":"Handle later",
+    "知道了":"Got it",
+    "WSL Codex 配置":"WSL Codex configuration",
     "未找到该 WSL 用户的 Codex 配置。":"No Codex configuration was found for this WSL user.",
     "WSL 无法访问本机中转，未修改配置。":"WSL cannot reach the local relay. Its configuration was not changed.",
     "WSL 连接到其他服务，未修改配置。":"WSL reached a different service. Its configuration was not changed.",
