@@ -2,14 +2,14 @@
 
 [简体中文](https://github.com/qzz1008-glitch/codex-request-optimizer/blob/main/README.md) · **English**
 
-A local request analysis and optimization tool for Codex on Windows x64 (64-bit). Fit more conversation context within limits such as **1 MB per request** through compression and size protection.
+A local request analysis and optimization tool for Codex on Windows x64 (64-bit). Reduce upload sizes through compression and fit more conversation context within the same request size limit.
 
 **[⬇️ Download](https://github.com/qzz1008-glitch/codex-request-optimizer/releases)** · **[📖 Usage guide](https://github.com/qzz1008-glitch/codex-request-optimizer/blob/main/docs/usage.md)**
 
 ## ✨ Features
 
 - **🗜️ Lossless compression**: reduce upload sizes for conversations, image generation, and image editing while retaining their content. Choose automatic compression or a manual level.
-- **🛡️ Size protection**: predictive protection triggers context compaction early; overflow protection condenses history before forwarding oversized requests, avoiding gateway 403 errors caused by request size.
+- **🛡️ Size protection**: control request size with a configurable limit. Predictive protection triggers context compaction early; overflow protection condenses history before forwarding.
 - **🧠 Context settings**: adjust the context window and automatic compaction threshold, or restore model defaults.
 - **🖼️ Image optimization**: choose Native, Disable, or Optimize mode. Optimization uses a separate analysis session to reduce image content in the main context. Size protection can also downscale oversized image requests, which may lose detail.
 - **🔁 Capacity retries**: let Codex wait and retry automatically when a model is at capacity. Set the retry count and delay.
@@ -30,9 +30,10 @@ Existing Codex configurations in WSL can also be connected as a validation featu
 
 ## ⚙️ Implementation overview
 
-A local Python relay connects through Codex's standard provider configuration, using zstd for lossless transport compression, SQLite for records, and WebView2 for the desktop interface. Codex manages the separate image-analysis tool.
-
-Request records stay on the local machine. Captured records omit authentication values; JSON views and downloads use redacted copies.
+- **Connection and forwarding**: Codex's standard provider configuration routes requests through a local Python relay. Processed requests continue to the original upstream service.
+- **Compression and protection**: zstd provides lossless transport compression. Actual upload size determines whether predictive or overflow protection is triggered to control request size.
+- **Image analysis**: Codex starts and manages a separate image tool through the standard MCP stdio interface. A separate session analyzes images and returns text results to the main session.
+- **Interface and records**: WebView2 provides the desktop interface, while SQLite stores request records locally. Captured records omit authentication values; JSON views and downloads use redacted copies.
 
 ## 📄 License
 

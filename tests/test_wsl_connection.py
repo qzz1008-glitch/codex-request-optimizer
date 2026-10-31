@@ -2,6 +2,7 @@
 import hashlib
 import json
 import ast
+import os
 from contextlib import closing
 from pathlib import Path
 import sqlite3
@@ -15,7 +16,7 @@ from unittest.mock import patch
 
 from packet_inspector.session_summary import SessionSummaries
 from packet_inspector.token_window import TokenWindows
-from packet_inspector.wsl_connection import (LABEL_SCRIPT, PROBE_SCRIPT, LocalWsl, WslConnection,
+from packet_inspector.wsl_connection import (LABEL_SCRIPT, LABEL_LAUNCH, PROBE_SCRIPT, LocalWsl, WslConnection,
                                              WslError, decode_output, validate_target)
 
 
@@ -194,12 +195,49 @@ class WslConnectionTests(unittest.TestCase):
         ast.parse(LABEL_SCRIPT, feature_version=(3, 7))
         cli = LocalWsl()
         def run(arguments, *, data, **kwargs):
-            self.assertEqual(arguments[-3:], ["sh", "-lc", "exec python3 -"])
-            result = subprocess.run([sys.executable, "-"], input=data, capture_output=True, timeout=5)
+            self.assertEqual(arguments[3:7], ["sh", "-lc", LABEL_LAUNCH, "codex-inspector-labels"])
+            self.assertEqual(arguments[-1], str(self.backend.config_path.parent))
+            result = subprocess.run([sys.executable, "-I", "-S", "-"], input=data,
+                                    cwd=arguments[-1], capture_output=True, timeout=5)
             self.assertEqual(result.returncode, 0, result.stderr)
             return "profile notice\n" + result.stdout.decode()
         with patch.object(cli, "run", side_effect=run):
             result = cli.labels("Ubuntu-Test", str(self.backend.config_path.parent), [THREAD])
+        self.assertEqual(result["rows"][0][0], THREAD)
+
+    def test_metadata_ignores_broken_import_paths_and_runs_in_the_linux_data_directory(self):
+        self.index()
+        received = self.root / "ReceiveFiles"
+        received.mkdir()
+        (received / "json.py").write_text(
+            "raise OSError(5, 'Input/output error', '/mnt/d/eSpace_Desktop/ReceiveFiles')\n", encoding="utf8")
+        polluted = {**os.environ, "PYTHONPATH": str(received)}
+        # Reproduce the colleague's failure before testing the isolated launch.
+        before = subprocess.run([sys.executable, "-S", "-c", "import json"], cwd=received,
+                                env=polluted, capture_output=True, timeout=5)
+        self.assertNotEqual(before.returncode, 0)
+        self.assertIn(b"Input/output error", before.stderr)
+        bash = Path(r"C:/Program Files/Git/bin/bash.exe") if sys.platform == "win32" else Path("/bin/bash")
+        if not bash.is_file():
+            self.skipTest("Bash is required to exercise the real shell launch")
+        home = self.backend.config_path.parent.as_posix()
+        cli = LocalWsl()
+        def run(arguments, *, data, **kwargs):
+            # Keep the production shell command/flags/arguments. Substitute only
+            # the Python executable, because this test does not install WSL.
+            command = arguments[5].replace("exec python3", 'exec "' + Path(sys.executable).as_posix() + '"')
+            self.assertEqual(arguments[-1], home)
+            script = b"import os,sys\nassert sys.flags.isolated and sys.flags.no_site\n" + data
+            script += ("\nprint('CPI_CWD='+os.getcwd())\n").encode()
+            after = subprocess.run([str(bash), "-lc", command, arguments[6], arguments[7]], input=script,
+                                   env=polluted, cwd=received, capture_output=True, timeout=10)
+            self.assertEqual(after.returncode, 0, after.stderr.decode(errors="replace"))
+            lines = after.stdout.decode().splitlines()
+            native_cwd = next(line.removeprefix("CPI_CWD=") for line in lines if line.startswith("CPI_CWD="))
+            self.assertEqual(Path(native_cwd).resolve(), self.backend.config_path.parent.resolve())
+            return after.stdout.decode()
+        with patch.object(cli, "run", side_effect=run):
+            result = cli.labels("Ubuntu-Test", home, [THREAD])
         self.assertEqual(result["rows"][0][0], THREAD)
 
     def test_linux_metadata_is_queried_natively_cached_and_used_for_grouping(self):
