@@ -17,6 +17,8 @@ const uiI18n = (() => {
     "由提供方管理":"Managed by the provider",
     "名称应为 1 到 80 个字符。":"The name must contain 1 to 80 characters.",
     "期限":"Expiry",
+    "小时":"Hour",
+    "时":"h",
     "一周":"One week",
     "无期限":"No expiry",
     "设为无期限":"Set no expiry",
