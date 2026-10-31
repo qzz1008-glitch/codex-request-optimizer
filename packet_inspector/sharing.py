@@ -623,6 +623,8 @@ class Sharing:
                 self.recovered = False
                 if not replacing:
                     self.server.connection_reload_required = True
+                    if notices := getattr(self.server, "restart_notices", None):
+                        notices.mark("sharing")
                 return {**self.status(), "reload_required": not replacing}
             except HTTPError as exc:
                 with exc:
@@ -652,6 +654,8 @@ class Sharing:
                 self.role.close()
             if had_remote:
                 self.server.connection_reload_required = True
+                if notices := getattr(self.server, "restart_notices", None):
+                    notices.mark("sharing")
             return {**self.status(), "reload_required": had_remote}
 
     def client_route(self):

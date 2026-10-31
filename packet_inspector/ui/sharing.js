@@ -229,6 +229,7 @@ globalThis.InspectorSharing=(()=>{
   async function action(button,dataValue,success=""){if(busy)return;feedbackKind=dataValue.kind||(current?.credentials||[]).find(row=>row.id===dataValue.id)?.kind||feedbackKind;controller?.abort();busy=true;button?.setAttribute("aria-busy","true");if(button)button.disabled=true;message("");
     try{const result=await request(dataValue),{link,...state}=result;
       const identifier=dataValue.action==="credential_issue"?result.issued_id:dataValue.action==="credential_use"&&dataValue.link?(dataValue.kind==="quota"?result.client?.active_id:result.egress?.selection?.active_id):null;
+      globalThis.inspectorRestartNotices?.sharing(result);
       highlightCredential(identifier,state);
       render(state);if(link)await copy(link,dataValue.action==="credential_issue"?dataValue.kind+"-generate":"sharing-copy-"+dataValue.id);else if(success!==null&&result.reload_required===true)message(dataValue.action==="credential_delete"?"已删除凭据。请重新加载 Codex 配置或重启 ChatGPT 应用。":"已切换额度来源。请重新加载 Codex 配置或重启 ChatGPT 应用。");else message(success===null?"":success||"已更新，新请求使用当前设置。");return result;
     }catch(error){message(error.message,true);}finally{busy=false;button?.setAttribute("aria-busy","false");if(button)button.disabled=false;if(current)render(current);}}

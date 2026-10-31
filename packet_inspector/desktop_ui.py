@@ -18,6 +18,7 @@ from .token_window import TokenWindows, is_token_request
 from .response_usage import packet_usage
 from .session_summary import SessionSummaries
 from .entry_port import port_status, save_port
+from .restart_notice import RestartNotices
 from .updates import Updates
 from .http_io import discard_small_body
 from .exit_flow import ExitError, ExitRequests, perform_exit
@@ -34,8 +35,8 @@ UI_FILES = {"/": ("index.html", "text/html; charset=utf-8"),
             "/tray.html": ("tray.html", "text/html; charset=utf-8"),
             "/tray.js": ("tray.js", "text/javascript; charset=utf-8"),
             "/tray.css": ("tray.css", "text/css; charset=utf-8")}
-POST_PATHS = {"/api/settings", "/api/context-settings", "/api/link", "/api/sharing"}
-GET_PATHS = {"/api/status", "/api/tray-status", "/api/context-settings", "/api/packet-filters", "/api/packets", "/api/sharing"}
+POST_PATHS = {"/api/settings", "/api/context-settings", "/api/link", "/api/sharing", "/api/restart-notice", "/api/connection/resume"}
+GET_PATHS = {"/api/status", "/api/tray-status", "/api/context-settings", "/api/packet-filters", "/api/packets", "/api/sharing", "/api/restart-notice"}
 
 
 def open_directory(value):
@@ -284,8 +285,14 @@ class UIHandler(BaseHTTPRequestHandler):
                 return
             # Entry configuration is independent of the running relay settings.
             # It never changes the live relay, provider URLs or running requests.
+            previous = port_status(status["data_dir"], self.server.relay_port)
             result = (save_port(status["data_dir"], self.server.relay_port, value)
                       if self.command == "POST" else port_status(status["data_dir"], self.server.relay_port))
+            config_path = status.get("profile", {}).get("config_path")
+            if self.command == "POST" and config_path:
+                notices = RestartNotices(status["data_dir"], config_path)
+                notices.change("entry_port", previous["configured_port"], result["configured_port"])
+                result["restart_notice"] = notices.snapshot()
             self._json(200, result)
         except (ValueError, TypeError) as exc:
             self._json(400, {"error": str(exc)})

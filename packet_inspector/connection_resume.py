@@ -94,7 +94,7 @@ class ConnectionResume:
                 self.current = {"id": self.current.get("id") or secrets.token_hex(12),
                                 "state": "checking", "result": {}, "error": ""}
             started = time.monotonic()
-            result, error = {"active": False, "reload_required": False}, ""
+            result, error = {"active": False, "reload_required": False, "local_reload_required": False}, ""
             try:
                 if server.settings["auto_detect_providers"] and server.connection_profile()["active"]:
                     provider = server.sync_providers()
@@ -108,6 +108,7 @@ class ConnectionResume:
                     reload_required = bool(provider.get("reload_required") or wsl.get("reload_required")
                                            or server.connection_reload_required)
                     result = {"active": True, "changed": bool(provider.get("changed") or wsl.get("changed")),
+                              "local_reload_required": bool(provider.get("reload_required")),
                               "reload_required": reload_required, "warnings": provider.get("warnings", [])[:16],
                               "wsl": self._wsl_result(wsl)}
                     server.connection_reload_required |= reload_required
@@ -117,6 +118,10 @@ class ConnectionResume:
                 # Keep serving already-published routes and report the repair.
                 error = safe_text(type(exc).__name__ + ": " + str(exc), (server.settings["relay_token"],), limit=1000)
                 self.deferred_wsl.clear()
+            for target in result.get("wsl", {}).get("targets", []):
+                if target.get("changed"):
+                    server.restart_notices.mark("wsl", target="wsl", scope=str(target.get("distribution", ""))[:160])
+            result["restart_notice"] = server.restart_notices.snapshot()
             attention = bool(error or result.get("warnings") or result.get("wsl", {}).get("warnings"))
             with self.guard:
                 self.current = {**self.current, "state": "attention" if attention else "complete",
