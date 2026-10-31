@@ -86,9 +86,6 @@ class UpgradePreview:
         self.window.protocol("WM_DELETE_WINDOW", self.close)
         self.window.bind("<Escape>", lambda _event: self.close())
         self.controls.bind("<Escape>", lambda _event: self.close())
-        self.view.open_button.configure(command=lambda: self.view.set_detail(
-            "Preview only. No application will be launched." if self.language == "en" else "仅预览界面，不会打开其他程序。"))
-        self.view.close_button.configure(command=self.close)
         self.window.update_idletasks()
         self.window.geometry(f"{self.view.u(536)}x{max(self.view.u(404), self.window.winfo_reqheight())}")
 
