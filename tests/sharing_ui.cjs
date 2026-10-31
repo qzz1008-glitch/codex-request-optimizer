@@ -32,7 +32,7 @@ const save=()=>node("sharing-inline-editor").dataset.field==="expires_at"&&!node
 const cancel=()=>node("sharing-inline-cancel").handlers.click();
 const deleteRow=id=>click("sharing-cards",{action:"delete",id});
 const confirmDelete=()=>node("sharing-delete-confirm").handlers.click();
-const weekly=(id,value)=>{const input=new Element();input.dataset={action:"weekly",id};input.value=String(value??"");return node("sharing-cards").handlers.change({target:input});};
+const weekly=(id,value,display=new Element())=>{const input=new Element();input.dataset={action:"weekly",id};input.value=String(value??"");input.parentElement={querySelector:selector=>selector===".sharing-weekly-value"?display:null};return node("sharing-cards").handlers.change({target:input});};
 const day=value=>{const date=new Date(value);return new Date(date.getTime()-date.getTimezoneOffset()*60000).toISOString().slice(0,10);};
 const deadline=value=>{const [year,month,date]=value.split("-").map(Number);return new Date(year,month-1,date+1).getTime()/1000;};
 const noExpiry=(id,checked)=>{node(id+"-unlimited").checked=checked;return node(id+"-unlimited").handlers.change();};
@@ -160,15 +160,17 @@ const visualOrder=kind=>node(kind+"-credential-rows").rows.map(row=>row.querySel
  const finite={...host,credentials:[{...outgoing,expires_at:deadline(changedExpiry)},incoming,exitIncoming]};pending.push({status:200,data:finite});await interval();assert.ok(node("quota-credential-rows").innerHTML.includes(`>${changedExpiry}</button>`),"The list shows the selected date instead of the next midnight's date");edit("q1","expires_at");assert.equal(node("sharing-inline-expiry").value,changedExpiry);const unchangedMidnight=requests.length;await save();assert.equal(requests.length,unchangedMidnight,"Opening an end-of-day deadline does not change it");edit("q1","expires_at");noExpiry("sharing-inline-expiry",true);assert.equal(requests.length,beforeNoExpiry+1,"The unlimited checkbox waits for explicit confirmation");cancel();assert.equal(requests.length,beforeNoExpiry+1);edit("q1","expires_at");noExpiry("sharing-inline-expiry",true);pending.push({status:200,data:host});await save();assert.equal(JSON.stringify(requests.at(-1).data),JSON.stringify({action:"credential_edit",id:"q1",expires_at:null}));
  for(let weekday=0;weekday<7;weekday++){
    const changed={...host,credentials:[{...outgoing,weekly_reset_day:weekday},incoming,exitIncoming]};
-   pending.push({status:200,data:changed});await weekly("q1",weekday);
+   const display=new Element();pending.push({status:200,data:changed});await weekly("q1",weekday,display);
+   assert.equal(display.textContent,["周一","周二","周三","周四","周五","周六","周日"][weekday]+" 00:00","The visible label follows the native selection");
    assert.deepEqual(requests.at(-1).data,{action:"credential_edit",id:"q1",weekly_reset:true,weekly_reset_day:weekday});
    assert.ok(node("quota-credential-rows").innerHTML.includes(`<option value="${weekday}" selected>`));
  }
  const legacyWeekly={...host,weekly_reset_days_supported:undefined};pending.push({status:200,data:legacyWeekly});await interval();
- const beforeLegacy=requests.length;await weekly("q1",4);assert.equal(requests.length,beforeLegacy);assert.match(node("sharing-message").textContent,/不支持选择刷新日期/);
+ const beforeLegacy=requests.length,legacyDisplay=new Element();await weekly("q1",4,legacyDisplay);assert.equal(requests.length,beforeLegacy);assert.match(node("sharing-message").textContent,/不支持选择刷新日期/);assert.equal(legacyDisplay.textContent,"周一 00:00","Rejected selections restore the visible label");
  pending.push({status:200,data:legacyWeekly});await weekly("q1",0);assert.deepEqual(requests.at(-1).data,{action:"credential_edit",id:"q1",weekly_reset:true});
  pending.push({status:200,data:host});await interval();
- pending.push({status:200,data:host});await weekly("q1",null);assert.equal(JSON.stringify(requests.at(-1).data),JSON.stringify({action:"credential_edit",id:"q1",weekly_reset:false,weekly_reset_day:null}));
+ const noResetDisplay=new Element();pending.push({status:200,data:host});await weekly("q1",null,noResetDisplay);assert.equal(JSON.stringify(requests.at(-1).data),JSON.stringify({action:"credential_edit",id:"q1",weekly_reset:false,weekly_reset_day:null}));assert.equal(noResetDisplay.textContent,"不刷新");
+ let releaseWeeklySave;pending.push(new Promise(resolve=>{releaseWeeklySave=resolve;}));const savingDisplay=new Element(),savingWeekly=weekly("q1",2,savingDisplay);await flush();assert.equal(savingDisplay.textContent,"周三 00:00","A pending save immediately shows the selected day");releaseWeeklySave({status:400,data:{error:"共享操作失败。"}});await savingWeekly;assert.match(node("quota-credential-rows").innerHTML,/<span class="sharing-weekly-value" aria-hidden="true">周一 00:00<\/span>/,"A failed save restores the stored visible label");
  edit("q1","label");node("sharing-inline-value").value="unsaved";click("sharing-cards",{action:"weekly",id:"q1"});assert.equal(node("sharing-inline-editor").hidden,false,"Opening the weekday select leaves the change event to save the selected schedule");pending.push({status:400,data:{error:"共享操作失败。"}});await weekly("q1",null);assert.equal(node("sharing-inline-editor").hidden,true);assert.match(node("quota-credential-rows").innerHTML,/data-action="weekly" data-id="q1"[^>]*><option value="">不刷新<\/option><option value="0" selected>/,"A failed schedule edit restores the stored setting");
  const beforeCancel=requests.length;edit("q1","label");node("sharing-inline-value").value="discarded";cancel();assert.equal(requests.length,beforeCancel);assert.equal(node("sharing-inline-editor").hidden,true);
  edit("q1","budget");documentEvents.keydown({key:"Escape",preventDefault(){}});assert.equal(node("sharing-inline-editor").hidden,true);edit("q1","label");documentEvents.pointerdown({target:{closest:()=>null}});assert.equal(node("sharing-inline-editor").hidden,true);
