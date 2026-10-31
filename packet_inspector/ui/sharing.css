@@ -40,7 +40,7 @@
 .sharing-weekly-select:disabled{cursor:default;opacity:.7}
 .sharing-weekly-cell .sharing-weekly-select{width:auto;min-height:26px;padding:3px 19px 3px 5px;font-size:11px;border-color:transparent;border-bottom-color:var(--line);border-radius:3px}
 .sharing-weekly-cell .sharing-weekly-select:hover:not(:disabled),.sharing-weekly-select:focus-visible{border-color:var(--accent);outline:none}
-.sharing-actions button{width:100%;padding:6px 12px;min-height:var(--sharing-control-height);font-size:12px}
+.sharing-actions button{width:min(168px,100%);padding:6px 12px;min-height:var(--sharing-control-height);font-size:12px}
 .sharing-local{width:calc(100% - var(--sharing-control-offset));min-height:var(--sharing-control-height);margin:8px 0 0 var(--sharing-control-offset);font-size:12px}.sharing-exit-source{margin:8px 0 0 var(--sharing-control-offset)}
 .sharing-exit-source button{flex:1;min-height:var(--sharing-control-height);font-size:12px;padding:5px 9px}.sharing-exit-source button[aria-pressed=true]{color:var(--accent);border-color:var(--accent)}
 .sharing-stat-note{font-size:11px;color:var(--muted);line-height:1.7;margin:15px 0 0}
@@ -86,6 +86,6 @@
 
 .sharing-edit-message{margin:0;color:var(--danger);font-size:12px;line-height:1.6}
 
-.sharing-card>.sharing-actions{display:grid;grid-template-columns:minmax(0,1fr);margin:12px 0 0 var(--sharing-control-offset)}
+.sharing-card>.sharing-actions{display:grid;grid-template-columns:minmax(0,1fr);justify-items:center;margin:14px 0 0}
 
 .sharing-table tr.sharing-recent td{background:color-mix(in srgb,var(--accent) 10%,var(--panel));box-shadow:inset 0 1px 0 color-mix(in srgb,var(--accent) 25%,transparent),inset 0 -1px 0 color-mix(in srgb,var(--accent) 25%,transparent)}
