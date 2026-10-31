@@ -32,17 +32,28 @@ from .usage_trigger import raw_chunks
 PROTOCOL = 4  # Reusable credentials, durable aggregate-only accounting, independent exit.
 POST_PATHS = {"/responses", "/responses/compact"}
 PRIVATE_NETWORKS = tuple(ipaddress.ip_network(n) for n in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"))
-DROP_HEADERS = {"authorization", "proxy-authorization", "cookie", "host", "content-length",
-                "chatgpt-account-id", "openai-organization", "openai-project", "api-key", "x-api-key",
-                "connection", "keep-alive", "proxy-authenticate", "te", "trailer", "transfer-encoding", "upgrade",
-                "forwarded", "x-real-ip", "x-inspector-control", "x-codex-inspector-packet-id"}
-RESPONSE_HEADERS = {"content-type", "content-encoding", "content-length", "retry-after", "x-request-id",
-                    "x-codex-turn-state", "x-codex-request-id", "openai-processing-ms"}
+HOP_HEADERS = {"connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "proxy-connection",
+               "te", "trailer", "transfer-encoding", "upgrade"}
+IDENTITY_HEADERS = {"authorization", "cookie", "chatgpt-account-id", "openai-organization", "openai-project",
+                    "api-key", "x-api-key"}
+DROP_HEADERS = HOP_HEADERS | IDENTITY_HEADERS | {"host", "content-length", "forwarded", "x-real-ip",
+                                                "x-codex-inspector-packet-id"}
+RESPONSE_DROP_HEADERS = HOP_HEADERS | IDENTITY_HEADERS | {"set-cookie", "set-cookie2", "forwarded", "x-real-ip",
+                                                         "x-codex-inspector-packet-id"}
 
 
 def allowed_request(method, suffix):
-    return ((method == "POST" and suffix in POST_PATHS)
-            or (method == "GET" and len(suffix) <= 2048 and urlsplit(suffix).path == "/models"))
+    try:
+        target = urlsplit(suffix)
+    except ValueError:
+        return False
+    if (not suffix.startswith("/") or suffix.startswith("//") or target.scheme or target.netloc
+            or target.fragment or "#" in suffix):
+        return False
+    # Inspect only the endpoint. Query parameters belong to the native client
+    # and are forwarded verbatim, including parameters added by later versions.
+    return ((method == "POST" and target.path in POST_PATHS)
+            or (method == "GET" and len(suffix) <= 2048 and target.path == "/models"))
 
 
 def lan_address(value):
@@ -84,11 +95,24 @@ def automatic_address():
     raise SharingError("未找到可用的局域网连接，请检查网络。")
 
 
+def connection_headers(headers):
+    return {value.strip().lower() for key, values in headers.items() if key.lower() == "connection"
+            for value in values.split(",") if value.strip()}
+
+
 def forwarding_headers(headers):
-    connection = {v.strip().lower() for v in headers.get("Connection", "").split(",")}
+    connection = connection_headers(headers)
     return {key: value for key, value in headers.items()
             if key.lower() not in DROP_HEADERS | connection
             and not key.lower().startswith(("x-forwarded-", "x-inspector-"))}
+
+
+def forwarding_response_headers(headers):
+    """Keep unknown native protocol headers; remove only transport/private data."""
+    connection = connection_headers(headers)
+    return [(key, value) for key, value in headers.items()
+            if key.lower() not in RESPONSE_DROP_HEADERS | connection
+            and not key.lower().startswith(("x-forwarded-", "x-inspector-"))]
 
 
 def parse_link(value):
@@ -223,7 +247,8 @@ class LANHandler(BaseHTTPRequestHandler):
         controller = self.server.controller
         path = self.path
         suffix = path.removeprefix("/v1")
-        if not path.startswith("/v1/") or (path not in {"/v1/status", "/v1/responses"}
+        responses_route = allowed_request("POST", suffix) and urlsplit(suffix).path == "/responses"
+        if not path.startswith("/v1/") or (path != "/v1/status" and not responses_route
                                            and not allowed_request(self.command, suffix)):
             self.reply(404, {"error": "sharing_route_not_found"})
             return
@@ -239,7 +264,7 @@ class LANHandler(BaseHTTPRequestHandler):
         except SharingError as exc:
             self.reply_error(403, exc.code, str(exc))
             return
-        if self.command == "GET" and path == "/v1/responses":
+        if self.command == "GET" and responses_route:
             self.reply(426, {"error": {"code": "websocket_not_supported", "message": "Use HTTP POST."}})
             return
         if not allowed_request(self.command, suffix):
@@ -274,8 +299,11 @@ class LANHandler(BaseHTTPRequestHandler):
             reserved = True
             # B has already prepared the body. A only substitutes authorization
             # and forwards, outside A's capture, diagnostics and protection paths.
-            headers = {key: value for key, value in headers.items() if key.lower() != "accept-encoding"}
-            headers["Accept-Encoding"] = "identity"
+            if self.command == "POST":
+                # Usage accounting observes the original output without a
+                # second body transform. GET responses need no observation.
+                headers = {key: value for key, value in headers.items() if key.lower() != "accept-encoding"}
+                headers["Accept-Encoding"] = "identity"
             request = Request(reservation["upstream"] + suffix,
                               data=body if self.command == "POST" else None, headers=headers, method=self.command)
             try:
@@ -297,10 +325,9 @@ class LANHandler(BaseHTTPRequestHandler):
                                           model=model if isinstance(model, str) else "",
                                           service_tier=tier if isinstance(tier, str) else None)
             self.connection.settimeout(UPSTREAM_READ_TIMEOUT_SECONDS)
-            self.send_response(response.status)
-            for key, value in response.headers.items():
-                if key.lower() in RESPONSE_HEADERS:
-                    self.send_header(key, value)
+            self.send_response_only(response.status, getattr(response, "reason", None))
+            for key, value in forwarding_response_headers(response.headers):
+                self.send_header(key, value)
             self.send_header("Connection", "close")
             self.end_headers()
             sent_headers = True
@@ -377,13 +404,18 @@ class Sharing:
         if selected != "openai" and not codex_auth(provider):
             raise SharingError("当前连接不是 Codex 原生登录出口，暂不支持共享此连接。")
         upstream = profile.get("upstream", "").rstrip("/")
-        expected = {"chatgpt": "https://chatgpt.com/backend-api/codex", "apikey": "https://api.openai.com/v1"}[credentials["mode"]]
-        target, standard = urlsplit(upstream), urlsplit(expected)
-        if (target.scheme != "https" or target.hostname != standard.hostname or target.port not in {None, 443}
-                or target.path.rstrip("/") != standard.path or target.query or target.fragment
-                or target.username or target.password):
+        host = {"chatgpt": "chatgpt.com", "apikey": "api.openai.com"}[credentials["mode"]]
+        try:
+            target = urlsplit(upstream)
+            valid = (target.scheme == "https" and target.hostname == host and target.port in {None, 443}
+                     and not (target.query or target.fragment or target.username or target.password))
+        except ValueError:
+            valid = False
+        if not valid:
             raise SharingError("当前连接不是 Codex 原生登录出口，暂不支持共享此连接。")
-        return expected
+        # The configured native path is authoritative. Do not reconstruct a
+        # fixed API prefix that can drift from the installed Codex version.
+        return upstream
 
     def start_host(self, address=None, port=None, hours=24, budget=1):
         # Compatibility for the original local API; new credentials use issue().
