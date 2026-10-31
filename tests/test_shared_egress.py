@@ -203,15 +203,19 @@ class SharedEgressTests(unittest.TestCase):
                 self.assertIn(b'synthetic upstream error', response.read())
         self.assertEqual(len(self.requests), 3)
 
-    def test_borrower_own_exit_creates_one_callback_and_manual_stop_does_not_restart(self):
-        self.relay.egress.select('local')
+    def test_default_local_exit_reuses_callback_and_recreates_it_after_stop(self):
+        self.assertEqual(self.relay.egress.status()['selection']['mode'], 'local')
         peer = {'host':'127.0.0.1','port':47846}
         first = self.relay.egress.request_exit(peer)
         self.assertEqual(first,self.relay.egress.request_exit(peer))
         self.assertTrue(first.startswith('codex-exit://127.0.0.1:'))
         self.relay.egress.stop()
-        self.assertEqual(self.relay.egress.request_exit(peer),'')
         self.assertIsNone(self.relay.egress.listener)
+        self.assertEqual(self.relay.egress.status()['selection']['mode'], 'local')
+        next_callback = self.relay.egress.request_exit(peer)
+        self.assertTrue(next_callback.startswith('codex-exit://127.0.0.1:'))
+        self.assertNotEqual(next_callback, first)
+        self.assertEqual(self.relay.egress.request_exit(peer), next_callback)
 
     def test_distinct_credentials_allow_multiple_machines_to_share_one_physical_exit(self):
         self.gated = True

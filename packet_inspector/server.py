@@ -1230,12 +1230,13 @@ class Handler(BaseHTTPRequestHandler):
             headers[CLIENT_HEADER] = self.server.sharing.vault.client_id
             try:
                 exit_link = self.server.egress.request_exit(remote)
+                if not exit_link:
+                    raise SharingError("本机出口尚未就绪。")
             except (OSError, SharingError):
                 update(state="relay_error", relay_error="shared_exit_unavailable", status=503)
                 self._json(503, {"error": {"code": "shared_exit_unavailable", "message": "所选出口未就绪，请检查共享出口设置。"}})
                 return
-            if exit_link:
-                headers[EGRESS_HEADER] = exit_link
+            headers[EGRESS_HEADER] = exit_link
         local_upstream = urlsplit(upstream).hostname in {"localhost", "127.0.0.1", "::1"}
         request_opener = (remote["opener"] if shared_client else self.server.local_opener
                           if local_upstream else self.server.egress.outgoing(own_request=True))

@@ -37,7 +37,7 @@ globalThis.InspectorSharing=(()=>{
       </form>
       <form id="${kind}-borrow" class="sharing-form" hidden><label>${label("名称")}<input id="${kind}-borrow-label" maxlength="80" required autocomplete="off"></label><label>${label("对方的凭据")}<input id="${kind}-borrow-link" type="password" autocomplete="off" spellcheck="false" required placeholder="${kind==="quota"?"codex-share":"codex-exit"}://…"></label></form>
       <div class="sharing-actions"><button class="primary sharing-copy-button" type="submit" form="${kind}-issue" id="${kind}-generate">${copyCaption("生成凭据")}</button><button class="primary" type="submit" form="${kind}-borrow" id="${kind}-activate" hidden>${label("保存并借入")}</button></div>
-      ${kind==="quota"?`<button id="quota-local" class="sharing-local" type="button" data-action="local" data-kind="quota">${label("使用本机额度")}</button>`:`<div id="exit-local" class="sharing-exit-source"><button type="button" data-action="provider" data-kind="exit">${label("额度方出口")}</button><button type="button" data-action="local" data-kind="exit">${label("本机出口")}</button></div>`}
+      ${kind==="quota"?`<button id="quota-local" class="sharing-local" type="button" data-action="local" data-kind="quota">${label("使用本机额度")}</button>`:`<div id="exit-local" class="sharing-exit-source"><button type="button" data-action="local" data-kind="exit">${label("本机出口")}</button></div>`}
       <p class="sharing-card-note">${label(kind==="quota"?"每张额度凭据仅供一台机器使用。":"每张出口凭据仅供一台机器使用，始终通过本机网络转发。")}</p>
     </div>`;
   }
@@ -246,7 +246,7 @@ globalThis.InspectorSharing=(()=>{
     controller?.abort();closeInline(false);message("");deleting={id:row.id,kind:row.kind};
     get("sharing-delete-name").textContent=[tr(row.kind==="quota"?"额度":"出口"),tr(row.direction==="out"?"借出":"借入"),row.label].join(" · ");
     get("sharing-delete-description").textContent=tr(row.direction==="out"?"删除后该凭据将失效，其用量记录也会移除，无法撤销。":"仅移除本机保存的凭据和用量记录，不影响对方的凭据。");
-    const hint=get("sharing-delete-hint");hint.hidden=!isActive(row);hint.textContent=isActive(row)?tr(row.kind==="quota"?"此凭据正在使用，删除后将停止借用并恢复原连接，需要重新加载 Codex 配置或重启 ChatGPT 应用。":"此凭据正在使用，删除后将恢复默认出口。"):"";
+    const hint=get("sharing-delete-hint");hint.hidden=!isActive(row);hint.textContent=isActive(row)?tr(row.kind==="quota"?"此凭据正在使用，删除后将停止借用并恢复原连接，需要重新加载 Codex 配置或重启 ChatGPT 应用。":"此凭据正在使用，删除后将使用本机出口。"):"";
     get("sharing-delete-dialog").showModal();get("sharing-delete-cancel").focus();
   }
   function closeDelete(renderNow=true){
@@ -270,7 +270,7 @@ globalThis.InspectorSharing=(()=>{
   }
   get("sharing-cards").addEventListener("click",async event=>{const button=event.target.closest("[data-view],[data-action]");if(!button||busy)return;const {kind,view,action:command}=button.dataset;
     if(view){closeInline(false);views[kind]=view;if(current)render(current);return;}
-    if(command==="local"||command==="provider"){await action(button,kind==="quota"?{action:"client_disconnect"}:{action:"egress_select",mode:command==="provider"?"provider":"local"});return;}
+    if(command==="local"){await action(button,kind==="quota"?{action:"client_disconnect"}:{action:"egress_select",mode:"local"});return;}
     const row=(current?.credentials||[]).find(row=>row.id===button.dataset.id);if(!row)return;
     if(command==="weekly")return;
     if(command==="delete"){openDelete(row);return;}
