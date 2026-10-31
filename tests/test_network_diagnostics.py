@@ -1,9 +1,13 @@
 """Diagnostics are event-triggered and never change network response bytes."""
 import gzip
+from contextlib import closing
 import http.client
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+import os
 from pathlib import Path
+import socket
+import sqlite3
 import tempfile
 import threading
 import time
@@ -27,6 +31,8 @@ class Gateway(BaseHTTPRequestHandler):
     def do_CONNECT(self):
         self.server.calls.append(("CONNECT", self.path, b""))
         self.send_response(self.server.connect_status)
+        for key,value in getattr(self.server,"connect_headers",[]):
+            self.send_header(key,value)
         self.send_header("Content-Length", "0")
         self.end_headers()
         self.close_connection = True
@@ -105,7 +111,9 @@ class NetworkRelayTests(unittest.TestCase):
 
     def test_no_startup_sync_or_success_diagnostic(self):
         self.assertFalse(self.server.network_diagnostics.path.exists())
-        self.assertEqual(self.send("/ok"), (200, self.gateway.success))
+        with patch("packet_inspector.network_diagnostics.process_identity") as identity:
+            self.assertEqual(self.send("/ok"), (200, self.gateway.success))
+            identity.assert_not_called()
         self.assertEqual(self.records(), [])
         self.assertFalse(self.server.network_diagnostics.path.exists())
         self.server.settings["auto_detect_providers"] = True
@@ -249,6 +257,7 @@ class NetworkRelayTests(unittest.TestCase):
                         with trace.active():
                             opener.open(Request("https://upstream.invalid/responses", data=b"{}"), timeout=2)
                     except (OSError, URLError) as exc:
+                        status,payload = trace.client_error(exc)
                         trace.finish(exc)
                     else:
                         self.fail("Synthetic proxy must fail before contacting an upstream")
@@ -256,9 +265,80 @@ class NetworkRelayTests(unittest.TestCase):
                 self.assertEqual(record["failure_phase"], expected)
                 self.assertEqual(record["socket_endpoint"]["port"], self.gateway.server_port)
                 self.assertEqual(record["socket_endpoint"]["tunnel_target"], "upstream.invalid")
+                self.assertEqual(record["proxy_connect_response"]["status"],connect_status)
+                self.assertEqual(status,504 if connect_status==504 else 502)
+                self.assertNotEqual(payload["error"]["cause"]["type"],"URLError")
+                self.assertTrue(payload["error"]["cause"]["message"])
+
+    def test_proxy_connect_status_and_reason_reach_client_without_retries_or_credentials(self):
+        proxy="http://proxy-user:proxy-password@127.0.0.1:"+str(self.gateway.server_port)
+        self.upstream="https://upstream.invalid"
+        self.gateway.connect_headers=[("Via","1.1 corporate-proxy"),("X-Request-ID","proxy-connect-123"),
+            ("Proxy-Authenticate",'Basic realm="private-domain", Negotiate opaque-secret-token'),
+            ("Proxy-Authenticate","NTLM another-secret-token"),("Set-Cookie","cookie-secret")]
+        self.server.settings["capacity_retry_enabled"]=True
+        with patch.dict(self.server.network_diagnostics.proxies,{"https":proxy},clear=True), \
+                patch("urllib.request.proxy_bypass",return_value=False):
+            self.server.opener=build_opener(ProxyHandler({"https":proxy}),DiagnosticHTTPHandler(),DiagnosticHTTPSHandler())
+            for status in (403,407,413,504):
+                with self.subTest(status=status):
+                    self.gateway.connect_status=status
+                    before=len(self.gateway.calls)
+                    actual,raw=self.send("",b'{"model":"test","input":[],"marker":"private-body-marker"}')
+                    error=json.loads(raw)["error"]
+                    self.assertEqual(actual,status)
+                    self.assertIn("HTTP "+str(status),error["message"])
+                    self.assertEqual(error["code"],"inspector_proxy_connect_failed")
+                    self.assertEqual(error["phase"],"proxy_connect")
+                    self.assertEqual(error["proxy_status"],status)
+                    self.assertEqual(len(self.gateway.calls),before+1)
+                    self.assertEqual(self.gateway.calls[-1][0],"CONNECT")
+                    record=next(r for r in self.records() if r["id"]==error["diagnostic_id"])
+                    self.assertTrue(record["proxy_authorization_sent"])
+                    self.assertEqual(record["proxy_connect_response"]["headers"]["x-request-id"],"proxy-connect-123")
+                    self.assertEqual(record["proxy_connect_response"]["authentication_schemes"],["basic","negotiate","ntlm"])
+                    self.assertEqual(record["process"]["pid"],os.getpid())
+                    self.assertIsInstance(record["process"]["parent_pid"],int)
+                    self.assertNotIn("uploaded_body_bytes",record["flow"])
+                    captured=json.dumps(record)+raw.decode()
+                    for secret in ("proxy-password","secret-test-token","opaque-secret-token","another-secret-token", "cookie-secret","private-body-marker","private-domain"):
+                        self.assertNotIn(secret,captured)
+
+
+    def test_proxy_header_observation_failure_preserves_actual_connect_error(self):
+        journal = self.server.network_diagnostics
+        opener = build_opener(ProxyHandler({"https": self.upstream}), DiagnosticHTTPHandler(), DiagnosticHTTPSHandler())
+        trace = journal.request("https://upstream.invalid/responses", "POST", {}, b"{}")
+        self.gateway.connect_status = 407
+        with patch("urllib.request.proxy_bypass", return_value=False), \
+                patch("packet_inspector.network_diagnostics.DiagnosticHTTPSConnection.get_proxy_response_headers",
+                      side_effect=RuntimeError("observer failure"), create=True):
+            with self.assertRaises(URLError) as caught:
+                with trace.active():
+                    opener.open(Request("https://upstream.invalid/responses", data=b"{}"), timeout=2)
+        status, payload = trace.client_error(caught.exception)
+        trace.finish(caught.exception)
+        self.assertEqual(status, 407)
+        self.assertEqual(payload["error"]["cause"]["type"], "OSError")
+        self.assertNotIn("observer failure", payload["error"]["message"])
+        record, = self.records()
+        self.assertEqual(record["proxy_headers_observation_error"], "RuntimeError")
 
 
 class DiagnosticDataTests(unittest.TestCase):
+    def test_network_cause_is_returned_when_no_http_status_exists(self):
+        with tempfile.TemporaryDirectory() as td:
+            journal=NetworkDiagnostics(Path(td),{})
+            trace=journal.request("https://upstream.invalid/responses","POST",{"Authorization":"Bearer private-token"},b"{}")
+            trace.record["phase"]="dns_or_tcp_connect"
+            error=URLError(socket.gaierror(11001,"getaddrinfo failed; private-token"))
+            status,payload=trace.client_error(error)
+            self.assertEqual(status,502)
+            self.assertEqual(payload["error"]["cause"]["type"],"gaierror")
+            self.assertIn("getaddrinfo failed",payload["error"]["message"])
+            self.assertNotIn("private-token",json.dumps(payload))
+            self.assertFalse(journal.path.exists())
+
     def test_stream_errors_do_not_capture_following_output(self):
         with tempfile.TemporaryDirectory() as td:
             journal = NetworkDiagnostics(Path(td), {})
@@ -303,6 +383,31 @@ class DiagnosticDataTests(unittest.TestCase):
                 journal._save({"id": "expired", "created": 1, "kind": "test"})
             records = journal.export()["records"]
             self.assertEqual({r["id"] for r in records}, {"3", "4"})
+
+    def test_legacy_database_reclaims_space_and_stays_bounded_during_error_rotation(self):
+        with tempfile.TemporaryDirectory() as td:
+            journal=NetworkDiagnostics(Path(td),{})
+            with closing(sqlite3.connect(journal.path)) as db, db:
+                db.execute("CREATE TABLE diagnostics (id TEXT PRIMARY KEY, created REAL, size INTEGER, document TEXT)")
+                for i in range(30):
+                    value={"id":"old-"+str(i),"created":time.time()-10,"text":"x"*8000}
+                    raw=json.dumps(value)
+                    db.execute("INSERT INTO diagnostics VALUES (?,?,?,?)",(value["id"],value["created"],len(raw),raw))
+                self.assertEqual(db.execute("PRAGMA auto_vacuum").fetchone()[0],0)
+            before=journal.path.stat().st_size
+            with patch("packet_inspector.network_diagnostics.MAX_RECORDS",5), \
+                    patch("packet_inspector.network_diagnostics.MAX_BYTES",5000):
+                for i in range(60):
+                    journal._save({"id":"error-"+str(i),"created":time.time()+i/100,"text":"y"*900})
+                    self.assertLess(journal.path.stat().st_size,64*1024)
+            self.assertEqual(journal.errors,0)
+            self.assertLess(journal.path.stat().st_size,before/2)
+            with closing(sqlite3.connect(journal.path)) as db:
+                self.assertEqual(db.execute("PRAGMA auto_vacuum").fetchone()[0],1)
+                count,size=db.execute("SELECT COUNT(*),SUM(size) FROM diagnostics").fetchone()
+                self.assertLessEqual(count,5)
+                self.assertLessEqual(size,5000)
+                self.assertEqual(db.execute("PRAGMA freelist_count").fetchone()[0],0)
 
     def test_diagnostic_write_failure_cannot_break_a_response(self):
         with tempfile.TemporaryDirectory() as td:

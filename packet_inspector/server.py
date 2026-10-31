@@ -1480,8 +1480,10 @@ class Handler(BaseHTTPRequestHandler):
             network_error = exc
             relay_error = diagnostic_error = type(exc).__name__
             if not sent_headers:
-                self._json(502, {"error": {"code": "inspector_upstream_unreachable",
-                            "message": "上游连接失败: " + type(exc).__name__}})
+                error_status, error_payload = network_trace.client_error(exc)
+                update(client_error_status=error_status, network_diagnostic_id=network_trace.record["id"],
+                       network_failure_phase=error_payload["error"]["phase"], network_error=error_payload["error"])
+                self._json(error_status, error_payload)
         finally:
             try:
                 if observation:
