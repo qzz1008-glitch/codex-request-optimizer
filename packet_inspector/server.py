@@ -405,7 +405,8 @@ class InspectorServer(ThreadingHTTPServer):
                         self.sync_providers()
                     result = self.link.restore()
                 result["wsl"] = self.wsl.apply(False, self.endpoint, self.settings["upstream"],
-                    self.settings["provider_routes"], lambda routes: None)
+                    self.settings["provider_routes"],
+                    lambda routes: self.save_settings({**self.settings, "provider_routes": routes}))
                 result["reload_required"] = bool(result.get("reload_required") or result["wsl"]["reload_required"])
                 self.save_settings({**self.settings, "auto_detect_providers": False})
                 self.connection_reload_required |= result.get("reload_required", False)

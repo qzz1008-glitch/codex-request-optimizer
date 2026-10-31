@@ -1125,6 +1125,7 @@ function showConnectionFeedback(which,result={}) {
   const wslWarnings=Array.isArray(result.wsl?.warnings)?result.wsl.warnings:[];
   if(wslTargets.some(value=>value.changed))items.push(t("WSL Codex 配置：重新连接 WSL 会话后生效"));
   const wslReasons={relay_unreachable:"WSL 无法访问本机中转，未修改配置。",relay_instance_mismatch:"WSL 连接到其他服务，未修改配置。",
+    config_not_found:"未找到该 WSL 用户的 Codex 配置。",
     restore_pending:"WSL 配置待恢复，请启动该发行版后再次接入并断开。"};
   const warnings=which==="activate"&&Array.isArray(result.warnings)?result.warnings.filter(value=>value?.reason==="unsupported_upstream"):[];
   showConfigurationFeedback(items,{reloadRequired,
@@ -1132,7 +1133,8 @@ function showConnectionFeedback(which,result={}) {
       warnings.slice(0,5).map(value=>"\n"+t("未接管 {provider}（{file}）：{reason}。").replace("{provider}",value.provider).replace("{file}",value.file).replace("{reason}",t(value.detail||value.reason))).join("")+
       (warnings.length>5?"\n"+t("另有 {count} 项配置未接管。").replace("{count}",warnings.length-5):"")+
       wslTargets.map(value=>"\n"+t(value.active?"WSL {distribution} 已接入。":"WSL {distribution} 已恢复。").replace("{distribution}",value.distribution)).join("")+
-      wslWarnings.map(value=>"\n"+value.distribution+"："+t(wslReasons[value.reason]||"WSL 操作失败，请查看接入诊断。")+" ("+value.reason+")").join("")});
+      wslWarnings.map(value=>"\n"+value.distribution+"："+t(wslReasons[value.reason]||"WSL 操作失败，请查看接入诊断。")+" ("+value.reason+")"+
+        (value.detail?"\n"+value.detail:"")).join("")});
 }
 function requestCompressionChange(mode) {
   if(mode==="connected")return requestConnection("header");

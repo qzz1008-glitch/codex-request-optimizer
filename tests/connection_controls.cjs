@@ -129,6 +129,13 @@ function fixture(connected) {
   assert.equal(context.compressionSaving,false);
   assert.equal(calls.some(call=>call[0]==='message'),false,'Disconnect must not create a banner');
 
+  ({context,element,buttons}=fixture(true));
+  context.showConnectionFeedback('activate',{reload_required:true,wsl:{targets:[{distribution:'Ubuntu',active:true,changed:true}],
+    warnings:[{distribution:'HCE',reason:'relay_unreachable',detail:'bash: connection refused'}]}});
+  assert(element('settings-restart-summary').textContent.includes('WSL Ubuntu 已接入。'));
+  assert(element('settings-restart-summary').textContent.includes('bash: connection refused'));
+  assert(element('settings-restart-items').children.some(item=>item.text.includes('WSL')));
+
   ({context,buttons}=fixture(true));
   context.state.status.provider_sync_error='OSError';
   context.renderCompressionMode();

@@ -8,27 +8,28 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+from datetime import datetime
 from pathlib import Path, PurePosixPath
 import re
 import shutil
 import subprocess
 import threading
 import time
+import tomllib
 from urllib.parse import urlsplit
 
 from .config_link import ConfigLink
 from .providers import ProviderManager
+from .network_diagnostics import safe_text
 
 
 PROBE_SCRIPT = r'''
-import json,sys,urllib.request
-opener=urllib.request.build_opener(urllib.request.ProxyHandler({}))
-try:
-    with opener.open("http://127.0.0.1:"+str(int(sys.argv[1]))+"/api/wsl-probe",timeout=2) as response:
-        data=json.loads(response.read(4096))
-except Exception as exc:
-    data={"error":type(exc).__name__}
-print(json.dumps(data))
+set -eu
+exec 3<>/dev/tcp/127.0.0.1/"$1"
+printf 'GET /api/wsl-probe HTTP/1.1\r\nHost: 127.0.0.1:%s\r\nConnection: close\r\n\r\n' "$1" >&3
+response=
+IFS= read -r -t 3 -N 4096 response <&3 || true
+printf '%s' "$response"
 '''
 
 # Only requested IDs and display metadata leave Linux; never auth or messages.
@@ -41,7 +42,7 @@ home=Path(request["home"])
 wanted=set(request["ids"][:300])
 rows,edges,index=[],[],{}
 def revision(path):
-    value=path.stem.removeprefix("state_")
+    value=path.stem[len("state_"):]
     return int(value) if value.isdigit() else -1
 for path in sorted(home.glob("state_*.sqlite"),key=revision,reverse=True):
     if not wanted: break
@@ -75,12 +76,52 @@ try:
                 index[key]=title[:512]
         except (ValueError,TypeError,AttributeError): pass
 except OSError: pass
-print(json.dumps({"rows":rows,"edges":edges,"index":index},ensure_ascii=True))
+print("CPI_LABELS="+json.dumps({"rows":rows,"edges":edges,"index":index},ensure_ascii=True))
 '''
 
 
 class WslError(ValueError):
-    pass
+    def __init__(self, reason, *, exit_code=None, detail=""):
+        super().__init__(reason)
+        self.exit_code = exit_code
+        self.detail = safe_text(detail, limit=1000)
+
+
+def warning(distribution, error):
+    value = {"distribution": distribution, "reason": str(error) if isinstance(error, WslError) else type(error).__name__}
+    if isinstance(error, WslError):
+        if error.exit_code is not None:
+            value["exit_code"] = error.exit_code
+        if error.detail:
+            value["detail"] = error.detail
+    return value
+
+
+def index_labels(config, ids):
+    """Plain JSONL can be read over WSL's file share without a Linux runtime."""
+    found, wanted = {}, set(ids)
+    try:
+        path = Path(config).parent / "session_index.jsonl"
+        offset = max(0, path.stat().st_size - 1024 * 1024)
+        with path.open("rb") as stream:
+            stream.seek(offset)
+            lines = stream.read(1024 * 1024).split(b"\n")
+        for line in reversed(lines[1:-1] if offset else lines[:-1]):
+            try:
+                item = json.loads(line)
+                key, title = item.get("id"), item.get("thread_name")
+                if key in wanted and key not in found and isinstance(title, str) and title.strip():
+                    label = {"title": title[:512]}
+                    try:
+                        label["updated_at"] = datetime.fromisoformat(item["updated_at"].replace("Z", "+00:00")).timestamp()
+                    except (ValueError, TypeError, KeyError, AttributeError, OverflowError):
+                        pass
+                    found[key] = label
+            except (ValueError, TypeError, AttributeError):
+                continue
+    except OSError:
+        pass
+    return found
 
 
 def decode_output(value):
@@ -115,8 +156,8 @@ class LocalWsl:
         except OSError:
             raise WslError("wsl_unavailable") from None
         if result.returncode:
-            # Do not log shell profiles or arbitrary subprocess output.
-            raise WslError("wsl_command_failed")
+            raise WslError("wsl_command_failed", exit_code=result.returncode,
+                           detail=decode_output(result.stderr[-3000:]))
         if len(result.stdout) > 4 * 1024 * 1024:
             raise WslError("wsl_output_too_large")
         return decode_output(result.stdout)
@@ -148,19 +189,30 @@ class LocalWsl:
 
     def probe(self, distribution, port, marker):
         try:
-            data = json.loads(self.run(["-d", distribution, "--exec", "python3", "-c", PROBE_SCRIPT, str(port)]))
+            text = self.run(["-d", distribution, "--exec", "bash", "-s", "--", str(port)],
+                            data=PROBE_SCRIPT.encode("utf-8"))
+        except WslError as exc:
+            raise WslError("relay_unreachable", exit_code=exc.exit_code, detail=exc.detail or str(exc)) from None
+        try:
+            headers, body = text.replace("\r\n", "\n").split("\n\n", 1)
+            if not re.match(r"HTTP/1\.[01] 200(?:\s|$)", headers):
+                raise WslError("relay_unreachable", detail=headers.splitlines()[0][:200])
+            data = json.loads(body)
         except WslError:
-            raise WslError("wsl_python_probe_failed") from None
+            raise
         except (ValueError, TypeError):
             raise WslError("relay_unreachable") from None
-        if isinstance(data, dict) and data.get("error"):
-            raise WslError("relay_unreachable")
         if not isinstance(data, dict) or data.get("instance") != marker:
             raise WslError("relay_instance_mismatch")
 
     def labels(self, distribution, home, ids):
-        body = json.dumps({"home": home, "ids": ids}).encode("utf-8")
-        return json.loads(self.run(["-d", distribution, "--exec", "python3", "-c", LABEL_SCRIPT], data=body))
+        # stdin avoids Windows/WSL quoting of a multiline Python -c argument.
+        script = LABEL_SCRIPT.replace('request=json.load(sys.stdin)', 'request=' + repr({"home": home, "ids": ids}))
+        text = self.run(["-d", distribution, "--exec", "sh", "-lc", "exec python3 -"], data=script.encode("utf-8"))
+        lines = [line[len("CPI_LABELS="):] for line in text.splitlines() if line.startswith("CPI_LABELS=")]
+        if len(lines) != 1:
+            raise WslError("metadata_invalid_response")
+        return json.loads(lines[0])
 
 
 class WslConnection:
@@ -173,6 +225,8 @@ class WslConnection:
         self._labels = {}
         self.metadata_error = ""
         self._metadata_retry = 0
+        self._discovered_at = 0
+        self._metadata_errors = {}
 
     def _distributions(self, *, refresh=False):
         if refresh or time.monotonic() - self._running_at > 15:
@@ -189,6 +243,54 @@ class WslConnection:
             except (OSError, ValueError, KeyError, TypeError):
                 continue
 
+    def _discover(self, running):
+        """Remember read-only locations independently of successful routing."""
+        detected, warnings = [], []
+        self._discovered_at = time.monotonic()
+        for distribution in running:
+            try:
+                home = self.backend.home(distribution)
+                config = self.backend.config(distribution, home)
+                if config is None:
+                    warnings.append({"distribution": distribution, "home": home, "reason": "config_not_found"})
+                    continue
+                identity = hashlib.sha256((distribution + "\n" + home).encode()).hexdigest()[:24]
+                directory = self.directory / identity
+                target = {"distribution": distribution, "home": home, "config": str(config)}
+                directory.mkdir(parents=True, exist_ok=True)
+                path = directory / "target.json"
+                text = json.dumps(target)
+                if not path.exists() or path.read_text(encoding="utf8") != text:
+                    staging = directory / "target.new"
+                    staging.write_text(text, encoding="utf8")
+                    staging.replace(path)
+                detected.append((directory, target, config))
+            except (WslError, OSError) as exc:
+                warnings.append(warning(distribution, exc))
+        return detected, warnings
+
+    @staticmethod
+    def _uses_our_routes(config, endpoint, routes):
+        data = tomllib.loads(config.read_text(encoding="utf-8-sig"))
+        urls = [data.get("openai_base_url")]
+        urls += [provider.get("base_url") for provider in data.get("model_providers", {}).values()
+                 if isinstance(provider, dict)]
+        own = {endpoint, *(endpoint + "/p/" + key for key in routes)}
+        return any(isinstance(url, str) and url in own for url in urls)
+
+    def _metadata_status(self):
+        errors = list(self._metadata_errors.values())[:8]
+        self.metadata_error = errors[0]["reason"] if errors else ""
+        path = self.directory / "metadata-status.json"
+        text = json.dumps({"errors": errors}, ensure_ascii=False)
+        if path.exists() and path.read_text(encoding="utf8") == text:
+            return
+        if errors or path.exists():
+            self.directory.mkdir(parents=True, exist_ok=True)
+            staging = path.with_suffix(".new")
+            staging.write_text(text, encoding="utf8")
+            staging.replace(path)
+
     def apply(self, connected, endpoint, upstream, routes, publish, *, retry_limit=None):
         with self._lock:
             result = {"targets": [], "warnings": [], "changed": False, "reload_required": False}
@@ -198,57 +300,51 @@ class WslConnection:
             except WslError as exc:
                 # WSL's Windows stub is present even when WSL is not installed.
                 if list(self._targets()):
-                    result["warnings"].append({"distribution": "WSL", "reason": str(exc)})
+                    result["warnings"].append(warning("WSL", exc))
                 return result
-            candidates = []
+            detected, warnings = self._discover(running)
+            result["detected"] = [target for _, target, _ in detected]
+            result["warnings"].extend(warnings)
             if connected:
-                for distribution in running:
-                    try:
-                        home = self.backend.home(distribution)
-                        config = self.backend.config(distribution, home)
-                        if config is None:
-                            continue
-                        identity = hashlib.sha256((distribution + "\n" + home).encode()).hexdigest()[:24]
-                        candidates.append((self.directory / identity, {"distribution": distribution, "home": home}, config))
-                    except (WslError, OSError) as exc:
-                        result["warnings"].append({"distribution": distribution, "reason": str(exc) if isinstance(exc, WslError) else type(exc).__name__})
+                candidates = detected
             else:
+                candidates = []
                 for directory, target in self._targets():
-                    if not (directory / "link.json").is_file():
-                        continue
                     if target["distribution"] not in running:
-                        result["warnings"].append({"distribution": target["distribution"], "reason": "restore_pending"})
+                        if (directory / "link.json").is_file():
+                            result["warnings"].append({"distribution": target["distribution"], "reason": "restore_pending"})
                         continue
                     candidates.append((directory, target, Path(target["config"])))
             for directory, target, config in candidates:
                 try:
                     link = ConfigLink(config, directory / "link.json")
+                    def publish_routes(updated):
+                        routes.clear()
+                        routes.update(updated)
+                        publish(updated)
                     if connected:
                         own = urlsplit(endpoint)
                         marker = hashlib.sha256(endpoint.encode()).hexdigest()
                         # Verify this exact Windows instance before any Linux write.
                         self.backend.probe(target["distribution"], own.port, marker)
-                        directory.mkdir(parents=True, exist_ok=True)
-                        target = {**target, "config": str(config)}
-                        staging = directory / "target.new"
-                        staging.write_text(json.dumps(target), encoding="utf8")
-                        staging.replace(directory / "target.json")
-                        def publish_routes(updated):
-                            routes.clear()
-                            routes.update(updated)
-                            publish(updated)
                         update = ProviderManager(link, endpoint, upstream).sync(routes, publish_routes, retry_limit=retry_limit)
                     else:
                         if not config.is_file() or any(not Path(name).is_file() for name in link._state().get("files", {})):
                             raise WslError("restore_pending")
-                        update = link.restore() if link._state() else {"reload_required": False}
+                        if not link._state():
+                            if not self._uses_our_routes(config, endpoint, routes):
+                                continue
+                            # Manually connected URLs still identify their saved
+                            # upstream. Record/backup them before native restore.
+                            ProviderManager(link, endpoint, upstream).sync(routes, publish_routes)
+                        update = link.restore()
                     result["targets"].append({**target, "active": connected, "changed": bool(update.get("reload_required"))})
                     result["changed"] |= bool(update.get("reload_required"))
                     result["reload_required"] |= bool(update.get("reload_required"))
                     result["warnings"].extend({"distribution": target["distribution"], "reason": item["reason"]}
                                               for item in update.get("warnings", []))
                 except (OSError, ValueError) as exc:
-                    result["warnings"].append({"distribution": target["distribution"], "reason": str(exc) if isinstance(exc, WslError) else type(exc).__name__})
+                    result["warnings"].append(warning(target["distribution"], exc))
             self._labels.clear()
             return result
 
@@ -262,11 +358,11 @@ class WslConnection:
         with self._lock:
             if time.monotonic() < self._metadata_retry:
                 return found
-            targets = list(self._targets())
-            if not targets:
-                return found
             try:
                 running = self._distributions()
+                if time.monotonic() - self._discovered_at > 60:
+                    self._discover(running)
+                targets = list(self._targets())
                 for directory, target in targets:
                     if target["distribution"] not in running:
                         continue
@@ -276,8 +372,13 @@ class WslConnection:
                         requested = sorted(set(ids) | (cached[1] if cached else set()))
                         if len(requested) > 300:
                             requested = ids
-                        raw = self.backend.labels(target["distribution"], target["home"], requested)
-                        labels, parents = {}, {}
+                        labels, parents = index_labels(Path(target["config"]), requested), {}
+                        try:
+                            raw = self.backend.labels(target["distribution"], target["home"], requested)
+                            self._metadata_errors.pop(key, None)
+                        except (OSError, ValueError, TypeError, KeyError) as exc:
+                            raw = {}
+                            self._metadata_errors[key] = warning(target["distribution"], exc)
                         for child, parent in raw.get("edges", []):
                             if child in requested and isinstance(parent, str) and re.fullmatch(r"[a-fA-F0-9-]{36}", parent) and child != parent:
                                 parents.setdefault(child, set()).add(parent)
@@ -289,7 +390,7 @@ class WslConnection:
                             parent = spawn.get("parent_thread_id") if isinstance(spawn, dict) else None
                             if isinstance(parent, str) and re.fullmatch(r"[a-fA-F0-9-]{36}", parent) and parent != thread:
                                 parents.setdefault(thread, set()).add(parent)
-                            labels[thread] = {"title": name if isinstance(name, str) and name.strip() else title,
+                            labels[thread] = {"title": name if isinstance(name, str) and name.strip() else title or labels.get(thread, {}).get("title"),
                                               "updated_at": updated, "fallback_title": subagent_title(source, name, nickname),
                                               **({"session_kind": "subagent"} if subagent else {})}
                         for thread, title in raw.get("index", {}).items():
@@ -303,7 +404,7 @@ class WslConnection:
                     for thread, label in cached[2].items():
                         if thread in ids:
                             found.setdefault(thread, label)
-                self.metadata_error = ""
+                self._metadata_status()
             except (OSError, ValueError, TypeError, KeyError) as exc:
                 self.metadata_error = str(exc) if isinstance(exc, WslError) else type(exc).__name__
                 self._metadata_retry = time.monotonic() + 15
