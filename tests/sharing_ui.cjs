@@ -27,6 +27,15 @@ const formMarkup=()=>node("quota-config").innerHTML+node("exit-config").innerHTM
 const flush=()=>new Promise(resolve=>setImmediate(resolve));
 const click=(target,dataset)=>{const button=new Element();button.dataset=dataset;return node(target).handlers.click({target:{closest:()=>button}});};
 const submit=id=>node(id).handlers.submit({preventDefault(){}});
+
+const borrowedStatus=(kind,id,enabled)=>{
+ const row=node(kind+"-credential-rows").innerHTML.match(new RegExp('<tr[^>]*data-credential-id="'+id+'">([\\s\\S]*?)</tr>'))?.[1];assert.ok(row,"Borrowed credential must be shown");
+ const status=row.match(/<td class="sharing-row-status"[^>]*>([\s\S]*?)<\/td>/)?.[1];assert.ok(status,"Borrowed credential must have a status cell");
+ assert.match(status,new RegExp('<button[^>]*data-action="use" data-id="'+id+'"[^>]*aria-pressed="'+enabled+'"[^>]*>'+(enabled?'启用中':'停用中')+'<\\/button>'));
+ assert.doesNotMatch(status,/\sdisabled(?:\s|>)/,"Active borrowed credentials must still be clickable");
+ const actions=row.match(/<div class="sharing-row-actions">([\s\S]*?)<\/div>/)?.[1];assert.ok(actions);assert.doesNotMatch(actions,/data-action="use"|>使用中<|>使用</,"Actions must not repeat the status control");assert.match(actions,/data-action="delete"/);
+};
+
 const edit=(id,field)=>click("sharing-cards",{action:"field",id,field});
 const save=()=>node("sharing-inline-editor").dataset.field==="expires_at"&&!node("sharing-inline-expiry-calendar").hidden?calendarClick("sharing-inline-expiry",{apply:"true"}):submit("sharing-inline-editor");
 const cancel=()=>node("sharing-inline-cancel").handlers.click();
@@ -119,22 +128,28 @@ const visualOrder=kind=>node(kind+"-credential-rows").rows.map(row=>row.querySel
  click("sharing-cards",{kind:"quota",view:"out"});pending.push({status:200,data:{...host,reload_required:true,host:{active:false,running:false},credentials:[{...outgoing,enabled:false},incoming,exitIncoming]}});await click("sharing-cards",{action:"toggle",id:"q1"});assert.equal(requests.at(-1).data.action,"credential_edit");assert.equal(requests.at(-1).data.id,"q1");assert.equal(requests.at(-1).data.enabled,false);assert.equal(node("sharing-message").hidden,true,"Disabling updates the state without a success toast");click("sharing-cards",{kind:"quota",view:"in"});assert.equal(node("quota-activate").disabled,false);
  const borrowing={...host,host:{active:false,running:false},client:{active:true,active_id:"q2"}};
  pending.push({status:200,data:{...borrowing,reload_required:true}});await click("sharing-cards",{action:"use",id:"q2"});await flush();assert.equal(requests.at(-1).data.id,"q2");assert.equal(requests.at(-1).data.action,"credential_use");assert.match(node("sharing-message").textContent,/重启/);assert.equal(node("quota-generate").disabled,true);
+ borrowedStatus("quota","q2",true);
+ pending.push({status:400,data:{error:"synthetic quota stop failure"}});await click("sharing-cards",{action:"use",id:"q2"});assert.deepEqual(requests.at(-1).data,{action:"client_disconnect"});borrowedStatus("quota","q2",true);
+ const localQuota={...borrowing,client:{active:false}};
+ pending.push({status:200,data:localQuota});await click("sharing-cards",{action:"use",id:"q2"});assert.deepEqual(requests.at(-1).data,{action:"client_disconnect"});borrowedStatus("quota","q2",false);
+ pending.push({status:400,data:{error:"synthetic quota start failure"}});await click("sharing-cards",{action:"use",id:"q2"});assert.deepEqual(requests.at(-1).data,{action:"credential_use",kind:"quota",id:"q2"});borrowedStatus("quota","q2",false);
+ pending.push({status:200,data:borrowing});await click("sharing-cards",{action:"use",id:"q2"});borrowedStatus("quota","q2",true);
  click("sharing-cards",{kind:"exit",view:"in"});assert.match(node("exit-credential-rows").innerHTML,/Exit provider/);assert.equal(node("exit-activate").disabled,false,"Exit and quota sources stay independent");
  assert.deepEqual(Array.from(node("exit-table-head").innerHTML.matchAll(/<th\b[^>]*>([^<]+)<\/th>/g),match=>match[1]),["凭据名称","上传 / 下载流量","连接次数","期限","状态","操作"]);assert.doesNotMatch(node("exit-credential-rows").innerHTML,/<progress/);
  assert.doesNotMatch(node("exit-credential-rows").innerHTML,/class="sharing-direction"/);
  assert.doesNotMatch(formMarkup(),/exit-local|sharing-exit-source|>本机出口<\/button>/);
- assert.match(node("exit-credential-rows").innerHTML,/data-action="use" data-id="e1"[^>]*>启用<\/button>/);
+ borrowedStatus("exit","e1",false);
  const usingExit={...borrowing,egress:{...borrowing.egress,selection:{mode:"peer",active_id:"e1"}}};
  pending.push({status:200,data:usingExit});await click("sharing-cards",{action:"use",id:"e1"});
  assert.equal(JSON.stringify(requests.at(-1).data),JSON.stringify({action:"credential_use",kind:"exit",id:"e1"}));
- assert.match(node("exit-credential-rows").innerHTML,/data-action="use" data-id="e1"[^>]*>停用<\/button>/);
+ borrowedStatus("exit","e1",true);
  assert.doesNotMatch(node("exit-credential-rows").innerHTML,/data-action="use" data-id="e1"[^>]*disabled/);
  pending.push({status:400,data:{error:"synthetic stop failure"}});await click("sharing-cards",{action:"use",id:"e1"});
  assert.equal(JSON.stringify(requests.at(-1).data),JSON.stringify({action:"egress_select",mode:"local"}));
- assert.match(node("exit-credential-rows").innerHTML,/data-action="use" data-id="e1"[^>]*>停用<\/button>/,"Failed stop preserves the active credential");
+ borrowedStatus("exit","e1",true);
  pending.push({status:200,data:borrowing});await click("sharing-cards",{action:"use",id:"e1"});
  assert.equal(JSON.stringify(requests.at(-1).data),JSON.stringify({action:"egress_select",mode:"local"}));
- assert.match(node("exit-credential-rows").innerHTML,/data-action="use" data-id="e1"[^>]*>启用<\/button>/);
+ borrowedStatus("exit","e1",false);
  assert.equal(node("quota-generate").disabled,true,"Stopping a borrowed exit preserves the active quota source");
  node("exit-borrow-link").value="codex-exit://private-value";node("exit-borrow-label").value="C";pending.push({status:200,data:borrowing});await submit("exit-borrow");assert.equal(requests.at(-1).data.kind,"exit");assert.equal(node("exit-borrow-link").value,"");
  node("quota-label").value="draft";const expiryDraft=day(Date.now()+10*864e5);changeExpiry("quota-expiry",expiryDraft);pending.push({status:200,data:host});await interval();assert.equal(node("quota-label").value,"draft","Polling preserves form drafts");assert.equal(node("quota-expiry").value,expiryDraft);assert.equal(node("quota-expiry-date").value,expiryDraft);
