@@ -470,6 +470,7 @@ const uiI18n = (() => {
     "次":"times",
     "打开主窗口":"Open main window",
     "无法完成操作，请稍后重试。":"Unable to complete the action. Please try again.",
+    "托盘窗口需要更新，请升级并重新打开本软件。":"The tray window needs updating. Upgrade and reopen this application.",
     "窗口操作":"Window controls",
     "开发版":"Dev",
     "最小化":"Minimize",
