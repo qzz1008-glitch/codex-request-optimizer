@@ -7,18 +7,15 @@ import http.client
 import json
 import os
 from pathlib import Path
-import queue
 import secrets
 import shutil
 import socket
 import subprocess
 import sys
-import threading
 import time
 import tempfile
 
 from packet_inspector.entry_port import configured_port
-from packet_inspector.app_icon import APP_ICON
 from packet_inspector.locking import file_lock
 from packet_inspector.window_lifecycle import EXIT_PROPERTY, request_window_exit
 from packet_inspector.frontend_dev import BuildProfile, load_profile, installed_profile, remember_upgrade_profile
@@ -38,14 +35,22 @@ def free_port():
 
 
 class Upgrade:
+    total_steps = 6
+
     def __init__(self, payload, data_dir, config, port=None, progress=None, default_profile=None):
         self.payload, self.data_dir, self.config = Path(payload), Path(data_dir).resolve(), Path(config).resolve()
         self.port = port
         self.progress = progress or (lambda message: None)
+        self.completed_steps = 0
         self.canonical = self.data_dir / "bin" / "CodexPacketInspector.exe"
         self.candidate = ""
         self.candidate_process = None
         self.default_profile = default_profile or BuildProfile()
+
+    def _report(self, message, completed=None):
+        if completed is not None:
+            self.completed_steps = max(self.completed_steps, min(completed, self.total_steps))
+        self.progress(message)
 
     def _wait_worker(self, identity, seconds=30):
         deadline = time.monotonic() + seconds
@@ -250,7 +255,7 @@ class Upgrade:
         raise RuntimeError("入口服务健康检查超时。")
 
     def _refresh_integration(self, status):
-        self.progress("正在更新托盘、快捷方式和启动入口…")
+        self._report("正在更新托盘、快捷方式和启动入口…", 4)
         control_worker(self.data_dir, self.candidate, "installation_refresh")
         if status.get("desktop_refresh_supported"):
             try:
@@ -297,13 +302,13 @@ class Upgrade:
         processes = self._legacy_processes() if legacy else []
         had_window = any(not item["background"] for item in processes)
         if had_window:
-            self.progress("正在关闭旧版优化器窗口，中转继续运行…")
+            self._report("正在关闭旧版优化器窗口，中转继续运行…")
             self._close_windows(processes)
         backup, manifest = self._backup()
         stopped, router_started = False, False
         try:
             if legacy:
-                self.progress("首次安装固定入口，正在等待旧服务空闲…")
+                self._report("首次安装固定入口，正在等待旧服务空闲…")
                 deadline = time.monotonic() + 60
                 while time.monotonic() < deadline:
                     current = local_json(self.port, "/api/status", timeout=3)
@@ -337,7 +342,7 @@ class Upgrade:
             atomic_json(self.data_dir / "router-state.json", {"protocol": PROTOCOL, "port": self.port,
                         "token": secrets.token_urlsafe(32), "config": str(self.config),
                         "active": self.candidate, "draining": []})
-            self.progress("启动固定入口并检查前后端…")
+            self._report("启动固定入口并检查前后端…")
             self._start_entry()
             router_started = True
             status = self._wait_entry(PROTOCOL)
@@ -350,7 +355,7 @@ class Upgrade:
                 self._open_window()
             return backup
         except Exception:
-            self.progress("升级未完成，正在恢复旧入口…")
+            self._report("升级未完成，正在恢复旧入口…")
             if router_started:
                 try:
                     state = json.loads((self.data_dir / "router-state.json").read_text(encoding="utf8"))
@@ -377,6 +382,7 @@ class Upgrade:
             raise
 
     def _run(self):
+        self._report("正在校验升级包…")
         manifest = json.loads((self.payload / "manifest.json").read_text(encoding="utf8"))
         if manifest.get("router_protocol") != PROTOCOL:
             raise ValueError("升级包的入口协议不兼容。")
@@ -389,7 +395,7 @@ class Upgrade:
         for path in dict.fromkeys((app, entry)):
             if digest(path) != manifest["sha256"][path.name]:
                 raise ValueError("升级包校验失败。")
-        self.progress("升级包校验通过，正在准备新版前后端…")
+        self._report("升级包校验通过，正在准备新版前后端…", 1)
         if self.port is None:
             runtime_file = self.data_dir / "runtime.json"
             self.port = json.loads(runtime_file.read_text(encoding="utf8"))["port"] if runtime_file.exists() else configured_port(self.data_dir)
@@ -426,16 +432,18 @@ class Upgrade:
             staging.replace(version_exe)
         if digest(version_exe) != manifest["sha256"][app.name]:
             raise ValueError("已暂存的新版程序校验失败。")
+        self._report("正在启动新版服务并检查运行状态…", 2)
         success, backup, reopen = False, None, False
         try:
             self._start_candidate(version_exe, manifest["version"])
+            self._report("新版服务已就绪，正在准备切换…", 3)
             if health and not legacy:
                 if windows:
-                    self.progress("正在更新桌面窗口，固定入口继续转发…")
+                    self._report("正在更新桌面窗口，固定入口继续转发…")
                     self._close_windows(windows)
                     reopen = True
                 state = json.loads((self.data_dir / "router-state.json").read_text(encoding="utf8"))
-                self.progress("新版已就绪，正在切换新请求；旧请求继续完成…")
+                self._report("新版已就绪，正在切换新请求；旧请求继续完成…")
                 old = state["active"]
                 local_json(self.port, "/__router__/switch", {"worker_id": self.candidate, "expected_active": old}, state["token"], timeout=40)
                 try:
@@ -450,7 +458,6 @@ class Upgrade:
             else:
                 backup = self._migrate(entry, legacy)
             success = True
-            self.progress("升级完成。旧服务会在请求结束后退出。")
             return {"state": "complete", "version": manifest["version"], "port": self.port,
                     "worker_id": self.candidate, "backup": str(backup) if backup else None,
                     "entry_migrated": health is None or legacy}
@@ -461,11 +468,13 @@ class Upgrade:
                 self._open_window()
 
     def run(self):
+        self.completed_steps = 0
         self.data_dir.mkdir(parents=True, exist_ok=True)
         with file_lock(self.data_dir / "upgrade.lock", blocking=False):
             atomic_json(self.data_dir / "upgrade-result.json", {"state": "running", "started": time.time()})
             try:
                 result = self._run()
+                self._report("正在整理版本与安装记录…", 5)
                 runtime_path = self.data_dir / "runtime.json"
                 if runtime_path.exists():
                     try:
@@ -479,6 +488,7 @@ class Upgrade:
                 from .upgrade_cleanup import cleanup_versions
                 result["cleanup"] = cleanup_versions(self.data_dir)
                 atomic_json(self.data_dir / "upgrade-result.json", {**result, "finished": time.time()})
+                self._report("升级完成。旧服务会在请求结束后退出。", self.total_steps)
                 return result
             except Exception as exc:
                 atomic_json(self.data_dir / "upgrade-result.json", {"state": "failed", "error": str(exc)[:500], "finished": time.time()})
@@ -543,61 +553,9 @@ def main(argv=None, *, default_profile=None, open_after=False):
             return 0
         except Exception:
             return 1
-    import tkinter as tk
-    from tkinter import ttk
-    window = tk.Tk()
-    try:
-        window.iconbitmap(str(APP_ICON))
-    except tk.TclError:
-        pass
-    window.title("Codex 请求优化器 · 安装与升级")
-    window.geometry("540x230")
-    window.resizable(False, False)
-    frame = ttk.Frame(window, padding=24)
-    frame.pack(fill="both", expand=True)
-    ttk.Label(frame, text="正在更新前后端", font=("Microsoft YaHei UI", 14)).pack(anchor="w")
-    message = tk.StringVar(value="准备升级包…")
-    ttk.Label(frame, textvariable=message, wraplength=480).pack(anchor="w", pady=16)
-    bar = ttk.Progressbar(frame, mode="indeterminate")
-    bar.pack(fill="x")
-    bar.start(12)
+    from packet_inspector.upgrade_window import run_upgrade_window
     engine = Upgrade(payload, args.data_dir, args.config, args.port, default_profile=default_profile)
-    open_app = ttk.Button(frame, text="打开优化器", command=engine._open_window, state="disabled")
-    open_app.pack(side="left", pady=18)
-    close = ttk.Button(frame, text="关闭", command=window.destroy, state="disabled")
-    close.pack(anchor="e", pady=18)
-    updates = queue.Queue()
-    engine.progress = updates.put
-    finished = threading.Event()
-    succeeded = threading.Event()
-    def work():
-        try:
-            engine.run()
-            if open_after:
-                engine._open_window()
-            succeeded.set()
-        except Exception as exc:
-            updates.put("升级未完成：" + str(exc))
-        finally:
-            finished.set()
-    def refresh():
-        while not updates.empty():
-            message.set(updates.get_nowait())
-        if finished.is_set():
-            if succeeded.is_set() and open_after:
-                window.destroy()
-                return
-            bar.stop()
-            close.configure(state="normal")
-            if succeeded.is_set():
-                open_app.configure(state="normal")
-        else:
-            window.after(150, refresh)
-    window.protocol("WM_DELETE_WINDOW", lambda: window.destroy() if finished.is_set() else None)
-    threading.Thread(target=work, daemon=True).start()
-    refresh()
-    window.mainloop()
-    return 0
+    return run_upgrade_window(engine, open_after=open_after)
 
 
 if __name__ == "__main__":

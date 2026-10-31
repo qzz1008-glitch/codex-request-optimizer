@@ -56,7 +56,7 @@ class UpdateTests(unittest.TestCase):
         self.assertEqual(state["state"], "upgrading")
         arguments = launch.call_args.args[0]
         self.assertEqual(Path(arguments[0]).name, ASSET)
-        self.assertIn("--quiet", arguments)
+        self.assertNotIn("--quiet", arguments)
         self.assertIn("--upgrade", arguments)
         self.assertEqual(arguments[arguments.index("--port") + 1], "47844")
         self.assertEqual(arguments[arguments.index("--data-dir") + 1], str(self.directory.resolve()))
@@ -78,6 +78,17 @@ class UpdateTests(unittest.TestCase):
         self.release["assets"][0]["name"] = LEGACY_ASSET
         self.opener.open.return_value = self.release_reply()
         self.assertEqual(self.updates.check()["asset"]["name"], LEGACY_ASSET)
+
+    def test_legacy_asset_retains_its_quiet_launch_protocol(self):
+        self.release["assets"][0]["name"] = LEGACY_ASSET
+        self.opener.open.side_effect = [self.release_reply(), Reply(self.package)]
+        self.updates.check()
+        with patch("packet_inspector.updates.github_credential", return_value=""), \
+                patch("packet_inspector.updates.subprocess.Popen") as launch:
+            self.updates.install()
+        arguments = launch.call_args.args[0]
+        self.assertIn("--quiet", arguments)
+        self.assertNotIn("--upgrade", arguments)
 
     def test_tampered_download_does_not_execute_or_leave_partial_package(self):
         self.opener.open.side_effect = [self.release_reply(), Reply(b"bad")]
