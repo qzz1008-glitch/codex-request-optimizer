@@ -64,7 +64,7 @@ const uiI18n = (() => {
     "请输入凭据名称。":"Enter a credential name.",
     "本期 / 额度":"Period / budget",
     "已用 / 额度":"Used / budget",
-    "本周 / 累计用量":"Week / all-time usage",
+    "累计用量":"All-time usage",
     "上传 / 下载流量":"Upload / download traffic",
     "本周 / 累计":"Week / all time",
     "上传 / 下载":"Upload / download",
