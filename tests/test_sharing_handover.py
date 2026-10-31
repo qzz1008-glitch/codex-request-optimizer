@@ -174,11 +174,16 @@ class SharingHandoverTests(unittest.TestCase):
         self.share_quota()
         response = self.quota_request(b'"held"')
         ticket = self.switch()
+        candidate_response = self.quota_request(b'"held"')
         self.router.switch(self.old.worker_id, self.new.worker_id)
         finish_upgrade(self.data, self.old.worker_id, self.new.worker_id, ticket)
         self.assertIn(b'"response.completed"', self.quota_request(b'"after rollback"').read())
+        with self.assertRaisesRegex(ValueError, "409"):
+            control_worker(self.data, self.new.worker_id, "stop")
         self.gate.set()
         self.assertIn(b'"response.completed"', response.read())
+        self.assertIn(b'"response.completed"', candidate_response.read())
+        self.assertEqual(self.bodies.count(b'"held"'), 2)
         self.assertTrue(self.old.sharing.owns_provider_state)
         self.assertFalse(self.new.sharing.owns_provider_state)
 
