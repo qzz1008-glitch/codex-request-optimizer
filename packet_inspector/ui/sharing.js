@@ -28,9 +28,11 @@ globalThis.InspectorSharing=(()=>{
   const editingExpiry=id=>id==="sharing-inline-expiry"&&editing?.field==="expires_at";
   const resetWeekdays=["周一","周二","周三","周四","周五","周六","周日"];
   const weeklyPickerOpen=()=>globalThis.CSS?.supports?.("selector(select:open)")&&get("sharing-cards").querySelector(".sharing-weekly-select:open");
+  const weeklyLabel=value=>value===null||value===""?tr("不刷新"):tr(resetWeekdays[value])+" 00:00";
+  function syncWeeklyLabel(input){const display=input.parentElement?.querySelector(".sharing-weekly-value");if(display)display.textContent=weeklyLabel(input.value);}
   function weeklyOptions(value=null){
     const selected=value===null?"":String(value);
-    return [["",label("不刷新")],...resetWeekdays.map((day,index)=>[String(index),label(day)+" 00:00"])].map(([key,text])=>`<option value="${key}"${key===selected?" selected":""}>${text}</option>`).join("");
+    return [["",esc(weeklyLabel(null))],...resetWeekdays.map((_,index)=>[String(index),esc(weeklyLabel(index))])].map(([key,text])=>`<option value="${key}"${key===selected?" selected":""}>${text}</option>`).join("");
   }
   function weeklyDay(row){const d=data(row);return typeof d.weekly_reset!=="boolean"?undefined:d.weekly_reset?(d.weekly_reset_day??0):null;}
   function weeklySettings(value){
@@ -184,7 +186,7 @@ globalThis.InspectorSharing=(()=>{
   function weeklyValue(row){
     const value=weeklyDay(row);
     if(value===undefined)return `<small title="${label("由提供方管理")}">—</small>`;
-    return `<span class="sharing-weekly-control"><select class="sharing-weekly-select" data-action="weekly" data-id="${row.id}" aria-label="${label("每周刷新")}" title="${label(row.direction==="in"?"由提供方管理":"按提供方本机时间，在所选当天零点刷新。")}"${row.direction==="in"?" disabled":""}>${weeklyOptions(value)}</select></span>`;
+    return `<span class="sharing-weekly-control"><span class="sharing-weekly-value" aria-hidden="true">${esc(weeklyLabel(value))}</span><select class="sharing-weekly-select" data-action="weekly" data-id="${row.id}" aria-label="${label("每周刷新")}" title="${label(row.direction==="in"?"由提供方管理":"按提供方本机时间，在所选当天零点刷新。")}"${row.direction==="in"?" disabled":""}>${weeklyOptions(value)}</select></span>`;
   }
   function quotaUsage(row){
     const d=data(row),used=d.period_cost_nanos,budget=d.budget_nanos,knownUsed=Number.isFinite(used)&&used>=0,knownBudget=Number.isFinite(budget)&&budget>=0;
@@ -399,8 +401,8 @@ globalThis.InspectorSharing=(()=>{
     const input=event.target;if(input.dataset.action!=="weekly")return;
     const row=(current?.credentials||[]).find(row=>row.id===input.dataset.id);
     if(busy||!row||row.direction!=="out"||row.kind!=="quota"){if(row)input.value=String(weeklyDay(row)??"");return;}
-    try{const changes=weeklySettings(input.value);if(editing)closeInline(false);await action(input,{action:"credential_edit",id:row.id,...changes},null);}
-    catch(error){input.value=String(weeklyDay(row)??"");message(error.message,true);}
+    try{const changes=weeklySettings(input.value);syncWeeklyLabel(input);if(editing)closeInline(false);await action(input,{action:"credential_edit",id:row.id,...changes},null);}
+    catch(error){input.value=String(weeklyDay(row)??"");syncWeeklyLabel(input);message(error.message,true);}
   });
   document.addEventListener("visibilitychange",()=>{if(document.hidden)controller?.abort();else if(active)refresh();});
   function setActive(value){active=value;clearInterval(timer);timer=null;if(!active){controller?.abort();finishDrag();clearRecent();closeInline(false);closeDelete(false);return;}message("");refresh();timer=setInterval(refresh,3000);}
