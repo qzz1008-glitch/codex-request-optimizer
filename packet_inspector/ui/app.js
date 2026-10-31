@@ -2020,7 +2020,8 @@ function renderHeaders(m) {
   const result=relayFailed?states[m.state]:code>=400?t("失败"):Object.hasOwn(endings,ended)?t(endings[ended]):m.state==="complete"?t("已结束"):states[m.state]||t("尚未收到");
   fact(p,t("结果"),result+(code!==null?" · HTTP "+code:""));
   fact(p,t("总耗时"),Number.isFinite(m.duration_ms)&&m.duration_ms>=0?nf.format(Math.round(m.duration_ms/100)/10)+" "+t("秒"):"—");
-  if(typeof m.relay_error==="string"&&m.relay_error)fact(p,t("错误原因"),t(m.relay_error));
+  const errorReason=m.network_error?.message||m.relay_error;
+  if(typeof errorReason==="string"&&errorReason)fact(p,t("错误原因"),t(errorReason));
   const session=sessionSummaries.find(row=>row.thread_id===m.thread_id);
   const auxiliary=auxiliarySessionKind(session),purpose=purposeFromMetadata(m);
   const specialKind=[purpose,m.request_kind,auxiliary].find(kind=>kind&&kind!=="subagent"&&Object.hasOwn(auxiliaryLabels,kind));

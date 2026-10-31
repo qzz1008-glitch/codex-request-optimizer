@@ -27,6 +27,7 @@ import zlib
 from . import VERSION
 from .analyzer import clean_text, redact
 from .build_info import build_info
+from .process_identity import process_identity
 
 RETENTION_SECONDS = 14 * 86400
 MAX_RECORDS = 500
@@ -269,6 +270,11 @@ class NetworkDiagnostics:
             if len(encoded) > MAX_RECORD_BYTES:
                 raise ValueError("diagnostic record exceeds limit")
             with self.lock, closing(sqlite3.connect(self.path, timeout=.2)) as db, db:
+                # FULL auto-vacuum returns deleted pages to the filesystem.
+                # Existing journals migrate on a diagnostic write, never at startup.
+                migrate = db.execute("PRAGMA auto_vacuum").fetchone()[0] != 1
+                if migrate:
+                    db.execute("PRAGMA auto_vacuum=FULL")
                 db.execute("CREATE TABLE IF NOT EXISTS diagnostics (id TEXT PRIMARY KEY, created REAL, size INTEGER, document TEXT)")
                 db.execute("INSERT OR REPLACE INTO diagnostics VALUES (?,?,?,?)",
                            (record["id"], record["created"], len(encoded), encoded.decode("utf-8")))
@@ -280,6 +286,9 @@ class NetworkDiagnostics:
                     if position >= MAX_RECORDS or size > MAX_BYTES:
                         remove.append((identifier,))
                 db.executemany("DELETE FROM diagnostics WHERE id=?", remove)
+                db.commit()
+                if migrate and db.execute("PRAGMA auto_vacuum").fetchone()[0] != 1:
+                    db.execute("VACUUM")
         except Exception as exc:
             self.errors += 1
             self.last_error = type(exc).__name__ + ": " + safe_text(exc, limit=300)
@@ -472,6 +481,35 @@ class RequestTrace:
         if isinstance(response, dict) and response.get("incomplete_details"):
             self.record["incomplete_details"] = safe_text(json.dumps(redact(response["incomplete_details"]), ensure_ascii=False), self.secrets, 2000)
 
+    def client_error(self, exc):
+        """Expose the observed HTTP error or a redacted network cause, not just URLError."""
+        phase = self.record.get("failure_phase", self.record["phase"])
+        proxy_response = self.record.get("proxy_connect_response", {}) if phase == "proxy_connect" else {}
+        proxy_status = proxy_response.get("status")
+        status = proxy_status if isinstance(proxy_status, int) and 400 <= proxy_status <= 599 else 502
+        cause = exception_detail(exc, self.secrets)[-1]
+        cause = {"type": cause["type"], "message": cause["message"][:1000]}
+        error = {"code": "inspector_proxy_connect_failed" if phase == "proxy_connect" else "inspector_upstream_unreachable",
+                 "phase": phase, "cause": cause, "diagnostic_id": self.record["id"]}
+        if proxy_response:
+            error["proxy_status"] = proxy_status
+        if phase == "proxy_connect":
+            endpoint = self.record.get("socket_endpoint", {})
+            host = str(endpoint.get("host", ""))
+            host = "[" + host + "]" if ":" in host else host
+            destination = host + (":" + str(endpoint["port"]) if endpoint.get("port") else "")
+            detail = ("HTTP " + str(proxy_status) + " " + proxy_response.get("reason", "")) if proxy_status else cause["message"]
+            message = "代理 CONNECT 失败（" + str(destination) + "）: " + detail + "；请求正文尚未发送。"
+        else:
+            labels = {"dns_or_tcp_connect": "DNS 或 TCP 连接失败", "tls": "TLS 连接失败",
+                      "request_write": "上游请求上传失败", "response_headers": "等待上游响应失败",
+                      "response_body": "读取上游响应失败"}
+            message = labels.get(phase, "上游连接失败") + ": " + cause["type"] + ": " + cause["message"]
+        error["message"] = safe_text(message, self.secrets, 1600) + " 诊断 ID: " + self.record["id"]
+        self.record["client_error_status"] = status
+        self.record["client_error"] = error
+        return status, {"error": error}
+
     def finish(self, exc=None, *, phase=None):
         if self.finished:
             return
@@ -493,6 +531,7 @@ class RequestTrace:
                 self.record["error_body"] = error_body(bytes(self.captured), self.record["response_headers"],
                                                          self.secrets, self.response_bytes > len(self.captured))
             self.record["environment"] = environment_snapshot(self.journal.proxies)
+            self.record["process"] = process_identity()
             destination = urlsplit(self.record["upstream"])
             self.record["configured_proxy_for_scheme"] = (safe_proxy(self.journal.proxies[destination.scheme])
                 if self.record["proxy_policy"] != "direct_for_loopback" and destination.scheme in self.journal.proxies else None)
@@ -526,13 +565,41 @@ class _ObservedConnection:
     def _tunnel(self):
         if not self.trace:
             return super()._tunnel()
-        self.trace.record["phase"] = "proxy_connect"
+        trace, response_class = self.trace, self.response_class
+        trace.record["phase"] = "proxy_connect"
+        trace.record["proxy_authorization_sent"] = any(key.lower() == "proxy-authorization" for key in self._tunnel_headers)
+        for key, value in self._tunnel_headers.items():
+            if key.lower() == "proxy-authorization" and value:
+                trace.secrets.append(str(value))
+                if " " in str(value):
+                    trace.secrets.append(str(value).split(" ", 1)[1])
+        # Keep stdlib CONNECT behavior; only observe the structured status line.
+        class ProxyResponse(response_class):
+            def _read_status(response):
+                version, status, reason = super()._read_status()
+                trace.record["proxy_connect_response"] = {"status": status, "reason": safe_text(reason.strip(), trace.secrets, 500)}
+                return version, status, reason
+        self.response_class = ProxyResponse
         started = time.monotonic()
         try:
             result = super()._tunnel()
             self.trace.record["phase"] = "tls" if isinstance(self, http.client.HTTPSConnection) else "request_write"
             return result
         finally:
+            self.response_class = response_class
+            try:
+                get_headers = getattr(self, "get_proxy_response_headers", None)
+                headers = get_headers() if get_headers else None
+                if headers is not None and "proxy_connect_response" in trace.record:
+                    proxy_response = trace.record["proxy_connect_response"]
+                    proxy_response["headers"] = {key.lower(): safe_text(value, trace.secrets, 1000)
+                        for key, value in headers.items() if key.lower() in RESPONSE_HEADERS}
+                    challenges = headers.get_all("Proxy-Authenticate", [])
+                    proxy_response["authentication_requested"] = bool(challenges)
+                    proxy_response["authentication_schemes"] = sorted({scheme.lower() for value in challenges
+                        for scheme in re.findall(r"(?:^|,)\s*(Basic|Digest|Negotiate|NTLM|Bearer)\b", value, re.I)})
+            except Exception as exc:
+                trace.record["proxy_headers_observation_error"] = type(exc).__name__
             self.trace.record["timings_ms"]["proxy_connect"] = round((time.monotonic() - started) * 1000, 1)
 
     def connect(self):
