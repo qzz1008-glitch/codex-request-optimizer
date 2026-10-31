@@ -118,12 +118,13 @@ def run(*, legacy_host=False):
                 wait_until(lambda: sized_for_content(panel))
                 style = evaluate("({background:getComputedStyle(document.body).backgroundColor,"
                                  "width:document.body.getBoundingClientRect().width,"
-                                 "overflow:document.body.scrollWidth>document.body.getBoundingClientRect().width,buttons:document.querySelectorAll('button').length})")
+                                 "overflow:document.body.scrollWidth>document.body.getBoundingClientRect().width,buttons:document.querySelectorAll('.tray-panel button').length})")
                 assert style == {"background": "rgb(255, 255, 255)", "width": expected_width, "overflow": False, "buttons": 2}, style
                 height = panel._size[1]
                 evaluate("const error=document.getElementById('tray-error');error.textContent='Test message';error.hidden=false;window.trayPanel.render({});true")
-                result["stage"] = "growing content"
-                wait_until(lambda: panel._size[1] > height and sized_for_content(panel))
+                result["stage"] = "floating error without resize"
+                wait_until(lambda: evaluate("!document.querySelector('.floating-feedback').hidden"))
+                assert panel._size[1] == height and sized_for_content(panel), "feedback resized the tray"
                 assert not is_visible(panel.window), "resizing exposed a hidden popup"
                 evaluate("document.getElementById('tray-error').hidden=true;window.trayPanel.render({});true")
                 result["stage"] = "shrinking content"

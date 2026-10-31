@@ -3,6 +3,7 @@
   let visible=false,timer=null,controller=null,sequence=0,busy=false,stateSync=0;
   let legacyScope=null,legacyScopeAt=0;
   const buttons=[document.getElementById("tray-open"),document.getElementById("tray-exit")];
+  uiI18n.floatingFeedback();
   const api=()=>window.pywebview?.api;
   const setText=(node,text)=>{if(node.textContent!==text)node.textContent=text;};
   const knownCount=value=>Number.isSafeInteger(value)&&value>=0;
@@ -103,7 +104,7 @@
     busy=true;for(const button of buttons)button.disabled=true;
     const error=document.getElementById("tray-error");error.hidden=true;
     try {const result=await api()[name]();if(result?.ok===false)throw Error(result.error);}
-    catch(_) {setText(error,t("无法完成操作，请稍后重试。"));error.hidden=false;measure();}
+    catch(_) {setText(error,t("无法完成操作，请稍后重试。"));error.hidden=false;}
     finally {busy=false;for(const button of buttons)button.disabled=false;}
   }
   buttons[0].addEventListener("click",()=>action("open_main"));buttons[1].addEventListener("click",()=>action("exit_app"));

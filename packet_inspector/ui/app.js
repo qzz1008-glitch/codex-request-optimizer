@@ -543,6 +543,7 @@ function fail(err) { message(err.message || String(err), true); }
 async function api(path, data, signal) { const r = await fetch(path, {method:data === undefined ? "GET" : "POST",headers:data === undefined ? {} : {"Content-Type":"application/json"},body:data === undefined ? undefined : JSON.stringify(data),signal}); const value = await r.json(); if (!r.ok) throw Object.assign(Error(value.error || ("HTTP "+r.status)),{status:r.status}); return value; }
 function action(id, fn) { $(id).addEventListener("click", () => Promise.resolve().then(fn).catch(fail)); }
 action("notice-dismiss",()=>{$("notice").hidden=true;});
+uiI18n.floatingFeedback();
 function tokenVersion(packet) { return [packet.state,packet.status,packet.duration_ms,packet.method,packet.path,packet.is_compaction,packet.request_kind,packet.overflow_compaction_calls,packet.overflow_cache_hit,packet.request_token_estimate?.state,packet.request_token_estimate?.input_tokens].join(":"); }
 function cancelTokenRead() {
   clearTimeout(tokenTimer);tokenTimer=null;
@@ -1302,6 +1303,7 @@ function renderEntryPortStatus() {
   else if(s.profile?.active){label="";kind="active";}
   node.textContent=t(label);node.dataset.state=kind;node.hidden=!label;
   node.title=supported?t("当前端口：{port}").replace("{port}",port.current_port)+(port.pending?" · "+t("待生效端口：{port}").replace("{port}",port.configured_port)+"\n"+t("入口服务重新启动后应用新端口，重启 ChatGPT App 生效。"):""):"";
+  if(kind==="error")node.title=t(label)+(node.title?"\n"+node.title:"");
 }
 function providerStatus(s) {
   if(s.profile.config_error || s.provider_sync_error)return t("无法读取 Codex 配置。");
@@ -1805,7 +1807,7 @@ async function loadTree(path) {
     else {$("json-tree").scrollTop=0;$("json-tree").scrollLeft=0;}
   } catch(error) {
     if(state.selected===id&&sequence===requestBodySequence) {
-      $("body-results").hidden=false;$("body-results").replaceChildren(el("small","muted",t(error.message)));
+      fail(error);
       if(!requestBodyView)$("json-tree").textContent="";
     }
   }
@@ -1842,7 +1844,7 @@ async function searchBody(query) {
     if(results.length) {state.path=results[0].path||"";focusJsonPath(view,state.path);}
   } catch(error) {
     if(state.selected===id&&sequence===requestBodySequence) {
-      root.replaceChildren(el("small","muted",t(error.message)));
+      root.hidden=true;fail(error);
       if(!requestBodyView)$("json-tree").textContent="";
     }
   }
