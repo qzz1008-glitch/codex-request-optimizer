@@ -7,6 +7,7 @@ const executablePath=process.env.CRO_TEST_BROWSER||(process.platform==='win32'&&
 if(!fs.existsSync(executablePath)){console.log(JSON.stringify({skipped:'No browser engine is installed'}));process.exit(0);}
 const root=path.join(__dirname,'../packet_inspector/ui'),read=name=>fs.readFileSync(path.join(root,name),'utf8');
 const app=read('app.js'),moduleSource=app.slice(app.indexOf('globalThis.InspectorRestartNotice = {'),app.indexOf('\nconst $ ='));
+const resumeSource=app.slice(app.indexOf('function connectionResumeBusy()'),app.indexOf('function renderConnectPrompt()'));
 const html=read('index.html').replace(/<script\b[^>]*>[\s\S]*?<\/script>/g,'').replace(/<link\b[^>]*>/g,'');
 let browser,cases=0;
 const rects=(page,ids)=>page.evaluate(ids=>ids.map(id=>{const r=document.getElementById(id).getBoundingClientRect();return [r.x,r.y,r.width,r.height];}),ids);
@@ -18,12 +19,17 @@ async function load(page,initial={}) {
   await page.evaluate(initial=>{
     window.t=value=>uiI18n.t(value);window.calls=[];window.noticeBusy=false;window.requestFailure='';
     window.statusData={data_dir:'test',profile:{active:true,config_path:'config.toml'},entry_port:{pending:false,current_port:47844,configured_port:47844},...initial};
+    window.state={status:statusData};window.$=id=>document.getElementById(id);
+    window.connectionResumeSeen='';window.connectionResumeRetrying=false;window.connectionResumeError='';
+    window.settingsSaving=false;window.linkSaving='';window.renderConnectionActions=()=>{};
     window.notice=InspectorRestartNotice.create({status:()=>statusData,busy:()=>noticeBusy,
       openSettings:async()=>document.getElementById('settings-dialog').showModal(),
       request:async(path,body)=>{calls.push([path,body]);if(requestFailure)throw Error(requestFailure);
         return {revision:statusData.restart_notice.revision+1,items:statusData.restart_notice.items.filter(row=>row.target!==body.target)};}});
     notice.ingest();
+    window.restartNotices=notice;
   },initial);
+  await page.addScriptTag({content:resumeSource});
 }
 async function run() {
   browser=await chromium.launch({executablePath,headless:true});
@@ -78,6 +84,37 @@ async function run() {
   assert.equal(await page.locator('[data-settings-field="log_dir"]').getAttribute('data-restart-label'),'待重启');
   await page.evaluate(()=>{statusData.storage_paths_pending=false;notice.ingest();});
   assert.equal(await page.locator('#restart-notice-open').getAttribute('data-visible'),'false');cases++;
+
+  await load(page,{data_dir:'resume'});
+  await page.evaluate(()=>{
+    const wsl={targets:[{distribution:'Ubuntu',changed:true,active:true}],warnings:[{distribution:'HCE',reason:'relay_unreachable',detail:'connection refused'}]};
+    statusData.wsl_connection=wsl;statusData.connection_resume={id:'sync-1',state:'attention',result:{changed:true,local_reload_required:false,reload_required:true,wsl}};
+    renderConnectionResume();notice.ingest();
+  });
+  assert.equal(await page.locator('dialog[open]').count(),0,'automatic synchronization must not open a result window');
+  assert.equal(await page.locator('#connection-resume-dialog').count(),0);
+  assert((await page.locator('#restart-notice-title').textContent()).includes('WSL'));
+  await page.locator('#restart-notice-open').click();
+  await page.locator('#connection-details').evaluate(node=>node.open=true);
+  const syncIds=['settings-dialog','connection-resume-controls','connection-resume-retry'],syncBefore=await rects(page,syncIds);
+  await page.evaluate(async()=>{
+    window.api=async path=>{if(path!=='/api/connection/resume')throw Error(path);return {id:'sync-2',state:'pending'};};
+    await retryConnectionResume();
+  });
+  assert.equal(await page.locator('#connection-resume-retry').isDisabled(),true);
+  assert.deepEqual(await rects(page,syncIds),syncBefore);
+  await page.evaluate(()=>{
+    statusData.wsl_connection={targets:[],warnings:[]};statusData.connection_resume={id:'sync-2',state:'complete',result:{changed:false,reload_required:true}};
+    renderConnectionResume();notice.ingest();
+  });
+  await page.evaluate(()=>notice.acknowledge('wsl'));
+  assert.equal(await page.locator('#restart-notice-open').getAttribute('data-visible'),'false','old native flags must not resurrect a WSL notice');
+  await page.evaluate(async()=>{
+    statusData.connection_resume={id:'sync-3',state:'attention',result:{}};renderConnectionResume();
+    window.api=async()=>{throw Error('Synthetic sync failure');};await retryConnectionResume();
+  });
+  assert.equal(await page.locator('#connection-resume-status').textContent(),'Synthetic sync failure');
+  assert.deepEqual(await rects(page,syncIds),syncBefore);cases++;
 
   await load(page,{data_dir:'backend',connection_reload_required:true,restart_notice:{revision:40,items:[{key:'entry_port',target:'chatgpt',scope:''},{key:'wsl',target:'wsl',scope:'Ubuntu'}]},
     entry_port:{pending:true,current_port:47844,configured_port:47848}});

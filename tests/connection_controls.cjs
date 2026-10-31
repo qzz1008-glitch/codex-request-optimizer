@@ -11,6 +11,7 @@ function fixture(connected) {
   const elements = new Map();
   function element(id) {
     if (!elements.has(id)) elements.set(id, {id, attrs:{}, dataset:{}, open:false, hidden:true, textContent:'',
+      classList:{toggle(){}},
       setAttribute(key,value){this.attrs[key]=value;}, showModal(){this.open=true;}, close(){this.open=false;},
       replaceChildren(...values){this.children=values;}});
     return elements.get(id);
@@ -21,12 +22,13 @@ function fixture(connected) {
     state:{status:{profile:{active:connected,can_restore:connected}}},
     compressionSaving:false,settingsSaving:false,settingsOpening:false,settingsEditing:false,
     exitSaving:false,connectSaving:false,connectChecking:false,linkSaving:'',compressionTarget:null,
-    compressionRevision:0,connectSource:'header',
-    restartNotices:{connection:(which,result)=>calls.push(['result',which,result])},
+    compressionRevision:0,connectSource:'header',connectionResumeSeen:'',connectionResumeRetrying:false,connectionResumeError:'',
+    restartNotices:{connection:(which,result)=>calls.push(['result',which,result]),render(){}},
     $:element,t:value=>value,setText:(el,value)=>{el.textContent=value;},
     uiI18n:{text:(node,value)=>{node.textContent=typeof value==='function'?value():value;}},
     el:(tag,cls,text)=>({tag,text}),
-    document:{querySelectorAll:()=>buttons},
+    document:{querySelectorAll:()=>buttons,querySelector:()=>[...elements.values()].find(value=>value.open)||null},
+    localStorage:{getItem(){return null;},setItem(){}},
     requestConnection:async source=>calls.push(['connect-prompt',source]),
     applyLinkAction:async action=>{calls.push(['link',action]);context.state.status.profile={active:false,can_restore:false};return {reload_required:true};},
     linkAction:async action=>{calls.push(['link',action]);context.state.status.profile={active:true,can_restore:true};return {reload_required:true};},
@@ -127,5 +129,31 @@ function fixture(connected) {
   context.state.status.profile.config_error='unreadable';
   context.renderCompressionMode();
   assert(buttons.every(button=>button.disabled));
-  console.log('Connection controls: confirmations retained and results stay inline.');
+  ({context,element,buttons,calls}=fixture(true));
+  context.state.status.connection_resume={id:'upgrade-1',state:'complete',result:{reload_required:true,changed:true}};
+  context.renderConnectionResume();
+  assert.equal(element('connection-resume-status').textContent,'接入配置已自动同步');
+  assert.equal(calls.filter(call=>call[0]==='result').length,1);
+  assert(!html.includes('id="connection-resume-dialog"'),'Automatic results belong in settings');
+  context.rememberConnectionResume();context.renderConnectionResume();
+  assert.equal(calls.filter(call=>call[0]==='result').length,1,'The same event is delivered once');
+  context.state.status.connection_resume={id:'upgrade-2',state:'complete',result:{reload_required:true,changed:false}};
+  context.renderConnectionResume();
+  assert.equal(calls.filter(call=>call[0]==='result').length,1,'Sticky legacy flags must not create new notices');
+  context.state.status.connection_resume={id:'upgrade-3',state:'attention',result:{wsl:{warnings:[{distribution:'HCE',reason:'relay_unreachable',detail:'connection refused'}]}}};
+  context.renderConnectionResume();
+  assert.equal(element('connection-resume-retry').hidden,false);
+  assert(calls.filter(call=>call[0]==='result')[1][2].wsl.warnings[0].detail.includes('connection refused'));
+  context.api=async(path)=>{assert.equal(path,'/api/connection/resume');return {id:'retry-1',state:'pending'};};
+  await context.retryConnectionResume();
+  context.renderCompressionMode();
+  assert(buttons.every(button=>button.disabled),'Wait for the automatic synchronization before changing connection mode');
+  context.state.status.connection_resume={id:'retry-1',state:'complete',result:{reload_required:false}};
+  context.renderConnectionResume();
+  assert.equal(element('connection-resume-status').textContent,'接入配置已自动同步');
+  assert.equal(element('connection-resume-retry').hidden,true,'A successful retry leaves no stale error or loading state');
+  context.api=async()=>{throw Error('Synthetic retry failure');};
+  await context.retryConnectionResume();
+  assert.equal(element('connection-resume-status').textContent,'Synthetic retry failure');
+  console.log('Connection controls: manual confirmations and automatic upgrade synchronization covered.');
 })().catch(error=>{console.error(error);process.exitCode=1;});

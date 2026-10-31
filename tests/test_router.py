@@ -18,6 +18,9 @@ from tests.relay_fixture import HTTP_TIMEOUT, wait_for_idle
 
 class RouterTests(unittest.TestCase):
     def setUp(self):
+        wsl = patch("packet_inspector.wsl_connection.LocalWsl.running", return_value=[])
+        wsl.start()
+        self.addCleanup(wsl.stop)
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
@@ -155,6 +158,42 @@ class RouterTests(unittest.TestCase):
                 self.assertEqual(response.status, 404)
                 response.read()
         self.assertEqual(self.seen, [])
+
+    def test_background_wsl_reconciliation_after_cutover_keeps_relay_requests_running(self):
+        self.first.save_settings({**self.first.settings, "auto_detect_providers": True})
+        self.first.sync_providers()
+        client = http.client.HTTPConnection("127.0.0.1", self.router.port, timeout=HTTP_TIMEOUT)
+        self.addCleanup(client.close)
+        path = "/relay/" + self.first.settings["relay_token"] + "/responses"
+        client.request("POST", path, b'{"input":[]}', {"X-Test-Stream": "1"})
+        response = client.getresponse()
+        self.assertEqual(response.read(1), b"a")
+        second = self.worker("2" * 32)
+        checking, release = threading.Event(), threading.Event()
+        self.addCleanup(release.set)
+        observed = []
+        def synchronize(*_args, **_kwargs):
+            observed.append((self.router.state["active"], second.maintenance_enabled))
+            checking.set()
+            release.wait(10)
+            return {"targets": [], "warnings": [], "changed": False, "reload_required": False}
+        with patch.object(second.wsl, "apply", side_effect=synchronize):
+            self.assertEqual(self.switch(second.worker_id)[0], 200)
+            self.assertTrue(checking.wait(5), "New worker should reconcile after the committed switch")
+            self.assertEqual(observed, [(second.worker_id, False)])
+            self.assertEqual(self.first.active_requests, 1)
+            new_client = http.client.HTTPConnection("127.0.0.1", self.router.port, timeout=3)
+            self.addCleanup(new_client.close)
+            new_client.request("POST", path, b'{"input":[]}')
+            new_response = new_client.getresponse()
+            self.assertEqual((new_response.status, new_response.read()), (200, b"ok"))
+            release.set()
+            deadline = time.monotonic() + 3
+            while second.connection_resume.status()["state"] == "checking" and time.monotonic() < deadline:
+                time.sleep(.02)
+            self.assertEqual(second.connection_resume.status()["state"], "complete")
+        self.release.set()
+        self.assertEqual(response.read(), b"bcdef")
 
     def test_cutover_preserves_stream_and_active_records_and_sends_new_requests_to_new_worker(self):
         client = http.client.HTTPConnection("127.0.0.1", self.router.port, timeout=HTTP_TIMEOUT)
