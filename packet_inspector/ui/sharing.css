@@ -48,9 +48,25 @@
 .sharing-stat-note{flex:none;margin-top:12px}
 .sharing-table-scroll{flex:1;min-height:0;overflow:auto;scrollbar-gutter:stable}.sharing-table{width:100%;border-collapse:collapse;font-size:12px;table-layout:auto}.sharing-table th.sharing-column-compact{width:1%}
 .sharing-table th{position:sticky;top:0;z-index:1;background:var(--panel);font-weight:600;text-align:left;font-size:11px;color:color-mix(in srgb,var(--ink) 70%,var(--muted));padding:0 9px 12px;border-bottom:1px solid var(--line);white-space:nowrap}
+.sharing-table th.sharing-column-status{width:104px;min-width:104px;text-align:center}
 .sharing-table td{padding:10px 9px;border-bottom:1px solid var(--line);vertical-align:middle;white-space:nowrap;overflow-wrap:normal;line-height:1.4;font-variant-numeric:tabular-nums}
 .sharing-table th:first-child{padding-left:20px}.sharing-table td:first-child{padding-left:0}
-.sharing-table td strong{display:inline-block;width:max(9ch,4.5em);overflow:hidden;text-overflow:ellipsis;vertical-align:middle;font-weight:600;font-size:12px}.sharing-table td small{display:inline;color:var(--muted);font-size:11px}.sharing-row-status{color:var(--ink)}
+.sharing-table td strong{display:inline-block;width:clamp(140px,12vw,180px);overflow:hidden;text-overflow:ellipsis;vertical-align:middle;font-weight:600;font-size:12px}.sharing-table td small{display:inline;color:var(--muted);font-size:11px}.sharing-row-status{color:var(--ink);text-align:center}
+.sharing-network-table{table-layout:fixed;min-width:740px}
+.sharing-network-table th:first-child{width:26%}
+.sharing-network-table th:nth-child(3){width:88px}
+.sharing-network-table th:nth-child(4){width:108px}
+.sharing-network-table th:nth-child(5){width:104px}
+.sharing-network-table th:nth-child(6){width:104px}
+.sharing-network-table:lang(en){min-width:820px}
+.sharing-network-table:lang(en) th:nth-child(6){width:144px}
+.sharing-network-table td:first-child .sharing-cell-value[data-field=label]{display:inline-block;width:calc(100% - 20px)}
+.sharing-network-table td:first-child strong{width:100%}
+.sharing-network-table .sharing-upload,.sharing-network-table .sharing-download{display:inline-block;max-width:calc((100% - 12px)/2);overflow:hidden;text-overflow:ellipsis;vertical-align:middle}
+.sharing-network-table :is(th,td):nth-child(3){text-align:right}
+.sharing-network-table :is(th,td):nth-child(5){text-align:center}
+.sharing-network-table th:last-child{text-align:right}
+.sharing-network-table .sharing-row-actions{justify-content:flex-end}
 .sharing-table tbody tr:hover:not(.sharing-recent) td{background:color-mix(in srgb,var(--bg) 65%,var(--panel))}
 .sharing-table .sharing-cell-value{display:inline;min-height:0;padding:0;border:0;border-radius:3px;background:transparent;color:var(--ink);font:inherit;line-height:inherit;vertical-align:baseline;text-decoration:underline dotted color-mix(in srgb,var(--ink) 35%,var(--line));text-underline-offset:3px;cursor:pointer}
 .sharing-table .sharing-cell-value:hover,.sharing-table .sharing-cell-value[aria-expanded=true]{color:var(--accent);text-decoration-color:currentColor}.sharing-cell-value:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
