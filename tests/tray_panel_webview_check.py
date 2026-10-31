@@ -122,8 +122,9 @@ def run(*, legacy_host=False):
                 assert style == {"background": "rgb(255, 255, 255)", "width": expected_width, "overflow": False, "buttons": 2}, style
                 height = panel._size[1]
                 evaluate("const error=document.getElementById('tray-error');error.textContent='Test message';error.hidden=false;window.trayPanel.render({});true")
-                result["stage"] = "floating error without resize"
-                wait_until(lambda: evaluate("!document.querySelector('.floating-feedback').hidden"))
+                result["stage"] = "inline error without resize"
+                wait_until(lambda: evaluate("!document.getElementById('tray-error').hidden && getComputedStyle(document.getElementById('tray-status')).display==='none'"))
+                assert evaluate("document.querySelector('.floating-feedback').hidden"), "error opened a floating notification"
                 assert panel._size[1] == height and sized_for_content(panel), "feedback resized the tray"
                 assert not is_visible(panel.window), "resizing exposed a hidden popup"
                 evaluate("document.getElementById('tray-error').hidden=true;window.trayPanel.render({});true")

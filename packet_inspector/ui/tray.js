@@ -104,7 +104,7 @@
     busy=true;for(const button of buttons)button.disabled=true;
     const error=document.getElementById("tray-error");error.hidden=true;
     try {const result=await api()[name]();if(result?.ok===false)throw Error(result.error);}
-    catch(_) {setText(error,t("无法完成操作，请稍后重试。"));error.hidden=false;}
+    catch(_) {setText(error,t("无法完成操作，请稍后重试。"));error.title=error.textContent;error.hidden=false;}
     finally {busy=false;for(const button of buttons)button.disabled=false;}
   }
   buttons[0].addEventListener("click",()=>action("open_main"));buttons[1].addEventListener("click",()=>action("restart_service"));buttons[2].addEventListener("click",()=>action("exit_app"));

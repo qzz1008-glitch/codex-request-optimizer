@@ -110,7 +110,12 @@
 .sharing-table tr.current td:first-child strong{color:var(--accent)}.sharing-row-actions{gap:4px;flex-wrap:nowrap}
 .sharing-table .sharing-drag-handle{display:inline-flex;align-items:center;justify-content:center;width:14px;min-height:22px;margin-right:6px;padding:0;border:0;background:transparent;color:var(--muted);vertical-align:middle;opacity:.55;cursor:grab}.sharing-drag-handle svg{width:10px;height:16px;fill:currentColor;pointer-events:none}.sharing-table .sharing-drag-handle:hover{opacity:1;background:transparent}.sharing-drag-handle:active{cursor:grabbing}.sharing-table tr.sharing-drag-preview{background:var(--panel);box-shadow:0 5px 16px #0003}.sharing-table tr.sharing-dragging{visibility:hidden}.sharing-reordering{cursor:grabbing;user-select:none}.sharing-table tbody[aria-busy=true] .sharing-drag-handle{opacity:.3;cursor:wait}
 .sharing-row-actions button{flex:none;padding:3px 7px;min-height:26px;border-color:color-mix(in srgb,var(--accent) 25%,var(--line));border-radius:5px;background:color-mix(in srgb,var(--accent) 6%,var(--panel));color:var(--accent);font-size:11px;font-weight:600}.sharing-row-actions button:hover:not(:disabled){background:color-mix(in srgb,var(--accent) 12%,var(--panel));border-color:color-mix(in srgb,var(--accent) 50%,var(--line))}.sharing-row-actions button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}.sharing-row-actions button:disabled{color:var(--muted);background:var(--bg);border-color:var(--line);opacity:1}
-/* Copy feedback uses the floating layer; an inline spinner must not widen the button. */
+/* Copy acknowledgement keeps the same button and column width. */
+.sharing-workspace .sharing-copy-button{width:54px;padding-inline:4px}
+.sharing-workspace:lang(en) .sharing-copy-button{width:68px}
+.sharing-workspace .sharing-copy-button[data-copied=true]{color:var(--green);border-color:color-mix(in srgb,var(--green) 35%,var(--line));background:color-mix(in srgb,var(--green) 6%,var(--panel))}
+.sharing-inline-feedback{flex:none;height:18px;margin-top:6px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.sharing-inline-feedback .sharing-message{font-size:12px;line-height:18px}
 .sharing-workspace .sharing-copy-button[aria-busy=true]::before{display:none}
 .sharing-row-actions .sharing-row-delete{color:var(--danger);background:color-mix(in srgb,var(--danger) 6%,var(--panel));border-color:color-mix(in srgb,var(--danger) 25%,var(--line))}.sharing-row-actions .sharing-row-delete:hover:not(:disabled){color:var(--danger);background:color-mix(in srgb,var(--danger) 12%,var(--panel));border-color:color-mix(in srgb,var(--danger) 55%,var(--line))}
 .sharing-empty{text-align:center;color:var(--muted);padding:32px 10px;font-size:13px}

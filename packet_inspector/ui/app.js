@@ -538,7 +538,7 @@ async function selectSession(value) {
   renderSessions();renderList();
   await loadPackets();
 }
-function message(text, error=false) { uiI18n.text($("notice-text"),text); $("notice").className = "notice"+(error?" error":""); $("notice").hidden = false; }
+function message(text, error=false) { uiI18n.text($("notice-text"),text); $("notice").className = "notice"+(error?" error":"");$("notice").dataset.feedbackTarget=$("settings-dialog").open?"settings-inline-feedback":"app-inline-feedback"; $("notice").hidden = false; }
 function fail(err) { message(err.message || String(err), true); }
 async function api(path, data, signal) { const r = await fetch(path, {method:data === undefined ? "GET" : "POST",headers:data === undefined ? {} : {"Content-Type":"application/json"},body:data === undefined ? undefined : JSON.stringify(data),signal}); const value = await r.json(); if (!r.ok) throw Object.assign(Error(value.error || ("HTTP "+r.status)),{status:r.status}); return value; }
 function action(id, fn) { $(id).addEventListener("click", () => Promise.resolve().then(fn).catch(fail)); }
@@ -1112,7 +1112,9 @@ function showConfigurationFeedback(items,{summary="",reloadRequired=true}={}) {
   uiI18n.text($("settings-restart-summary"),summary);$("settings-restart-summary").hidden=!summary;
   $("settings-restart-items").replaceChildren(...items.map(label=>el("li","",label)));
   $("settings-restart-items").hidden=!items.length;
-  if(!$("settings-restart-dialog").open)$("settings-restart-dialog").showModal();
+  const feedback=$("settings-restart-feedback");
+  feedback.dataset.feedbackTarget=$("settings-dialog").open?"settings-inline-feedback":"connection-inline-feedback";
+  feedback.hidden=false;
 }
 function showConnectionFeedback(which,result={}) {
   connectionRestartNotified=true;
@@ -1174,7 +1176,7 @@ function renderConnectPrompt() {
 }
 async function requestConnection(source="header") {
   const s=state.status,dialog=$("connect-confirm-dialog");
-  if(!s||s.profile?.active||s.profile?.config_error||connectSaving||connectChecking||linkSaving||settingsSaving||settingsOpening||compressionSaving||exitSaving||dialog.open||$("exit-confirm-dialog").open||$("settings-restart-dialog").open)return;
+  if(!s||s.profile?.active||s.profile?.config_error||connectSaving||connectChecking||linkSaving||settingsSaving||settingsOpening||compressionSaving||exitSaving||dialog.open||$("exit-confirm-dialog").open)return;
   if(settingsEditing)return;
   startupConnectChecked=true;connectChecking=true;renderConnectionActions();
   try {await refreshStatus();}
@@ -1432,13 +1434,12 @@ function finishSettingsSave() {
     context_tokens:"有效上下文",compact_tokens:"自动压缩阈值",capacity_retry:"容量不足重试"};
   const items=[...settingsRestartChanges.keys()].map(field=>t(labels[field]));
   if(state.status.entry_port?.pending)items.unshift(t("入口端口"));
-  if(!items.length){closeSettings();return;}
   setSettingsMessage("设置已保存。");
-  showConfigurationFeedback(items);
+  if(items.length)showConfigurationFeedback(items);
   if(settingsRestartChanges.has("capacity_retry"))connectionRestartNotified=true;
 }
 async function saveSettings() {
-  if(!settingsEditing||settingsSaving||linkSaving||!settingsBaseline||$("settings-restart-dialog").open)return;
+  if(!settingsEditing||settingsSaving||linkSaving||!settingsBaseline)return;
   const draft=readSettingsDraft(),changed=new Set(changedSettings(draft)),s=state.status;
   if(!changed.size)return;
   for(const input of $("settings-dialog").querySelectorAll(".settings-content input:not(:disabled)")) {
@@ -1471,7 +1472,7 @@ async function saveSettings() {
   const controls=new Map([...$("settings-dialog").querySelectorAll("input,select,button")].map(node=>[node,node.disabled]));
   let saved=0,error=null;
   settingsSaveProgress={total:Number(!!entries.length)+Number(!!contextChanged)+Number(!!portChanged)+Number(changed.has("language")),steps:[]};
-  settingsSaving=true;settingsRevision++;
+  settingsSaving=true;$("settings-restart-feedback").hidden=true;settingsRevision++;
   for(const node of controls.keys())node.disabled=true;
   $("settings-dialog").setAttribute("aria-busy","true");renderSettingsSaveProgress();
   try {
@@ -1574,7 +1575,7 @@ async function performUpdate(which) {
   finally {updateBusy=false;updateAction="";renderUpdates();}
 }
 async function openSettings() {
-  if(settingsOpening||compressionSaving||exitSaving||connectSaving||connectChecking||$("connect-confirm-dialog").open||$("exit-confirm-dialog").open||$("compression-confirm-dialog").open||$("settings-restart-dialog").open||$("settings-dialog").open)return;
+  if(settingsOpening||compressionSaving||exitSaving||connectSaving||connectChecking||$("connect-confirm-dialog").open||$("exit-confirm-dialog").open||$("compression-confirm-dialog").open||$("settings-dialog").open)return;
   settingsOpening=true;
   updateFeedbackVisible=updateBusy||["checking","downloading","upgrading"].includes(updateStatus?.state);
   try {
@@ -1583,7 +1584,7 @@ async function openSettings() {
     settingsBaseline=readSettingsDraft();settingsEditing=true;
     resetSettingsSaveProgress();
     renderLanguageSelection();renderConnectionActions();renderUpdates();updateSettingsSaveState();
-    $("settings-dialog").showModal();
+    $("settings-dialog").showModal();$("settings-restart-feedback").dataset.feedbackTarget="settings-inline-feedback";
   } finally {settingsOpening=false;}
 }
 async function selectPacket(id,refresh=false,expectedListRequest=null) {
@@ -2097,20 +2098,17 @@ function discardSettingsDraft() {
   return restore.catch(fail);
 }
 function restoreSettings() {
-  if(!settingsEditing||settingsSaving||$("settings-restart-dialog").open)return;
+  if(!settingsEditing||settingsSaving)return;
   discardSettingsDraft();
   settingsLanguage=uiI18n.language;settingsBaseline=readSettingsDraft();settingsEditing=true;
   renderLanguageSelection();renderConnectionActions();updateSettingsSaveState();
 }
 function closeSettings() {
-  if(settingsSaving||$("settings-restart-dialog").open)return;
+  if(settingsSaving)return;
   closeZstdLevelPicker(false);
+  $("settings-restart-feedback").dataset.feedbackTarget="connection-inline-feedback";
   $("settings-dialog").close();return discardSettingsDraft();
 }
-action("settings-restart-confirm",()=>{
-  $("settings-restart-dialog").close();settingsRestartChanges.clear();closeSettings();
-});
-$("settings-restart-dialog").addEventListener("cancel",event=>event.preventDefault());
 action("settings-close",closeSettings);action("settings-restore",restoreSettings);
 for(const id of ["log-dir","cache-dir","image-save-dir"])action(id+"-open",()=>openSettingsDirectory(id));
 for(const id of ["log-dir","cache-dir"])action(id+"-reset",()=>{

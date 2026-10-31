@@ -1,217 +1,156 @@
-/* Isolated browser checks: no live application, relay, server or user profile. */
+/* Isolated browser checks; no live service, application or user profile. */
 const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path');
 let chromium;
-try {({chromium}=require('playwright'));}
-catch (_) {console.log(JSON.stringify({skipped:'Playwright is not installed'}));process.exit(0);}
+try{({chromium}=require('playwright'));}catch(_){console.log(JSON.stringify({skipped:'Playwright is not installed'}));process.exit(0);}
 const edge=path.join(process.env['ProgramFiles(x86)']||'C:/Program Files (x86)','Microsoft/Edge/Application/msedge.exe');
 const executablePath=process.env.CRO_TEST_BROWSER||(process.platform==='win32'&&fs.existsSync(edge)?edge:chromium.executablePath());
 if(!fs.existsSync(executablePath)){console.log(JSON.stringify({skipped:'No browser engine is installed'}));process.exit(0);}
-const root=path.join(__dirname,'../packet_inspector/ui'),read=name=>fs.readFileSync(path.join(root,name),'utf8');
+const root=path.join(__dirname,'../packet_inspector/ui'),read=name=>fs.readFileSync(path.join(root,name),'utf8'),app=read('app.js');
+const extract=(start,end)=>app.slice(app.indexOf(start),app.indexOf(end,app.indexOf(start)));
 let browser,cases=0;
-async function load(name,{fallback=false}={}) {
-  const page=await browser.newPage({viewport:{width:name==='tray'?240:1280,height:name==='tray'?230:900}});
-  const html=read(name==='tray'?'tray.html':'index.html').replace(/<script\b[^>]*>[\s\S]*?<\/script>/g,'').replace(/<link\b[^>]*>/g,'');
-  await page.setContent(html);
-  for(const file of name==='tray'?['tray.css']:['style.css','sharing.css'])await page.addStyleTag({content:read(file)});
-  await page.addScriptTag({content:read('i18n.js')});
-  await page.evaluate(fallback=>{
-    if(fallback)Object.defineProperty(HTMLElement.prototype,'showPopover',{value:undefined,configurable:true});
-    window.feedback=uiI18n.floatingFeedback();
-    window.feedbackText=(id,value,error=false)=>{
-      const node=document.getElementById(id);node.textContent=value;node.hidden=!value;node.classList.toggle('error',error);
-    };
-  },fallback);
-  return page;
+async function load(tray=false){
+ const page=await browser.newPage({viewport:{width:1280,height:900}});
+ await page.setContent(read(tray?'tray.html':'index.html').replace(/<script\b[^>]*>[\s\S]*?<\/script>/g,'').replace(/<link\b[^>]*>/g,''));
+ for(const file of tray?['tray.css']:['style.css','sharing.css'])await page.addStyleTag({content:read(file)});
+ await page.addScriptTag({content:read('i18n.js')});
+ await page.evaluate(()=>{
+  window.t=value=>uiI18n.t(value);window.feedback=uiI18n.floatingFeedback();
+  window.feedbackText=(id,value,error=false)=>{const node=document.getElementById(id);uiI18n.text(node,value);node.hidden=!value;node.classList.toggle('error',error);};
+ });
+ return page;
 }
-async function geometry(page,ids) {
-  return page.evaluate(ids=>ids.map(id=>{
-    const rect=(id.startsWith('.')?document.querySelector(id):document.getElementById(id)).getBoundingClientRect();
-    return [rect.x,rect.y,rect.width,rect.height];
-  }),ids);
-}
-async function visible(page,value=true) {
-  await page.waitForFunction(value=>document.querySelector('.floating-feedback').hidden!==value,value);
-}
-async function settle(page) {await page.evaluate(()=>new Promise(resolve=>setTimeout(resolve,0)));}
-async function run() {
-  browser=await chromium.launch({executablePath,headless:true});
-  const page=await load('main');
-  await page.evaluate(()=>{
-    document.getElementById('records-view').hidden=true;document.getElementById('sharing-view').hidden=false;
-  });
-  const sharingIds=['sharing-view','sharing-cards','quota-credential-rows','exit-credential-rows'];
-  const before=await geometry(page,sharingIds);
-  const error='当前后台不支持删除凭据，请更新软件后重试。';
-  await page.evaluate(value=>{
-    for(const id of ['sharing-message','sharing-inline-message','sharing-delete-message'])feedbackText(id,value,true);
-  },error);
-  await visible(page);
-  assert.deepEqual(await geometry(page,sharingIds),before,'sharing errors must not move cards or tables');
-  assert.equal(await page.locator('.floating-feedback').count(),1);
-  assert.equal(await page.locator('.floating-feedback-content').innerText(),error);
-  assert.equal(await page.locator('#sharing-message').evaluate(node=>getComputedStyle(node).display),'none');
-  assert(await page.locator('.floating-feedback').evaluate(node=>node.matches(':popover-open')));
-  const noticeBounds=await page.locator('.floating-feedback').boundingBox();
-  assert(Math.abs(noticeBounds.x+noticeBounds.width-1260)<=1&&Math.abs(noticeBounds.y+noticeBounds.height-880)<=1,'ordinary notifications stay at the window edge');
-  assert.equal(await page.locator('.floating-feedback').evaluate(node=>getComputedStyle(node).animationName),'none');
-  cases++;
-
-  await page.keyboard.press('Escape');await visible(page,false);
-  await page.evaluate(value=>feedbackText('sharing-message',value,true),error);await settle(page);
-  await visible(page,false); // Polling the same error cannot undo dismissal.
-  await page.evaluate(()=>uiI18n.setLanguage('en',{persist:false}));await settle(page);await visible(page,false);
-  await page.evaluate(()=>uiI18n.setLanguage('zh',{persist:false}));
-  await page.evaluate(()=>feedbackText('sharing-message',''));await settle(page);
-  await page.evaluate(value=>feedbackText('sharing-message',value,true),error);await visible(page);
-  cases++;
-
-  await page.evaluate(()=>document.getElementById('sharing-inline-editor').hidden=false);await visible(page);
-  assert(await page.locator('.floating-feedback-content>.sharing-edit-message').count(),'inline error should win over its duplicate');
-  await page.evaluate(()=>document.getElementById('sharing-inline-editor').hidden=true);await visible(page,false);
-  cases++;
-
-  await page.evaluate(()=>document.getElementById('sharing-delete-dialog').showModal());await visible(page);
-  const deleteIds=['sharing-delete-dialog','sharing-delete-cancel','sharing-delete-confirm'];
-  const deleteBefore=await geometry(page,deleteIds);
-  assert.equal(await page.locator('.floating-feedback').evaluate(node=>node.parentElement.id),'sharing-delete-dialog');
-  await page.evaluate(()=>feedbackText('sharing-delete-message','A longer deletion error '.repeat(15),true));
-  await settle(page);assert.deepEqual(await geometry(page,deleteIds),deleteBefore);
-  await page.keyboard.press('Escape');await visible(page,false);
-  assert(await page.locator('#sharing-delete-dialog').evaluate(node=>node.open),'Escape dismisses feedback before closing the dialog');
-  cases++;
-
-  await page.locator('#sharing-delete-cancel').focus();
-  await page.evaluate(()=>{
-    uiI18n.text(document.getElementById('notice-text'),'设置已保存。');
-    document.getElementById('notice').hidden=false;
-  });await visible(page);
-  assert.equal(await page.locator('.floating-feedback').getAttribute('role'),'status','informational notice stays informational');
-  assert.equal(await page.evaluate(()=>document.activeElement.id),'sharing-delete-cancel','showing feedback must not steal focus');
-  await page.evaluate(()=>uiI18n.setLanguage('en',{persist:false}));
-  await page.waitForFunction(()=>document.querySelector('.floating-feedback-content').textContent==='Settings saved.');
-  assert.equal(await page.locator('.floating-feedback button').count(),0,'feedback has no close control');
-  await visible(page,false);
-  assert.equal(await page.evaluate(()=>document.activeElement.id),'sharing-delete-cancel');
-  await page.locator('#sharing-delete-cancel').click();
-  await page.evaluate(()=>{document.getElementById('notice').hidden=false;});await visible(page);
-  assert.equal(await page.locator('.floating-feedback-content').innerText(),'Settings saved.','the same feedback can appear again for a new action');
-  cases++;
-
-  await page.evaluate(()=>{
-    document.getElementById('sharing-delete-dialog').close();document.getElementById('settings-dialog').showModal();
-  });
-  const settingsIds=['settings-dialog','settings-save','settings-restore','context-settings'];
-  const settingsBefore=await geometry(page,settingsIds);
-  await page.evaluate(()=>{
-    document.getElementById('settings-message').textContent='Saving settings… 2/3';
-    const log=document.getElementById('settings-save-log');log.hidden=false;
-    for(let i=0;i<6;i++) {
-      const li=document.createElement('li');li.textContent='Saving section '+i;li.dataset.state=i===5?'error':'done';log.append(li);
-    }
-  });await visible(page);
-  assert.deepEqual(await geometry(page,settingsIds),settingsBefore,'save progress cannot grow the footer');
-  assert.equal(await page.locator('.floating-feedback').getAttribute('role'),'alert');
-  assert.equal(await page.locator('.floating-feedback-content .settings-save-log li').count(),6);
-  assert.equal(await page.locator('.floating-feedback-content [id]').count(),0,'copies must not duplicate control IDs');
-  cases++;
-
-  // The newest modal can occur earlier in document order (exit from settings).
-  await page.evaluate(()=>document.getElementById('exit-confirm-dialog').showModal());await settle(page);
-  assert.equal(await page.locator('.floating-feedback').evaluate(node=>node.parentElement.id),'exit-confirm-dialog');
-  await page.evaluate(()=>feedbackText('exit-confirm-message','Exit failed',true));await visible(page);
-  await page.evaluate(()=>{
-    document.getElementById('notice').classList.remove('error');
-    document.getElementById('notice-text').textContent='Background information';
-  });await settle(page);
-  assert.equal(await page.locator('.floating-feedback-content').innerText(),'Exit failed','information cannot overwrite an active error');
-  await page.evaluate(()=>document.getElementById('exit-confirm-dialog').close());
-  cases++;
-
-  await page.evaluate(()=>{
-    document.getElementById('settings-dialog').close();document.getElementById('sharing-view').hidden=true;
-    document.getElementById('records-view').hidden=false;feedbackText('list-loading','正在加载更多记录…');
-  });await visible(page,false);
-  await page.evaluate(()=>feedbackText('list-loading',''));await page.waitForTimeout(240);await visible(page,false);
-  await page.evaluate(()=>feedbackText('list-loading','正在加载更多记录…'));await visible(page);
-  assert.equal(await page.locator('.floating-feedback').getAttribute('role'),'status');
-  await page.evaluate(()=>feedbackText('list-loading',''));await visible(page,false);
-  cases++;
-
-  const fallback=await load('main',{fallback:true});
-  await fallback.evaluate(()=>document.getElementById('settings-dialog').showModal());
-  await fallback.locator('#settings-save').evaluate(node=>{node.disabled=false;});
-  await fallback.locator('#settings-save').click();
-  const fallbackBefore=await geometry(fallback,['settings-dialog','settings-save']);
-  await fallback.evaluate(()=>feedbackText('context-message','Cannot read context settings',true));await visible(fallback);
-  assert.equal(await fallback.locator('.floating-feedback').evaluate(node=>node.parentElement.id),'settings-dialog');
-  assert.equal(await fallback.locator('.floating-feedback').evaluate(node=>getComputedStyle(node).position),'fixed');
-  assert.deepEqual(await geometry(fallback,['settings-dialog','settings-save']),fallbackBefore);
-  const fallbackToast=await fallback.locator('.floating-feedback').boundingBox();
-  assert(Math.abs(fallbackToast.x+fallbackToast.width-1260)<=1&&Math.abs(fallbackToast.y+fallbackToast.height-880)<=1,'dialog notifications also stay at the window edge');
-  cases++;
-
-  const sharing=await load('main');
-  await sharing.evaluate(()=>{
-    document.getElementById('records-view').hidden=true;document.getElementById('sharing-view').hidden=false;
-    const snapshot={supported:true,protocol:4,credentials_supported:true,host:{active:true,running:true},client:{active:false},
-      egress:{supported:true,host:{active:false},selection:{mode:'local'}},credentials:[
-        {id:'quota1',kind:'quota',direction:'out',label:'Quota',enabled:true,expires_at:null,budget_nanos:10e9,totals:{}},
-        {id:'exit1',kind:'exit',direction:'out',label:'Exit',enabled:true,expires_at:null,totals:{}}
-      ]};
-    window.fetch=async(_,options)=>{
-      const action=options.body?JSON.parse(options.body).action:null;
-      if(action==='credential_copy')await new Promise(resolve=>{window.finishCopy=resolve;});
-      return {ok:true,json:async()=>({...snapshot,...(action==='credential_copy'?{link:'synthetic-secret'}:{})})};
-    };
-    Object.defineProperty(navigator,'clipboard',{value:{writeText:async value=>{window.copiedValue=value;}},configurable:true});
-  });
-  await sharing.addScriptTag({content:read('sharing.js')});
-  const copyGeometry=()=>sharing.evaluate(()=>[...document.querySelectorAll('.sharing-table th,.sharing-copy-button')].map(node=>{
-    const rect=node.getBoundingClientRect();return [rect.x,rect.y,rect.width,rect.height];
-  }));
-  for(const [language,id] of [['zh','quota1'],['en','exit1']]) {
-    await sharing.evaluate(language=>{uiI18n.setLanguage(language,{persist:false});InspectorSharing.setActive(true);},language);
-    const selector=`[data-action="copy"][data-id="${id}"]`;
-    await sharing.waitForSelector(selector);
-    const copyBefore=await copyGeometry(),caption=await sharing.locator(selector).innerText();
-    await sharing.locator(selector).click();
-    await sharing.waitForFunction(()=>typeof window.finishCopy==='function');
-    assert.deepEqual(await copyGeometry(),copyBefore,'copy progress cannot widen a button or a table column');
-    assert.equal(await sharing.locator(selector).innerText(),caption);
-    await sharing.evaluate(()=>{window.finishCopy();window.finishCopy=null;});await visible(sharing);
-    assert.equal(await sharing.locator('.floating-feedback-content').innerText(),
-      language==='zh'?'已复制，仅供一台机器使用':'Copied. For use on one machine only.');
-    assert.equal(await sharing.evaluate(()=>window.copiedValue),'synthetic-secret');
-    assert.deepEqual(await copyGeometry(),copyBefore,'copy success cannot resize the button or the columns');
-    assert.equal(await sharing.locator(selector).innerText(),caption);
-    assert.equal(await sharing.locator('body').innerText().then(text=>text.includes('synthetic-secret')),false);
-    assert.equal(await sharing.locator('.floating-feedback button').count(),0);
-    const toast=await sharing.locator('.floating-feedback').boundingBox(),anchor=await sharing.locator(selector).boundingBox();
-    assert(toast.x<anchor.x+anchor.width&&toast.x+toast.width>anchor.x,'copy feedback must overlap its button horizontally');
-    assert(Math.min(Math.abs(toast.y+toast.height-anchor.y),Math.abs(anchor.y+anchor.height-toast.y))<=12,'copy feedback must stay near the clicked button');
-    if(language==='zh') {
-      const appeared=Date.now();await sharing.waitForTimeout(1000);
-      await sharing.evaluate(()=>{const node=document.getElementById('sharing-message');node.textContent=node.textContent;});
-      await visible(sharing,false);
-      assert(Date.now()-appeared<3000,'unchanged polling must not keep restarting the dismissal timer');
-    }
-    else {
-      // Replacing a brief success with an error cancels the previous timer.
-      await sharing.evaluate(()=>feedbackText('sharing-message','Copy follow-up error',true));
-      await sharing.waitForTimeout(2600);await visible(sharing);
-      assert.equal(await sharing.locator('.floating-feedback-content').innerText(),'Copy follow-up error');
-      await visible(sharing,false);
-    }
-    cases++;
-  }
-
-  const tray=await load('tray');
-  const trayBefore=await geometry(tray,['.tray-panel','tray-open','tray-exit']);
-  await tray.evaluate(()=>feedbackText('tray-error','无法完成操作，请稍后重试。',true));await visible(tray);
-  assert.deepEqual(await geometry(tray,['.tray-panel','tray-open','tray-exit']),trayBefore,'tray feedback cannot resize the native menu');
-  const bounds=await tray.locator('.floating-feedback').boundingBox();
-  assert(bounds.x>=0&&bounds.x+bounds.width<=240&&bounds.y>=0&&bounds.y+bounds.height<=230);
-  cases++;
-  console.log(JSON.stringify({floating_feedback:'passed',browser_cases:cases}));
+const settle=page=>page.evaluate(()=>new Promise(resolve=>setTimeout(resolve,0)));
+const geometry=(page,ids)=>page.evaluate(ids=>ids.map(id=>{const r=document.getElementById(id).getBoundingClientRect();return [r.x,r.y,r.width,r.height];}),ids);
+async function noPopup(page){await settle(page);assert.equal(await page.locator('.floating-feedback').evaluate(node=>node.hidden),true,'reviewed feedback must not open a floating notification');}
+async function run(){
+ browser=await chromium.launch({executablePath,headless:true});
+ const page=await load();
+ await page.addScriptTag({content:[
+  "window.$=id=>document.getElementById(id);window.state={status:{version:'1.0.0',entry_port:{pending:false}}};",
+  "window.updateStatus=null;window.updateBusy=false;window.settingsSaving=false;window.updateAction='';window.updateFeedbackVisible=true;",
+  "window.settingsRestartChanges=new Map();window.connectionRestartNotified=false;window.closeZstdLevelPicker=()=>{};window.discardSettingsDraft=()=>{};",
+  "function el(tag,cls,value){const node=document.createElement(tag);node.className=cls;node.textContent=value;return node;}",
+  extract('function renderUpdates()','async function loadUpdates()'),
+  extract('function showConfigurationFeedback(','function showConnectionFeedback('),
+  extract('function setSettingsMessage(','function renderSettingsSaveProgress('),
+  extract('function finishSettingsSave()','async function saveSettings()'),
+  extract('function closeSettings()','action("settings-close"'),
+  extract('function message(','function fail(')
+ ].join('\n')});
+ await page.evaluate(()=>document.getElementById('settings-dialog').showModal());
+ for(const width of [1120,1600]){await page.setViewportSize({width,height:900});
+ for(const language of ['zh','en']){
+  await page.evaluate(language=>{uiI18n.setLanguage(language,{persist:false});updateStatus={state:'idle',current_version:'1.0.0'};renderUpdates();},language);
+  const before=await geometry(page,['updates-settings','settings-dialog','settings-save','settings-restore']);
+  for(const status of ['checking','current','available','downloading','upgrading','complete','error']){
+   await page.evaluate(status=>{updateStatus={state:status,current_version:'1.0.0',latest_version:'1.1.0',error:'Synthetic update error '.repeat(30)};renderUpdates();},status);
+   await noPopup(page);assert(await page.locator('#updates-message').isVisible());
+   assert.equal(await page.locator('#updates-message').getAttribute('title'),await page.locator('#updates-message').textContent());
+   const [version,result]=await geometry(page,['updates-versions','updates-message']);
+   assert(result[0]>=version[0]+version[2]&&Math.abs(result[1]+result[3]/2-version[1]-version[3]/2)<=1);
+   assert.deepEqual(await geometry(page,['updates-settings','settings-dialog','settings-save','settings-restore']),before);
+  }cases++;
+ }}
+ await page.setViewportSize({width:1280,height:900});
+ await page.evaluate(()=>uiI18n.setLanguage('zh',{persist:false}));
+ const settingsIds=['settings-dialog','settings-save','settings-restore','context-settings'],beforeSave=await geometry(page,settingsIds);
+ await page.evaluate(()=>{
+  setSettingsMessage('正在保存设置… 2/3');const log=document.getElementById('settings-save-log');log.hidden=false;
+  for(let i=0;i<6;i++){const li=document.createElement('li');li.textContent='Saving section '+i;li.dataset.state=i===5?'error':'done';log.append(li);}
+ });
+ await noPopup(page);assert.equal(await page.locator('#settings-inline-feedback').getAttribute('role'),'alert');
+ assert.equal(await page.locator('#settings-inline-feedback .settings-save-log li').count(),6);
+ assert.equal(await page.locator('#settings-inline-feedback [id]').count(),0);
+ assert.deepEqual(await geometry(page,settingsIds),beforeSave);
+ await page.evaluate(()=>{document.getElementById('settings-save-log').replaceChildren();document.getElementById('settings-save-log').hidden=true;finishSettingsSave();});
+ await noPopup(page);assert(await page.locator('#settings-dialog').evaluate(node=>node.open));
+ assert((await page.locator('#settings-inline-feedback').textContent()).includes('设置已保存'));cases++;
+ for(const id of ['entry-port-message','context-message','packet-size-message','runtime-settings-message','image-isolation-message','image-save-dir-message']){
+  await page.evaluate(id=>{setSettingsMessage('');feedbackText(id,'Synthetic field error: '+id,true);},id);await noPopup(page);
+  assert((await page.locator('#settings-inline-feedback').textContent()).includes(id));
+  assert.deepEqual(await geometry(page,settingsIds),beforeSave);await page.evaluate(id=>feedbackText(id,''),id);cases++;
+ }
+ await page.evaluate(()=>showConfigurationFeedback(['自动压缩阈值'],{summary:'已接入。'}));await noPopup(page);
+ assert((await page.locator('#settings-inline-feedback').textContent()).includes('自动压缩阈值'));
+ assert.equal(await page.locator('#settings-restart-dialog').count(),0);assert.deepEqual(await geometry(page,settingsIds),beforeSave);
+ await page.evaluate(()=>closeSettings());await noPopup(page);
+ assert((await page.locator('#connection-inline-feedback').textContent()).includes('重启 ChatGPT App'));cases++;
+ for(const id of ['compression-confirm-dialog','connect-confirm-dialog','exit-confirm-dialog']){
+  await page.evaluate(id=>document.getElementById(id).showModal(),id);const before=await geometry(page,[id]),messageId=id.replace('-dialog','-message');
+  await page.evaluate(id=>feedbackText(id,'Synthetic confirmation error '.repeat(25),true),messageId);await noPopup(page);
+  assert(await page.locator('#'+messageId).isVisible());assert.deepEqual(await geometry(page,[id]),before);
+  await page.evaluate(id=>document.getElementById(id).close(),id);cases++;
+ }
+ const beforeLoading=await geometry(page,['packet-list','requests-inline-feedback']);
+ await page.evaluate(()=>feedbackText('list-loading','正在加载更多记录…'));await noPopup(page);
+ assert((await page.locator('#requests-inline-feedback').textContent()).includes('加载'));
+ assert.deepEqual(await geometry(page,['packet-list','requests-inline-feedback']),beforeLoading);
+ await page.evaluate(()=>feedbackText('list-loading',''));await noPopup(page);assert.equal(await page.locator('#requests-inline-feedback').textContent(),'');cases++;
+ const beforeFailure=await geometry(page,['records-view','app-inline-feedback']);
+ await page.evaluate(()=>message('Synthetic content failure',true));await noPopup(page);
+ assert.equal(await page.locator('#app-inline-feedback').textContent(),'Synthetic content failure');
+ assert.deepEqual(await geometry(page,['records-view','app-inline-feedback']),beforeFailure);cases++;
+ await page.evaluate(()=>{
+  document.getElementById('settings-restart-feedback').hidden=true;document.getElementById('settings-dialog').showModal();document.getElementById('settings-message').textContent='';
+  document.addEventListener('invalid',event=>{window.invalidPrevented=event.defaultPrevented;},true);
+  const input=document.getElementById('entry-port');input.value='1';input.reportValidity();
+ });
+ await noPopup(page);assert(await page.evaluate(()=>window.invalidPrevented));
+ assert.equal(await page.locator('#entry-port').getAttribute('aria-invalid'),'true');
+ assert((await page.locator('#settings-inline-feedback').textContent()).includes('1024'));
+ await page.evaluate(()=>uiI18n.setLanguage('en',{persist:false}));await settle(page);
+ assert((await page.locator('#settings-inline-feedback').textContent()).includes('Must be at least'));
+ await page.locator('#entry-port').fill('47844');assert.equal(await page.locator('#entry-port').getAttribute('aria-invalid'),'false');cases++;
+ await page.evaluate(()=>document.getElementById('settings-dialog').close());
+ const sharing=await load();
+ await sharing.evaluate(()=>{
+  document.getElementById('records-view').hidden=true;document.getElementById('sharing-view').hidden=false;
+  const credentials=['quota','exit'].map(kind=>({id:kind+'1',kind,direction:'out',label:kind,enabled:true,expires_at:null,weekly_reset:false,budget_nanos:10e9,totals:{},daily:{}}));
+  const state={supported:true,protocol:4,credentials_supported:true,weekly_reset_days_supported:true,used_quota_edit_supported:true,host:{active:true,running:true},client:{active:false},egress:{supported:true,host:{active:false},selection:{mode:'local'}},credentials};
+  window.fetch=async(_,options)=>{
+   const action=options.body?JSON.parse(options.body).action:null;
+   if(action==='credential_copy')await new Promise(resolve=>{window.finishCopy=resolve;});
+   if(window.failNext){window.failNext=false;return {ok:false,json:async()=>({error:'Synthetic sharing failure'})};}
+   return {ok:true,json:async()=>({...state,...(action==='credential_copy'?{link:'synthetic-secret'}:{})})};
+  };
+  window.setInterval=fn=>{window.sharingPoll=fn;return 1;};window.clearInterval=()=>{};
+  Object.defineProperty(navigator,'clipboard',{value:{writeText:async value=>{window.copiedValue=value;}},configurable:true});
+ });
+ await sharing.addScriptTag({content:read('sharing.js')});
+ for(const language of ['zh','en']){
+  await sharing.evaluate(language=>{uiI18n.setLanguage(language,{persist:false});InspectorSharing.setActive(true);},language);
+  const selector='[data-action=copy][data-id=quota1]';await sharing.waitForSelector(selector);
+  const before=await geometry(sharing,['quota-credential-rows','sharing-copy-quota1']),caption=await sharing.locator(selector).textContent();
+  await sharing.locator(selector).click();await sharing.waitForFunction(()=>typeof window.finishCopy==='function');
+  assert.deepEqual(await geometry(sharing,['quota-credential-rows','sharing-copy-quota1']),before);
+  await sharing.evaluate(()=>{window.finishCopy();window.finishCopy=null;});await noPopup(sharing);
+  await sharing.waitForFunction(()=>document.getElementById('sharing-copy-quota1').dataset.copied==='true');
+  assert.equal(await sharing.locator(selector).textContent(),language==='zh'?'已复制':'Copied');
+  assert.equal(await sharing.evaluate(()=>window.copiedValue),'synthetic-secret');
+  assert(!await sharing.locator('body').textContent().then(value=>value.includes('synthetic-secret')));
+  await sharing.evaluate(()=>window.sharingPoll());await noPopup(sharing);
+  assert.equal(await sharing.locator(selector).textContent(),language==='zh'?'已复制':'Copied');
+  assert.deepEqual(await geometry(sharing,['quota-credential-rows','sharing-copy-quota1']),before);
+  await sharing.waitForFunction(()=>document.getElementById('sharing-copy-quota1').dataset.copied!=='true');
+  assert.equal(await sharing.locator(selector).textContent(),caption);cases++;
+ }
+ await sharing.evaluate(()=>{uiI18n.setLanguage('zh',{persist:false});feedbackText('sharing-message','已更新，新请求使用当前设置。');});await noPopup(sharing);
+ assert((await sharing.locator('#quota-inline-feedback').textContent()).includes('已更新'));cases++;
+ await sharing.locator('[data-action=field][data-id=quota1][data-field=label]').click();const beforeEdit=await geometry(sharing,['sharing-inline-editor']);
+ await sharing.locator('#sharing-inline-value').fill('New name');await sharing.evaluate(()=>window.failNext=true);await sharing.locator('#sharing-inline-save').click();
+ await sharing.waitForFunction(()=>!document.getElementById('sharing-inline-message').hidden);await noPopup(sharing);
+ assert.deepEqual(await geometry(sharing,['sharing-inline-editor']),beforeEdit);
+ await sharing.locator('#sharing-inline-cancel').click();cases++;
+ await sharing.locator('[data-action=delete][data-id=quota1]').click();const beforeDelete=await geometry(sharing,['sharing-delete-dialog']);
+ await sharing.evaluate(()=>window.failNext=true);await sharing.locator('#sharing-delete-confirm').click();
+ await sharing.waitForFunction(()=>!document.getElementById('sharing-delete-message').hidden);await noPopup(sharing);
+ assert.deepEqual(await geometry(sharing,['sharing-delete-dialog']),beforeDelete);await sharing.locator('#sharing-delete-cancel').click();cases++;
+ await sharing.locator('#quota-budget').fill('0');await sharing.evaluate(()=>document.getElementById('quota-budget').reportValidity());await noPopup(sharing);
+ assert.equal(await sharing.locator('#quota-budget').getAttribute('aria-invalid'),'true');assert((await sharing.locator('#quota-inline-feedback').textContent()).includes('1'));cases++;
+ const tray=await load(true),beforeTray=await tray.locator('.tray-panel').boundingBox();
+ await tray.evaluate(()=>feedbackText('tray-error','无法完成操作，请稍后重试。',true));await noPopup(tray);
+ assert(await tray.locator('#tray-error').isVisible());assert(!await tray.locator('#tray-status').isVisible());assert.deepEqual(await tray.locator('.tray-panel').boundingBox(),beforeTray);
+ await tray.evaluate(()=>feedbackText('tray-error',''));assert(await tray.locator('#tray-status').isVisible());cases++;
+ console.log(JSON.stringify({floating_feedback:'passed',browser_cases:cases,updates:'inline beside version',reviewed_feedback:'inline',copy_acknowledgement:'fixed-width button',validation:'no native bubble',layout:'stable'}));
 }
 run().catch(error=>{console.error(error);process.exitCode=1;}).finally(async()=>{await browser?.close();});
