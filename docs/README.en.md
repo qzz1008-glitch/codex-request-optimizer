@@ -168,6 +168,8 @@ See the **[user guide](https://github.com/qzz1008-glitch/codex-request-optimizer
 
 Use standard Codex **provider configuration** to route requests through a local relay for analysis, compression, and protection before forwarding them to the original upstream. Responses stream back to the client.
 
+Connecting validates each provider's upstream address. An unselected provider with an unsupported address keeps its original configuration and is identified in the result without blocking a valid default connection. An invalid selected provider still stops connection and identifies the affected configuration field. Remote upstreams require HTTPS; local upstreams may use HTTP.
+
 ```mermaid
 flowchart LR
     A["Codex"] <--> B["Local request analysis and optimization"]

@@ -18,10 +18,16 @@ END = "# END CODEX PACKET INSPECTOR"
 
 
 def validate_upstream(url):
-    p = urlsplit(url)
-    _ = p.port  # Reject malformed/out-of-range ports before changing a config file.
+    invalid = "上游地址须为不含密码、查询参数的 HTTP/HTTPS 地址"
+    if not isinstance(url, str):
+        raise ValueError(invalid)
+    try:
+        p = urlsplit(url)
+        _ = p.port  # Reject malformed/out-of-range ports before changing a config file.
+    except ValueError:
+        raise ValueError(invalid) from None
     if p.scheme not in {"http", "https"} or not p.hostname or p.username or p.password or p.query or p.fragment:
-        raise ValueError("上游地址须为不含密码、查询参数的 HTTP/HTTPS 地址")
+        raise ValueError(invalid)
     if p.scheme == "http" and p.hostname not in {"localhost", "127.0.0.1", "::1"}:
         raise ValueError("非本机的上游必须使用 HTTPS")
     return url.rstrip("/")
