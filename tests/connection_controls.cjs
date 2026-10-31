@@ -67,7 +67,8 @@ function fixture(connected) {
     return {reload_required:true,warnings:[{file:'config.toml',provider:'optional',reason:'unsupported_upstream',detail:'非本机的上游必须使用 HTTPS'}]};
   };
   await context.confirmConnection();
-  assert.equal(element('settings-restart-dialog').open,true);
+  assert.equal(element('settings-restart-feedback').hidden,false);
+  assert.equal(element('settings-restart-feedback').dataset.feedbackTarget,'connection-inline-feedback');
   assert.equal(element('settings-restart-summary').textContent,'已接入。\n未接管 optional（config.toml）：非本机的上游必须使用 HTTPS。');
   assert.equal(element('connect-confirm-message').hidden,true);
 
