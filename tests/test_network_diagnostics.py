@@ -69,6 +69,7 @@ class NetworkRelayTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name).resolve()
         self.gateway = ThreadingHTTPServer(("127.0.0.1", 0), Gateway)
+        self.gateway.daemon_threads = False
         self.gateway.calls = []
         self.gateway.connect_status = 504
         self.gateway.html = (b'<!doctype html><html><head><title>HIS Proxy Notification</title>'
@@ -84,6 +85,8 @@ class NetworkRelayTests(unittest.TestCase):
         self.config.write_text('model_provider="test"\n[model_providers.test]\nname="Test"\nwire_api="responses"\n'
                                'base_url=' + json.dumps(self.upstream) + '\n', encoding="utf-8")
         self.server = InspectorServer(("127.0.0.1", 0), self.root / "data", self.config, self.upstream)
+        # Join handlers before removing databases that diagnostics may still write.
+        self.server.daemon_threads = False
         self.server.settings["auto_detect_providers"] = False
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
         self.addCleanup(self.server.server_close)
@@ -95,15 +98,16 @@ class NetworkRelayTests(unittest.TestCase):
         request = Request(self.server.endpoint + "/responses", data=body,
                           headers={"Content-Type": "application/json", "Authorization": "Bearer secret-test-token"})
         try:
-            response = self.client.open(request, timeout=3)
+            response = self.client.open(request, timeout=15)
         except HTTPError as exc:
             response = exc
         with response:
             result = response.status, response.read()
         # The server finalizes diagnostics after its last socket write.
-        end = time.monotonic() + 2
+        end = time.monotonic() + 10
         while self.server.active_requests and time.monotonic() < end:
             time.sleep(.01)
+        self.assertFalse(self.server.active_requests, "Relay diagnostics did not finish")
         return result
 
     def records(self):
