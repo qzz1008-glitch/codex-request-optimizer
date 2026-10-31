@@ -20,7 +20,7 @@ from urllib.parse import urlsplit
 from urllib.request import Request
 
 from packet_inspector.config_link import ConfigLink
-from packet_inspector.egress_transport import EGRESS_HEADER, parse_egress_link
+from packet_inspector.egress_transport import EGRESS_HEADER, ExitOpener, parse_egress_link
 from packet_inspector.providers import ProviderManager
 from packet_inspector.server import InspectorServer
 from packet_inspector.sharing import SharingError, automatic_address, parse_link, pinned_opener, forwarding_headers
@@ -277,6 +277,21 @@ class LANSharingTests(unittest.TestCase):
         server.settings["egress_port"] = free_port()
         # Owner and guest fixtures represent separate machines, even on one CI host.
         server.sharing.role = MachineSharingRole('CodexSharingTest-' + secrets.token_hex(16))
+        # Keep real exit authentication while mapping the synthetic HTTP model.
+        # Production exits forward only official HTTPS destinations.
+        def model_exit(link, **options):
+            opener = ExitOpener(link, **options)
+            original_open = opener.open
+            def open_request(request, **kwargs):
+                if request.full_url.startswith(self.target + "/"):
+                    try:
+                        return server.opener.open(request, **kwargs)
+                    finally:
+                        opener.close()
+                return original_open(request, **kwargs)
+            opener.open = open_request
+            return opener
+        server.egress.opener_factory = model_exit
         return server
 
     def tearDown(self):
@@ -293,10 +308,12 @@ class LANSharingTests(unittest.TestCase):
         with patch.object(self.owner.sharing, "_host_upstream", return_value=self.target):
             return self.owner.sharing.start_host("127.0.0.1", free_port(), **options)["link"]
 
-    def remote_request(self, link, path="/v1/status", body=None, grant=True, client=None):
+    def remote_request(self, link, path="/v1/status", body=None, grant=True, client=None, with_exit=True, exit_link=None):
         host, port, token, fingerprint = parse_link(link)
         opener = pinned_opener(host, port, fingerprint)
         headers = {"Authorization": "Bearer " + token, CLIENT_HEADER: client or self.guest.sharing.vault.client_id} if grant else {}
+        if with_exit and path.startswith(("/v1/responses", "/v1/models")):
+            headers[EGRESS_HEADER] = exit_link or self.guest.egress.request_exit({"host": host, "port": port})
         try:
             response = opener.open(Request(f"https://{host}:{port}" + path, data=body, headers=headers), timeout=HTTP_TIMEOUT)
         except HTTPError as exc:
@@ -686,7 +703,7 @@ class LANSharingTests(unittest.TestCase):
         self.assertIs(self.owner.egress.peer_opener, opener)
         status, deleted = self.local_api("/api/sharing", {"action": "credential_delete", "id": active_id})
         self.assertEqual(status, 200)
-        self.assertEqual(deleted["egress"]["selection"]["mode"], "provider")
+        self.assertEqual(deleted["egress"]["selection"]["mode"], "local")
         self.assertIsNone(self.owner.egress.peer_id)
         self.assertIsNone(self.owner.egress.peer_opener)
         self.assertEqual(self.owner.link.config.read_bytes(), original)
@@ -714,6 +731,35 @@ class LANSharingTests(unittest.TestCase):
         self.guest.sharing.connect(link)
         self.consume()
 
+    def test_borrowed_quota_defaults_to_local_without_a_user_exit_credential(self):
+        self.guest.sharing.connect(self.start())
+        self.assertEqual(self.guest.egress.status()["selection"]["mode"], "local")
+        self.assertFalse(any(row["kind"] == "exit" and not row.get("internal")
+                             for row in self.guest.sharing.vault.rows()))
+        self.consume()
+        callback = self.guest.egress.callback_link
+        self.assertTrue(callback)
+        self.assertEqual(parse_egress_link(callback)[1], self.guest.egress.listener.server_port)
+        self.guest.egress.select("peer")  # No selected credential means local.
+        self.assertEqual(self.guest.egress.status()["selection"]["mode"], "local")
+        self.guest.egress.select("provider")  # Retired clients also use local.
+        self.assertEqual(self.guest.egress.status()["selection"]["mode"], "local")
+        self.consume()
+        self.assertEqual(self.guest.egress.callback_link, callback)
+
+    def test_using_the_quota_providers_exit_requires_its_separate_exit_grant(self):
+        link = self.start()
+        status, body = self.remote_request(link, "/v1/responses", b"{}", with_exit=False)
+        self.assertEqual(status, 403)
+        self.assertEqual(json.loads(body)["error"]["code"], "sharing_exit_metadata_missing")
+        self.assertEqual(self.owner.sharing.host["requests"], 0)
+        self.guest.sharing.connect(link)
+        issued = self.owner.egress.issue(label="explicit provider exit", address="127.0.0.1", port=free_port())
+        self.guest.egress.select("peer", issued["link"], label="separate exit")
+        self.consume()
+        self.assertEqual(self.guest.egress.status()["selection"]["mode"], "peer")
+        self.assertEqual(self.guest.egress.callback_link, "")
+
     def test_quota_provider_uses_borrower_exit_selection_instead_of_its_own_peer(self):
         self.guest.sharing.connect(self.start())
         foreign = "codex-exit://127.0.0.1:47847/#" + secrets.token_urlsafe(32) + "." + "a" * 64
@@ -724,16 +770,15 @@ class LANSharingTests(unittest.TestCase):
             owner_routes.append(link)
             return physical
         self.owner.egress.opener_factory = delegated
-        # An owner can use another exit for its own traffic. Borrowers choosing
-        # the owner's exit still receive the owner's physical network.
+        # An owner's own selection never replaces the borrower's selected exit.
         self.owner.egress.mode = "peer"
         self.owner.egress.peer_opener = None
         self.consume()
-        self.assertEqual(owner_routes, [])
-        self.guest.egress.select("local")
-        self.consume()
         callback = owner_routes[-1]
         self.assertEqual(parse_egress_link(callback)[1], self.guest.egress.listener.server_port)
+        self.guest.egress.select("local")
+        self.consume()
+        self.assertEqual(owner_routes, [callback, callback])
         # A local physical exit can be shared while this machine borrows quota.
         self.assertTrue(self.guest.egress.status()["host"]["active"])
         class Selected:
@@ -742,7 +787,7 @@ class LANSharingTests(unittest.TestCase):
         self.guest.egress.opener_factory = lambda *_args, **_kwargs: Selected()
         self.guest.egress.select("peer", foreign)
         self.consume()
-        self.assertEqual(owner_routes, [callback, foreign])
+        self.assertEqual(owner_routes, [callback, callback, foreign])
         with patch.object(self.guest.egress, "opener_factory", side_effect=SharingError("unreachable")):
             with self.assertRaises(SharingError):
                 self.guest.egress.select("peer", foreign.replace("47847", "47848"))
@@ -1192,7 +1237,7 @@ class LANSharingTests(unittest.TestCase):
             routes.append(link)
             # A setting changed during preparation must not split this request's
             # summaries and generation across different network exits.
-            self.guest.egress.select("provider")
+            self.guest.egress.select("local")
             return self.owner.opener
         self.owner.egress.opener_factory = delegated
         self.guest.settings.update(packet_size_protection_enabled=True, budget_bytes=4000, zstd_level=3)

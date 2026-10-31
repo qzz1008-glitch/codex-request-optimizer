@@ -13,7 +13,7 @@ import time
 from urllib.parse import unquote, urlsplit
 from urllib.request import ProxyHandler, proxy_bypass
 
-from .egress_transport import EGRESS_PROTOCOL, ExitOpener, UPSTREAM_HOSTS, parse_egress_link
+from .egress_transport import EGRESS_PROTOCOL, MISSING_EXIT_ROUTE_MESSAGE, ExitOpener, UPSTREAM_HOSTS, parse_egress_link
 from .http_io import UPSTREAM_READ_TIMEOUT_SECONDS
 from .sharing import LANServer, SharingError, automatic_address, lan_address, tls_context
 from .sharing_credentials import CLIENT_HEADER, ExitMachineMismatch
@@ -131,7 +131,7 @@ class SharedEgress:
         self.listener = self.timer = None
         self.host = {}
         self.local_link = ""
-        self.mode = "provider"
+        self.mode = "local"
         self.peer_link = ""
         self.peer_opener = None
         self.peer_id = None
@@ -242,8 +242,6 @@ class SharedEgress:
             self.local_link = ""
             self.callback_link = ""
             self.host.pop("grant_hash", None)
-            if expected is None and self.mode == "local":
-                self.mode = "provider"
         if listener:
             listener.shutdown()
             listener.server_close()
@@ -259,13 +257,17 @@ class SharedEgress:
             return self.issue()
 
     def select(self, mode, link="", *, label="", identifier=None):
-        if mode not in {"provider", "local", "peer"}:
-            raise SharingError("请选择本机、额度提供方或其他共享出口。")
+        if mode == "provider":  # Retired clients migrate to their own exit.
+            mode = "local"
+        if mode not in {"local", "peer"}:
+            raise SharingError("请选择本机出口或借入出口。")
         if identifier:
             link = self.vault.get_secret(identifier, "exit", "in")
         if mode == "peer" and not link:
             with self.guard:
                 link = self.peer_link
+            if not link:
+                mode = "local"
         opener = self.opener_factory(link, client_id=self.vault.client_id) if mode == "peer" else None
         try:
             saved_id = self.vault.import_link("exit", link, label, getattr(opener, "snapshot", {})) if opener else None
@@ -285,9 +287,7 @@ class SharedEgress:
         """Return a capability for the credential holder, not a chain of exits."""
         with self.guard:
             mode, link = self.mode, self.peer_link
-        if mode == "provider":
-            return ""  # Explicit physical exit on the credential holder.
-        if mode == "peer":
+        if mode == "peer" and link:
             return link
         if not account_peer:
             return ""
@@ -299,23 +299,29 @@ class SharedEgress:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as route:
             route.connect((account_peer["host"], account_peer["port"]))
             address = route.getsockname()[0]
-        self.callback_link = self.issue(address=address, internal=True)["link"]
-        return self.callback_link
+        with self.guard:
+            if not self.listener or not self.callback_link:
+                self.callback_link = self.issue(address=address, internal=True)["link"]
+            return self.callback_link
 
     def outgoing(self, override="", *, own_request=False, client_id=None):
         if override:
             return self.opener_factory(override, client_id=client_id or self.vault.client_id, ephemeral=True)
         if own_request:
             with self.guard:
-                if self.mode == "peer":
+                if self.mode == "peer" and self.peer_link:
+                    if self.peer_opener is None:
+                        raise SharingError("借入出口未就绪，请重新借入出口或选择本机出口。")
                     return self.peer_opener
-        return self.server.opener
+            return self.server.opener
+        raise SharingError(MISSING_EXIT_ROUTE_MESSAGE, code="sharing_exit_metadata_missing")
 
     def status(self):
         with self.guard:
             host = {key: value for key, value in self.host.items() if key not in {"grant_hash", "fingerprint"}}
             host["active"] = bool(self.listener and (self.host.get("expires_at") is None or time.time() < self.host["expires_at"]))
-            selection = {"mode": self.mode, "peer_configured": bool(self.peer_link), "active_id": self.peer_id}
+            mode = "peer" if self.mode == "peer" and self.peer_link else "local"
+            selection = {"mode": mode, "peer_configured": bool(self.peer_link), "active_id": self.peer_id if mode == "peer" else None}
             if self.peer_link:
                 address, port, _token, _fingerprint = parse_egress_link(self.peer_link)
                 selection.update(address=address, port=port)
@@ -325,4 +331,4 @@ class SharedEgress:
         try:
             self.stop()
         finally:
-            self.select("provider")
+            self.select("local")
