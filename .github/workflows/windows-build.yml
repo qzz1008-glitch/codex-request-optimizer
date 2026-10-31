@@ -6,11 +6,52 @@ on:
   push:
     branches: [main]
     tags: ['v*']
+    paths-ignore:
+      - README.md
+      - docs/README.en.md
+      - docs/images/**
 permissions:
   contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 jobs:
-  build:
+  tests:
+    name: Unit tests (${{ matrix.shard }}/4)
     runs-on: windows-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    env:
+      PYTHONUTF8: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          architecture: x64
+          cache: pip
+          cache-dependency-path: |
+            requirements-dev.txt
+            packet_inspector/requirements.txt
+      - run: python -m pip install -r requirements-dev.txt
+      - name: Run complete test shard
+        run: python -m scripts.ci_tests --shard ${{ matrix.shard }} --shards 4 --report .local/ci-tests.json
+      - name: Save test timings
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Test-timings-${{ matrix.shard }}
+          path: .local/ci-tests.json
+          include-hidden-files: true
+          retention-days: 7
+          if-no-files-found: ignore
+  package:
+    if: github.event_name != 'pull_request'
+    runs-on: windows-latest
+    timeout-minutes: 20
     env:
       PYTHONUTF8: '1'
     steps:
@@ -26,7 +67,6 @@ jobs:
             requirements-dev.txt
             packet_inspector/requirements.txt
       - run: python -m pip install -r requirements-dev.txt
-      - run: python -m unittest discover -s tests -t . -p "test_*.py" -q
       - run: python -m scripts.build_inspector --output-dir release/ci
         if: github.event_name != 'pull_request'
       - run: python -m scripts.verify.verify_desktop_exe --release-dir release/ci
@@ -50,6 +90,21 @@ jobs:
             release/ci/BUILD-SOURCE.json
             release/ci/SHA256SUMS.txt
             release/ci/publish/*
+  build:
+    if: always() && !cancelled()
+    needs: [tests, package]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require all tests and package checks
+        env:
+          TESTS_RESULT: ${{ needs.tests.result }}
+          PACKAGE_RESULT: ${{ needs.package.result }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          test "$TESTS_RESULT" = success
+          if [ "$EVENT_NAME" != pull_request ]; then
+            test "$PACKAGE_RESULT" = success
+          fi
   publish:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: build
