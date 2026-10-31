@@ -477,10 +477,14 @@ class LANSharingTests(unittest.TestCase):
         with patch("packet_inspector.sharing.automatic_address", return_value="127.0.0.1"), patch.object(
                 self.owner.sharing, "_host_upstream", return_value=self.target):
             status, issued = self.local_api("/api/sharing", {"action": "credential_issue", "kind": "quota",
-                "label": "first colleague", "budget": "10", "weekly_reset": True, "expires_at": None})
+                "label": "first colleague", "budget": "10", "weekly_reset": True, "weekly_reset_day": 4, "expires_at": None})
         self.assertEqual(status, 200)
+        self.assertTrue(issued["weekly_reset_days_supported"])
         identifier, link = issued["issued_id"], issued["link"]
+        self.assertEqual(next(row for row in issued["credentials"] if row["id"] == identifier)["weekly_reset_day"], 4)
         self.guest.sharing.connect(link, label="provider history")
+        incoming = next(row for row in self.guest.sharing.vault.rows() if row["direction"] == "in")
+        self.assertEqual(incoming["snapshot"]["weekly_reset_day"], 4)
         self.consume()
         self.consume()
         wait_for_idle(self.owner, self.guest)
@@ -490,6 +494,7 @@ class LANSharingTests(unittest.TestCase):
         row = next(row for row in edited["credentials"] if row["id"] == identifier)
         self.assertEqual(row["budget_nanos"], 25_000_000_000)
         self.assertFalse(row["weekly_reset"])
+        self.assertIsNone(row["weekly_reset_day"])
         self.assertEqual(row["totals"]["unpriced_responses"], 2)  # Dummy model has no published rate.
         self.assertEqual(row["totals"]["requests"], 2)
         self.guest.sharing.disconnect()

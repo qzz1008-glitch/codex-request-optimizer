@@ -16,6 +16,7 @@ from .sharing_pricing import MIN_BUDGET_USD, budget_nanos, reference_cost
 
 CLIENT_HEADER = "X-Inspector-Client"
 MIN_TTL_SECONDS = 86400
+RESET_DAY_UNSET = object()
 COUNTERS = ("input_tokens", "output_tokens", "total_tokens", "cached_input_tokens", "responses",
             "missing_responses", "unpriced_responses", "cost_nanos", "sent_bytes", "received_bytes", "requests")
 
@@ -57,9 +58,21 @@ def expiration(value, *, since=None):
     return float(value)
 
 
-def week_start(now=None):
+def week_start(now=None, weekday=0):
     current = datetime.fromtimestamp(time.time() if now is None else now)
-    return (current.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=current.weekday())).timestamp()
+    return (current.replace(hour=0, minute=0, second=0, microsecond=0)
+            - timedelta(days=(current.weekday() - weekday) % 7)).timestamp()
+
+
+def refresh_day(enabled=False, value=RESET_DAY_UNSET):
+    """An explicit weekday wins; legacy enabled schedules reset on Monday."""
+    if type(enabled) is not bool:
+        raise SharingError("凭据刷新设置无效。")
+    if value is RESET_DAY_UNSET:
+        return 0 if enabled else None
+    if value is not None and (type(value) is not int or not 0 <= value <= 6):
+        raise SharingError("请选择周一至周日，或不启用每周刷新。")
+    return value
 
 
 def day_key(now=None):
@@ -117,8 +130,12 @@ class CredentialVault:
 
     @staticmethod
     def _roll(data):
-        if data.get("weekly_reset") and data["period_started_at"] < week_start():
-            data.update(period_id=secrets.token_hex(8), period_started_at=week_start(), period_cost_nanos=0)
+        if not data.get("weekly_reset"):
+            return False
+        boundary = week_start(weekday=data.get("weekly_reset_day") or 0)
+        anchor = max(data["period_started_at"], data.get("weekly_reset_changed_at", 0))
+        if anchor < boundary:
+            data.update(period_id=secrets.token_hex(8), period_started_at=boundary, period_cost_nanos=0)
             return True
         return False
 
@@ -147,16 +164,19 @@ class CredentialVault:
         with self.connection() as db:
             return self._unique_label(db, kind, label)
 
-    def issue(self, kind, label="", expires_at=None, budget=MIN_BUDGET_USD, weekly_reset=False, *, internal=False, issued_at=None):
+    def issue(self, kind, label="", expires_at=None, budget=MIN_BUDGET_USD, weekly_reset=False, *,
+              weekly_reset_day=RESET_DAY_UNSET, internal=False, issued_at=None):
         if kind not in {"quota", "exit"} or type(weekly_reset) is not bool:
             raise SharingError("凭据类型或刷新设置无效。")
         issued_at = time.time() if issued_at is None else issued_at
         limit = budget_nanos(budget) if kind == "quota" else 0
+        day = refresh_day(weekly_reset, weekly_reset_day) if kind == "quota" else None
         expiry = expiration(expires_at, since=issued_at)
         identifier, token = secrets.token_hex(12), secrets.token_urlsafe(32)
         data = {"id": identifier, "kind": kind, "direction": "out", "label": str(label or "同事")[:80],
                 "created_at": issued_at, "expires_at": expiry, "enabled": True, "internal": internal,
-                "budget_nanos": limit if kind == "quota" else 0, "weekly_reset": weekly_reset if kind == "quota" else False,
+                "budget_nanos": limit if kind == "quota" else 0, "weekly_reset": day is not None,
+                "weekly_reset_day": day,
                 "period_id": secrets.token_hex(8), "period_started_at": time.time(), "period_cost_nanos": 0,
                 "totals": {key: 0 for key in COUNTERS}, "daily": {}}
         if kind == "exit" and internal:
@@ -262,10 +282,13 @@ class CredentialVault:
 
     @staticmethod
     def public(data):
-        private = {"bound", "client_hash", "exit_client_hash", "quota_client_hash", "period_id"}
+        private = {"bound", "client_hash", "exit_client_hash", "quota_client_hash", "period_id", "weekly_reset_changed_at"}
         data = {key: value for key, value in data.items() if key not in private}
         if isinstance(data.get("snapshot"), dict):
             data["snapshot"] = {key: value for key, value in data["snapshot"].items() if key not in private}
+        for record in (data, data.get("snapshot", {})):
+            if isinstance(record, dict) and "weekly_reset" in record:
+                record.setdefault("weekly_reset_day", 0 if record["weekly_reset"] else None)
         if data.get("direction") == "out":
             start = day_key(week_start())
             data["week_cost_nanos"] = sum(v["cost_nanos"] for k, v in data["daily"].items() if k >= start)
@@ -342,11 +365,21 @@ class CredentialVault:
                 if data["kind"] == "quota" and limit != data["budget_nanos"]:
                     limit = budget_nanos(changes["budget"])
                 data["budget_nanos"] = limit if data["kind"] == "quota" else 0
-            for key in ("enabled", "weekly_reset"):
-                if key in changes:
-                    if type(changes[key]) is not bool:
-                        raise SharingError("凭据设置无效。")
-                    data[key] = changes[key]
+            if "enabled" in changes:
+                if type(changes["enabled"]) is not bool:
+                    raise SharingError("凭据设置无效。")
+                data["enabled"] = changes["enabled"]
+            if "weekly_reset" in changes or "weekly_reset_day" in changes:
+                if data["kind"] != "quota":
+                    raise SharingError("凭据刷新设置无效。")
+                prior_day = data.get("weekly_reset_day", 0) if data.get("weekly_reset") else None
+                value = changes.get("weekly_reset_day", RESET_DAY_UNSET)
+                if value is RESET_DAY_UNSET and changes.get("weekly_reset") is True and prior_day is not None:
+                    value = prior_day
+                day = refresh_day(changes.get("weekly_reset", data.get("weekly_reset", False)), value)
+                if day != prior_day:
+                    data["weekly_reset_changed_at"] = time.time()
+                data.update(weekly_reset=day is not None, weekly_reset_day=day)
             if reset:
                 data.update(period_id=secrets.token_hex(8), period_started_at=time.time(), period_cost_nanos=0)
             if not dry_run:

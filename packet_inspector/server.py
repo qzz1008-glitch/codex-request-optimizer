@@ -718,7 +718,8 @@ class Handler(BaseHTTPRequestHandler):
                         if data.get("kind") == "quota":
                             result = self.server.sharing.issue(label=data.get("label", ""),
                                 expires_at=data.get("expires_at"), budget=data.get("budget", 1),
-                                weekly_reset=data.get("weekly_reset", False))
+                                weekly_reset=data.get("weekly_reset", False),
+                                **({"weekly_reset_day": data["weekly_reset_day"]} if "weekly_reset_day" in data else {}))
                         elif data.get("kind") == "exit":
                             issued = self.server.egress.issue(label=data.get("label", ""), expires_at=data.get("expires_at"))
                             result = {**self.server.sharing.status(), "link": issued["link"], "issued_id": issued["issued_id"]}

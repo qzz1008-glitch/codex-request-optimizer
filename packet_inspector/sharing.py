@@ -25,7 +25,7 @@ from .sharing_auth import NativeAuthorization, SharingError
 from .sharing_config import SharedProvider
 from .sharing_usage import SharedUsageStream, empty_usage
 from .sharing_role import MachineSharingRole
-from .sharing_credentials import CLIENT_HEADER, CredentialVault
+from .sharing_credentials import CLIENT_HEADER, RESET_DAY_UNSET, CredentialVault
 from .sharing_errors import error_payload
 from .usage_trigger import raw_chunks
 
@@ -440,19 +440,20 @@ class Sharing:
                     raise
                 raise SharingError("无法开启共享，请检查网络、Codex 登录状态或设置中的额度端口。") from None
 
-    def issue(self, *, label="", expires_at=None, budget=1, weekly_reset=False, address=None, port=None, issued_at=None):
+    def issue(self, *, label="", expires_at=None, budget=1, weekly_reset=False, weekly_reset_day=RESET_DAY_UNSET,
+              address=None, port=None, issued_at=None):
         # Validate before starting a listener or the native authorization helper.
-        from .sharing_credentials import expiration
+        from .sharing_credentials import expiration, refresh_day
         from .sharing_pricing import budget_nanos
         issued_at = time.time() if issued_at is None else issued_at
         expiration(expires_at, since=issued_at)
         budget_nanos(budget)
-        if type(weekly_reset) is not bool:
-            raise SharingError("凭据刷新设置无效。")
+        day = refresh_day(weekly_reset, weekly_reset_day)
         label = self.vault.prepare_label("quota", label)
         self.ensure_service(address, port)
         with self.guard:
-            identifier, _ = self.vault.issue("quota", label, expires_at, budget, weekly_reset, issued_at=issued_at)
+            identifier, _ = self.vault.issue("quota", label, expires_at, budget, day is not None,
+                                            weekly_reset_day=day, issued_at=issued_at)
             self.host["last_credential_id"] = identifier
             return {**self.status(), "link": self.credential_link(identifier), "issued_id": identifier}
 
@@ -692,6 +693,7 @@ class Sharing:
             egress = getattr(self.server, "egress", None)
             return {"supported": True, "protocol": PROTOCOL, "host": host, "client": client, "addresses": self.addresses,
                     "automatic_address_supported": True, "credentials_supported": True,
+                    "weekly_reset_days_supported": True,
                     "credentials": self.vault.rows() if not self.closed else [],
                     "egress": egress.status() if egress is not None else {"supported": False},
                     "recovery_error": self.recovery_error, "recovered": self.recovered}

@@ -361,6 +361,79 @@ class CredentialVaultTests(unittest.TestCase):
             self.assertEqual(self.vault.rows()[0]["period_cost_nanos"], 0)
         self.assertEqual(self.vault.rows()[0]["totals"]["cost_nanos"], 40_000)
 
+    def test_each_weekday_resets_at_local_midnight_and_keeps_lifetime_usage(self):
+        monday = datetime(2026, 10, 26)
+        for weekday in range(7):
+            boundary = (monday + timedelta(days=weekday)).timestamp()
+            with self.subTest(weekday=weekday):
+                with patch("packet_inspector.sharing_credentials.time.time", return_value=boundary - 60):
+                    identifier, token = self.grant(str(weekday), weekly_reset_day=weekday)
+                    reservation = self.vault.authenticate("quota", token, "a" * 64)
+                    self.vault.record(reservation, dict(model="gpt-6.1-sol", input_tokens=10))
+                with patch("packet_inspector.sharing_credentials.time.time", return_value=boundary - 1):
+                    row = self.vault.snapshot(reservation)
+                    self.assertEqual(row["weekly_reset_day"], weekday)
+                    self.assertTrue(row["weekly_reset"])
+                    self.assertEqual(row["period_cost_nanos"], 20_000)
+                with patch("packet_inspector.sharing_credentials.time.time", return_value=boundary):
+                    self.assertEqual(self.vault.snapshot(reservation)["period_cost_nanos"], 0)
+                    self.vault.record(reservation, dict(model="gpt-6.1-sol", input_tokens=10))
+                    row = self.vault.snapshot(reservation)
+                    self.assertEqual(row["period_cost_nanos"], 0)
+                    self.assertEqual(row["totals"]["cost_nanos"], 40_000)
+
+    def test_changing_or_enabling_refresh_waits_for_the_next_selected_midnight(self):
+        friday = datetime(2026, 10, 30, 12).timestamp()
+        with patch("packet_inspector.sharing_credentials.time.time", return_value=friday - 4 * 86400):
+            identifier, token = self.grant(weekly_reset=True)
+            reservation = self.vault.authenticate("quota", token, "a" * 64)
+            self.vault.record(reservation, dict(model="gpt-6.1-sol", input_tokens=10))
+        with patch("packet_inspector.sharing_credentials.time.time", return_value=friday):
+            # Thursday already passed. Editing the plan must not refill the budget.
+            self.vault.update(identifier, {"weekly_reset_day": 3})
+            self.assertEqual(self.vault.snapshot(reservation)["period_cost_nanos"], 20_000)
+            self.vault.update(identifier, {"weekly_reset": True})
+            self.assertEqual(self.vault.snapshot(reservation)["weekly_reset_day"], 3)
+            self.vault.record(reservation, dict(model="gpt-6.1-sol", input_tokens=10))
+            self.assertEqual(self.vault.snapshot(reservation)["period_cost_nanos"], 40_000)
+        with patch("packet_inspector.sharing_credentials.time.time", return_value=friday + 5 * 86400):
+            self.assertEqual(self.vault.snapshot(reservation)["period_cost_nanos"], 40_000)
+        thursday = datetime(2026, 11, 5).timestamp()
+        with patch("packet_inspector.sharing_credentials.time.time", return_value=thursday):
+            self.assertEqual(self.vault.snapshot(reservation)["period_cost_nanos"], 0)
+            self.vault.update(identifier, {"weekly_reset_day": None})
+            current = self.vault.authenticate("quota", token, "a" * 64)
+            self.vault.record(current, dict(model="gpt-6.1-sol", input_tokens=10))
+        with patch("packet_inspector.sharing_credentials.time.time", return_value=thursday + 8 * 86400):
+            row = self.vault.snapshot(current)
+            self.assertFalse(row["weekly_reset"])
+            self.assertIsNone(row["weekly_reset_day"])
+            self.assertEqual(row["period_cost_nanos"], 20_000)
+            self.vault.update(identifier, {"weekly_reset_day": 3})
+            self.assertEqual(self.vault.snapshot(current)["period_cost_nanos"], 20_000)
+
+    def test_legacy_monday_refresh_survives_restart_and_invalid_weekdays_are_atomic(self):
+        with patch("packet_inspector.sharing_credentials.time.time", return_value=datetime(2026, 10, 25, 23).timestamp()):
+            identifier, token = self.grant(weekly_reset=True)
+            reservation = self.vault.authenticate("quota", token, "a" * 64)
+            self.vault.record(reservation, dict(model="gpt-6.1-sol", input_tokens=10))
+            with self.vault.connection() as db:
+                data = json.loads(db.execute("SELECT data FROM credentials WHERE id=?", (identifier,)).fetchone()[0])
+                data.pop("weekly_reset_day")
+                self.vault._save(db, identifier, data)
+            restarted = CredentialVault(self.root)
+            self.assertEqual(restarted.snapshot(reservation)["weekly_reset_day"], 0)
+            for value in (True, False, -1, 7, 1.5, "2", ""):
+                with self.subTest(value=value):
+                    with self.assertRaises(SharingError):
+                        self.vault.issue("quota", weekly_reset_day=value)
+                    with self.assertRaises(SharingError):
+                        restarted.update(identifier, {"budget": 99, "weekly_reset_day": value})
+            self.assertEqual(restarted.snapshot(reservation)["budget_nanos"], 1e9)
+            self.assertEqual(restarted.snapshot(reservation)["period_cost_nanos"], 20_000)
+        with patch("packet_inspector.sharing_credentials.time.time", return_value=datetime(2026, 10, 26).timestamp()):
+            self.assertEqual(restarted.snapshot(reservation)["period_cost_nanos"], 0)
+
     def test_persistence_secret_protection_expiry_and_incoming_history(self):
         identifier, token = self.grant(expires_at=time.time() + 86460)
         second = CredentialVault(self.root)
