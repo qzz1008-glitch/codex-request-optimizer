@@ -43,6 +43,68 @@ class CredentialVaultTests(unittest.TestCase):
         identifier, token = self.vault.issue("quota", label, **kwargs)
         return identifier, "Bearer " + token
 
+    def test_manual_order_persists_without_changing_credentials_or_other_lists(self):
+        first, token = self.vault.issue("quota", "first")
+        second, _ = self.vault.issue("quota", "second")
+        third, _ = self.vault.issue("quota", "third")
+        exit_id, _ = self.vault.issue("exit", "exit")
+        incoming = self.vault.import_link("quota", "codex-share://127.0.0.1:1/#one", "incoming")
+        incoming_two = self.vault.import_link("quota", "codex-share://127.0.0.1:1/#two", "incoming two")
+        hidden, _ = self.vault.issue("quota", "callback", internal=True)
+        before = self.vault.rows()
+        order = lambda vault, direction="out": [row["id"] for row in vault.rows()
+            if row["kind"] == "quota" and row["direction"] == direction and not row.get("internal")]
+        self.assertEqual(order(self.vault), [third, second, first])
+        self.vault.reorder(first, third)
+        self.assertEqual(order(self.vault), [first, third, second])
+        self.assertCountEqual(self.vault.rows(), before)
+        restored = CredentialVault(self.root)
+        self.assertEqual(order(restored), [first, third, second])
+        self.assertEqual(restored.get_secret(first), token)
+        restored.reorder(first, second, after=True)
+        self.assertEqual(order(restored), [third, second, first])
+        restored.update(second, {"label": "renamed"})
+        self.assertEqual(order(restored), [third, second, first])
+        newest, _ = restored.issue("quota", "newest")
+        self.assertEqual(order(restored), [newest, third, second, first])
+        restored.reorder(incoming, incoming_two)
+        restored.import_link("quota", "codex-share://127.0.0.1:1/#one", "incoming")
+        self.assertEqual(order(restored, "in"), [incoming, incoming_two])
+        self.assertEqual(order(restored), [newest, third, second, first])
+        restored.delete(third)
+        self.assertEqual(order(restored), [newest, second, first])
+        with restored.connection() as db:
+            self.assertIsNone(db.execute("SELECT id FROM credential_positions WHERE id=?", (third,)).fetchone())
+        self.assertTrue({exit_id, hidden}.issubset({row["id"] for row in restored.rows()}))
+
+    def test_reorder_rejects_cross_list_internal_and_invalid_moves_atomically(self):
+        first, _ = self.vault.issue("quota", "first")
+        second, _ = self.vault.issue("quota", "second")
+        exit_id, _ = self.vault.issue("exit", "exit")
+        incoming = self.vault.import_link("quota", "codex-share://127.0.0.1:1/#one", "incoming")
+        hidden, _ = self.vault.issue("quota", "callback", internal=True)
+        self.vault.reorder(first, second)
+        original = self.vault.rows()
+        for source, target, after in [(first, exit_id, False), (first, incoming, False),
+                (first, hidden, False), (hidden, first, False), (first, "missing", False),
+                ("missing", first, False), (first, second, "true"), (None, second, False)]:
+            with self.subTest(source=source, target=target, after=after), self.assertRaises(SharingError):
+                self.vault.reorder(source, target, after=after)
+            self.assertEqual(self.vault.rows(), original)
+        self.vault.reorder(first, first)
+        self.assertEqual(self.vault.rows(), original)
+
+    def test_existing_database_gains_order_storage_without_changing_grants(self):
+        first, token = self.vault.issue("quota", "first")
+        second, _ = self.vault.issue("quota", "second")
+        with self.vault.connection() as db:
+            db.execute("DROP TABLE credential_positions")
+        migrated = CredentialVault(self.root)
+        self.assertEqual([row["id"] for row in migrated.rows()], [second, first])
+        self.assertEqual(migrated.get_secret(first), token)
+        migrated.reorder(first, second)
+        self.assertEqual([row["id"] for row in CredentialVault(self.root).rows()], [first, second])
+
     def test_names_are_unique_per_kind_across_directions_and_inactive_grants(self):
         identifier, _ = self.vault.issue("quota", "  Colleague  ")
         self.assertEqual(self.vault.rows()[0]["label"], "Colleague")

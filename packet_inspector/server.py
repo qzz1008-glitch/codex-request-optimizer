@@ -739,6 +739,10 @@ class Handler(BaseHTTPRequestHandler):
                             else:
                                 self.server.egress.stop()
                         result = self.server.sharing.status()
+                    elif action == "credential_reorder":
+                        self.server.sharing.vault.reorder(data.get("id"), data.get("target_id"),
+                            after=data.get("after", False))
+                        result = self.server.sharing.status()
                     elif action == "credential_delete":
                         result = self.server.sharing.delete_credential(data.get("id"))
                     elif action == "credential_copy":
