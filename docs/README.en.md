@@ -144,7 +144,9 @@ To inspect session providers and configuration sources, copy [Collect-CodexRouti
 
 Keep the app installed on Windows. Connecting checks running regular WSL distributions and reads `CODEX_HOME` from the default user's login environment, falling back to `~/.codex`. After finding an existing configuration and verifying access to the same Windows relay, it backs up and updates provider routing and native transport compression. Linux tools, plugins and other settings are preserved. Disconnect restores the managed settings while keeping subsequent user edits. Stopped distributions are not started automatically; pending restoration is reported explicitly.
 
-WSL session names and parent relationships are queried read-only inside Linux and briefly cached for the shared session list. This build requires an existing `python3` in WSL and supports the default user of running local distributions. It creates no tunnel and changes no WSL network or firewall settings. Failed connectivity checks leave WSL configuration untouched. For the first validation, start WSL, disconnect and reconnect the inspector, then restart ChatGPT and reconnect the WSL session as prompted.
+Connectivity probing uses Bash and does not require Python. WSL session names can be read directly from the native `session_index.jsonl`; SQLite queries for names and parent relationships run read-only inside Linux using an existing `python3` from the login environment, with Python 3.7-compatible syntax. Name lookup works independently of connection probing and also labels captured history. Manually configured URLs matching this app's known routes are backed up and restored on disconnect. Connection diagnostics include detected paths and failure details; metadata errors use a separate bounded status file.
+
+This build supports the default user of running local distributions. It creates no tunnel and changes no WSL network or firewall settings. Failed connectivity checks leave WSL configuration untouched. For the first validation, start WSL, disconnect and reconnect the inspector, then restart ChatGPT and reconnect the WSL session as prompted.
 
 ### Online updates
 

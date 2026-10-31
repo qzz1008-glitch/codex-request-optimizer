@@ -1,6 +1,7 @@
 """WSL connection tests use temporary files and an emulated CLI, never real WSL."""
 import hashlib
 import json
+import ast
 from contextlib import closing
 from pathlib import Path
 import sqlite3
@@ -53,7 +54,7 @@ class FakeWsl:
             input=json.dumps({"home": str(self.config_path.parent), "ids": ids}).encode(), timeout=5)
         if result.returncode:
             raise AssertionError(result.stderr.decode())
-        return json.loads(result.stdout)
+        return json.loads(result.stdout.decode().split("CPI_LABELS=", 1)[1])
 
 
 class WslConnectionTests(unittest.TestCase):
@@ -105,7 +106,8 @@ class WslConnectionTests(unittest.TestCase):
         self.assertEqual(result["warnings"][0]["reason"], "relay_unreachable")
         self.assertEqual(self.backend.config_path.read_bytes(), before)
         self.assertEqual(self.routes, routes)
-        self.assertFalse(list(self.wsl._targets()))
+        self.assertEqual(len(list(self.wsl._targets())), 1, "Read-only metadata discovery survives a failed probe")
+        self.assertFalse(list(self.wsl.directory.glob("*/link.json")), "There is no managed Linux configuration yet")
 
     def test_missing_config_and_stopped_distros_are_not_created_or_started(self):
         self.backend.config_path.unlink()
@@ -125,6 +127,71 @@ class WslConnectionTests(unittest.TestCase):
         self.backend.config_path.write_text(text, encoding="utf8")
         self.apply(False)
         self.assertEqual(tomllib.loads(self.backend.config_path.read_text(encoding="utf8"))["model"], "manual")
+
+    def test_first_disconnect_restores_manually_connected_config_without_a_probe(self):
+        self.backend.config_path.write_text('model="example"\nopenai_base_url="' + ENDPOINT + '/p/windows"\n'
+            '[mcp_servers.linux_tool]\ncommand="/usr/bin/tool"\n', encoding="utf8")
+        self.assertFalse(list(self.wsl._targets()))
+        with patch.object(self.backend, "probe", side_effect=AssertionError("Disconnect must not depend on network probing")):
+            result = self.apply(False)
+        self.assertTrue(result["reload_required"])
+        self.assertFalse(result["warnings"])
+        data = tomllib.loads(self.backend.config_path.read_text(encoding="utf8"))
+        self.assertFalse(data.get("openai_base_url", "").startswith(ENDPOINT))
+        self.assertTrue(data["features"]["enable_request_compression"])
+        self.assertEqual(data["mcp_servers"]["linux_tool"]["command"], "/usr/bin/tool")
+
+    def test_first_disconnect_does_not_change_a_direct_linux_configuration(self):
+        before = self.backend.config_path.read_bytes()
+        result = self.apply(False)
+        self.assertFalse(result["targets"])
+        self.assertEqual(self.backend.config_path.read_bytes(), before)
+
+    def test_history_names_work_without_successful_connection_or_linux_python(self):
+        path = self.backend.config_path.parent / "session_index.jsonl"
+        path.write_text(json.dumps({"id": THREAD, "thread_name": "聊天对话串"}) + "\n", encoding="utf8")
+        self.backend.probe_error = "relay_unreachable"
+        self.apply()
+        self.assertFalse(list(self.wsl.directory.glob("*/link.json")))
+        fresh = WslConnection(self.root / "data", self.backend)
+        with patch.object(self.backend, "labels", side_effect=WslError("python_not_found", exit_code=127)) as query:
+            self.assertEqual(fresh.labels([THREAD])[THREAD]["title"], "聊天对话串")
+            self.assertEqual(fresh.labels([THREAD])[THREAD]["title"], "聊天对话串")
+            self.assertEqual(query.call_count, 1)
+        details = json.loads((fresh.directory / "metadata-status.json").read_text(encoding="utf8"))
+        self.assertEqual(details["errors"][0]["exit_code"], 127)
+
+    def test_manual_history_discovery_works_before_any_connection_action(self):
+        self.index()
+        self.assertFalse(list(self.wsl._targets()))
+        self.assertEqual(self.wsl.labels([THREAD])[THREAD]["title"], "聊天对话串")
+        self.assertFalse(list(self.wsl.directory.glob("*/link.json")))
+
+    def test_subprocess_failure_retains_bounded_redacted_details(self):
+        cli = LocalWsl()
+        cli.executable = "test-wsl.exe"
+        error = b'python3: command not found\nhttp://localhost/relay/demo-secret/p/id Bearer example.secret\n' + b'x' * 1200
+        with patch("packet_inspector.wsl_connection.subprocess.run", return_value=subprocess.CompletedProcess([], 127, b'', error)):
+            with self.assertRaises(WslError) as caught:
+                cli.run(["--list"])
+        self.assertEqual(caught.exception.exit_code, 127)
+        self.assertIn("command not found", caught.exception.detail)
+        self.assertNotIn("demo-secret", caught.exception.detail)
+        self.assertNotIn("example.secret", caught.exception.detail)
+        self.assertLessEqual(len(caught.exception.detail), 1000)
+
+    def test_linux_metadata_script_runs_from_stdin_and_accepts_profile_output(self):
+        self.index()
+        ast.parse(LABEL_SCRIPT, feature_version=(3, 7))
+        cli = LocalWsl()
+        def run(arguments, *, data, **kwargs):
+            self.assertEqual(arguments[-3:], ["sh", "-lc", "exec python3 -"])
+            result = subprocess.run([sys.executable, "-"], input=data, capture_output=True, timeout=5)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            return "profile notice\n" + result.stdout.decode()
+        with patch.object(cli, "run", side_effect=run):
+            result = cli.labels("Ubuntu-Test", str(self.backend.config_path.parent), [THREAD])
+        self.assertEqual(result["rows"][0][0], THREAD)
 
     def test_linux_metadata_is_queried_natively_cached_and_used_for_grouping(self):
         self.apply()
@@ -191,8 +258,12 @@ class WslConnectionTests(unittest.TestCase):
         self.addCleanup(server.server_close)
         self.addCleanup(server.shutdown)
         cli = LocalWsl()
+        bash = Path(r"C:/Program Files/Git/bin/bash.exe") if sys.platform == "win32" else Path("/bin/bash")
+        if not bash.is_file():
+            self.skipTest("Bash is required for the real TCP probe test")
         def run(arguments, **kwargs):
-            result = subprocess.run([sys.executable, "-c", PROBE_SCRIPT, arguments[-1]],
+            self.assertEqual(arguments[-4:-1], ["bash", "-s", "--"])
+            result = subprocess.run([str(bash), "-s", "--", arguments[-1]], input=kwargs["data"],
                                     capture_output=True, timeout=5)
             self.assertEqual(result.returncode, 0, result.stderr)
             return result.stdout.decode()

@@ -3,6 +3,7 @@
 const uiI18n = (() => {
   const english = {
     "WSL Codex 配置：重新连接 WSL 会话后生效":"WSL Codex configuration: reconnect the WSL session to apply",
+    "未找到该 WSL 用户的 Codex 配置。":"No Codex configuration was found for this WSL user.",
     "WSL 无法访问本机中转，未修改配置。":"WSL cannot reach the local relay. Its configuration was not changed.",
     "WSL 连接到其他服务，未修改配置。":"WSL reached a different service. Its configuration was not changed.",
     "WSL 配置待恢复，请启动该发行版后再次接入并断开。":"WSL restoration is pending. Start the distribution, then connect and disconnect again.",
