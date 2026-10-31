@@ -311,7 +311,8 @@ globalThis.InspectorSharing=(()=>{
     disableExpiry("sharing-inline-expiry",!isDate);
     get("sharing-inline-save").textContent=tr(isDate?"确定":"保存");
     box.dataset.field=field;box.hidden=false;positionInline();
-    (isDate?get("sharing-inline-expiry-date"):input).focus();if(field==="label")input.select();
+    if(isDate)openCalendar("sharing-inline-expiry");
+    else{input.focus();if(field==="label")input.select();}
   }
   get("sharing-inline-value").addEventListener("input",()=>{get("sharing-inline-value").setCustomValidity("");get("sharing-inline-message").hidden=true;});
   get("sharing-inline-cancel").addEventListener("click",()=>{if(!busy)closeInline();});
