@@ -6,18 +6,23 @@ globalThis.InspectorSharing=(()=>{
   const label=value=>esc(tr(value)),number=value=>Number(value||0).toLocaleString();
   const dollars=n=>"$"+(Number(n||0)/1e9).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:4});
   const bytes=n=>{n=Number(n||0);return n<1000?`${number(n)} B`:n<1e6?`${(n/1000).toFixed(1)} KB`:`${(n/1e6).toFixed(2)} MB`;};
-  const localHour=n=>{const d=new Date(n);return new Date(d.getTime()-d.getTimezoneOffset()*60000).toISOString().slice(0,13)+":00";};
-  const date=n=>n===null?tr("无期限"):Number.isFinite(n)?localHour(n*1000).slice(0,13).replace("T"," ")+tr("时"):"—";
-  const expiryHours=Array.from({length:8},(_,n)=>String(n*3).padStart(2,"0"));
-  const futureHour=days=>{const d=new Date(Date.now()+days*864e5),hour=d.getHours()+(d.getMinutes()||d.getSeconds()||d.getMilliseconds()?1:0);d.setHours(Math.ceil(hour/3)*3,0,0,0);return localHour(d.getTime());};
-  const minimumExpiry=()=>futureHour(1),defaultExpiry=()=>futureHour(7);
+  const localDay=n=>{const d=new Date(n);return new Date(d.getTime()-d.getTimezoneOffset()*60000).toISOString().slice(0,10);};
+  const expiryDay=n=>{const d=new Date(n*1000);if(!d.getHours()&&!d.getMinutes()&&!d.getSeconds()&&!d.getMilliseconds())d.setDate(d.getDate()-1);return localDay(d.getTime());};
+  const date=n=>n===null?tr("无期限"):Number.isFinite(n)?expiryDay(n):"—";
+  const minimumExpiry=()=>expiryDay((Date.now()+864e5)/1000);
+  const defaultExpiry=()=>{const d=new Date();d.setDate(d.getDate()+7);return localDay(d.getTime());};
+  function dayEnd(day){
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(day))return NaN;
+    const d=new Date(day+"T00:00");if(!Number.isFinite(d.getTime())||localDay(d.getTime())!==day)return NaN;
+    d.setDate(d.getDate()+1);d.setHours(0,0,0,0);return d.getTime()/1000;
+  }
   let active=false,busy=false,current=null,timer=null,controller=null,recoveryShown=false,editing=null,deleting=null,copiedKey=null,copyTimer=null,calendar=null;
   const views={quota:"out",exit:"out"};
   const message=(value,error=false)=>{const box=get("sharing-message");box.textContent=tr(value);box.hidden=!value;box.classList.toggle("error",error);for(const id of ["sharing-inline-message","sharing-delete-message"]){const local=get(id);local.textContent=error?tr(value):"";local.hidden=!error;}};
   const expiryIds=["quota-expiry","exit-expiry","sharing-inline-expiry"];
   function expiryControl(id,labelId){
-    return `<div class="sharing-expiry-control" role="group" aria-labelledby="${labelId}"><input id="${id}" type="hidden"><input id="${id}-hour" type="hidden"><button id="${id}-date" class="sharing-expiry-date" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="${id}-calendar" aria-labelledby="${labelId} ${id}-display"><span id="${id}-display"></span><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><rect x="2.5" y="3.5" width="11" height="10" rx="1.5"/><path d="M5 2v3m6-3v3M3 7h10"/></svg></button>
-      <div id="${id}-calendar" class="sharing-calendar" role="dialog" aria-labelledby="${id}-month" hidden><div class="sharing-calendar-header"><button id="${id}-previous" type="button" data-month="-1" aria-label="${label("上个月")}">‹</button><strong id="${id}-month" aria-live="polite"></strong><button type="button" data-month="1" aria-label="${label("下个月")}">›</button></div><div id="${id}-weekdays" class="sharing-calendar-weekdays" aria-hidden="true"></div><div id="${id}-days" class="sharing-calendar-days" role="group" aria-labelledby="${id}-month"></div><div class="sharing-calendar-time"><span id="${id}-hours-label">${label("小时")}</span><div id="${id}-hours" class="sharing-calendar-hours" role="group" aria-labelledby="${id}-hours-label"></div></div><div class="sharing-calendar-footer"><button id="${id}-apply" class="primary" type="button" data-apply="true">${label("确定")}</button><label class="sharing-expiry-unlimited"><input id="${id}-unlimited" type="checkbox">${label("无期限")}</label></div></div></div>`;
+    return `<div class="sharing-expiry-control" role="group" aria-labelledby="${labelId}"><input id="${id}" type="hidden"><button id="${id}-date" class="sharing-expiry-date" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="${id}-calendar" aria-labelledby="${labelId} ${id}-display"><span id="${id}-display"></span><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><rect x="2.5" y="3.5" width="11" height="10" rx="1.5"/><path d="M5 2v3m6-3v3M3 7h10"/></svg></button>
+      <div id="${id}-calendar" class="sharing-calendar" role="dialog" aria-labelledby="${id}-month" hidden><div class="sharing-calendar-header"><button id="${id}-previous" type="button" data-month="-1" aria-label="${label("上个月")}">‹</button><strong id="${id}-month" aria-live="polite"></strong><button type="button" data-month="1" aria-label="${label("下个月")}">›</button></div><div id="${id}-weekdays" class="sharing-calendar-weekdays" aria-hidden="true"></div><div id="${id}-days" class="sharing-calendar-days" role="group" aria-labelledby="${id}-month"></div><div class="sharing-calendar-footer"><button id="${id}-apply" class="primary" type="button" data-apply="true">${label("确定")}</button><label class="sharing-expiry-unlimited"><input id="${id}-unlimited" type="checkbox">${label("无期限")}</label></div></div></div>`;
   }
   function expiryField(id){
     return `<div class="sharing-expiry"><label id="${id}-label" for="${id}-date">${label("期限")}</label>${expiryControl(id,id+"-label")}</div>`;
@@ -40,22 +45,17 @@ globalThis.InspectorSharing=(()=>{
   get("sharing-inline-expiry-container").innerHTML=expiryControl("sharing-inline-expiry","sharing-inline-label");
   function disableExpiry(id,disabled=false){
     get(id+"-unlimited").disabled=disabled;
-    get(id+"-date").disabled=disabled;get(id+"-hour").disabled=disabled||get(id).dataset.unlimited==="true";
+    get(id+"-date").disabled=disabled;
   }
-  function setExpiry(id,value){
+  function setExpiry(id,value,modified){
     const input=get(id),finite=value??input.dataset.finiteValue??defaultExpiry();
     input.dataset.finiteValue=finite;input.value=value??"";input.dataset.unlimited=String(value===null);
-    const original=id==="sharing-inline-expiry"&&editing?.field==="expires_at"&&Number.isFinite(editing.original)?editing.original*1000:Infinity;
-    get(id+"-date").value=finite.slice(0,10);input.dataset.minimumDay=localHour(Math.min(original,new Date(minimumExpiry()).getTime())).slice(0,10);
-    get(id+"-display").textContent=value===null?tr("无期限"):finite.slice(0,13).replace("T"," ")+tr("时");
-    get(id+"-hour").value=finite.slice(11,13);get(id+"-unlimited").checked=value===null;disableExpiry(id);
+    if(modified!==undefined)input.dataset.modified=String(modified);
+    get(id+"-date").value=finite;input.dataset.minimumDay=minimumExpiry();
+    get(id+"-display").textContent=value===null?tr("无期限"):finite;
+    get(id+"-unlimited").checked=value===null;disableExpiry(id);
   }
-  function syncExpiry(id){
-    const input=get(id),day=get(id+"-date").value,hour=get(id+"-hour").value,value=day&&hour?day+"T"+hour+":00":"";
-    input.value=input.dataset.unlimited==="true"?"":value;
-    if(value)input.dataset.finiteValue=value;
-  }
-  function resetIssue(kind){get(kind+"-label").value="";setExpiry(kind+"-expiry",defaultExpiry());if(kind==="quota"){get("quota-budget").value="1";get("quota-weekly").checked=false;}}
+  function resetIssue(kind){get(kind+"-label").value="";setExpiry(kind+"-expiry",defaultExpiry(),false);if(kind==="quota"){get("quota-budget").value="1";get("quota-weekly").checked=false;}}
   function closeCalendar(focus=true){
     if(!calendar)return;
     const id=calendar.id;calendar=null;get(id+"-unlimited").checked=get(id).dataset.unlimited==="true";get(id+"-calendar").hidden=true;get(id+"-date").setAttribute("aria-expanded","false");if(focus)get(id+"-date").focus();
@@ -71,15 +71,14 @@ globalThis.InspectorSharing=(()=>{
     const {id,month}=calendar,locale=document.documentElement?.lang||"zh-CN",year=month.getFullYear(),index=month.getMonth(),minimum=get(id).dataset.minimumDay;
     get(id+"-month").textContent=new Intl.DateTimeFormat(locale,{year:"numeric",month:"long"}).format(month);
     get(id+"-weekdays").innerHTML=Array.from({length:7},(_,n)=>`<span>${esc(new Intl.DateTimeFormat(locale,{weekday:"short"}).format(new Date(2023,0,1+n)))}</span>`).join("");
-    const today=localHour(Date.now()).slice(0,10),selected=calendar.unlimited?null:calendar.day;
+    const today=localDay(Date.now()),selected=calendar.unlimited?null:calendar.day;
     const days=Array.from({length:new Date(year,index,1).getDay()},()=>'<span aria-hidden="true"></span>');
     for(let n=1;n<=new Date(year,index+1,0).getDate();n++){
-      const day=localHour(new Date(year,index,n,12).getTime()).slice(0,10);
+      const day=localDay(new Date(year,index,n,12).getTime());
       days.push(`<button type="button" data-day="${day}" ${day<minimum?"disabled":""} tabindex="${day===calendar.focused?"0":"-1"}" aria-label="${day}" aria-pressed="${day===selected}" ${day===today?'aria-current="date"':""}>${n}</button>`);
     }
-    get(id+"-days").innerHTML=days.join("");get(id+"-previous").disabled=localHour(new Date(year,index,0,12).getTime()).slice(0,10)<minimum;
-    get(id+"-hours").innerHTML=expiryHours.map(hour=>`<button type="button" data-hour="${hour}" ${selectableExpiry(id,calendar.day,hour)?"":"disabled"} aria-pressed="${!calendar.unlimited&&calendar.hour===hour}">${hour}${label("时")}</button>`).join("");
-    get(id+"-unlimited").checked=calendar.unlimited;get(id+"-apply").disabled=calendar.unlimited||!selectableExpiry(id,calendar.day,calendar.hour);
+    get(id+"-days").innerHTML=days.join("");get(id+"-previous").disabled=localDay(new Date(year,index,0,12).getTime())<minimum;
+    get(id+"-unlimited").checked=calendar.unlimited;get(id+"-apply").disabled=calendar.unlimited||!selectableExpiry(calendar.day);
     positionCalendar();if(focus)get(id+"-days").querySelector(`[data-day="${calendar.focused}"]`)?.focus();
   }
   function openCalendar(id){
@@ -87,41 +86,38 @@ globalThis.InspectorSharing=(()=>{
     if(calendar?.id===id){closeCalendar();return;}
     closeCalendar(false);controller?.abort();
     const day=get(id+"-date").value,focused=day<get(id).dataset.minimumDay?get(id).dataset.minimumDay:day;
-    calendar={id,month:new Date(focused+"T12:00"),focused,day,hour:get(id+"-hour").value,unlimited:get(id).dataset.unlimited==="true"};get(id+"-date").setAttribute("aria-expanded","true");get(id+"-calendar").hidden=false;renderCalendar(true);
+    calendar={id,month:new Date(focused+"T12:00"),focused,day,unlimited:get(id).dataset.unlimited==="true"};get(id+"-date").setAttribute("aria-expanded","true");get(id+"-calendar").hidden=false;renderCalendar(true);
   }
-  function selectableExpiry(id,day,hour){
-    if(!expiryHours.includes(hour))return false;
-    const original=id==="sharing-inline-expiry"&&editing?.field==="expires_at"?editing.original:undefined;
-    try{expiryTime(day+"T"+hour+":00",original);return true;}catch(_){return false;}
+  function selectableExpiry(day){
+    try{expiryTime(day);return true;}catch(_){return false;}
   }
   for(const id of expiryIds){
-    setExpiry(id,defaultExpiry());get(id+"-calendar").hidden=true;
+    setExpiry(id,defaultExpiry(),false);get(id+"-calendar").hidden=true;
     get(id+"-date").addEventListener("click",()=>openCalendar(id));
     get(id+"-unlimited").addEventListener("change",()=>{setExpiry(id,get(id+"-unlimited").checked?null:get(id).dataset.finiteValue||defaultExpiry());get("sharing-inline-message").hidden=true;closeCalendar();});
     get(id+"-calendar").addEventListener("click",event=>{
-      const button=event.target.closest("[data-month],[data-day],[data-hour],[data-apply]");if(!button||button.disabled||busy||calendar?.id!==id)return;
-      if(button.dataset.month){calendar.month=new Date(calendar.month.getFullYear(),calendar.month.getMonth()+Number(button.dataset.month),1,12);calendar.focused=localHour(calendar.month.getTime()).slice(0,10);if(calendar.focused<get(id).dataset.minimumDay)calendar.focused=get(id).dataset.minimumDay;renderCalendar();return;}
-      if(button.dataset.apply){if(!selectableExpiry(id,calendar.day,calendar.hour))return;setExpiry(id,calendar.day+"T"+calendar.hour+":00");get("sharing-inline-message").hidden=true;closeCalendar();return;}
-      if(button.dataset.hour){if(!selectableExpiry(id,calendar.day,button.dataset.hour))return;calendar.hour=button.dataset.hour;calendar.unlimited=false;renderCalendar();get(id+"-hours").querySelector(`[data-hour="${calendar.hour}"]`)?.focus();return;}
+      const button=event.target.closest("[data-month],[data-day],[data-apply]");if(!button||button.disabled||busy||calendar?.id!==id)return;
+      if(button.dataset.month){calendar.month=new Date(calendar.month.getFullYear(),calendar.month.getMonth()+Number(button.dataset.month),1,12);calendar.focused=localDay(calendar.month.getTime());if(calendar.focused<get(id).dataset.minimumDay)calendar.focused=get(id).dataset.minimumDay;renderCalendar();return;}
+      if(button.dataset.apply){if(!selectableExpiry(calendar.day))return;setExpiry(id,calendar.day,true);get("sharing-inline-message").hidden=true;closeCalendar();return;}
       if(button.dataset.day<get(id).dataset.minimumDay)return;
       calendar.day=button.dataset.day;calendar.focused=calendar.day;calendar.unlimited=false;renderCalendar(true);
     });
     get(id+"-calendar").addEventListener("keydown",event=>{
       if(!calendar||calendar.id!==id||busy)return;
       if(event.key==="Escape"){event.preventDefault();event.stopPropagation();closeCalendar();return;}
-      if(event.target?.closest?.("[data-hour],[data-apply]"))return;
+      if(event.target?.closest?.("[data-apply]"))return;
       const offsets={ArrowLeft:-1,ArrowRight:1,ArrowUp:-7,ArrowDown:7},day=new Date(calendar.focused+"T12:00");
       if(event.key in offsets)day.setDate(day.getDate()+offsets[event.key]);
       else if(event.key==="Home"||event.key==="End")day.setDate(day.getDate()-day.getDay()+(event.key==="End"?6:0));
       else if(event.key==="PageUp"||event.key==="PageDown"){const n=day.getDate();day.setDate(1);day.setMonth(day.getMonth()+(event.key==="PageUp"?-1:1));day.setDate(Math.min(n,new Date(day.getFullYear(),day.getMonth()+1,0).getDate()));}
       else return;
-      event.preventDefault();let value=localHour(day.getTime()).slice(0,10);if(value<get(id).dataset.minimumDay)value=get(id).dataset.minimumDay;
+      event.preventDefault();let value=localDay(day.getTime());if(value<get(id).dataset.minimumDay)value=get(id).dataset.minimumDay;
       calendar.focused=value;calendar.month=new Date(value+"T12:00");renderCalendar(true);
     });
   }
-  // Keep legacy minute/second precision when the displayed hour has not changed.
-  function expiryTime(value,original){if(Number.isFinite(original)&&value===localHour(original*1000))return original;const d=new Date(value),n=value?d.getTime()/1000:NaN;if(!Number.isFinite(n)||n<Date.now()/1000+86400)throw new Error(tr("期限至少为一天，也可选择无期限。"));if(d.getHours()%3||d.getMinutes()||d.getSeconds())throw new Error(tr("请选择 0、3、6、9、12、15、18 或 21 时。"));return n;}
-  function expiry(id,original){syncExpiry(id);return get(id).dataset.unlimited==="true"?null:expiryTime(get(id).value,original);}
+  // Preserve an existing timestamp until the user explicitly chooses a date.
+  function expiryTime(value,original){if(Number.isFinite(original)&&value===expiryDay(original))return original;const n=dayEnd(value);if(!Number.isFinite(n)||n<Date.now()/1000+86400)throw new Error(tr("期限至少为一天，也可选择无期限。"));return n;}
+  function expiry(id,original){const input=get(id);return input.dataset.unlimited==="true"?null:expiryTime(get(id+"-date").value,input.dataset.modified==="true"?undefined:original);}
   function budget(id){const value=get(id).value,n=Number(value);if(!Number.isFinite(n)||n<1||n>1000000)throw new Error(tr("额度应为 1 到 1,000,000 美元。"));return value;}
   function credentialName(kind,value,identifier=null){
     const name=String(value??"").trim();
@@ -214,7 +210,7 @@ globalThis.InspectorSharing=(()=>{
     get("sharing-inline-label").setAttribute("for",isDate?"sharing-inline-expiry-date":"sharing-inline-value");
     get("sharing-inline-expiry-container").hidden=!isDate;
     if(isDate){
-      setExpiry("sharing-inline-expiry",Number.isFinite(original)?localHour(original*1000):defaultExpiry());
+      setExpiry("sharing-inline-expiry",Number.isFinite(original)?expiryDay(original):defaultExpiry(),false);
       if(original===null)setExpiry("sharing-inline-expiry",null);
     }
     disableExpiry("sharing-inline-expiry",!isDate);
