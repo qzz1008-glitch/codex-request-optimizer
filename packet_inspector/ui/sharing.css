@@ -34,22 +34,26 @@
 .sharing-calendar-header{display:grid;grid-template-columns:28px minmax(0,1fr) 28px;align-items:center;text-align:center}.sharing-calendar-header strong{font-size:13px;font-weight:600}.sharing-calendar-header button{height:28px;min-height:0;padding:0;border:0;background:transparent;color:var(--muted);font-size:20px;line-height:1}
 .sharing-calendar-weekdays,.sharing-calendar-days{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:2px;text-align:center}.sharing-calendar-weekdays{color:var(--muted);font-size:11px;line-height:24px}.sharing-calendar-days button{height:29px;min-height:0;padding:0;border:0;border-radius:5px;background:transparent;color:var(--ink);font-size:12px;font-variant-numeric:tabular-nums}.sharing-calendar-days button:hover:not(:disabled){background:var(--bg)}.sharing-calendar-days button[aria-current=date]{box-shadow:inset 0 0 0 1px var(--line)}.sharing-calendar-days button[aria-pressed=true]{background:var(--accent);color:#fff}.sharing-calendar-days button[aria-pressed=true]:hover{background:var(--accent)}.sharing-calendar button:disabled{opacity:.3;cursor:default}
 .sharing-calendar-footer{display:flex;align-items:center;justify-content:space-between;padding-top:10px;border-top:1px solid var(--line)}.sharing-calendar-footer>button{min-height:27px;padding:4px 10px;font-size:12px}
-.sharing-expiry-trigger::after{content:"";display:inline-block;flex:none;width:5px;height:5px;margin-left:8px;border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;transform:translateY(-2px) rotate(45deg);opacity:.55}
-.sharing-expiry-trigger[aria-expanded=true]::after{transform:translateY(1px) rotate(225deg)}
+.sharing-expiry-trigger::after,.sharing-weekly-control::after{content:"";display:inline-block;flex:none;width:5px;height:5px;margin-left:8px;border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;transform:translateY(-2px) rotate(45deg);opacity:.55}
+.sharing-expiry-trigger[aria-expanded=true]::after,.sharing-weekly-control:has(select:open)::after{transform:translateY(1px) rotate(225deg)}
 .sharing-actions,.sharing-row-actions{display:flex;gap:7px;flex-wrap:wrap;align-items:center}
 .sharing-budget-row,.sharing-weekly-row{display:grid;grid-template-columns:var(--sharing-label-width) minmax(0,1fr);align-items:center;gap:var(--sharing-field-gap);min-width:0}
 .sharing-budget-row>label,.sharing-weekly-row>label{display:inline-flex;flex-direction:row;align-items:center;margin:0;white-space:nowrap;font-size:12px;color:var(--muted)}
 .sharing-weekly-select{box-sizing:border-box;appearance:none;min-width:0;min-height:34px;padding:6px 28px 6px 10px;border:1px solid var(--line);border-radius:6px;background-color:var(--panel);background-image:linear-gradient(45deg,transparent 50%,var(--muted) 50%),linear-gradient(135deg,var(--muted) 50%,transparent 50%);background-position:calc(100% - 13px) 50%,calc(100% - 9px) 50%;background-size:4px 4px;background-repeat:no-repeat;color:var(--ink);font:inherit;font-size:12px;cursor:pointer}
 .sharing-weekly-select:open{background-image:linear-gradient(135deg,transparent 50%,var(--muted) 50%),linear-gradient(45deg,var(--muted) 50%,transparent 50%)}
 .sharing-config .sharing-weekly-select{background-color:var(--panel)}
-.sharing-weekly-cell .sharing-weekly-select{width:calc(10ch + 32px);min-height:0;padding:0 24px 0 0;border:0;border-radius:3px;background-color:transparent;color:var(--ink);font:inherit;line-height:inherit;vertical-align:baseline;text-decoration:underline dotted color-mix(in srgb,var(--ink) 35%,var(--line));text-underline-offset:3px}
+.sharing-weekly-control{position:relative;display:inline-flex;align-items:center;vertical-align:baseline;color:var(--ink)}
+.sharing-weekly-control::after{position:absolute;right:0;top:calc(50% - 2.5px);pointer-events:none}
+.sharing-weekly-control:has(select:hover:not(:disabled)){color:var(--accent)}
+.sharing-weekly-control:has(select:disabled)::after{content:none}
+.sharing-weekly-cell .sharing-weekly-select{width:calc(10ch + 32px);min-height:0;padding:0 24px 0 0;border:0;border-radius:3px;background:transparent;color:var(--ink);font:inherit;line-height:inherit;vertical-align:baseline;text-decoration:underline dotted color-mix(in srgb,var(--ink) 35%,var(--line));text-underline-offset:3px}
 .sharing-weekly-select:hover:not(:disabled){border-color:color-mix(in srgb,var(--muted) 45%,var(--line));background-color:var(--panel)}
 .sharing-weekly-select:focus-visible{border-color:var(--muted);outline:none;box-shadow:0 0 0 2px color-mix(in srgb,var(--muted) 18%,transparent)}
 .sharing-weekly-select:disabled{color:var(--muted);border-color:var(--line);cursor:default;opacity:1}
 .sharing-weekly-cell .sharing-weekly-select:hover:not(:disabled){background-color:transparent;color:var(--accent);text-decoration-color:currentColor}
 .sharing-weekly-cell .sharing-weekly-select:focus-visible{outline:2px solid var(--accent);outline-offset:3px;box-shadow:none}
 .sharing-weekly-cell .sharing-weekly-select:disabled{background-image:none;text-decoration:none}
-@media(forced-colors:active){.sharing-weekly-select,.sharing-weekly-select:open{appearance:auto;background-image:none}.sharing-weekly-select:focus-visible{outline:2px solid Highlight;outline-offset:2px;box-shadow:none}}
+@media(forced-colors:active){.sharing-weekly-select,.sharing-weekly-select:open{appearance:auto;background-image:none}.sharing-weekly-control::after{display:none}.sharing-weekly-select:focus-visible{outline:2px solid Highlight;outline-offset:2px;box-shadow:none}}
 .sharing-actions button{width:min(168px,100%);padding:6px 12px;min-height:var(--sharing-control-height);font-size:12px}
 .sharing-local{width:calc(100% - var(--sharing-control-offset));min-height:var(--sharing-control-height);margin:8px 0 0 var(--sharing-control-offset);font-size:12px}
 .sharing-stat-note{font-size:11px;color:var(--muted);line-height:1.7;margin:15px 0 0}
