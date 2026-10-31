@@ -153,14 +153,17 @@ def main(argv=None):
     parser.add_argument("--mode",choices=("dev","release"),default="release")
     parser.add_argument("--portable-dev",action="store_true")
     parser.add_argument("--release-only",action="store_true",help="omit the companion development EXE from a release build")
+    parser.add_argument("--local",action="store_true",help="use local Git refs without fetching; retain all source and artifact checks")
     parser.add_argument("--check-source",action="store_true",help="validate the shared source without building")
     args=parser.parse_args(argv)
     if args.release_only and args.mode!="release":
         parser.error("--release-only requires --mode release")
+    refresh=args.mode=="release" and not args.local
     try:
         workspace=Workspace(ROOT)
         with workspace.lock():
-            metadata=workspace.validate(args.mode,refresh=args.mode=="release")
+            metadata=workspace.validate(args.mode,refresh=refresh)
+            metadata["remote_refreshed"]=refresh
             if metadata['version']!=VERSION:raise SourceError("Imported version differs from the source version")
             if args.check_source:
                 print(json.dumps({"source":"ok",**metadata,"canonical_root":str(workspace.canonical)},ensure_ascii=False))
@@ -179,7 +182,7 @@ def main(argv=None):
                 package_release(snapshot.source,stage,licenses)
             snapshot.write_manifest(stage/"BUILD-SOURCE.json",args.mode)
             snapshot.assert_unchanged()
-            Workspace(ROOT).validate(args.mode,refresh=args.mode=="release")
+            Workspace(ROOT).validate(args.mode,refresh=refresh)
             artifacts=[]
             for path in sorted(stage.rglob("*")):
                 if path.is_file():
