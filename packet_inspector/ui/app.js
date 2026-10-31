@@ -1125,7 +1125,7 @@ function showConnectionFeedback(which,result={}) {
   if(result.loopback_proxy?.changed)items.push(t("本机代理例外"));
   const wslTargets=Array.isArray(result.wsl?.targets)?result.wsl.targets:[];
   const wslWarnings=Array.isArray(result.wsl?.warnings)?result.wsl.warnings:[];
-  if(wslTargets.some(value=>value.changed))items.push(t("WSL Codex 配置：重新连接 WSL 会话后生效"));
+  if(wslTargets.some(value=>value.changed))items.push(t("WSL Codex 配置"));
   const wslReasons={relay_unreachable:"WSL 无法访问本机中转，未修改配置。",relay_instance_mismatch:"WSL 连接到其他服务，未修改配置。",
     config_not_found:"未找到该 WSL 用户的 Codex 配置。",
     restore_pending:"WSL 配置待恢复，请启动该发行版后再次接入并断开。"};
@@ -1189,18 +1189,16 @@ function renderConnectionResume() {
   if(!connectionResumeSeen)try {connectionResumeSeen=localStorage.getItem("connection-resume-seen")||"";}catch {}
   if(event.id===connectionResumeSeen)return;
   const result=event.result||{},attention=event.state==="attention";
-  const wslChanged=(result.wsl?.targets||[]).some(value=>value.changed);
   if(!attention&&!result.reload_required&&!dialog.open){connectionResumeSeen=event.id;return;}
   if(settingsSaving||settingsEditing||linkSaving||connectSaving||compressionSaving||exitSaving||document.querySelector("dialog[open]")&&!dialog.open)return;
   connectionRestartNotified=true;
   const warnings=[...(result.warnings||[]),...(result.wsl?.warnings||[])];
   uiI18n.text($("connection-resume-title"),attention?"接入配置需要处理":"接入配置已自动同步");
   uiI18n.text($("connection-resume-description"),attention?"部分配置未能自动同步。请查看详情并重新检查，无需手动断开再接入。":
-    result.reload_required?(wslChanged?"已保留原来的接入状态。请完全退出并重新打开 ChatGPT App，WSL 会话需重新连接。":
-      "已保留原来的接入状态。请完全退出并重新打开 ChatGPT App。"):"配置无需更改，无需重启。");
+    result.reload_required?"已保留原来的接入状态。请完全退出并重新打开 ChatGPT App。":"配置无需更改，无需重启。");
   const lines=[...(event.error?[event.error]:[]),...warnings.slice(0,16).map(value=>
     (value.distribution||value.provider||"Codex")+"："+value.reason+(value.detail?"\n"+value.detail:""))];
-  if(attention&&result.reload_required)lines.unshift(t(wslChanged?"已变更的配置需重启 ChatGPT App，WSL 会话需重新连接。":"已变更的配置需重启 ChatGPT App。"));
+  if(attention&&result.reload_required)lines.unshift(t("已变更的配置需重启 ChatGPT App。"));
   for(const item of result.wsl?.deferred||[])lines.push(item.distribution+"："+t("WSL 启动后会自动同步。"));
   setText($("connection-resume-details"),lines.join("\n"));$("connection-resume-details").hidden=!lines.length;
   $("connection-resume-retry").hidden=!attention;$("connection-resume-retry").disabled=connectionResumeRetrying;
