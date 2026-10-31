@@ -196,13 +196,34 @@ globalThis.InspectorSharing=(()=>{
       render(state);if(link)await copy(link,dataValue.action==="credential_issue"?dataValue.kind+"-generate":dataValue.id);else if(result.reload_required===true)message(dataValue.action==="credential_delete"?"已删除凭据。请重新加载 Codex 配置或重启 ChatGPT 应用。":"已切换额度来源。请重新加载 Codex 配置或重启 ChatGPT 应用。");else message(success===null?"":success||"已更新，新请求使用当前设置。");return result;
     }catch(error){message(error.message,true);}finally{busy=false;button?.setAttribute("aria-busy","false");if(button)button.disabled=false;if(current)render(current);}}
   async function refresh(){if(!active||document.hidden||busy||editing||deleting||calendar||dragging)return;controller?.abort();const task=new AbortController();controller=task;try{const value=await request(null,task.signal);if(active&&!task.signal.aborted)render(value);}catch(error){if(error.name!=="AbortError")message(error.message,true);}finally{if(controller===task)controller=null;}}
-  function clearDrop(){
-    dragging?.target?.classList.remove("sharing-drop-before","sharing-drop-after");if(dragging)dragging.target=null;
+  function finishDrag(restore=true){
+    if(!dragging)return;
+    const draft=dragging;dragging=null;clearTimeout(draft.hideTimer);
+    if(draft.frame!==null)cancelAnimationFrame(draft.frame);
+    draft.source.classList.remove("sharing-dragging","sharing-drag-preview");get("sharing-cards").classList.remove("sharing-reordering");
+    if(restore&&current)render(current);
   }
-  function finishDrag(){if(!dragging)return;dragging.source.classList.remove("sharing-dragging");clearDrop();dragging=null;}
-  function dropTarget(event){
-    const element=event.target.closest("tr"),id=element?.querySelector("[data-drag-id]")?.dataset.dragId,row=(current?.credentials||[]).find(row=>row.id===id);
-    return dragging&&row&&row.id!==dragging.id&&row.kind===dragging.kind&&row.direction===dragging.direction?{element,row}:null;
+  function pauseDragScroll(){if(dragging&&dragging.frame!==null){cancelAnimationFrame(dragging.frame);dragging.frame=null;}}
+  function placeDrag(y){
+    const draft=dragging;if(!draft)return;
+    const rows=Array.from(draft.body.rows).filter(row=>row!==draft.source);
+    const before=rows.find(row=>{const box=row.getBoundingClientRect();return y<box.top+box.height/2;})||null;
+    draft.target=(before||rows.at(-1))?.querySelector("[data-drag-id]")?.dataset.dragId;draft.after=!before;
+    if(draft.source.nextElementSibling===before)return;
+    const positions=new Map(rows.map(row=>[row,row.getBoundingClientRect().top]));
+    for(const row of rows)row.getAnimations?.().forEach(animation=>animation.cancel());
+    draft.body.insertBefore(draft.source,before);
+    const reduce=typeof matchMedia==="function"&&matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if(!reduce)for(const row of rows){const delta=positions.get(row)-row.getBoundingClientRect().top;if(delta)row.animate?.([{transform:`translateY(${delta}px)`},{transform:"translateY(0)"}],{duration:150,easing:"cubic-bezier(.2,.8,.2,1)"});}
+  }
+  function scrollDrag(){
+    const draft=dragging;if(!draft)return;draft.frame=null;
+    const box=draft.scroll.getBoundingClientRect(),y=draft.y;
+    if(y<box.top||y>box.bottom)return;
+    const speed=y<box.top+28?-Math.ceil((box.top+28-y)/3):y>box.bottom-28?Math.ceil((y-box.bottom+28)/3):0;
+    if(!speed)return;
+    const previous=draft.scroll.scrollTop;draft.scroll.scrollBy(0,speed);
+    if(draft.scroll.scrollTop!==previous){placeDrag(y);draft.frame=requestAnimationFrame(scrollDrag);}
   }
   async function moveCredential(identifier,target,after){
     if(busy)return;
@@ -219,20 +240,32 @@ globalThis.InspectorSharing=(()=>{
   get("sharing-cards").addEventListener("dragstart",event=>{
     const handle=event.target.closest("[data-drag-id]"),row=(current?.credentials||[]).find(row=>row.id===handle?.dataset.dragId);
     if(busy||deleting||!row||row.internal||shownRows(row.kind).length<2){event.preventDefault();return;}
-    controller?.abort();closeInline(false);finishDrag();dragging={id:row.id,kind:row.kind,direction:row.direction,source:handle.closest("tr"),target:null};dragging.source.classList.add("sharing-dragging");
+    controller?.abort();closeInline(false);finishDrag();
+    const source=handle.closest("tr"),body=source.parentElement,box=source.getBoundingClientRect();
+    const draft={id:row.id,kind:row.kind,direction:row.direction,source,body,scroll:source.closest(".sharing-table-scroll"),target:null,after:false,y:event.clientY,frame:null};dragging=draft;
     event.dataTransfer.effectAllowed="move";event.dataTransfer.setData("application/x-inspector-credential",row.id);
+    source.classList.add("sharing-drag-preview");
+    event.dataTransfer.setDragImage(source,Math.max(0,Math.min(box.width,event.clientX-box.left)),Math.max(0,Math.min(box.height,event.clientY-box.top)));
+    get("sharing-cards").classList.add("sharing-reordering");
+    // Capture the complete row before leaving its live placeholder invisible.
+    draft.hideTimer=setTimeout(()=>{if(dragging===draft){source.classList.remove("sharing-drag-preview");source.classList.add("sharing-dragging");}},0);
   });
   get("sharing-cards").addEventListener("dragover",event=>{
-    const target=dropTarget(event);clearDrop();if(!target)return;
-    event.preventDefault();event.dataTransfer.dropEffect="move";const rect=target.element.getBoundingClientRect(),after=event.clientY>rect.top+rect.height/2;dragging.target=target.element;target.element.classList.add(after?"sharing-drop-after":"sharing-drop-before");
-    const scroll=target.element.closest(".sharing-table-scroll"),bounds=scroll?.getBoundingClientRect();if(bounds){if(event.clientY<bounds.top+24)scroll.scrollBy(0,-12);else if(event.clientY>bounds.bottom-24)scroll.scrollBy(0,12);}
+    if(!dragging)return;
+    if(!dragging.scroll.contains(event.target)){pauseDragScroll();return;}
+    event.preventDefault();event.dataTransfer.dropEffect="move";dragging.y=event.clientY;placeDrag(event.clientY);
+    if(dragging.frame===null)scrollDrag();
   });
   get("sharing-cards").addEventListener("drop",async event=>{
-    const target=dropTarget(event),draft=dragging;if(!target){finishDrag();return;}event.preventDefault();const rect=target.element.getBoundingClientRect(),after=event.clientY>rect.top+rect.height/2;finishDrag();await moveCredential(draft.id,target.row.id,after);
+    const draft=dragging;if(!draft)return;
+    if(!draft.scroll.contains(event.target)){finishDrag();return;}
+    event.preventDefault();placeDrag(event.clientY);const {id,target,after}=draft;finishDrag(false);
+    if(target)await moveCredential(id,target,after);
   });
-  get("sharing-cards").addEventListener("dragend",finishDrag);
-  get("sharing-cards").addEventListener("dragleave",event=>{if(!get("sharing-cards").contains(event.relatedTarget))clearDrop();});
+  get("sharing-cards").addEventListener("dragend",()=>finishDrag());
+  get("sharing-cards").addEventListener("dragleave",event=>{if(dragging&&!dragging.scroll.contains(event.relatedTarget))pauseDragScroll();});
   get("sharing-cards").addEventListener("keydown",async event=>{
+    if(dragging)return;
     const handle=event.target.closest("[data-drag-id]");if(!handle||!event.altKey||!["ArrowUp","ArrowDown"].includes(event.key))return;
     event.preventDefault();const row=(current?.credentials||[]).find(row=>row.id===handle.dataset.dragId);if(!row)return;const rows=shownRows(row.kind),index=rows.findIndex(item=>item.id===row.id),down=event.key==="ArrowDown",target=rows[index+(down?1:-1)];if(target)await moveCredential(row.id,target.id,down);
   });

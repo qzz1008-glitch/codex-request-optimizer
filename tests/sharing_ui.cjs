@@ -37,11 +37,35 @@ const changeExpiry=(id,value,notify=true)=>{noExpiry(id,false);if(!notify){node(
 const openCalendar=id=>node(id+"-date").handlers.click();
 const calendarClick=(id,dataset)=>click(id+"-calendar",dataset);
 const calendarKey=(id,key)=>node(id+"-calendar").handlers.keydown({key,preventDefault(){},stopPropagation(){}});
-const dragNodes=new Map();
-const dragHandle=id=>{if(!dragNodes.has(id)){const handle=new Element(),row=new Element();handle.dataset.dragId=id;handle.closest=selector=>selector==="[data-drag-id]"?handle:selector==="tr"?row:null;row.querySelector=selector=>selector==="[data-drag-id]"?handle:null;row.closest=selector=>selector==="tr"?row:null;dragNodes.set(id,{handle,row});}return dragNodes.get(id).handle;};
-const dragEvent=(id,clientY=210)=>({target:dragHandle(id),clientY,prevented:false,preventDefault(){this.prevented=true;},dataTransfer:{values:{},setData(type,value){this.values[type]=value;}}});
-const startDrag=id=>{const event=dragEvent(id);node("sharing-cards").handlers.dragstart(event);return event;};
+const dragNodes=new Map(),dragAnimations=[];
 const rowOrder=kind=>[...node(kind+"-credential-rows").innerHTML.matchAll(/data-drag-id="([^"]+)"/g)].map(match=>match[1]);
+const dragHandle=id=>{
+ if(!dragNodes.has(id)){
+  const handle=new Element(),row=new Element();handle.dataset.dragId=id;
+  handle.closest=selector=>selector==="[data-drag-id]"?handle:selector==="tr"?row:null;
+  row.querySelector=selector=>selector==="[data-drag-id]"?handle:null;
+  row.closest=selector=>selector==="tr"?row:selector===".sharing-table-scroll"?row.parentElement?.scroller:null;
+  row.getBoundingClientRect=()=>{const index=row.parentElement?.rows.indexOf(row)??0,top=200+index*40;return {left:500,top,bottom:top+40,width:356,height:40};};
+  row.animate=(frames,options)=>{dragAnimations.push({id,frames,options});};
+  Object.defineProperty(row,"nextElementSibling",{get(){const rows=row.parentElement.rows;return rows[rows.indexOf(row)+1]||null;}});
+  dragNodes.set(id,{handle,row});
+ }
+ return dragNodes.get(id).handle;
+};
+const prepareDrag=kind=>{
+ const body=node(kind+"-credential-rows");body.rows=rowOrder(kind).map(id=>{dragHandle(id);const row=dragNodes.get(id).row;row.parentElement=body;return row;});
+ body.insertBefore=(row,before)=>{body.rows.splice(body.rows.indexOf(row),1);body.rows.splice(before?body.rows.indexOf(before):body.rows.length,0,row);};
+ body.scroller=new Element();body.scroller.scrollTop=0;body.scroller.getBoundingClientRect=()=>({top:180,bottom:500});
+ body.scroller.contains=target=>target===body||body.rows.some(row=>target===row||target===row.querySelector("[data-drag-id]"));
+};
+const dragEvent=(id,clientY=210)=>{const event={target:dragHandle(id),clientX:520,clientY,prevented:false,preventDefault(){this.prevented=true;},dataTransfer:{values:{},setData(type,value){this.values[type]=value;},setDragImage(element,x,y){event.image={element,x,y};}}};return event;};
+const startDrag=id=>{
+ const kind=["quota","exit"].find(kind=>rowOrder(kind).includes(id));prepareDrag(kind);
+ const before=new Set(timeouts.keys()),event=dragEvent(id,dragNodes.get(id).row.getBoundingClientRect().top+10);node("sharing-cards").handlers.dragstart(event);
+ for(const [key,callback] of [...timeouts])if(!before.has(key)){timeouts.delete(key);callback();}
+ return event;
+};
+const visualOrder=kind=>node(kind+"-credential-rows").rows.map(row=>row.querySelector("[data-drag-id]").dataset.dragId);
 (async()=>{
  context.InspectorSharing.setActive(true);await flush();assert.equal(node("sharing-cards").hidden,false);
  assert.match(node("quota-config").innerHTML,/<div class="sharing-weekly-row"><label for="quota-weekly">每周刷新<\/label><select/);
@@ -158,9 +182,10 @@ const rowOrder=kind=>[...node(kind+"-credential-rows").innerHTML.matchAll(/data-
  const otherQuota={...outgoing,id:"q3",label:"Second"},thirdQuota={...outgoing,id:"q4",label:"Third"},dragState={...namedState,credentials:[outgoing,otherQuota,thirdQuota,incoming,exitIncoming,exitOne,exitTwo]};
  const sortedState=ids=>({...dragState,credentials:[...ids.map(id=>dragState.credentials.find(row=>row.id===id)),...dragState.credentials.filter(row=>row.kind!=="quota"||row.direction!=="out")]});
  pending.push({status:200,data:dragState});await interval();click("sharing-cards",{kind:"quota",view:"out"});assert.deepEqual(rowOrder("quota"),["q1","q3","q4"]);assert.match(node("quota-credential-rows").innerHTML,/draggable="true"/);
- const beforeDrag=requests.length,started=startDrag("q1");assert.equal(started.prevented,false);assert.equal(started.dataTransfer.effectAllowed,"move");assert.equal(started.dataTransfer.values["application/x-inspector-credential"],"q1");assert.equal(dragNodes.get("q1").row.classList.contains("sharing-dragging"),true);await interval();assert.equal(requests.length,beforeDrag,"Polling cannot replace rows while dragging");
- const over=dragEvent("q3",300);node("sharing-cards").handlers.dragover(over);assert.equal(over.prevented,true);assert.equal(dragNodes.get("q3").row.classList.contains("sharing-drop-after"),true);pending.push({status:200,data:sortedState(["q3","q1","q4"])});await node("sharing-cards").handlers.drop(dragEvent("q3",300));assert.equal(JSON.stringify(requests.at(-1).data),JSON.stringify({action:"credential_reorder",id:"q1",target_id:"q3",after:true}));assert.deepEqual(rowOrder("quota"),["q3","q1","q4"]);assert.equal(dragNodes.get("q1").row.classList.contains("sharing-dragging"),false);assert.equal(dragNodes.get("q3").row.classList.contains("sharing-drop-after"),false);
+ const beforeDrag=requests.length,started=startDrag("q1");assert.equal(started.prevented,false);assert.equal(started.dataTransfer.effectAllowed,"move");assert.equal(started.image.element,dragNodes.get("q1").row,"The drag preview must capture the complete credential row");assert.equal(started.dataTransfer.values["application/x-inspector-credential"],"q1");assert.equal(dragNodes.get("q1").row.classList.contains("sharing-dragging"),true);await interval();assert.equal(requests.length,beforeDrag,"Polling cannot replace rows while dragging");
+ const over=dragEvent("q3",275);node("sharing-cards").handlers.dragover(over);assert.equal(over.prevented,true);assert.deepEqual(visualOrder("quota"),["q3","q1","q4"],"Other rows must give way during the drag");assert.equal(requests.length,beforeDrag,"Live movement does not save before drop");assert.ok(dragAnimations.length>0,"Displaced rows must animate to their new positions");pending.push({status:200,data:sortedState(["q3","q1","q4"])});await node("sharing-cards").handlers.drop(dragEvent("q3",275));assert.equal(JSON.stringify(requests.at(-1).data),JSON.stringify({action:"credential_reorder",id:"q1",target_id:"q4",after:false}));assert.deepEqual(rowOrder("quota"),["q3","q1","q4"]);assert.equal(dragNodes.get("q1").row.classList.contains("sharing-dragging"),false);
  pending.push({status:200,data:sortedState(["q3","q1","q4"])});await interval();assert.deepEqual(rowOrder("quota"),["q3","q1","q4"],"Polling retains the saved order");
+ const beforeReducedMotion=dragAnimations.length,beforeReducedRequests=requests.length;context.matchMedia=()=>({matches:true});startDrag("q1");node("sharing-cards").handlers.dragover(dragEvent("q3",210));assert.deepEqual(visualOrder("quota"),["q1","q3","q4"]);assert.equal(dragAnimations.length,beforeReducedMotion,"Reduced motion must retain live sorting without animations");node("sharing-cards").handlers.dragend();delete context.matchMedia;assert.equal(requests.length,beforeReducedRequests);assert.deepEqual(rowOrder("quota"),["q3","q1","q4"]);
  const beforeInvalidDrag=requests.length;startDrag("q1");const foreign=dragEvent("e2");node("sharing-cards").handlers.dragover(foreign);assert.equal(foreign.prevented,false);await node("sharing-cards").handlers.drop(foreign);assert.equal(requests.length,beforeInvalidDrag,"Rows cannot be dragged into another credential list");startDrag("q1");node("sharing-cards").handlers.dragend();assert.equal(requests.length,beforeInvalidDrag);assert.equal(dragNodes.get("q1").row.classList.contains("sharing-dragging"),false);
  startDrag("q4");pending.push({status:200,data:sortedState(["q4","q3","q1"])});await node("sharing-cards").handlers.drop(dragEvent("q3"));assert.equal(requests.at(-1).data.after,false);assert.deepEqual(rowOrder("quota"),["q4","q3","q1"]);
  let rejectOrder;pending.push(new Promise(resolve=>{rejectOrder=resolve;}));startDrag("q4");const savingOrder=node("sharing-cards").handlers.drop(dragEvent("q1",300));assert.deepEqual(rowOrder("quota"),["q3","q1","q4"],"The dropped row moves before the save finishes");assert.equal(node("quota-credential-rows").attributes["aria-busy"],"true");rejectOrder({status:400,data:{error:"invalid sharing action"}});await savingOrder;assert.deepEqual(rowOrder("quota"),["q4","q3","q1"],"A failed save restores the previous order");assert.match(node("sharing-message").textContent,/当前后台不支持凭据排序.*更新软件/);assert.equal(node("quota-credential-rows").attributes["aria-busy"],"false");
@@ -170,5 +195,5 @@ const rowOrder=kind=>[...node(kind+"-credential-rows").innerHTML.matchAll(/data-
  pending.push({status:200,data:{...idle,protocol:3,credentials_supported:false}});context.InspectorSharing.setActive(true);await flush();assert.equal(node("sharing-cards").hidden,true);assert.match(node("sharing-message").textContent,/更新软件/);context.InspectorSharing.setActive(false);
  assert.doesNotMatch(fs.readFileSync("packet_inspector/ui/sharing.js","utf8"),/datetime-local|showPicker|sharing-inline-no-expiry/);
  assert.doesNotMatch(fs.readFileSync("packet_inspector/ui/sharing.js","utf8"),/localStorage|sessionStorage/);
- console.log(JSON.stringify({sharing_ui:"passed",checks:["two_resource_cards","split_credential_lists","independent_empty_states","reusable_credentials","history_selection","expiry_and_weekly_reset","live_usage","editable_used_quota","privacy","confirmed_deletion","drag_order","reorder_failure_rollback","keyboard_order","old_backend_guard"]}));
+ console.log(JSON.stringify({sharing_ui:"passed",checks:["two_resource_cards","split_credential_lists","independent_empty_states","reusable_credentials","history_selection","expiry_and_weekly_reset","live_usage","editable_used_quota","privacy","confirmed_deletion","drag_order","whole_row_preview","live_drag_gap","reorder_failure_rollback","keyboard_order","old_backend_guard"]}));
 })().catch(error=>{console.error(error);process.exitCode=1;});
