@@ -76,7 +76,7 @@
 .sharing-network-table .sharing-upload,.sharing-network-table .sharing-download{display:inline-block;max-width:calc((100% - 12px)/2);overflow:hidden;text-overflow:ellipsis;vertical-align:middle}
 .sharing-network-table :is(th,td):nth-child(3){text-align:right}
 .sharing-network-table :is(th,td):nth-child(5){text-align:center}
-.sharing-network-table th:last-child{text-align:right}
+.sharing-table th:last-child{text-align:center}
 .sharing-network-table .sharing-row-actions{justify-content:flex-end}
 .sharing-table tbody tr:hover:not(.sharing-recent) td{background:color-mix(in srgb,var(--bg) 65%,var(--panel))}
 .sharing-table .sharing-cell-value{display:inline;min-height:0;padding:0;border:0;border-radius:3px;background:transparent;color:var(--ink);font:inherit;line-height:inherit;vertical-align:baseline;text-decoration:underline dotted color-mix(in srgb,var(--ink) 35%,var(--line));text-underline-offset:3px;cursor:pointer}
