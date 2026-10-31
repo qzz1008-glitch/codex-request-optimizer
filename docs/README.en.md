@@ -180,6 +180,8 @@ The local service uses **Python**, transport compression uses **zstd**, and requ
 
 Token usage comes from actual upstream responses when available, with read-only fallback to existing local Codex records. Unconfirmed data remains marked as unavailable.
 
+The Codex compatibility layer reads configuration and responses by protocol structure and preserves unknown fields. SSE event names and multiline data share one parser. Removed Codex executable paths trigger discovery of an installed runtime; local state indexes are queried read-only using their available columns, with per-session lookup across coexisting revisions. Unknown events pass through unchanged, and unconfirmed usage and ownership remain unavailable. New protocol semantics are not guessed from version numbers.
+
 ---
 
 ## 📄 License

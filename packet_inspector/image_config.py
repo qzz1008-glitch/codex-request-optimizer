@@ -5,7 +5,6 @@ import json
 import os
 from pathlib import Path
 import secrets
-import shutil
 import subprocess
 import tomllib
 
@@ -14,6 +13,7 @@ import tomlkit
 from .config_link import ConfigLink
 from .locking import file_lock
 from .image_tool_install import ImageToolInstallation
+from .codex_runtime import find_codex_cli
 
 TOOL_SERVER = "isolated_vision"
 VISION_PROVIDER = "codex_isolated_vision"
@@ -27,22 +27,6 @@ def image_mode(settings):
     if isinstance(mode, str) and mode in IMAGE_MODES:
         return mode
     return "optimized" if settings.get("image_isolation_enabled") is True else "native"
-
-
-def find_codex_cli(configured=None):
-    """Use an existing CLI, including the desktop app's per-user CLI cache."""
-    selected = configured or os.environ.get("CODEX_CLI_PATH") or shutil.which("codex")
-    if selected:
-        return str(selected)
-    local_app_data = os.environ.get("LOCALAPPDATA")
-    if not local_app_data:
-        return None
-    directory = Path(local_app_data) / "OpenAI" / "Codex" / "bin"
-    try:
-        candidates = [path for path in directory.glob("*/codex.exe") if path.is_file()]
-        return str(max(candidates, key=lambda path: path.stat().st_mtime_ns).resolve()) if candidates else None
-    except OSError:
-        return None
 
 
 def read_configuration(path):

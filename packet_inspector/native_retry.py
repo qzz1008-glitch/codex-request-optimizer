@@ -75,7 +75,7 @@ class NativeRetryStream(UsageStream):
         changed = super()._rewrite(value, event=event)
         if self.policy is None or not isinstance(value, dict):
             return changed
-        if event and value.get("type") not in {"error", "response.failed"}:
+        if event and value.get("type") not in ("error", "response.failed"):
             return changed
         enabled, seconds = self.policy()
         if enabled:

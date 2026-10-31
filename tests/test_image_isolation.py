@@ -62,10 +62,13 @@ def tool_image_body(custom=False):
 
 class ImageCliDiscoveryTests(unittest.TestCase):
     def test_configured_cli_takes_priority(self):
-        with patch.dict(os.environ, {"CODEX_CLI_PATH": "environment-cli"}), patch(
-                "packet_inspector.image_config.shutil.which") as which:
-            self.assertEqual(find_codex_cli("configured-cli"), "configured-cli")
-        which.assert_not_called()
+        with tempfile.TemporaryDirectory() as temporary:
+            configured = Path(temporary) / "configured.exe"
+            configured.write_text("synthetic CLI placeholder", encoding="ascii")
+            with patch.dict(os.environ, {"CODEX_CLI_PATH": "environment-cli"}), patch(
+                    "packet_inspector.codex_runtime.shutil.which") as which:
+                self.assertEqual(find_codex_cli(configured), str(configured.resolve()))
+            which.assert_not_called()
 
     def test_desktop_only_user_does_not_need_cli_on_path(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -74,10 +77,10 @@ class ImageCliDiscoveryTests(unittest.TestCase):
             for path in (older, newer):
                 path.parent.mkdir(parents=True)
                 path.write_text("synthetic CLI placeholder", encoding="ascii")
-            os.utime(older, ns=(1, 1))
-            os.utime(newer, ns=(2, 2))
+            os.utime(older, ns=(1_000_000_000, 1_000_000_000))
+            os.utime(newer, ns=(2_000_000_000, 2_000_000_000))
             with patch.dict(os.environ, {"LOCALAPPDATA": temporary, "CODEX_CLI_PATH": ""}), patch(
-                    "packet_inspector.image_config.shutil.which", return_value=None):
+                    "packet_inspector.codex_runtime.shutil.which", return_value=None):
                 self.assertEqual(find_codex_cli(), str(newer.resolve()))
                 newer.unlink()
                 self.assertEqual(find_codex_cli(), str(older.resolve()))
@@ -85,7 +88,7 @@ class ImageCliDiscoveryTests(unittest.TestCase):
     def test_missing_desktop_and_cli_return_unavailable(self):
         with tempfile.TemporaryDirectory() as temporary, patch.dict(
                 os.environ, {"LOCALAPPDATA": temporary, "CODEX_CLI_PATH": ""}), patch(
-                "packet_inspector.image_config.shutil.which", return_value=None):
+                "packet_inspector.codex_runtime.shutil.which", return_value=None):
             self.assertIsNone(find_codex_cli())
 
 
@@ -214,7 +217,7 @@ class ImageConfigurationTests(unittest.TestCase):
     def test_failed_enable_rolls_back_both_files(self):
         before = self.config.read_bytes()
         with self.assertRaisesRegex(RuntimeError, "settings failed"):
-            with patch("packet_inspector.image_config.shutil.which", return_value="fake"), patch.object(
+            with patch("packet_inspector.codex_runtime.shutil.which", return_value="fake"), patch.object(
                     self.manager, "_validate"), self.manager.change(True):
                 raise RuntimeError("settings failed")
         self.assertEqual(self.config.read_bytes(), before)
@@ -377,7 +380,7 @@ class ImageConfigurationTests(unittest.TestCase):
                 raise OSError("profile disk full")
             return original_write(link, text)
         with patch.object(ConfigLink, "_write", new=write), patch(
-                "packet_inspector.image_config.shutil.which", return_value="fake"), self.assertRaises(OSError):
+                "packet_inspector.codex_runtime.shutil.which", return_value="fake"), self.assertRaises(OSError):
             with self.manager.change(True):
                 pass
         self.assertEqual(self.config.read_bytes(), before)
@@ -387,7 +390,7 @@ class ImageConfigurationTests(unittest.TestCase):
         before = self.config.read_bytes()
         profile_before = b'model_reasoning_effort="low"\r\n'
         self.manager.profile_path.write_bytes(profile_before)
-        with patch("packet_inspector.image_config.shutil.which", return_value="fake"), patch.object(
+        with patch("packet_inspector.codex_runtime.shutil.which", return_value="fake"), patch.object(
                 self.manager, "_validate", side_effect=ValueError("unsupported CLI")), self.assertRaises(ValueError):
             with self.manager.change(True):
                 pass
@@ -583,7 +586,7 @@ class ImageRelayTests(unittest.TestCase):
             self.assertEqual(self.api("/api/settings", restore)[0], 200)
 
     def enable(self):
-        with patch("packet_inspector.image_config.shutil.which", return_value="fake-codex"), patch.object(self.server.image_config, "_validate"):
+        with patch("packet_inspector.codex_runtime.shutil.which", return_value="fake-codex"), patch.object(self.server.image_config, "_validate"):
             status, result = self.api("/api/settings", {"image_isolation_enabled": True})
         self.assertEqual(status, 200)
         return result
@@ -721,7 +724,7 @@ class ImageRelayTests(unittest.TestCase):
 
     def test_failed_settings_write_restores_config_and_state(self):
         config_before = self.config.read_bytes()
-        with patch("packet_inspector.image_config.shutil.which", return_value="fake"), patch.object(self.server.image_config, "_validate"), patch.object(
+        with patch("packet_inspector.codex_runtime.shutil.which", return_value="fake"), patch.object(self.server.image_config, "_validate"), patch.object(
                 self.server, "save_settings", side_effect=OSError("disk full")):
             self.assertEqual(self.api("/api/settings", {"image_isolation_enabled": True})[0], 500)
         self.assertEqual(self.config.read_bytes(), config_before)
@@ -730,7 +733,7 @@ class ImageRelayTests(unittest.TestCase):
 
     def test_combined_settings_failure_restores_native_and_mcp_config(self):
         config_before, settings_before = self.config.read_bytes(), self.server.settings_path.read_bytes()
-        with patch("packet_inspector.image_config.shutil.which", return_value="fake"), patch.object(self.server.image_config, "_validate"), patch(
+        with patch("packet_inspector.codex_runtime.shutil.which", return_value="fake"), patch.object(self.server.image_config, "_validate"), patch(
                 "packet_inspector.server.configure_startup", side_effect=ValueError("startup failed")):
             self.assertEqual(self.api("/api/settings", {"image_isolation_enabled": True, "start_on_login": True})[0], 400)
         self.assertEqual(self.config.read_bytes(), config_before)

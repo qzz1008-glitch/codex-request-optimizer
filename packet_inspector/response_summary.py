@@ -5,15 +5,14 @@ import json
 import re
 
 from .analyzer import KEY_PATTERN, clean_text, encode
+from .response_events import EVENT_BOUNDARY as BOUNDARY, decode_sse, response_media_type, TERMINAL_STATUSES
 
 MAX_EVENT_BYTES = 4 * 1024 * 1024
 MAX_TEXT = 500
 MAX_TOOLS = 8
 MAX_SUMMARY_BYTES = 4096
-BOUNDARY = re.compile(br"\r?\n\r?\n")
 CREDENTIALS = re.compile(KEY_PATTERN.pattern, re.I | re.ASCII)
-TERMINALS = {"response.completed": "completed", "response.failed": "failed",
-             "response.incomplete": "incomplete", "response.cancelled": "cancelled"}
+TERMINALS = TERMINAL_STATUSES
 
 
 def safe_text(value):
@@ -23,9 +22,7 @@ def safe_text(value):
 
 class ResponseSummary:
     def __init__(self, response):
-        self.mode = response.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
-        if self.mode.startswith("application/") and self.mode.endswith("+json"):
-            self.mode = "application/json"
+        self.mode = response_media_type(response.headers)
         self.enabled = response.headers.get("Content-Encoding", "identity").lower() in {"", "identity"} and self.mode in {
             "", "text/event-stream", "application/json"}
         self.pending = bytearray()
@@ -119,18 +116,10 @@ class ResponseSummary:
             self._item(item, text=not self.have_delta and kind.endswith(".done"))
 
     def _frame(self, data):
-        lines = data.removeprefix(b"\xef\xbb\xbf").splitlines()
-        body = b"\n".join(line[5:].lstrip(b" ") for line in lines if line.startswith(b"data:"))
-        if body and body != b"[DONE]":
-            try:
-                value = json.loads(body)
-                if isinstance(value, dict) and not value.get("type"):
-                    event = next((line[6:].strip() for line in lines if line.startswith(b"event:")), b"")
-                    if event:
-                        value = {**value, "type": event.decode("utf8")}
-                self._consume(value)
-            except (ValueError, UnicodeError):
-                self.observation_limited = True
+        try:
+            self._consume(decode_sse(data))
+        except (ValueError, UnicodeError):
+            self.observation_limited = True
 
     def feed(self, chunk):
         if not self.enabled:

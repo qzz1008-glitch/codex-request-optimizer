@@ -66,6 +66,14 @@ class TokenWindowTests(unittest.TestCase):
             db.execute("CREATE TABLE threads (id TEXT)")
         self.assertEqual(self.reader.lookup(self.packet, 103)["input_tokens"], 40000)
 
+    def test_more_than_three_database_revisions_do_not_hide_native_usage(self):
+        self.write(event())
+        for revision in range(6, 10):
+            with closing(sqlite3.connect(self.home / f"state_{revision}.sqlite")) as db:
+                db.execute("CREATE TABLE threads (id TEXT,rollout_path TEXT)")
+        self.assertEqual(self.reader.lookup(self.packet, 103)["input_tokens"], 40000)
+        self.assertEqual(self.reader.latest(THREAD)["input_tokens"], 40000)
+
     def test_subagent_usage_survives_inherited_parent_headers(self):
         self.prefix.insert(1, {"type": "session_meta", "payload": {"id": "parent-session"}})
         self.write(event())

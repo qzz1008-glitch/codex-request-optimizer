@@ -16,6 +16,44 @@ from tests.test_token_window import THREAD, event
 
 
 class SessionSummaryTests(unittest.TestCase):
+    def test_new_partial_index_does_not_hide_threads_in_older_revisions(self):
+        other = "01a1592b-c6ab-7ab1-8c9b-8e74da992bcc"
+        for revision in range(6, 10):
+            with closing(sqlite3.connect(self.native / f"state_{revision}.sqlite")) as db:
+                db.execute("CREATE TABLE threads(id TEXT,name TEXT)")
+                if revision == 9:
+                    db.execute("INSERT INTO threads VALUES (?,?)", (other, "New schema thread"))
+                db.commit()
+        paths = list(self.native.glob("state_*.sqlite"))
+        before = {path: path.read_bytes() for path in paths}
+        labels = self.reader._labels([THREAD, other])
+        self.assertEqual(labels[THREAD]["title"], "会话名称")
+        self.assertEqual(labels[other]["title"], "New schema thread")
+        self.assertEqual({path: path.read_bytes() for path in paths}, before)
+
+    def test_newer_row_with_cleared_title_does_not_resurrect_old_name(self):
+        with closing(sqlite3.connect(self.native / "state_6.sqlite")) as db:
+            db.execute("CREATE TABLE threads(id TEXT,title TEXT)")
+            db.execute("INSERT INTO threads VALUES (?,NULL)", (THREAD,))
+            db.commit()
+        self.assertIsNone(self.reader._labels([THREAD])[THREAD]["title"])
+
+    def test_conflicting_parent_evidence_during_index_migration_stays_unavailable(self):
+        first = "01a1592b-c6ab-7ab1-8c9b-8e74da992bcc"
+        second = "01a1592b-c6ab-7ab1-8c9b-8e74da992bcd"
+        with closing(sqlite3.connect(self.native / "state_6.sqlite")) as db:
+            db.execute("CREATE TABLE threads(id TEXT,title TEXT)")
+            db.execute("CREATE TABLE thread_spawn_edges(child_thread_id TEXT,parent_thread_id TEXT)")
+            db.execute("INSERT INTO thread_spawn_edges VALUES (?,?)", (THREAD, first))
+            db.commit()
+        with closing(sqlite3.connect(self.native / "state_5.sqlite")) as db:
+            db.execute("ALTER TABLE threads ADD COLUMN source TEXT")
+            db.execute("UPDATE threads SET source=?", (json.dumps({"subagent": {"thread_spawn": {"parent_thread_id": second}}}),))
+            db.commit()
+        label = self.reader._labels([THREAD])[THREAD]
+        self.assertEqual(label["title"], "会话名称")
+        self.assertNotIn("parent_thread_id", label)
+
     def test_missing_title_and_timestamp_columns_do_not_hide_available_native_name(self):
         with closing(sqlite3.connect(self.native / "state_6.sqlite")) as db:
             db.execute("CREATE TABLE threads(id TEXT,name TEXT)")

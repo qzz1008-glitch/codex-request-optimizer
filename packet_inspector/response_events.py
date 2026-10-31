@@ -1,5 +1,6 @@
 """Read-only Responses event classification shared by rewriting and diagnostics."""
 
+import json
 import re
 
 MAX_OBSERVATION_BYTES = 1024 * 1024
@@ -10,9 +11,47 @@ CAPACITY_CODES = {"server_is_overloaded", "server_overloaded", "model_overloaded
 
 HANDSHAKE_EVENTS = {"response.created", "response.in_progress", "response.queued", "ping", "keepalive"}
 
-TERMINAL_EVENTS = {"response.completed", "response.failed", "response.incomplete", "error"}
+TERMINAL_STATUSES = {"response.completed": "completed", "response.failed": "failed",
+                     "response.incomplete": "incomplete", "response.cancelled": "cancelled"}
+TERMINAL_EVENTS = {*TERMINAL_STATUSES, "error"}
 
 EVENT_BOUNDARY = re.compile(br"\r?\n\r?\n")
+
+
+def response_media_type(headers):
+    kind = headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
+    return "application/json" if kind.startswith("application/") and kind.endswith("+json") else kind
+
+
+def sse_fields(frame):
+    """Read standard SSE fields, including multiline data and the last event name.
+
+    Callers bound the frame before parsing. Unknown fields remain untouched in
+    the original stream; this function only supplies an inspection copy.
+    """
+    data, name = [], ""
+    for line in frame.removeprefix(b"\xef\xbb\xbf").splitlines():
+        field, _, value = line.partition(b":")
+        value = value.removeprefix(b" ")
+        if field == b"data":
+            data.append(value)
+        elif field == b"event":
+            name = value.decode("utf8")
+    return b"\n".join(data), name
+
+
+def sse_payload(data, name=""):
+    if not data or data.strip() == b"[DONE]":
+        return None
+    value = json.loads(data)
+    if isinstance(value, dict) and "type" not in value and name:
+        value["type"] = name
+    return value
+
+
+def decode_sse(frame):
+    return sse_payload(*sse_fields(frame))
+
 
 def capacity_error(payload, *, include_output=False):
     if not isinstance(payload, dict):
@@ -76,7 +115,7 @@ def stream_event_class(payload):
     if isinstance(payload.get("error"), dict) or isinstance(kind, str) and kind in TERMINAL_EVENTS:
         return "terminal"
     status = payload.get("status")
-    if not kind and isinstance(status, str) and status in {"completed", "failed", "incomplete"}:
+    if not kind and isinstance(status, str) and status in TERMINAL_STATUSES.values():
         return "terminal"
     if not isinstance(kind, str):
         return "unknown"
