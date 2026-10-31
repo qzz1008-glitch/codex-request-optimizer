@@ -732,7 +732,10 @@ class Handler(BaseHTTPRequestHandler):
                         controller = self.server.sharing if draft["kind"] == "quota" else self.server.egress
                         if draft["direction"] == "out" and data.get("enabled") is True:
                             controller.ensure_service()
-                        vault.update(data.get("id"), data, reset=reset)
+                        if draft["direction"] == "in":
+                            self.server.sharing.rename_credential(draft["id"], draft["label"])
+                        else:
+                            vault.update(data.get("id"), data, reset=reset)
                         if draft["direction"] == "out" and not any(row["kind"] == draft["kind"] and row["direction"] == "out"
                                    and row["enabled"] and not row["expired"] for row in vault.rows()):
                             if draft["kind"] == "quota":
