@@ -85,13 +85,14 @@ class UpgradeWindowTests(unittest.TestCase):
             for language in ("zh", "en"):
                 with self.subTest(scale=scale, language=language):
                     self.window.tk.call("tk", "scaling", scale * 96 / 72)
-                    view = UpgradeWindow(self.window, 6, language, "v0.7.9", "v0.8.0")
+                    view = UpgradeWindow(self.window, 6, language, "v0.8.0 · abcdef01", "v0.8.0 · 23456789")
                     self.window.update_idletasks()
                     for success in (False, True):
                         view.finish(success, "fixture")
                         self.window.update_idletasks()
                         self.assertLessEqual(view.heading.winfo_reqwidth(), view.u(480))
                     self.assertLessEqual(view.close_button.master.winfo_reqwidth(), view.u(480))
+                    self.assertLessEqual(view.version_label.master.winfo_reqwidth(), view.u(480))
                     # Height can grow to accommodate the native font rather than clipping controls.
                     self.assertLessEqual(self.window.winfo_reqheight(), view.u(440))
                     for child in self.window.winfo_children():
@@ -99,6 +100,29 @@ class UpgradeWindowTests(unittest.TestCase):
 
 
 class UpgradeWindowMetadataTests(unittest.TestCase):
+    def test_same_version_displays_distinct_current_and_target_builds(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            identity, current, target = "a" * 32, "1" * 64, "2" * 64
+            (root / "runtime.json").write_text(json.dumps({"version": "0.8.0", "worker_id": identity}), encoding="utf8")
+            workers = root / "router-workers"
+            workers.mkdir()
+            (workers / (identity + ".json")).write_text(json.dumps({"id": identity,
+                "executable": str(root / "bin" / "versions" / current / "CodexPacketInspector.exe")}), encoding="utf8")
+            (root / "manifest.json").write_text(json.dumps({"version": "0.8.0",
+                "sha256": {"CodexPacketInspector.exe": target}}), encoding="utf8")
+            self.assertEqual(window_metadata(SimpleNamespace(data_dir=root, payload=root)),
+                             ("zh", "v0.8.0 · 11111111", "v0.8.0 · 22222222"))
+
+    def test_invalid_build_metadata_is_omitted_from_version_labels(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            (root / "runtime.json").write_text(json.dumps({"version": "0.8.0", "worker_id": "../outside"}), encoding="utf8")
+            for hashes in ([], {"CodexPacketInspector.exe": "unexpected\ntext"}):
+                (root / "manifest.json").write_text(json.dumps({"version": "0.8.0", "sha256": hashes}), encoding="utf8")
+                self.assertEqual(window_metadata(SimpleNamespace(data_dir=root, payload=root)),
+                                 ("zh", "v0.8.0", "v0.8.0"))
+
     def test_uses_saved_language_and_both_versions_without_requiring_a_service(self):
         with tempfile.TemporaryDirectory() as name:
             root = Path(name)
