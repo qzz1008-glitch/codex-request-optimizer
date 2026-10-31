@@ -655,7 +655,19 @@ class Handler(BaseHTTPRequestHandler):
                 data = json.loads(self._body(8192))
                 if not isinstance(data, dict):
                     raise ValueError("invalid worker control")
-                if data.get("action") == "stop":
+                if data.get("action") == "restart":
+                    with self.server.maintenance_guard, self.server.guard:
+                        expected = data.get("expected_pid")
+                        if (type(expected) is not int or expected != os.getpid()
+                                or self.server.worker_state != "active" or self.server.upgrade_draining):
+                            self._json(409, {"error": "restart_target_changed"})
+                            return
+                        # Explicit tray confirmation permits interrupting requests.
+                        # The existing fixed entry starts the same registered worker.
+                        self.server.upgrade_draining = True
+                    self._json(200, {"restarting": True})
+                    threading.Thread(target=self.server.shutdown, daemon=True).start()
+                elif data.get("action") == "stop":
                     with self.server.guard:
                         if self.server.active_requests:
                             self._json(409, {"error": "requests_in_flight"})

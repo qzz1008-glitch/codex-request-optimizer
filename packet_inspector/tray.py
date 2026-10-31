@@ -75,10 +75,11 @@ def close_entry_tray(pid, executable):
 
 
 class NativeTray:
-    def __init__(self, open_window, exit_app, *, status_reader=None, show_panel=None):
+    def __init__(self, open_window, exit_app, *, status_reader=None, show_panel=None, restart_service=None):
         self.open_window, self.exit_app = open_window, exit_app
         self.status_reader = status_reader
         self.show_panel = show_panel
+        self.restart_service = restart_service
         self.ready = threading.Event()
         self.error = None
         self.hwnd = None
@@ -146,7 +147,8 @@ class NativeTray:
         english = status.get("language") == "en"
         return [(100, header, 0x3), (0, None, 0x800),
                 (101, recorded, 0x3), (102, protected, 0x3), (103, context, 0x3), (0, None, 0x800),
-                (1, "Open main window" if english else "打开主窗口", 0), (0, None, 0x800),
+                (1, "Open main window" if english else "打开主窗口", 0),
+                (3, "Restart service" if english else "重启服务", 0 if self.restart_service else 0x3), (0, None, 0x800),
                 (2, "Exit" if english else "退出程序", 0)]
 
     def _refresh_menu(self):
@@ -239,8 +241,8 @@ class NativeTray:
             self._menu_open, self._menu, self._menu_text = False, None, {}
             user.DestroyMenu(menu)
         user.PostMessageW(hwnd, 0, 0, 0)
-        if selection in (1, 2):
-            callback = self.open_window if selection == 1 else self.exit_app
+        callback = {1: self.open_window, 2: self.exit_app, 3: self.restart_service}.get(selection)
+        if callback is not None:
             threading.Thread(target=callback, daemon=True).start()
 
     def _run(self):

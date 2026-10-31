@@ -59,6 +59,10 @@ def main(argv=None):
                 except OSError:
                     ctypes.windll.user32.MessageBoxW(0, "无法打开退出确认，中转服务继续运行。请稍后重试。", "Codex 请求优化器", 0x40)
 
+            def restart_service():
+                from packet_inspector.service_restart import restart_from_tray
+                return restart_from_tray(options.data_dir)
+
             panel_launch_guard = threading.Lock()
             panel_process = None
             def prepare_panel():
@@ -80,7 +84,7 @@ def main(argv=None):
                 return False
 
             tray = NativeTray(open_window, exit_app, status_reader=server.tray_status,
-                              show_panel=show_panel).start()
+                              show_panel=show_panel, restart_service=restart_service).start()
             server.desktop_tray = True
             def warm_panel():
                 try:

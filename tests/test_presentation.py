@@ -67,7 +67,8 @@ class PresentationTests(unittest.TestCase):
         self.server.worker_state = "active"
         self.presentation.reconcile()
         self.factory.assert_called_once_with(self.presentation._open_window, self.presentation._exit,
-                                             status_reader=self.server.tray_status, show_panel=self.presentation._show_panel)
+                                             status_reader=self.server.tray_status, show_panel=self.presentation._show_panel,
+                                             restart_service=self.presentation._restart_service)
         self.retire.assert_called_once()
 
     def test_old_tray_stays_until_the_next_tray_commits_and_survives_rollback(self):

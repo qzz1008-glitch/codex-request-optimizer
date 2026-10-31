@@ -18,7 +18,7 @@ Browse requests by session to understand what was sent, how much space it used, 
 - Analyze the size of messages, tool outputs, reasoning, and other components, and compare successive requests in a session.
 - Browse structured request JSON, search it, navigate to a path, and download a redacted copy.
 - Select and copy text, with valid selections preserved across live refreshes and sorting.
-- Right-click the tray icon to open a white panel showing connection status, retained request count / time range / session count, requests that triggered protection, and average input tokens before compaction; statistics follow retained records. During cold-start warmup, a native menu keeps the open-window and exit actions available.
+- Right-click the tray icon to open a white panel showing connection status, retained request count / time range / session count, requests that triggered protection, and average input tokens before compaction; statistics follow retained records. A native menu is used during cold-start warmup. Both menus can open the main window, restart the service, or exit. Restarting requires confirmation and briefly interrupts forwarding while preserving configuration and connection state.
 
 ### 📈 Trends and historical browsing
 
