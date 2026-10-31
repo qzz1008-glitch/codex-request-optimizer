@@ -24,7 +24,7 @@ Capacity retries handle: `Selected model is at capacity. Please try a different 
 2. Click Connect and adjust compression, protection, and image options in Settings.
 3. Restart your Codex client when prompted. Later, check for updates in Settings or run a newer EXE to upgrade.
 
-Includes Chinese/English language switching, tray operation, and start on login. Upgrades preserve records and settings.
+Includes Chinese/English language switching, tray operation, and start on login. Upgrades preserve records and settings, automatically synchronize existing connections, and clearly prompt when a restart or attention is needed.
 
 Existing Codex configurations in WSL can also be connected as a validation feature. See the [usage guide](https://github.com/qzz1008-glitch/codex-request-optimizer/blob/main/docs/usage.md) for sharing, WSL, and other detailed instructions.
 
