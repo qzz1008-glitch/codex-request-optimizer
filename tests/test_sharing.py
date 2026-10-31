@@ -243,6 +243,7 @@ class LANSharingTests(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory()
         self.root = Path(self.temporary.name)
         self.received = []
+        self.get_received = []
         self.release_stream = threading.Event()
         self.stream_started = threading.Event()
         self.gate_stream = False
@@ -278,6 +279,7 @@ class LANSharingTests(unittest.TestCase):
                 self.wfile.flush()
 
             def do_GET(self):
+                fixture.get_received.append((self.path, dict(self.headers)))
                 body = b'{"models":[{"slug":"dummy-test-model"}]}'
                 self.send_response(200)
                 self.send_header('Content-Type', 'application/json')
@@ -350,11 +352,11 @@ class LANSharingTests(unittest.TestCase):
         with response:
             return response.status, response.read()
 
-    def request_guest(self, path="/responses", headers=None, content="dummy prompt", guest=None):
+    def request_guest(self, path="/responses", headers=None, content="dummy prompt", guest=None, raw_body=None):
         guest = guest or self.guest
         client = http.client.HTTPConnection("127.0.0.1", guest.port, timeout=HTTP_TIMEOUT)
         target = urlsplit(guest.sharing.client_endpoint).path
-        body = json.dumps({"model": "test", "input": [{"role": "user", "content": content}]}).encode()
+        body = raw_body if raw_body is not None else json.dumps({"model": "test", "input": [{"role": "user", "content": content}]}).encode()
         client.request("POST", target + path, body, {"Content-Type": "application/json", **(headers or {})})
         return client, client.getresponse(), body
 
@@ -971,9 +973,10 @@ class LANSharingTests(unittest.TestCase):
         link = self.start()
         self.assertEqual(self.remote_request(link)[0], 200)
         self.assertEqual(self.remote_request(link, grant=False)[0], 403)
-        for path in ("/api/status", "/api/settings", "/v1/responses/other", "/v1/responses?url=https://example.invalid"):
+        for path in ("/api/status", "/api/settings", "/v1/responses/other", "/v1/unknown?url=https://example.invalid"):
             self.assertEqual(self.remote_request(link, path)[0], 404)
         self.assertEqual(self.remote_request(link, "/v1/responses")[0], 426)
+        self.assertEqual(self.remote_request(link, "/v1/responses?url=https://example.invalid")[0], 426)
         fresh = self.owner.sharing.rotate()["link"]
         self.assertEqual(self.remote_request(link)[0], 403)
         self.assertEqual(self.remote_request(fresh)[0], 200)
@@ -1066,6 +1069,92 @@ class LANSharingTests(unittest.TestCase):
                 self.assertEqual(decode_body(self.received[-1][2], encoding), expected)
         modes = [call.args[4] for call in prepare.call_args_list]
         self.assertEqual(modes, ['zstd', 'zstd'])
+
+    def test_native_request_matches_direct_upload_after_identity_substitution(self):
+        import zstandard
+        self.guest.sharing.connect(self.start())
+        self.guest.settings["packet_size_protection_enabled"] = False
+        original = b'{\n  "model":"test", "input":[], "future_native":{"ratio":1.00,"items":[true,null]}\n}\n'
+        wire = zstandard.ZstdCompressor(level=3).compress(original)
+        native = {"Content-Type": "application/json", "Content-Encoding": "zstd",
+                  "User-Agent": "codex_app_windows/native-test", "Originator": "codex_app_windows",
+                  "OpenAI-Beta": "native-test", "Session_id": "native-session",
+                  "X-Codex-Turn-State": "opaque-turn-state", "X-Codex-Future-Protocol": "opaque-future"}
+        for suffix in ("/responses?future=1&hint=a%2Fb&hint=c", "/responses/compact?future=next"):
+            with self.subTest(suffix=suffix):
+                direct = http.client.HTTPConnection("127.0.0.1", self.upstream.server_port, timeout=HTTP_TIMEOUT)
+                try:
+                    direct.request("POST", suffix, wire, {**native, "Authorization": "Bearer dummy-owner-secret",
+                                                         "ChatGPT-Account-Id": "dummy-owner-id"})
+                    direct.getresponse().read()
+                finally:
+                    direct.close()
+                client, response, _ = self.request_guest(suffix, headers={**native,
+                    "Authorization": "Bearer dummy-guest-secret", "ChatGPT-Account-Id": "dummy-guest-id",
+                    "Cookie": "guest-cookie", "OpenAI-Project": "guest-project"}, raw_body=wire)
+                try:
+                    self.assertEqual(response.status, 200)
+                    response.read()
+                finally:
+                    client.close()
+                wait_for_idle(self.owner, self.guest)
+                direct_path, direct_headers, direct_body = self.received[-2]
+                shared_path, shared_headers, shared_body = self.received[-1]
+                self.assertEqual((shared_path, shared_body), (direct_path, direct_body))
+                normalized = lambda values: {k.lower(): v for k, v in values.items() if k.lower() != "connection"}
+                self.assertEqual(normalized(shared_headers), normalized(direct_headers))
+
+    def test_native_response_extensions_survive_both_sharing_relays(self):
+        self.guest.sharing.connect(self.start())
+        self.direct_response = b'{"id":"native-response", "future":{"ratio":1.00}, "usage":{"input_tokens":37,"output_tokens":2,"total_tokens":39}}'
+        self.extra_response_headers = {"Content-Length": str(len(self.direct_response)),
+            "X-Codex-Future-Protocol": "opaque-next-state", "X-Codex-Primary-Used-Percent": "17.5",
+            "Retry-After": "9", "ChatGPT-Account-Id": "owner-private", "Authorization": "owner-private",
+            "Connection": "X-Hop-Private", "X-Hop-Private": "private"}
+        client, response, _ = self.request_guest()
+        try:
+            self.assertEqual(response.status, 200)
+            self.assertEqual(response.read(), self.direct_response)
+            self.assertEqual(response.getheader("X-Codex-Future-Protocol"), "opaque-next-state")
+            self.assertEqual(response.getheader("X-Codex-Primary-Used-Percent"), "17.5")
+            self.assertEqual(response.getheader("Retry-After"), "9")
+            for name in ("Authorization", "ChatGPT-Account-Id", "Set-Cookie", "X-Hop-Private"):
+                self.assertIsNone(response.getheader(name))
+        finally:
+            client.close()
+
+    def test_model_query_preserves_native_accept_encoding(self):
+        self.guest.sharing.connect(self.start())
+        client = http.client.HTTPConnection("127.0.0.1", self.guest.port, timeout=HTTP_TIMEOUT)
+        suffix = "/models?client_version=next&hint=a%2Fb"
+        try:
+            client.request("GET", urlsplit(self.guest.sharing.client_endpoint).path + suffix,
+                           headers={"Accept-Encoding": "gzip, zstd", "X-Codex-Future-Protocol": "opaque"})
+            response = client.getresponse()
+            self.assertEqual(response.status, 200)
+            response.read()
+        finally:
+            client.close()
+        path, headers = self.get_received[-1]
+        headers = {key.lower(): value for key, value in headers.items()}
+        self.assertEqual(path, suffix)
+        self.assertEqual(headers["accept-encoding"], "gzip, zstd")
+        self.assertEqual(headers["x-codex-future-protocol"], "opaque")
+
+    def test_websocket_probe_query_still_returns_native_http_fallback(self):
+        link = self.start()
+        self.guest.sharing.connect(link)
+        suffix = "/responses?native_probe=next"
+        self.assertEqual(self.remote_request(link, "/v1" + suffix)[0], 426)
+        client = http.client.HTTPConnection("127.0.0.1", self.guest.port, timeout=HTTP_TIMEOUT)
+        try:
+            client.request("GET", urlsplit(self.guest.sharing.client_endpoint).path + suffix)
+            response = client.getresponse()
+            self.assertEqual(response.status, 426)
+            response.read()
+        finally:
+            client.close()
+        self.assertEqual(self.received, [])
 
     def test_host_usage_is_true_upstream_usage_before_guest_predictive_rewrite(self):
         self.completion = self.completion.replace(b'"status":"completed"', b'"status":"completed","model":"gpt-6.1-sol"')

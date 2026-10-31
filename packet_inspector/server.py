@@ -1275,7 +1275,8 @@ class Handler(BaseHTTPRequestHandler):
         remote = None
         if shared_client:
             if not sharing_request_allowed(self.command, suffix):
-                if self.command == "GET" and suffix == "/responses":
+                if (self.command == "GET" and sharing_request_allowed("POST", suffix)
+                        and urlsplit(suffix).path == "/responses"):
                     self._json(426, {"error": {"code": "websocket_not_supported", "message": "Use HTTP POST."}})
                 else:
                     self._json(404, {"error": "sharing_route_not_found"})
