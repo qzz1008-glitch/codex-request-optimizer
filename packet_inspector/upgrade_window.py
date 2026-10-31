@@ -70,11 +70,30 @@ def window_metadata(engine):
         except (OSError, ValueError):
             return {}
 
-    def version(value):
-        return "v" + value if isinstance(value, str) and len(value) <= 64 and re.fullmatch(r"\d+\.\d+\.\d+[\w.+-]{0,32}", value) else ""
+    def version(value, build=None):
+        if not isinstance(value, str) or len(value) > 64 or not re.fullmatch(r"\d+\.\d+\.\d+[\w.+-]{0,32}", value):
+            return ""
+        suffix = " · " + build[:8] if isinstance(build, str) and re.fullmatch(r"[0-9a-f]{64}", build) else ""
+        return "v" + value + suffix
 
     language = "en" if read(engine.data_dir / "settings.json").get("ui_language") == "en" else "zh"
-    return language, version(read(engine.data_dir / "runtime.json").get("version")), version(read(engine.payload / "manifest.json").get("version"))
+    runtime, manifest = read(engine.data_dir / "runtime.json"), read(engine.payload / "manifest.json")
+    current_build = None
+    identity = runtime.get("worker_id")
+    if isinstance(identity, str) and re.fullmatch(r"[0-9a-f]{32}", identity):
+        worker = read(engine.data_dir / "router-workers" / (identity + ".json"))
+        executable = worker.get("executable")
+        if worker.get("id") == identity and isinstance(executable, str) and executable:
+            try:
+                # Managed version directories are named after their verified EXE hash.
+                path = Path(executable).resolve()
+                if path.is_relative_to((engine.data_dir / "bin" / "versions").resolve()):
+                    current_build = path.parent.name
+            except (OSError, ValueError):
+                pass
+    hashes = manifest.get("sha256")
+    target_build = hashes.get("CodexPacketInspector.exe") if isinstance(hashes, dict) else None
+    return language, version(runtime.get("version"), current_build), version(manifest.get("version"), target_build)
 
 
 def _work_area(window):

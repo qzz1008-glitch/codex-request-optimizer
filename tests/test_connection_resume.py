@@ -83,6 +83,20 @@ class ConnectionResumeTests(unittest.TestCase):
         self.assertFalse(self.resume.status()["result"]["reload_required"])
         self.assertEqual(before, (self.config.read_bytes(), self.backend.config_path.read_bytes()))
 
+    def test_wsl_pending_changes_are_separate_and_sticky_reload_does_not_recreate_them(self):
+        self.connected()
+        notice = self.server.restart_notices.snapshot()
+        self.server.restart_notices.acknowledge("chatgpt", notice["revision"])
+        self.resume.step()
+        result = self.resume.status()["result"]
+        self.assertFalse(result["local_reload_required"])
+        self.assertEqual({row["target"] for row in result["restart_notice"]["items"]}, {"wsl"})
+        self.server.restart_notices.acknowledge("wsl", result["restart_notice"]["revision"])
+        self.resume.schedule()
+        self.resume.step()
+        self.assertTrue(self.resume.status()["result"]["reload_required"], "Legacy flags may remain set")
+        self.assertEqual(self.resume.status()["result"]["restart_notice"]["items"], [])
+
     def test_probe_failure_is_reported_and_retry_recovers_without_toggling_connection(self):
         self.connected()
         self.backend.probe_error = "relay_unreachable"
