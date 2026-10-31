@@ -94,7 +94,8 @@
 .sharing-row-status[data-state=disabled]{color:var(--muted)}
 .sharing-row-status[data-state=disabled] .sharing-cell-value{color:var(--muted);background:color-mix(in srgb,var(--muted) 7%,var(--panel));border-color:color-mix(in srgb,var(--muted) 22%,var(--line))}
 .sharing-row-status .sharing-cell-value:hover{filter:brightness(.96)}
-.sharing-expiry-cell{display:inline-flex;align-items:center}
+.sharing-expiry-cell{display:inline-flex;align-items:center;width:calc(10ch + 16px)}
+.sharing-table .sharing-expiry-trigger{display:inline-flex;align-items:center;justify-content:space-between;width:100%;text-align:left}
 .sharing-budget-cell{min-height:25px}.sharing-budget-progress{display:block;appearance:none;border:0;border-radius:3px;background:var(--line);width:100%;height:3px;margin:5px 0 0;overflow:hidden;--sharing-progress-color:var(--accent)}
 .sharing-budget-progress[data-full=true]{--sharing-progress-color:var(--danger)}.sharing-budget-progress::-webkit-progress-bar{background:var(--line);border-radius:3px}.sharing-budget-progress::-webkit-progress-value{background:var(--sharing-progress-color);border-radius:3px}.sharing-budget-progress::-moz-progress-bar{background:var(--sharing-progress-color);border-radius:3px}
 .sharing-table tr.current td:first-child strong{color:var(--accent)}.sharing-row-actions{gap:4px;flex-wrap:nowrap}
