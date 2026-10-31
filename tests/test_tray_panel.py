@@ -251,9 +251,9 @@ class TrayPanelTests(unittest.TestCase):
 
     def test_restart_dismisses_the_panel_and_uses_the_fixed_confirmation_action(self):
         self.load()
-        with patch("packet_inspector.service_restart.restart_from_tray", return_value={"ok": True, "cancelled": True}) as restart:
-            self.assertEqual(PanelAPI(self.panel).restart_service(), {"ok": True, "cancelled": True})
-            restart.assert_called_once_with(self.root)
+        with patch("packet_inspector.service_restart.restart_from_tray", return_value={"ok": True, "requested": True}) as restart:
+            self.assertEqual(PanelAPI(self.panel).restart_service(), {"ok": True, "requested": True})
+            restart.assert_called_once_with(self.root, self.open_main)
         self.assertFalse(self.panel.visible)
         self.open_main.assert_not_called()
 
