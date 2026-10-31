@@ -32,6 +32,8 @@ ENGLISH = {
     "新版服务已就绪，正在准备切换…": "The new service is ready. Preparing the handover…",
     "正在更新桌面窗口，固定入口继续转发…": "Updating the desktop window. The relay entry remains available…",
     "新版已就绪，正在切换新请求；旧请求继续完成…": "Switching new requests. Existing requests continue to completion…",
+    "正在交接额度与网络共享，已有连接继续完成…": "Handing over quota and network sharing. Existing connections continue…",
+    "当前运行版本不支持共享无缝交接，已保留当前服务。请先停止共享或断开借入，再升级一次。": "This running version cannot hand over sharing without interruption. The service was preserved. Stop sharing and disconnect borrowed connections before this one-time update.",
     "正在更新托盘、快捷方式和启动入口…": "Refreshing the tray, shortcuts and startup entry…",
     "正在关闭旧版优化器窗口，中转继续运行…": "Closing the previous window. The relay remains running…",
     "首次安装固定入口，正在等待旧服务空闲…": "Installing the stable entry. Waiting for existing requests to finish…",

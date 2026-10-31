@@ -177,7 +177,7 @@ class SharedEgress:
                          "fingerprint": fingerprint,
                          "connections": 0, "in_flight": 0, "sent_bytes": 0, "received_bytes": 0}
             self.listener = listener
-            threading.Thread(target=listener.serve_forever, name="codex-shared-exit", daemon=True).start()
+            listener.start()
 
     def issue(self, *, label="", expires_at=None, address=None, port=None, internal=False, issued_at=None):
         from .sharing_credentials import expiration
@@ -243,7 +243,7 @@ class SharedEgress:
             self.callback_link = ""
             self.host.pop("grant_hash", None)
         if listener:
-            listener.shutdown()
+            listener.pause()
             listener.server_close()
         return self.status()
 
