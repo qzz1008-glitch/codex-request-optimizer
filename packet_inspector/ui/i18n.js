@@ -44,7 +44,7 @@ const uiI18n = (() => {
     "保存凭据":"Save credential",
     "使用本机额度":"Use local quota",
     "请选择本机出口或借入出口。":"Choose this computer's exit or a borrowed exit.",
-    "借入出口未就绪，请重新借入出口或选择本机出口。":"The borrowed exit is not ready. Reconnect it or choose this computer's exit.",
+    "借入出口未就绪，请重新启用或停用该凭据。":"The borrowed exit is not ready. Enable the credential again or disable it.",
     "共享出口信息不完整，请更新借用方软件后重试。":"The shared exit information is incomplete. Update the borrowing client and try again.",
     "此出口凭据已绑定其他机器，请使用独立凭据。":"This exit credential is bound to another computer. Use a separate credential.",
     "此额度凭据已绑定其他机器，请使用独立凭据。":"This quota credential is bound to another computer. Use a separate credential.",

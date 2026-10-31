@@ -60,7 +60,7 @@ globalThis.InspectorSharing=(()=>{
       </form>
       <form id="${kind}-borrow" class="sharing-form" hidden><label>${label("名称")}<input id="${kind}-borrow-label" maxlength="80" required autocomplete="off"></label><label>${label("凭据")}<input id="${kind}-borrow-link" type="password" autocomplete="off" spellcheck="false" required placeholder="${kind==="quota"?"codex-share":"codex-exit"}://…"></label></form>
       <div class="sharing-actions"><button class="primary sharing-copy-button" type="submit" form="${kind}-issue" id="${kind}-generate">${label("生成凭据")}</button><button class="primary" type="submit" form="${kind}-borrow" id="${kind}-activate" hidden>${label("保存凭据")}</button></div>
-      ${kind==="quota"?`<button id="quota-local" class="sharing-local" type="button" data-action="local" data-kind="quota">${label("使用本机额度")}</button>`:`<div id="exit-local" class="sharing-exit-source"><button type="button" data-action="local" data-kind="exit">${label("本机出口")}</button></div>`}
+      ${kind==="quota"?`<button id="quota-local" class="sharing-local" type="button" data-action="local" data-kind="quota">${label("使用本机额度")}</button>`:""}
     </div>`;
   }
   for(const kind of ["quota","exit"])get(kind+"-config").innerHTML=card(kind);
@@ -181,7 +181,7 @@ globalThis.InspectorSharing=(()=>{
     get(kind+"-credential-count").textContent=number(rows.length);
     get(kind+"-table-head").innerHTML=`<tr>${(quota?["凭据名称","已用 / 额度","累计用量","期限","每周刷新","状态","操作"]:["凭据名称","上传 / 下载流量","连接次数","期限","状态","操作"]).map(value=>`<th${["凭据名称","期限","每周刷新","状态","操作"].includes(value)?` class="sharing-column-compact${value==="状态"?" sharing-column-status":""}"`:""}>${label(value)}</th>`).join("")}</tr>`;
     get(kind+"-credential-rows").innerHTML=rows.map(row=>{const d=data(row),out=row.direction==="out";
-      return `<tr class="${[isActive(row)?"current":"",recentId===row.id?"sharing-recent":""].filter(Boolean).join(" ")}" data-credential-id="${esc(row.id)}"><td>${fieldValue(row,"label",`<strong title="${esc(row.label)}">${esc(row.label)}</strong>`)}</td><td>${quota?quotaUsage(row):`<span class="sharing-value sharing-upload" title="${esc(bytes(d.totals?.sent_bytes))}">${esc(bytes(d.totals?.sent_bytes))}</span><span class="sharing-value-separator"> / </span><span class="sharing-value sharing-download" title="${esc(bytes(d.totals?.received_bytes))}">${esc(bytes(d.totals?.received_bytes))}</span>`}</td><td>${esc(quota?money(d.totals?.cost_nanos,[row]):number(d.totals?.requests))}</td><td><span class="sharing-expiry-cell">${fieldValue(row,"expires_at",esc(d.expires_at===undefined?"—":date(d.expires_at)))}</span></td>${quota?`<td class="sharing-weekly-cell">${weeklyValue(row)}</td>`:""}<td class="sharing-row-status">${out?`<button type="button" class="sharing-cell-value" data-action="toggle" data-id="${row.id}" data-state="${d.expired||d.exhausted?"warn":lending(row)?"enabled":"disabled"}" title="${label(lending(row)?"停用":"启用")}">${label(status(row))}</button>`:label(status(row))}</td><td><div class="sharing-row-actions">${out?`<button type="button" id="sharing-copy-${row.id}" class="sharing-copy-button" data-action="copy" data-id="${row.id}" title="${label("复制凭据")}" aria-label="${label("复制凭据")}">${label("凭据")}</button>`:`<button type="button" data-action="use" data-id="${row.id}" ${isActive(row)?"disabled":""}>${label(isActive(row)?"使用中":"使用")}</button>`}<button type="button" class="sharing-row-delete" data-action="delete" data-id="${row.id}" title="${label("删除凭据")}">${label("删除")}</button></div></td></tr>`;
+      return `<tr class="${[isActive(row)?"current":"",recentId===row.id?"sharing-recent":""].filter(Boolean).join(" ")}" data-credential-id="${esc(row.id)}"><td>${fieldValue(row,"label",`<strong title="${esc(row.label)}">${esc(row.label)}</strong>`)}</td><td>${quota?quotaUsage(row):`<span class="sharing-value sharing-upload" title="${esc(bytes(d.totals?.sent_bytes))}">${esc(bytes(d.totals?.sent_bytes))}</span><span class="sharing-value-separator"> / </span><span class="sharing-value sharing-download" title="${esc(bytes(d.totals?.received_bytes))}">${esc(bytes(d.totals?.received_bytes))}</span>`}</td><td>${esc(quota?money(d.totals?.cost_nanos,[row]):number(d.totals?.requests))}</td><td><span class="sharing-expiry-cell">${fieldValue(row,"expires_at",esc(d.expires_at===undefined?"—":date(d.expires_at)))}</span></td>${quota?`<td class="sharing-weekly-cell">${weeklyValue(row)}</td>`:""}<td class="sharing-row-status">${out?`<button type="button" class="sharing-cell-value" data-action="toggle" data-id="${row.id}" data-state="${d.expired||d.exhausted?"warn":lending(row)?"enabled":"disabled"}" title="${label(lending(row)?"停用":"启用")}">${label(status(row))}</button>`:label(status(row))}</td><td><div class="sharing-row-actions">${out?`<button type="button" id="sharing-copy-${row.id}" class="sharing-copy-button" data-action="copy" data-id="${row.id}" title="${label("复制凭据")}" aria-label="${label("复制凭据")}">${label("凭据")}</button>`:`<button type="button" data-action="use" data-id="${row.id}" ${quota&&isActive(row)?"disabled":""}>${label(quota?(isActive(row)?"使用中":"使用"):(isActive(row)?"停用":"启用"))}</button>`}<button type="button" class="sharing-row-delete" data-action="delete" data-id="${row.id}" title="${label("删除凭据")}">${label("删除")}</button></div></td></tr>`;
     }).join("");
     get(kind+"-empty").hidden=rows.length>0;
   }
@@ -194,8 +194,7 @@ globalThis.InspectorSharing=(()=>{
       for(const button of get("sharing-cards").querySelectorAll(`[data-view][data-kind="${kind}"]`))button.setAttribute("aria-pressed",String(button.dataset.view===views[kind]));
       get(kind+"-generate").disabled=busy||(kind==="quota"&&borrowing);get(kind+"-activate").disabled=busy||(kind==="quota"&&hosting);
     }
-    get("quota-local").hidden=!borrowing;get("quota-local").disabled=busy;get("exit-local").hidden=views.exit!=="in";
-    for(const button of get("exit-local").querySelectorAll("button")){button.disabled=busy;button.setAttribute("aria-pressed",String(button.dataset.action===value.egress?.selection?.mode));}
+    get("quota-local").hidden=!borrowing;get("quota-local").disabled=busy;
     for(const kind of ["quota","exit"])renderList(kind);
     if(recentScroll){const row=get("sharing-cards").querySelector(`[data-credential-id="${recentId}"]`);if(row){row.scrollIntoView({block:"nearest",inline:"nearest"});recentScroll=false;}}
     if(busy)for(const kind of ["quota","exit"])for(const input of get(kind+"-credential-rows").querySelectorAll("button,input,select"))input.disabled=true;
@@ -370,13 +369,13 @@ globalThis.InspectorSharing=(()=>{
   }
   get("sharing-cards").addEventListener("click",async event=>{const button=event.target.closest("[data-view],[data-action]");if(!button||busy)return;const {kind,view,action:command}=button.dataset;
     if(view){closeInline(false);views[kind]=view;if(current)render(current);return;}
-    if(command==="local"){await action(button,kind==="quota"?{action:"client_disconnect"}:{action:"egress_select",mode:"local"});return;}
+    if(command==="local"&&kind==="quota"){await action(button,{action:"client_disconnect"});return;}
     const row=(current?.credentials||[]).find(row=>row.id===button.dataset.id);if(!row)return;
     if(command==="weekly")return;
     if(command==="delete"){openDelete(row);return;}
     if(command==="field"){openInline(row,button.dataset.field,button);return;}if(editing)closeInline(false);if(command==="copy"){await action(button,{action:"credential_copy",id:row.id});return;}
     if(command==="toggle")await action(button,{action:"credential_edit",id:row.id,enabled:!lending(row)},null);
-    if(command==="use")await action(button,{action:"credential_use",kind:row.kind,id:row.id});
+    if(command==="use")await action(button,row.kind==="exit"&&isActive(row)?{action:"egress_select",mode:"local"}:{action:"credential_use",kind:row.kind,id:row.id});
   });
   get("sharing-cards").addEventListener("change",async event=>{
     const input=event.target;if(input.dataset.action!=="weekly")return;
