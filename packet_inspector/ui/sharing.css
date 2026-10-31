@@ -29,9 +29,12 @@
 .sharing-calendar-footer{display:flex;align-items:center;justify-content:space-between;padding-top:10px;border-top:1px solid var(--line)}.sharing-calendar-footer>button{min-height:27px;padding:4px 10px;font-size:12px}
 .sharing-expiry-trigger::after{content:"";display:inline-block;flex:none;width:5px;height:5px;margin-left:8px;border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;transform:translateY(-2px) rotate(45deg);opacity:.55}
 .sharing-actions,.sharing-row-actions,.sharing-exit-source{display:flex;gap:7px;flex-wrap:wrap;align-items:center}
-.sharing-check{flex-direction:row!important;align-items:center;gap:7px!important}.sharing-check input{width:14px;height:14px;margin:0}
-.sharing-budget-row{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:7px;min-width:0}
-.sharing-budget-row>label{display:inline-flex;flex-direction:row;align-items:center;margin:0;white-space:nowrap;font-size:12px;color:var(--muted)}.sharing-budget-row>.sharing-check{gap:5px!important;font-size:11px}
+.sharing-budget-row,.sharing-weekly-row{display:grid;grid-template-columns:auto minmax(0,1fr);align-items:center;gap:7px;min-width:0}
+.sharing-budget-row>label,.sharing-weekly-row>label{display:inline-flex;flex-direction:row;align-items:center;margin:0;white-space:nowrap;font-size:12px;color:var(--muted)}
+.sharing-weekly-select{box-sizing:border-box;min-width:0;min-height:34px;padding:6px 26px 6px 9px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--ink);font:inherit;font-size:12px;cursor:pointer}
+.sharing-weekly-select:disabled{cursor:default;opacity:.7}
+.sharing-weekly-cell .sharing-weekly-select{width:108px;min-height:26px;padding:3px 19px 3px 5px;font-size:11px;border-color:transparent;border-bottom-color:var(--line);border-radius:3px}
+.sharing-weekly-cell .sharing-weekly-select:hover:not(:disabled),.sharing-weekly-select:focus-visible{border-color:var(--accent);outline:none}
 .sharing-actions button{padding:6px 12px;min-height:32px;font-size:12px}
 .sharing-local{margin-top:12px;font-size:12px}.sharing-exit-source{margin-top:14px}
 .sharing-exit-source button{flex:1;font-size:12px;padding:5px 9px}.sharing-exit-source button[aria-pressed=true]{color:var(--accent);border-color:var(--accent)}
@@ -45,7 +48,7 @@
 .sharing-table td strong{display:inline-block;max-width:160px;overflow:hidden;text-overflow:ellipsis;vertical-align:middle;font-weight:600;font-size:12px}.sharing-table td small{display:inline;color:var(--muted);font-size:11px}.sharing-row-status{color:var(--muted)}
 .sharing-table .sharing-cell-value{display:inline;min-height:0;padding:0;border:0;border-radius:2px;background:transparent;color:inherit;font:inherit;line-height:inherit;vertical-align:baseline;text-decoration:underline dotted var(--line);text-underline-offset:3px;cursor:pointer}
 .sharing-table .sharing-cell-value:hover,.sharing-table .sharing-cell-value[aria-expanded=true]{color:var(--accent);text-decoration-color:currentColor}.sharing-cell-value:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
-.sharing-expiry-cell{display:inline-flex;align-items:center;gap:10px}.sharing-weekly-check{display:inline-flex;align-items:center;gap:4px;margin:0;color:var(--muted);font-size:11px;cursor:pointer}.sharing-weekly-check input{width:13px;height:13px;margin:0}.sharing-weekly-check:has(input:disabled){cursor:default}
+.sharing-expiry-cell{display:inline-flex;align-items:center}
 .sharing-budget-cell{min-width:112px;min-height:25px}.sharing-budget-progress{display:block;appearance:none;border:0;border-radius:3px;background:var(--line);width:100%;height:3px;margin:5px 0 0;overflow:hidden;--sharing-progress-color:var(--accent)}
 .sharing-budget-progress[data-full=true]{--sharing-progress-color:var(--danger)}.sharing-budget-progress::-webkit-progress-bar{background:var(--line);border-radius:3px}.sharing-budget-progress::-webkit-progress-value{background:var(--sharing-progress-color);border-radius:3px}.sharing-budget-progress::-moz-progress-bar{background:var(--sharing-progress-color);border-radius:3px}
 .sharing-table tr.current td:first-child strong{color:var(--accent)}.sharing-row-actions{gap:4px;flex-wrap:nowrap}

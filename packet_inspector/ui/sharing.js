@@ -20,6 +20,18 @@ globalThis.InspectorSharing=(()=>{
   const views={quota:"out",exit:"out"};
   const message=(value,error=false)=>{const box=get("sharing-message");box.textContent=tr(value);box.hidden=!value;box.classList.toggle("error",error);for(const id of ["sharing-inline-message","sharing-delete-message"]){const local=get(id);local.textContent=error?tr(value):"";local.hidden=!error;}};
   const expiryIds=["quota-expiry","exit-expiry","sharing-inline-expiry"];
+  const resetWeekdays=["周一","周二","周三","周四","周五","周六","周日"];
+  function weeklyOptions(value=null){
+    const selected=value===null?"":String(value);
+    return [["",label("不启用")],...resetWeekdays.map((day,index)=>[String(index),label(day)+" 00:00"])].map(([key,text])=>`<option value="${key}"${key===selected?" selected":""}>${text}</option>`).join("");
+  }
+  function weeklyDay(row){const d=data(row);return typeof d.weekly_reset!=="boolean"?undefined:d.weekly_reset?(d.weekly_reset_day??0):null;}
+  function weeklySettings(value){
+    if(value!==""&&!/^[0-6]$/.test(value))throw Error(tr("请选择周一至周日，或不启用每周刷新。"));
+    const day=value===""?null:Number(value);
+    if(day!==null&&day!==0&&!current?.weekly_reset_days_supported)throw Error(tr("当前后台不支持选择刷新日期，请更新软件。"));
+    return {weekly_reset:day!==null,...(current?.weekly_reset_days_supported?{weekly_reset_day:day}:{})};
+  }
   function expiryControl(id,labelId){
     return `<div class="sharing-expiry-control" role="group" aria-labelledby="${labelId}"><input id="${id}" type="hidden"><button id="${id}-date" class="sharing-expiry-date" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="${id}-calendar" aria-labelledby="${labelId} ${id}-display"><span id="${id}-display"></span><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><rect x="2.5" y="3.5" width="11" height="10" rx="1.5"/><path d="M5 2v3m6-3v3M3 7h10"/></svg></button>
       <div id="${id}-calendar" class="sharing-calendar" role="dialog" aria-labelledby="${id}-month" hidden><div class="sharing-calendar-header"><button id="${id}-previous" type="button" data-month="-1" aria-label="${label("上个月")}">‹</button><strong id="${id}-month" aria-live="polite"></strong><button type="button" data-month="1" aria-label="${label("下个月")}">›</button></div><div id="${id}-weekdays" class="sharing-calendar-weekdays" aria-hidden="true"></div><div id="${id}-days" class="sharing-calendar-days" role="group" aria-labelledby="${id}-month"></div><div class="sharing-calendar-footer"><button id="${id}-apply" class="primary" type="button" data-apply="true">${label("确定")}</button><label class="sharing-expiry-unlimited"><input id="${id}-unlimited" type="checkbox">${label("无期限")}</label></div></div></div>`;
@@ -33,10 +45,10 @@ globalThis.InspectorSharing=(()=>{
     return `<div class="sharing-card" data-kind="${kind}">
       <form id="${kind}-issue" class="sharing-form"><label>${label("名称")}<input id="${kind}-label" maxlength="80" required autocomplete="off"></label>
         ${expiryField(kind+"-expiry")}
-        ${kind==="quota"?`<div class="sharing-budget-row"><label id="quota-budget-label" for="quota-budget">${label("额度")}</label><span class="sharing-amount-field"><input id="quota-budget" type="number" value="1" min="1" max="1000000" step="0.01" required aria-labelledby="quota-budget-label" aria-describedby="quota-budget-unit" title="${label("最低 1 美元。")}"><span id="quota-budget-unit" class="sharing-amount-unit">${label("美元")}</span></span><label class="sharing-check"><input id="quota-weekly" type="checkbox">${label("每周刷新")}</label></div>`:""}
+        ${kind==="quota"?`<div class="sharing-budget-row"><label id="quota-budget-label" for="quota-budget">${label("额度")}</label><span class="sharing-amount-field"><input id="quota-budget" type="number" value="1" min="1" max="1000000" step="0.01" required aria-labelledby="quota-budget-label" aria-describedby="quota-budget-unit" title="${label("最低 1 美元。")}"><span id="quota-budget-unit" class="sharing-amount-unit">${label("美元")}</span></span></div><div class="sharing-weekly-row"><label for="quota-weekly">${label("每周刷新")}</label><select id="quota-weekly" class="sharing-weekly-select" title="${label("按提供方本机时间，在所选当天零点刷新。")}">${weeklyOptions()}</select></div>`:""}
       </form>
-      <form id="${kind}-borrow" class="sharing-form" hidden><label>${label("名称")}<input id="${kind}-borrow-label" maxlength="80" required autocomplete="off"></label><label>${label("对方的凭据")}<input id="${kind}-borrow-link" type="password" autocomplete="off" spellcheck="false" required placeholder="${kind==="quota"?"codex-share":"codex-exit"}://…"></label></form>
-      <div class="sharing-actions"><button class="primary sharing-copy-button" type="submit" form="${kind}-issue" id="${kind}-generate">${copyCaption("生成凭据")}</button><button class="primary" type="submit" form="${kind}-borrow" id="${kind}-activate" hidden>${label("保存并借入")}</button></div>
+      <form id="${kind}-borrow" class="sharing-form" hidden><label>${label("名称")}<input id="${kind}-borrow-label" maxlength="80" required autocomplete="off"></label><label>${label("凭据")}<input id="${kind}-borrow-link" type="password" autocomplete="off" spellcheck="false" required placeholder="${kind==="quota"?"codex-share":"codex-exit"}://…"></label></form>
+      <div class="sharing-actions"><button class="primary sharing-copy-button" type="submit" form="${kind}-issue" id="${kind}-generate">${copyCaption("生成凭据")}</button><button class="primary" type="submit" form="${kind}-borrow" id="${kind}-activate" hidden>${label("保存凭据")}</button></div>
       ${kind==="quota"?`<button id="quota-local" class="sharing-local" type="button" data-action="local" data-kind="quota">${label("使用本机额度")}</button>`:`<div id="exit-local" class="sharing-exit-source"><button type="button" data-action="local" data-kind="exit">${label("本机出口")}</button></div>`}
       <p class="sharing-card-note">${label(kind==="quota"?"每张额度凭据仅供一台机器使用。":"每张出口凭据仅供一台机器使用，始终通过本机网络转发。")}</p>
     </div>`;
@@ -55,7 +67,7 @@ globalThis.InspectorSharing=(()=>{
     get(id+"-display").textContent=value===null?tr("无期限"):finite;
     get(id+"-unlimited").checked=value===null;disableExpiry(id);
   }
-  function resetIssue(kind){get(kind+"-label").value="";setExpiry(kind+"-expiry",defaultExpiry(),false);if(kind==="quota"){get("quota-budget").value="1";get("quota-weekly").checked=false;}}
+  function resetIssue(kind){get(kind+"-label").value="";setExpiry(kind+"-expiry",defaultExpiry(),false);if(kind==="quota"){get("quota-budget").value="1";get("quota-weekly").value="";}}
   function closeCalendar(focus=true){
     if(!calendar)return;
     const id=calendar.id;calendar=null;get(id+"-unlimited").checked=get(id).dataset.unlimited==="true";get(id+"-calendar").hidden=true;get(id+"-date").setAttribute("aria-expanded","false");if(focus)get(id+"-date").focus();
@@ -118,7 +130,7 @@ globalThis.InspectorSharing=(()=>{
   // Preserve an existing timestamp until the user explicitly chooses a date.
   function expiryTime(value,original){if(Number.isFinite(original)&&value===expiryDay(original))return original;const n=dayEnd(value);if(!Number.isFinite(n)||n<Date.now()/1000+86400)throw new Error(tr("期限至少为一天，也可选择无期限。"));return n;}
   function expiry(id,original){const input=get(id);return input.dataset.unlimited==="true"?null:expiryTime(get(id+"-date").value,input.dataset.modified==="true"?undefined:original);}
-  function budget(id){const value=get(id).value,n=Number(value);if(!Number.isFinite(n)||n<1||n>1000000)throw new Error(tr("额度应为 1 到 1,000,000 美元。"));return value;}
+  function budget(id,minimum=1){const value=String(get(id).value),n=Number(value);if(!value.trim()||!Number.isFinite(n)||n<minimum||n>1000000)throw new Error(tr(minimum===0?"已用额度应为 0 到 1,000,000 美元。":"额度应为 1 到 1,000,000 美元。"));return value;}
   function credentialName(kind,value,identifier=null){
     const name=String(value??"").trim();
     if(!name||name.length>80)throw new Error(tr("名称应为 1 到 80 个字符。"));
@@ -144,22 +156,22 @@ globalThis.InspectorSharing=(()=>{
     return handle+`<button type="button" class="sharing-cell-value${field==="expires_at"?" sharing-expiry-trigger":""}" data-action="field" data-field="${field}" data-id="${row.id}" aria-controls="sharing-inline-editor" aria-expanded="false" title="${label("点击修改")}">${text}</button>`;
   }
   function weeklyValue(row){
-    const value=data(row).weekly_reset;
-    if(typeof value!=="boolean")return `<small title="${label("由提供方管理")}">${label("每周刷新")} —</small>`;
-    return `<label class="sharing-weekly-check"${row.direction==="in"?` title="${label("由提供方管理")}"`:""}><input type="checkbox" data-action="weekly" data-id="${row.id}"${value?" checked":""}${row.direction==="in"?" disabled":""}>${label("每周刷新")}</label>`;
+    const value=weeklyDay(row);
+    if(value===undefined)return `<small title="${label("由提供方管理")}">—</small>`;
+    return `<select class="sharing-weekly-select" data-action="weekly" data-id="${row.id}" aria-label="${label("每周刷新")}" title="${label(row.direction==="in"?"由提供方管理":"按提供方本机时间，在所选当天零点刷新。")}"${row.direction==="in"?" disabled":""}>${weeklyOptions(value)}</select>`;
   }
   function quotaUsage(row){
     const d=data(row),used=d.period_cost_nanos,budget=d.budget_nanos,knownUsed=Number.isFinite(used)&&used>=0,knownBudget=Number.isFinite(budget)&&budget>=0;
     const amount=knownUsed?money(used,[row]):"—",limit=knownBudget?budget===0?tr("不限"):dollars(budget):"—",text=amount+" / "+limit;
     const progress=knownUsed&&knownBudget&&budget>0?`<progress class="sharing-budget-progress" max="${budget}" value="${Math.min(used,budget)}" data-full="${used>=budget}" aria-label="${label("已用 / 额度")}" aria-valuetext="${esc(text)}" title="${esc(text)}"></progress>`:"";
-    return `<div class="sharing-budget-cell"><span>${esc(amount)}<small> / ${fieldValue(row,"budget",esc(limit))}</small></span>${progress}</div>`;
+    return `<div class="sharing-budget-cell"><span>${knownUsed?fieldValue(row,"used",esc(amount)):"—"}<small> / ${fieldValue(row,"budget",esc(limit))}</small></span>${progress}</div>`;
   }
   function renderList(kind){
     const rows=shownRows(kind),quota=kind==="quota";
     get(kind+"-credential-count").textContent=number(rows.length);
-    get(kind+"-table-head").innerHTML=`<tr>${(quota?["凭据名称","已用 / 额度","累计用量","期限","状态","操作"]:["凭据名称","上传 / 下载流量","连接次数","期限","状态","操作"]).map(value=>`<th>${label(value)}</th>`).join("")}</tr>`;
+    get(kind+"-table-head").innerHTML=`<tr>${(quota?["凭据名称","已用 / 额度","累计用量","期限","每周刷新","状态","操作"]:["凭据名称","上传 / 下载流量","连接次数","期限","状态","操作"]).map(value=>`<th>${label(value)}</th>`).join("")}</tr>`;
     get(kind+"-credential-rows").innerHTML=rows.map(row=>{const d=data(row),out=row.direction==="out";
-      return `<tr class="${isActive(row)?"current":""}"><td>${fieldValue(row,"label",`<strong title="${esc(row.label)}">${esc(row.label)}</strong>`)}</td><td>${quota?quotaUsage(row):`${esc(bytes(d.totals?.sent_bytes))}<small> / ${esc(bytes(d.totals?.received_bytes))}</small>`}</td><td>${esc(quota?money(d.totals?.cost_nanos,[row]):number(d.totals?.requests))}</td><td><span class="sharing-expiry-cell">${fieldValue(row,"expires_at",esc(d.expires_at===undefined?"—":date(d.expires_at)))}${quota?weeklyValue(row):""}</span></td><td class="sharing-row-status">${out?`<button type="button" class="sharing-cell-value" data-action="toggle" data-id="${row.id}" title="${label(lending(row)?"停用":"启用")}">${label(status(row))}</button>`:label(status(row))}</td><td><div class="sharing-row-actions">${out?`<button type="button" class="sharing-copy-button" data-action="copy" data-id="${row.id}" data-copied="${copiedKey===row.id}" title="${label("复制凭据")}" aria-label="${label("复制凭据")}">${copyCaption("凭据")}</button>${quota?`<button type="button" data-action="reset" data-id="${row.id}">${label("重置")}</button>`:""}`:`<button type="button" data-action="use" data-id="${row.id}" ${isActive(row)?"disabled":""}>${label(isActive(row)?"使用中":"使用")}</button>`}<button type="button" class="sharing-row-delete" data-action="delete" data-id="${row.id}" title="${label("删除凭据")}">${label("删除")}</button></div></td></tr>`;
+      return `<tr class="${isActive(row)?"current":""}"><td>${fieldValue(row,"label",`<strong title="${esc(row.label)}">${esc(row.label)}</strong>`)}</td><td>${quota?quotaUsage(row):`${esc(bytes(d.totals?.sent_bytes))}<small> / ${esc(bytes(d.totals?.received_bytes))}</small>`}</td><td>${esc(quota?money(d.totals?.cost_nanos,[row]):number(d.totals?.requests))}</td><td><span class="sharing-expiry-cell">${fieldValue(row,"expires_at",esc(d.expires_at===undefined?"—":date(d.expires_at)))}</span></td>${quota?`<td class="sharing-weekly-cell">${weeklyValue(row)}</td>`:""}<td class="sharing-row-status">${out?`<button type="button" class="sharing-cell-value" data-action="toggle" data-id="${row.id}" title="${label(lending(row)?"停用":"启用")}">${label(status(row))}</button>`:label(status(row))}</td><td><div class="sharing-row-actions">${out?`<button type="button" class="sharing-copy-button" data-action="copy" data-id="${row.id}" data-copied="${copiedKey===row.id}" title="${label("复制凭据")}" aria-label="${label("复制凭据")}">${copyCaption("凭据")}</button>`:`<button type="button" data-action="use" data-id="${row.id}" ${isActive(row)?"disabled":""}>${label(isActive(row)?"使用中":"使用")}</button>`}<button type="button" class="sharing-row-delete" data-action="delete" data-id="${row.id}" title="${label("删除凭据")}">${label("删除")}</button></div></td></tr>`;
     }).join("");
     get(kind+"-empty").hidden=rows.length>0;
   }
@@ -176,7 +188,7 @@ globalThis.InspectorSharing=(()=>{
     get("quota-local").hidden=!borrowing;get("quota-local").disabled=busy;get("exit-local").hidden=views.exit!=="in";
     for(const button of get("exit-local").querySelectorAll("button")){button.disabled=busy;button.setAttribute("aria-pressed",String(button.dataset.action===value.egress?.selection?.mode));}
     for(const kind of ["quota","exit"])renderList(kind);
-    if(busy)for(const kind of ["quota","exit"])for(const input of get(kind+"-credential-rows").querySelectorAll("button,input"))input.disabled=true;
+    if(busy)for(const kind of ["quota","exit"])for(const input of get(kind+"-credential-rows").querySelectorAll("button,input,select"))input.disabled=true;
     if(!recoveryShown&&(value.recovery_error||value.recovered)){recoveryShown=true;message(value.recovery_error||"上次共享已结束，已恢复原连接。请重新加载 Codex 配置。",!!value.recovery_error);}
   }
   async function action(button,dataValue,success=""){if(busy)return;clearCopied();controller?.abort();busy=true;button?.setAttribute("aria-busy","true");if(button)button.disabled=true;message("");
@@ -238,16 +250,17 @@ globalThis.InspectorSharing=(()=>{
     get("sharing-inline-message").hidden=true;if(renderNow&&current){render(current);get("sharing-cards").querySelector(`[data-action="field"][data-id="${draft.id}"][data-field="${draft.field}"]`)?.focus();}
   }
   function openInline(row,field,anchor){
-    if(busy||!["label","budget","expires_at"].includes(field)||(row.direction!=="out"&&field!=="label")||(field==="budget"&&row.kind!=="quota"))return;
+    if(busy||!["label","budget","used","expires_at"].includes(field)||(row.direction!=="out"&&field!=="label")||(["budget","used"].includes(field)&&row.kind!=="quota"))return;
+    if(field==="used"&&!current?.used_quota_edit_supported){message("当前后台不支持修改已用额度，请更新软件。",true);return;}
     controller?.abort();closeInline(false);message("");
-    const original=field==="label"?row.label:field==="budget"?row.budget_nanos/1e9:row.expires_at;
+    const original=field==="label"?row.label:field==="budget"?row.budget_nanos/1e9:field==="used"?row.period_cost_nanos/1e9:row.expires_at;
     editing={id:row.id,kind:row.kind,field,original,anchor};anchor.setAttribute("aria-expanded","true");
-    const input=get("sharing-inline-value"),box=get("sharing-inline-editor"),isDate=field==="expires_at";
-    input.type=field==="budget"?"number":"text";input.maxLength=80;input.step="any";
-    input.min=field==="budget"?String(Math.min(original,1)):"";
-    input.max=field==="budget"?"1000000":"";input.autocomplete="off";input.setCustomValidity("");input.disabled=isDate;input.hidden=isDate;input.required=!isDate;
+    const input=get("sharing-inline-value"),box=get("sharing-inline-editor"),isDate=field==="expires_at",isAmount=field==="budget"||field==="used";
+    input.type=isAmount?"number":"text";input.maxLength=80;input.step="any";
+    input.min=field==="budget"?String(Math.min(original,1)):field==="used"?"0":"";
+    input.max=isAmount?"1000000":"";input.autocomplete="off";input.setCustomValidity("");input.disabled=isDate;input.hidden=isDate;input.required=!isDate;
     input.value=isDate?"":original??"";
-    get("sharing-inline-label").textContent=tr(field==="label"?"名称":field==="budget"?"额度":"期限")+(field==="budget"?" · "+tr("美元"):"");
+    get("sharing-inline-label").textContent=tr(field==="label"?"名称":field==="budget"?"额度":field==="used"?"已用额度":"期限")+(isAmount?" · "+tr("美元"):"");
     get("sharing-inline-label").setAttribute("for",isDate?"sharing-inline-expiry-date":"sharing-inline-value");
     get("sharing-inline-expiry-container").hidden=!isDate;
     if(isDate){
@@ -267,7 +280,7 @@ globalThis.InspectorSharing=(()=>{
     try{
       let value;
       if(draft.field==="label")value=credentialName(draft.kind,input.value,draft.id);
-      else if(draft.field==="budget")value=Number(input.value)===draft.original?draft.original:budget("sharing-inline-value");
+      else if(draft.field==="budget"||draft.field==="used")value=String(input.value).trim()&&Number(input.value)===draft.original?draft.original:budget("sharing-inline-value",draft.field==="used"?0:1);
       else value=expiry("sharing-inline-expiry",draft.original);
       if(value===draft.original){closeInline();return;}
       input.disabled=true;disableExpiry("sharing-inline-expiry",true);get("sharing-inline-cancel").disabled=true;
@@ -306,7 +319,7 @@ globalThis.InspectorSharing=(()=>{
   });
   async function copy(value,key){try{await navigator.clipboard.writeText(value);copiedKey=key;copyTimer=setTimeout(clearCopied,1800);message("");}catch(_){message("复制失败，请点击右侧“凭据”重试。",true);}}
   for(const kind of ["quota","exit"]){
-    get(kind+"-issue").addEventListener("submit",async event=>{event.preventDefault();try{const result=await action(get(kind+"-generate"),{action:"credential_issue",kind,label:credentialName(kind,get(kind+"-label").value),expires_at:expiry(kind+"-expiry"),...(kind==="quota"?{budget:budget("quota-budget"),weekly_reset:get("quota-weekly").checked}:{})},null);if(result)resetIssue(kind);}catch(error){message(error.message,true);}});
+    get(kind+"-issue").addEventListener("submit",async event=>{event.preventDefault();try{const result=await action(get(kind+"-generate"),{action:"credential_issue",kind,label:credentialName(kind,get(kind+"-label").value),expires_at:expiry(kind+"-expiry"),...(kind==="quota"?{budget:budget("quota-budget"),...weeklySettings(get("quota-weekly").value)}:{})},null);if(result)resetIssue(kind);}catch(error){message(error.message,true);}});
     get(kind+"-borrow").addEventListener("submit",async event=>{event.preventDefault();const result=await action(get(kind+"-activate"),{action:"credential_use",kind,label:get(kind+"-borrow-label").value.trim(),link:get(kind+"-borrow-link").value.trim()});if(result)get(kind+"-borrow-link").value="";});
   }
   get("sharing-cards").addEventListener("click",async event=>{const button=event.target.closest("[data-view],[data-action]");if(!button||busy)return;const {kind,view,action:command}=button.dataset;
@@ -316,16 +329,15 @@ globalThis.InspectorSharing=(()=>{
     if(command==="weekly")return;
     if(command==="delete"){openDelete(row);return;}
     if(command==="field"){openInline(row,button.dataset.field,button);return;}if(editing)closeInline(false);if(command==="copy"){await action(button,{action:"credential_copy",id:row.id});return;}
-    if(command==="reset")await action(button,{action:"credential_reset",id:row.id},"本期额度已重置，累计统计已保留。");
     if(command==="toggle")await action(button,{action:"credential_edit",id:row.id,enabled:!lending(row)});
     if(command==="use")await action(button,{action:"credential_use",kind:row.kind,id:row.id});
   });
   get("sharing-cards").addEventListener("change",async event=>{
     const input=event.target;if(input.dataset.action!=="weekly")return;
     const row=(current?.credentials||[]).find(row=>row.id===input.dataset.id);
-    if(busy||!row||row.direction!=="out"||row.kind!=="quota"){if(row)input.checked=data(row).weekly_reset===true;return;}
-    const value=input.checked;if(editing)closeInline(false);
-    await action(input,{action:"credential_edit",id:row.id,weekly_reset:value},null);
+    if(busy||!row||row.direction!=="out"||row.kind!=="quota"){if(row)input.value=String(weeklyDay(row)??"");return;}
+    try{const changes=weeklySettings(input.value);if(editing)closeInline(false);await action(input,{action:"credential_edit",id:row.id,...changes},null);}
+    catch(error){input.value=String(weeklyDay(row)??"");message(error.message,true);}
   });
   document.addEventListener("visibilitychange",()=>{if(document.hidden)controller?.abort();else if(active)refresh();});
   function setActive(value){active=value;clearInterval(timer);timer=null;if(!active){controller?.abort();finishDrag();clearCopied();closeInline(false);closeDelete(false);return;}message("");refresh();timer=setInterval(refresh,3000);}
