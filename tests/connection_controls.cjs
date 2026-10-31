@@ -10,7 +10,7 @@ assert(!html.includes('id="header-connect"'));
 function fixture(connected) {
   const elements = new Map();
   function element(id) {
-    if (!elements.has(id)) elements.set(id, {id, attrs:{}, open:false, hidden:false, textContent:'',
+    if (!elements.has(id)) elements.set(id, {id, attrs:{}, dataset:{}, open:false, hidden:id==='settings-restart-feedback', textContent:'',
       setAttribute(key,value){this.attrs[key]=value;}, showModal(){this.open=true;}, close(){this.open=false;},
       replaceChildren(...values){this.children=values;}});
     return elements.get(id);
@@ -48,7 +48,7 @@ function fixture(connected) {
   assert.deepEqual(calls,[['connect-prompt','header']]);
   await context.confirmConnection();
   assert.equal(context.state.status.profile.active,true);
-  assert.equal(element('settings-restart-dialog').open,true);
+  assert.equal(element('settings-restart-feedback').hidden,false);
   assert.equal(context.connectionRestartNotified,true);
 
   ({context,element}=fixture(false));
@@ -57,7 +57,7 @@ function fixture(connected) {
     return {reload_required:true,loopback_proxy:{state:'repaired',changed:true}};
   };
   await context.confirmConnection();
-  assert.equal(element('settings-restart-dialog').open,true);
+  assert.equal(element('settings-restart-feedback').hidden,false);
   assert.deepEqual(element('settings-restart-items').children.map(item=>item.text),['Codex 接入与原生压缩','本机代理例外']);
   assert.equal(element('settings-restart-summary').textContent,'已接入。已修复本机代理例外。');
 
@@ -68,12 +68,15 @@ function fixture(connected) {
     return {reload_required:false};
   };
   await context.confirmConnection();
-  assert.equal(element('settings-restart-dialog').open,true);
+  assert.equal(element('settings-restart-feedback').hidden,false);
   assert.equal(element('settings-restart-title').textContent,'操作已完成');
   assert.equal(element('settings-restart-description').textContent,'配置无需更改，无需重启。');
   assert.equal(element('settings-restart-items').hidden,true);
-  assert.equal(calls.some(call=>call[0]==='message'),false,'Success belongs in the result dialog');
+  assert.equal(calls.some(call=>call[0]==='message'),false,'Success belongs in the inline result');
+  assert.equal(element('settings-restart-feedback').dataset.feedbackTarget,'connection-inline-feedback');
+  element('settings-dialog').open=true;
   context.showConfigurationFeedback(['自动压缩阈值']);
+  assert.equal(element('settings-restart-feedback').dataset.feedbackTarget,'settings-inline-feedback');
   assert.equal(element('settings-restart-summary').hidden,true,'Later settings saves clear the connection summary');
   assert.equal(element('settings-restart-title').textContent,'重启 ChatGPT App 后生效');
   assert.equal(element('settings-restart-items').hidden,false);
@@ -85,7 +88,7 @@ function fixture(connected) {
   await context.confirmConnection();
   assert.equal(element('connect-confirm-message').textContent,'接入失败');
   assert.equal(element('connect-confirm-message').hidden,false);
-  assert.equal(element('settings-restart-dialog').open,false);
+  assert.equal(element('settings-restart-feedback').hidden,true);
   assert.equal(calls.some(call=>call[0]==='message'),false,'Connection failures stay in the confirmation');
 
   ({context,element,calls}=fixture(false));
@@ -111,7 +114,7 @@ function fixture(connected) {
   assert.deepEqual(calls.filter(call=>call[0]==='link'),[['link','restore']]);
   assert.equal(context.state.status.profile.active,false);
   assert.equal(element('compression-confirm-dialog').open,false);
-  assert.equal(element('settings-restart-dialog').open,true);
+  assert.equal(element('settings-restart-feedback').hidden,false);
   assert.equal(context.compressionSaving,false);
   assert.equal(calls.some(call=>call[0]==='message'),false,'Disconnect must not create a banner');
 
@@ -122,5 +125,5 @@ function fixture(connected) {
   context.state.status.profile.config_error='unreadable';
   context.renderCompressionMode();
   assert(buttons.every(button=>button.disabled));
-  console.log('Connection controls: two states, confirmations and restart prompts passed.');
+  console.log('Connection controls: confirmations retained and results stay inline.');
 })().catch(error=>{console.error(error);process.exitCode=1;});

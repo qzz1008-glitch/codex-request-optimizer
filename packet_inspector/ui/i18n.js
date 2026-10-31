@@ -129,6 +129,13 @@ const uiI18n = (() => {
     "已切换额度来源。请重新加载 Codex 配置或重启 ChatGPT 应用。":"Quota source changed. Reload the Codex configuration or restart ChatGPT.",
     "已更新，新请求使用当前设置。":"Updated. New requests use these settings.",
     "已复制":"Copied",
+    "请填写此项。":"Please fill in this field.",
+    "请输入有效值。":"Please enter a valid value.",
+    "不能小于 {value}。":"Must be at least {value}.",
+    "不能大于 {value}。":"Must be at most {value}.",
+    "请输入符合步长要求的值。":"Please enter a value that matches the required step.",
+    "输入长度不符合要求。":"The input length does not meet the requirements.",
+    "输入格式不正确。":"The input format is invalid.",
     "已复制，仅供一台机器使用":"Copied. For use on one machine only.",
     "复制失败，请点击右侧“凭据”重试。":"Copy failed. Click Credential on the right to try again.",
     "请选择未来的到期时间，或选择无期限。":"Choose a future expiration time or no expiry.",
@@ -1075,8 +1082,8 @@ const uiI18n = (() => {
     if(persist)try {localStorage.setItem("packet-inspector-language",language);} catch(_) {}
     if(changed)apply();
   }
-  // Shared by the desktop and tray. Feedback sources stay outside layout;
-  // one top-layer notification mirrors the active source, including save progress.
+  // Shared by the desktop and tray. Sources mirror into fixed inline regions;
+  // the floating fallback remains for older callers without an explicit target.
   function floatingFeedback() {
     const sources=[...document.querySelectorAll("[data-feedback-source]")].map(node=>({
       node,content:node.id==="notice"?node.querySelector("#notice-text"):node,
@@ -1087,7 +1094,8 @@ const uiI18n = (() => {
     content.className="floating-feedback-content";
     popup.append(content);document.body.append(popup);
     if(typeof popup.showPopover==="function")popup.setAttribute("popover","manual");
-    let active=null,locale=language,expiryTimer=null;
+    let active=null,locale=language,expiryTimer=null,inlineSequence=0;
+    const inlineHosts=new Map();
     function resolve(anchor) {
       return anchor?.id?document.getElementById(anchor.id):null;
     }
@@ -1107,7 +1115,7 @@ const uiI18n = (() => {
       const error=node.classList.contains("error")||(node.id!=="notice"&&node.getAttribute("role")==="alert")||!!clone.querySelector('.error,[data-state="error"]');
       const anchorId=error?"":node.dataset.feedbackAnchor||"",requested=Number(node.dataset.feedbackDuration);
       const duration=error?6000:Number.isFinite(requested)&&requested>0?Math.max(1000,Math.min(10000,requested)):3000;
-      return {clone,error,anchorId,duration,priority:priority+(error?100:0),signature:JSON.stringify([value,error,anchorId,duration])};
+      return {clone,error,anchorId,duration,priority:priority+(error?100:0)+(Number(node.dataset.feedbackPriority)||0),signature:JSON.stringify([value,error,anchorId,duration])};
     }
     function hide() {
       clearTimeout(expiryTimer);expiryTimer=null;
@@ -1144,14 +1152,17 @@ const uiI18n = (() => {
       }else if(active?.anchor)hide();
       popup.style.removeProperty("visibility");
     }
+    function cleanClone(clone) {
+      for(const node of [clone,...clone.querySelectorAll("[id],[data-feedback-source],[role],[aria-live]")]) {
+        for(const attribute of ["id","data-feedback-source","data-feedback-target","role","aria-live"])node.removeAttribute(attribute);
+      }
+      return clone;
+    }
     function present(entry,value) {
       if(active&&snapshot(active.entry)?.error&&!value.error&&active.entry!==entry&&!value.anchorId)return;
       const changed=!active||active.entry!==entry||active.signature!==value.signature;
       const anchor=changed?(value.anchorId?{id:value.anchorId}:null):active.anchor;
-      const clone=value.clone;
-      for(const node of [clone,...clone.querySelectorAll("[id],[data-feedback-source],[role],[aria-live]")]) {
-        for(const attribute of ["id","data-feedback-source","role","aria-live"])node.removeAttribute(attribute);
-      }
+      const clone=cleanClone(value.clone);
       content.replaceChildren(clone);
       popup.classList.toggle("error",value.error);popup.setAttribute("role",value.error?"alert":"status");
       active={entry,anchor,signature:value.signature};popup.hidden=false;place();
@@ -1162,9 +1173,18 @@ const uiI18n = (() => {
     }
     function refresh() {
       const translated=locale!==language;locale=language;
-      const candidates=[];
+      const candidates=[],inlineCandidates=new Map();
       for(const entry of sources) {
-        const value=snapshot(entry),signature=value?.signature||"";
+        const value=snapshot(entry),target=resolve({id:entry.node.dataset.feedbackTarget}),signature=value?.signature||"";
+        if(target) {
+          clearTimeout(entry.timer);entry.timer=null;
+          if(!inlineHosts.has(target))inlineHosts.set(target,"");
+          if(signature!==entry.signature||target!==entry.inlineTarget)entry.inlineStamp=++inlineSequence;
+          entry.signature=signature;entry.inlineTarget=target;
+          if(value){const list=inlineCandidates.get(target)||[];list.push({entry,value});inlineCandidates.set(target,list);}
+          continue;
+        }
+        entry.inlineTarget=null;
         if(signature===entry.signature)continue;
         entry.signature=signature;clearTimeout(entry.timer);entry.timer=null;
         if(!value||translated)continue;
@@ -1175,18 +1195,62 @@ const uiI18n = (() => {
           },entry.delay);
         }else candidates.push({entry,value});
       }
-      if(active&&!snapshot(active.entry))hide();
+      for(const [host,previous] of inlineHosts) {
+        const list=inlineCandidates.get(host)||[];
+        list.sort((a,b)=>b.value.priority-a.value.priority||(b.entry.inlineStamp||0)-(a.entry.inlineStamp||0));
+        const selected=list[0],signature=selected?selected.entry.node.id+selected.value.signature:"";
+        if(signature===previous)continue;
+        inlineHosts.set(host,signature);
+        host.replaceChildren(...(selected?[cleanClone(selected.value.clone)]:[]));
+        host.classList.toggle("error",!!selected?.value.error);
+        host.setAttribute("role",selected?.value.error?"alert":"status");
+        host.title=selected?.value.clone.textContent.trim()||"";
+        for(const log of host.querySelectorAll(".settings-save-log"))log.scrollTop=log.scrollHeight;
+      }
+      if(active&&(!snapshot(active.entry)||active.entry.node.dataset.feedbackTarget))hide();
       candidates.sort((a,b)=>b.value.priority-a.value.priority);
       if(candidates.length)present(candidates[0].entry,candidates[0].value);
       else if(active)present(active.entry,snapshot(active.entry));
     }
     const observer=new MutationObserver(refresh),owners=new Set();
     for(const {node} of sources) {
-      observer.observe(node,{subtree:true,childList:true,characterData:true,attributes:true,attributeFilter:["hidden","class","data-state","data-feedback-anchor","data-feedback-duration"]});
+      observer.observe(node,{subtree:true,childList:true,characterData:true,attributes:true,attributeFilter:["hidden","class","data-state","data-feedback-anchor","data-feedback-duration","data-feedback-target","data-feedback-priority"]});
       for(let owner=node.parentElement;owner;owner=owner.parentElement)owners.add(owner);
     }
     for(const owner of owners)observer.observe(owner,{attributes:true,attributeFilter:["hidden","open"]});
     observer.observe(document.documentElement,{attributes:true,attributeFilter:["lang"]});
+    const validating=new WeakSet();
+    function validationText(input) {
+      const value=input.validity;
+      if(value.valueMissing)return t("请填写此项。");
+      if(value.rangeUnderflow)return t("不能小于 {value}。").replace("{value}",input.min);
+      if(value.rangeOverflow)return t("不能大于 {value}。").replace("{value}",input.max);
+      if(value.stepMismatch)return t("请输入符合步长要求的值。");
+      if(value.tooShort||value.tooLong)return t("输入长度不符合要求。");
+      if(value.patternMismatch)return t("输入格式不正确。");
+      return t("请输入有效值。");
+    }
+    document.addEventListener("invalid",event=>{
+      const input=event.target,scope=input.closest?.("[data-validation-feedback]");
+      if(!scope)return;
+      event.preventDefault();input.classList.add("input-invalid");input.setAttribute("aria-invalid","true");
+      if(validating.has(scope))return;
+      validating.add(scope);queueMicrotask(()=>validating.delete(scope));
+      const source=document.getElementById(scope.dataset.validationFeedback);if(!source)return;
+      const section=input.closest(".sharing-section");
+      if(scope.id==="sharing-view"&&section)source.dataset.feedbackTarget=section.getAttribute("aria-labelledby")==="exit-section-title"?"exit-inline-feedback":"quota-inline-feedback";
+      text(source,()=>{
+        const label=input.labels?.[0]?.textContent.trim()||input.getAttribute("aria-label")||"";
+        return (label?label+": ":"")+validationText(input);
+      });
+      source.classList.add("error");source.hidden=false;source.dataset.validationOwner=input.id;input.focus();
+    },true);
+    document.addEventListener("input",event=>{
+      const input=event.target;if(input.getAttribute?.("aria-invalid")!=="true")return;
+      input.classList.remove("input-invalid");input.setAttribute("aria-invalid","false");
+      const scope=input.closest("[data-validation-feedback]"),source=scope&&document.getElementById(scope.dataset.validationFeedback);
+      if(source?.dataset.validationOwner===input.id){text(source,"");source.classList.remove("error");delete source.dataset.validationOwner;}
+    },true);
     function resetExpiredNotice(event) {
       const node=event.submitter||event.target?.closest?.('button,input,select,a,[role="button"]');
       if(node) {

@@ -455,7 +455,6 @@ code.session-id{font-family:Consolas,"Cascadia Mono",monospace;font-size:11px;wo
   #settings-dialog .context-label{grid-column:1/-1}
   #settings-dialog .context-default{justify-self:end}
   #settings-dialog .settings-feedback{grid-column:1/-1}
-  #settings-dialog .settings-feedback:has(#settings-message:empty):has(#settings-save-log[hidden]){display:none}
   #settings-dialog #settings-restore{grid-column:2}
 }
 @container settings-dialog (max-width:380px){
@@ -527,6 +526,33 @@ dialog{width:min(760px,calc(var(--desktop-width) - 80px));max-height:calc(var(--
 .header-actions{margin-left:auto}
 
 /* Transient feedback must never participate in page or dialog layout. */
+.inline-feedback{min-width:0;color:var(--muted);font-size:12px;line-height:18px}
+.inline-feedback:empty{visibility:hidden}
+.inline-feedback.error{color:var(--danger)}
+.input-invalid,#settings-dialog .context-value:has(.input-invalid){border-color:var(--danger)!important;outline:1px solid var(--danger);outline-offset:0}
+.app-inline-feedback{flex:none;height:18px;padding:0 var(--view-inset,12px);overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.inline-feedback>p,.inline-feedback .sharing-message{margin:0;padding:0;border:0;background:none}
+.requests-inline-feedback{flex:none;height:18px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.requests-inline-feedback .list-loading{margin:0;line-height:18px;text-align:left}
+#settings-dialog .settings-inline-feedback{height:34px;overflow:auto;overscroll-behavior:contain;scrollbar-width:none;line-height:17px}
+#settings-dialog .settings-inline-feedback .help{max-height:34px;margin:0;line-height:17px;overflow:auto}
+#settings-dialog .settings-inline-feedback .settings-feedback:has(.settings-save-log)>.help{max-height:17px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+#settings-dialog .settings-inline-feedback .settings-save-log{max-height:17px;margin:0;gap:0;font-size:11px;line-height:17px;scrollbar-width:none;overscroll-behavior:contain}
+#settings-dialog .settings-inline-feedback .settings-step-label{overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.header-compression{position:relative}
+.connection-inline-feedback{position:absolute;top:calc(100% + 2px);left:50%;transform:translateX(-50%);width:220px;height:14px;font-size:10px;line-height:14px;text-align:center;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.configuration-result{line-height:17px}
+.configuration-result>span:not([hidden])+span::before,.configuration-items:not([hidden])::before{content:" · "}
+.configuration-items{display:inline;margin:0;padding:0;list-style:none}
+.configuration-items li{display:inline}
+.configuration-items li+li::before{content:"、"}
+.configuration-items:lang(en) li+li::before{content:", "}
+.connection-inline-feedback .configuration-result{line-height:14px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.connection-inline-feedback .configuration-items{display:none}
+#zstd-level-message{height:34px;max-height:34px;margin:0;overflow:auto;line-height:17px}
+#zstd-level-message[hidden]{display:block!important;visibility:hidden}
+.confirmation-feedback,.sharing-edit-message{height:34px;max-height:34px;margin:0;overflow:auto;line-height:17px}
+.confirmation-feedback[hidden],.sharing-edit-message[hidden]{display:block!important;visibility:hidden}
 [data-feedback-source]{display:none!important}
 .floating-feedback{
   position:fixed;inset:auto var(--feedback-right,20px) var(--feedback-bottom,20px) auto;
