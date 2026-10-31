@@ -478,6 +478,7 @@ dialog{width:min(760px,calc(var(--desktop-width) - 80px));max-height:calc(var(--
 #compression-confirm-dialog{width:min(440px,calc(100vw - 48px))}#compression-confirm-dialog h2{font-size:20px}#compression-confirm-dialog .button-row{justify-content:flex-end}#compression-confirm-message{color:var(--danger)}
 #exit-confirm-dialog{width:min(540px,calc(100vw - 48px))}#exit-confirm-dialog h2{font-size:20px}#exit-confirm-dialog .button-row{justify-content:flex-end;flex-wrap:wrap}#exit-confirm-message{color:var(--danger)}
 #connect-confirm-dialog{width:min(460px,calc(100vw - 48px))}#connect-confirm-dialog h2{font-size:20px}#connect-confirm-dialog .button-row{justify-content:flex-end}#connect-confirm-message{color:var(--danger)}
+#connection-resume-dialog{width:min(520px,calc(100vw - 48px))}#connection-resume-dialog h2{font-size:20px}#connection-resume-dialog .button-row{justify-content:flex-end}#connection-resume-details{white-space:pre-wrap;overflow-wrap:anywhere;max-height:220px;overflow:auto}
 .updates-actions button{position:relative;display:inline-flex;align-items:center;justify-content:center;min-width:0;text-align:center}
 .update-spinner{position:absolute;inset-inline-start:10px;top:calc(50% - 7px);width:14px;height:14px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;visibility:hidden}
 .updates-actions button[aria-busy=true]{opacity:1;padding-inline:30px}

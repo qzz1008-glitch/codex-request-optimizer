@@ -67,8 +67,17 @@ class WslConnectionTests(unittest.TestCase):
         self.routes = {"windows": {"identity": "windows\nopenai", "provider": "openai", "upstream": UPSTREAM}}
 
     def apply(self, connected=True):
-        return self.wsl.apply(connected, ENDPOINT, UPSTREAM, self.routes,
-                              lambda routes: setattr(self, "published", dict(routes)))
+        def publish(routes):
+            self.routes = dict(routes)
+            self.published = dict(routes)
+        return self.wsl.apply(connected, ENDPOINT, UPSTREAM, self.routes, publish)
+
+    def test_route_publication_does_not_clear_a_live_request_lookup(self):
+        live_routes = self.routes
+        before = dict(live_routes)
+        self.apply()
+        self.assertEqual(live_routes, before)
+        self.assertGreater(len(self.routes), len(live_routes))
 
     def index(self, *, source='"cli"', name="聊天对话串"):
         with closing(sqlite3.connect(self.backend.config_path.parent / "state_42.sqlite")) as db, db:
