@@ -12,6 +12,7 @@ import tempfile
 import threading
 import time
 from urllib.parse import parse_qs, urlsplit
+from unittest.mock import patch
 
 from packet_inspector.desktop_ui import DesktopUI, UI_DIR, ui_build_id
 from packet_inspector.exit_flow import REQUEST_FILE
@@ -119,7 +120,7 @@ def run(*, legacy_host=False):
                 style = evaluate("({background:getComputedStyle(document.body).backgroundColor,"
                                  "width:document.body.getBoundingClientRect().width,"
                                  "overflow:document.body.scrollWidth>document.body.getBoundingClientRect().width,buttons:document.querySelectorAll('.tray-panel button').length})")
-                assert style == {"background": "rgb(255, 255, 255)", "width": expected_width, "overflow": False, "buttons": 2}, style
+                assert style == {"background": "rgb(255, 255, 255)", "width": expected_width, "overflow": False, "buttons": 3}, style
                 height = panel._size[1]
                 evaluate("const error=document.getElementById('tray-error');error.textContent='Test message';error.hidden=false;window.trayPanel.render({});true")
                 result["stage"] = "inline error without resize"
@@ -132,6 +133,12 @@ def run(*, legacy_host=False):
                 wait_until(lambda: panel._size[1] == height and sized_for_content(panel))
                 assert not is_visible(panel.window), "check must keep the popup hidden"
                 assert backend.requests == [], "startup warmup queried statistics"
+                result["stage"] = "old host missing restart bridge"
+                evaluate("window.__restartBridge=window.pywebview.api.restart_service;delete window.pywebview.api.restart_service;document.getElementById('tray-restart').click();true")
+                wait_until(lambda: evaluate("!document.getElementById('tray-error').hidden"))
+                assert "更新" in evaluate("document.getElementById('tray-error').textContent"), "missing action needs an actionable host update message"
+                assert evaluate("!document.getElementById('tray-restart').disabled"), "missing bridge left the menu busy"
+                evaluate("window.pywebview.api.restart_service=window.__restartBridge;delete window.__restartBridge;document.getElementById('tray-error').hidden=true;true")
                 backend.release.clear()
                 panel.visible = True
                 panel._anchor = (1900, 1040), (0, 0, 1920, 1040)
@@ -181,6 +188,17 @@ def run(*, legacy_host=False):
                 assert ui_build_id(root) == original, "tray edit invalidated the main window"
                 assert not is_visible(panel.window), "hot reload exposed a hidden popup"
                 assert not panel.panel_state()["visible"]
+                result["stage"] = "restart confirmation bridge"
+                with patch("packet_inspector.service_restart._target", return_value=("isolated-worker", 12345)), \
+                        patch("packet_inspector.service_restart._dialog", return_value=False) as confirmation, \
+                        patch("packet_inspector.service_restart.control_worker") as control:
+                    panel.visible = True
+                    evaluate("document.getElementById('tray-restart').click();true")
+                    wait_until(lambda: confirmation.call_count == 1)
+                    wait_until(lambda: evaluate("!document.getElementById('tray-restart').disabled"))
+                    assert confirmation.call_args.kwargs == {"confirm": True}, "restart skipped its confirmation"
+                    control.assert_not_called()
+                assert not panel.visible, "restart did not dismiss the menu before confirmation"
                 panel.visible = True
                 panel.window.destroy()  # Alt+F4 closes a form through the same cancellable event.
                 wait_until(lambda: not panel.panel_state()["visible"])
@@ -196,7 +214,8 @@ def run(*, legacy_host=False):
                         assert query.get("limit")==["1"] and query.get("include_get")==["1"] and query.get("view")==["trend"], "legacy fallback loaded request history"
                 result.update(passed=True, checks=["hidden startup warmup", f"{expected_width}px layout", "content sizing", "Chinese/English", "responsive before statistics", "record scope",
                                                   "legacy backend scope", "truncated legacy groups", "empty store resets scope",
-                                                  "visible polling", "hidden idle", "independent hot reload", "Alt+F4 dismissal", "Open/Exit bridge"])
+                                                  "visible polling", "hidden idle", "independent hot reload", "missing restart bridge feedback",
+                                                  "restart confirmation/cancel bridge", "Alt+F4 dismissal", "Open/Exit bridge"])
                 result.pop("stage", None)
             except Exception as exc:
                 result.update(passed=False, error=f"{type(exc).__name__}: {exc}")
