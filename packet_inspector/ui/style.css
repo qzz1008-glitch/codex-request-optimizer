@@ -76,13 +76,13 @@
 .sidebar>*:not(.packet-list){flex-shrink:0}
 
 /* Sessions, requests, and details scroll independently. */
-:root{--desktop-width:1200px;--desktop-height:760px;--desktop-min-width:1120px;--desktop-min-height:640px;--view-inset:12px}
+:root{--desktop-width:1200px;--desktop-height:760px;--desktop-min-width:1200px;--desktop-min-height:640px;--view-inset:12px}
 body{height:100dvh;min-width:0;display:flex;flex-direction:column;overflow-x:hidden;overflow-y:hidden}
 .app-window{display:flex;flex-direction:column;flex:1;min-height:0;min-width:0;width:100%;height:100dvh;background:var(--bg);overflow:hidden;container:inspector-window / size}
 .app-header{flex-shrink:0}
-.workspace{display:grid;flex:1;min-height:0;min-width:0;height:auto;grid-template-columns:260px minmax(380px,1fr) 480px}
+.workspace{display:grid;flex:1;min-height:0;min-width:0;height:auto;grid-template-columns:300px minmax(420px,1fr) 480px}
 /* Keep all three panes visible in narrower windows. */
-@container inspector-window (max-width:1119px){.workspace{grid-template-columns:260px minmax(0,1fr) 480px}}
+@container inspector-window (max-width:1199px){.workspace{grid-template-columns:300px minmax(0,1fr) 480px}}
 .sessions-sidebar{display:flex;flex-direction:column;min-width:0;min-height:0;gap:8px;padding:var(--view-inset);background:var(--panel);border-right:1px solid var(--line);overflow:hidden}
 .sessions-sidebar .sidebar-title,.requests-sidebar .sidebar-title{margin-inline:0}
 .sessions-title{gap:12px}
@@ -127,7 +127,7 @@ code.session-id{font-family:Consolas,"Cascadia Mono",monospace;font-size:11px;wo
 #ui-refresh:focus-visible{outline:2px solid #8baee5;outline-offset:2px}
 #ui-refresh svg{display:block;width:16px;height:16px;pointer-events:none}
 @media(prefers-reduced-motion:reduce){#ui-refresh{transition:none}}
-.token-trend-view{display:grid;grid-template-columns:260px minmax(0,1fr);flex:1;min-height:0;min-width:0;overflow:hidden}
+.token-trend-view{display:grid;grid-template-columns:300px minmax(0,1fr);flex:1;min-height:0;min-width:0;overflow:hidden}
 .trend-sidebar{display:flex;flex-direction:column;gap:12px;min-height:0;min-width:0;padding:var(--view-inset);border-right:1px solid var(--line);background:#fafbfd;overflow:hidden}
 .trend-sidebar-controls{display:flex;align-items:center;gap:8px;flex:none}
 .trend-main{display:flex;flex-direction:column;gap:12px;min-height:0;min-width:0;padding:var(--view-inset);overflow:hidden}
