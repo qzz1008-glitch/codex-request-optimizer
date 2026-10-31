@@ -104,7 +104,9 @@
 .sharing-message{flex:none;box-sizing:border-box;margin:0;padding:10px 14px;border:1px solid var(--line);border-radius:7px;background:var(--panel);font-size:13px;line-height:1.6}
 .sharing-message.error{color:var(--danger);border-color:var(--danger)}
 .sharing-inline-editor{position:fixed;z-index:30;display:grid;gap:10px;box-sizing:border-box;width:256px;max-width:calc(100vw - 24px);padding:14px;border:1px solid var(--line);border-radius:9px;background:var(--panel);color:var(--ink);box-shadow:0 5px 24px #0002}
-.sharing-inline-editor[data-field=expires_at]{width:356px}.sharing-inline-editor>label{margin:0;font-size:12px;color:var(--muted);white-space:nowrap}
+.sharing-inline-editor[data-field=expires_at],.sharing-inline-editor[data-field=expires_at] #sharing-inline-expiry-container,.sharing-inline-editor[data-field=expires_at] .sharing-expiry-control{display:contents}
+.sharing-inline-editor[data-field=expires_at]>label,.sharing-inline-editor[data-field=expires_at]>input,.sharing-inline-editor[data-field=expires_at]>.sharing-edit-message,.sharing-inline-editor[data-field=expires_at]>.sharing-inline-footer,#sharing-inline-expiry-date{display:none}
+.sharing-inline-editor>label{margin:0;font-size:12px;color:var(--muted);white-space:nowrap}
 .sharing-inline-footer{display:flex;align-items:center;gap:12px}
 .sharing-inline-actions{display:flex;justify-content:flex-end;gap:7px;margin-left:auto}.sharing-inline-actions button{min-height:28px;padding:4px 10px;font-size:12px}
 #sharing-delete-dialog{width:420px;max-width:calc(100vw - 40px);padding:24px}#sharing-delete-dialog h2{font-size:17px;margin-bottom:16px}#sharing-delete-dialog p{font-size:13px;line-height:1.7}.sharing-delete-name{font-weight:600;overflow-wrap:anywhere}#sharing-delete-dialog .button-row{justify-content:flex-end}

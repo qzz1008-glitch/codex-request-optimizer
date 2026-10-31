@@ -22,9 +22,10 @@ globalThis.InspectorSharing=(()=>{
   const message=(value,error=false,anchor="")=>{
     const box=get("sharing-message");box.textContent=tr(value);box.hidden=!value;box.classList.toggle("error",error);
     box.dataset.feedbackAnchor=error?"":anchor;box.dataset.feedbackDuration=anchor&&!error?"2400":"";
-    for(const id of ["sharing-inline-message","sharing-delete-message"]){const local=get(id);local.textContent=error?tr(value):"";local.hidden=!error;}
+    for(const id of ["sharing-inline-message","sharing-calendar-message","sharing-delete-message"]){const local=get(id);local.textContent=error?tr(value):"";local.hidden=!error;}
   };
   const expiryIds=["quota-expiry","exit-expiry","sharing-inline-expiry"];
+  const editingExpiry=id=>id==="sharing-inline-expiry"&&editing?.field==="expires_at";
   const resetWeekdays=["周一","周二","周三","周四","周五","周六","周日"];
   function weeklyOptions(value=null){
     const selected=value===null?"":String(value);
@@ -39,7 +40,7 @@ globalThis.InspectorSharing=(()=>{
   }
   function expiryControl(id,labelId){
     return `<div class="sharing-expiry-control" role="group" aria-labelledby="${labelId}"><input id="${id}" type="hidden"><button id="${id}-date" class="sharing-expiry-date" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="${id}-calendar" aria-labelledby="${labelId} ${id}-display"><span id="${id}-display"></span><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><rect x="2.5" y="3.5" width="11" height="10" rx="1.5"/><path d="M5 2v3m6-3v3M3 7h10"/></svg></button>
-      <div id="${id}-calendar" class="sharing-calendar" role="dialog" aria-labelledby="${id}-month" hidden><div class="sharing-calendar-header"><button id="${id}-previous" type="button" data-month="-1" aria-label="${label("上个月")}">‹</button><strong id="${id}-month" aria-live="polite"></strong><button type="button" data-month="1" aria-label="${label("下个月")}">›</button></div><div id="${id}-weekdays" class="sharing-calendar-weekdays" aria-hidden="true"></div><div id="${id}-days" class="sharing-calendar-days" role="group" aria-labelledby="${id}-month"></div><div class="sharing-calendar-footer"><button id="${id}-apply" class="primary" type="button" data-apply="true">${label("确定")}</button><label class="sharing-expiry-unlimited"><input id="${id}-unlimited" type="checkbox">${label("无期限")}</label></div></div></div>`;
+      <div id="${id}-calendar" class="sharing-calendar" role="dialog" aria-labelledby="${id}-month" hidden><div class="sharing-calendar-header"><button id="${id}-previous" type="button" data-month="-1" aria-label="${label("上个月")}">‹</button><strong id="${id}-month" aria-live="polite"></strong><button type="button" data-month="1" aria-label="${label("下个月")}">›</button></div><div id="${id}-weekdays" class="sharing-calendar-weekdays" aria-hidden="true"></div><div id="${id}-days" class="sharing-calendar-days" role="group" aria-labelledby="${id}-month"></div><div class="sharing-calendar-footer"><button id="${id}-apply" class="primary" type="button" data-apply="true">${label("确定")}</button><label class="sharing-expiry-unlimited"><input id="${id}-unlimited" type="checkbox">${label("无期限")}</label></div>${id==="sharing-inline-expiry"?'<p id="sharing-calendar-message" class="sharing-edit-message" role="alert" hidden></p>':""}</div></div>`;
   }
   function expiryField(id){
     return `<div class="sharing-expiry"><label id="${id}-label" for="${id}-date">${label("期限")}</label>${expiryControl(id,id+"-label")}</div>`;
@@ -84,11 +85,12 @@ globalThis.InspectorSharing=(()=>{
   function resetIssue(kind){get(kind+"-label").value="";setExpiry(kind+"-expiry",defaultExpiry(),false);if(kind==="quota"){get("quota-budget").value="1";get("quota-weekly").value="";}}
   function closeCalendar(focus=true){
     if(!calendar)return;
-    const id=calendar.id;calendar=null;get(id+"-unlimited").checked=get(id).dataset.unlimited==="true";get(id+"-calendar").hidden=true;get(id+"-date").setAttribute("aria-expanded","false");if(focus)get(id+"-date").focus();
+    const id=calendar.id;calendar=null;get(id+"-unlimited").checked=get(id).dataset.unlimited==="true";get(id+"-calendar").hidden=true;get(id+"-date").setAttribute("aria-expanded","false");
+    if(focus){if(editingExpiry(id))closeInline();else get(id+"-date").focus();}
   }
   function positionCalendar(){
     if(!calendar)return;
-    const box=get(calendar.id+"-calendar"),anchor=get(calendar.id+"-date").getBoundingClientRect(),rect=box.getBoundingClientRect(),margin=12;
+    const box=get(calendar.id+"-calendar"),anchor=(editingExpiry(calendar.id)?editing.anchor:get(calendar.id+"-date")).getBoundingClientRect(),rect=box.getBoundingClientRect(),margin=12;
     box.style.left=Math.max(margin,Math.min(anchor.left,innerWidth-rect.width-margin))+"px";
     box.style.top=(anchor.bottom+6+rect.height<=innerHeight-margin?anchor.bottom+6:Math.max(margin,anchor.top-rect.height-6))+"px";
   }
@@ -104,7 +106,7 @@ globalThis.InspectorSharing=(()=>{
       days.push(`<button type="button" data-day="${day}" ${day<minimum?"disabled":""} tabindex="${day===calendar.focused?"0":"-1"}" aria-label="${day}" aria-pressed="${day===selected}" ${day===today?'aria-current="date"':""}>${n}</button>`);
     }
     get(id+"-days").innerHTML=days.join("");get(id+"-previous").disabled=localDay(new Date(year,index,0,12).getTime())<minimum;
-    get(id+"-unlimited").checked=calendar.unlimited;get(id+"-apply").disabled=calendar.unlimited||!selectableExpiry(calendar.day);
+    get(id+"-unlimited").checked=calendar.unlimited;get(id+"-apply").disabled=calendar.unlimited?!editingExpiry(id):!selectableExpiry(calendar.day,calendarOriginal(id));
     positionCalendar();if(focus)get(id+"-days").querySelector(`[data-day="${calendar.focused}"]`)?.focus();
   }
   function openCalendar(id){
@@ -112,21 +114,30 @@ globalThis.InspectorSharing=(()=>{
     if(calendar?.id===id){closeCalendar();return;}
     closeCalendar(false);controller?.abort();
     const day=get(id+"-date").value,focused=day<get(id).dataset.minimumDay?get(id).dataset.minimumDay:day;
-    calendar={id,month:new Date(focused+"T12:00"),focused,day,unlimited:get(id).dataset.unlimited==="true"};get(id+"-date").setAttribute("aria-expanded","true");get(id+"-calendar").hidden=false;renderCalendar(true);
+    calendar={id,month:new Date(focused+"T12:00"),focused,day,unlimited:get(id).dataset.unlimited==="true",modified:false};get(id+"-date").setAttribute("aria-expanded","true");get(id+"-calendar").hidden=false;renderCalendar(true);
   }
-  function selectableExpiry(day){
-    try{expiryTime(day);return true;}catch(_){return false;}
+  function calendarOriginal(id){return editingExpiry(id)&&!calendar?.modified&&get(id).dataset.modified!=="true"?editing.original:undefined;}
+  function selectableExpiry(day,original){
+    try{expiryTime(day,original);return true;}catch(_){return false;}
   }
   for(const id of expiryIds){
     setExpiry(id,defaultExpiry(),false);get(id+"-calendar").hidden=true;
     get(id+"-date").addEventListener("click",()=>openCalendar(id));
-    get(id+"-unlimited").addEventListener("change",()=>{setExpiry(id,get(id+"-unlimited").checked?null:get(id).dataset.finiteValue||defaultExpiry());get("sharing-inline-message").hidden=true;closeCalendar();});
-    get(id+"-calendar").addEventListener("click",event=>{
+    get(id+"-unlimited").addEventListener("change",()=>{
+      if(editingExpiry(id)&&calendar?.id===id){calendar.unlimited=get(id+"-unlimited").checked;get("sharing-calendar-message").hidden=true;renderCalendar();return;}
+      setExpiry(id,get(id+"-unlimited").checked?null:get(id).dataset.finiteValue||defaultExpiry());get("sharing-inline-message").hidden=true;closeCalendar();
+    });
+    get(id+"-calendar").addEventListener("click",async event=>{
       const button=event.target.closest("[data-month],[data-day],[data-apply]");if(!button||button.disabled||busy||calendar?.id!==id)return;
       if(button.dataset.month){calendar.month=new Date(calendar.month.getFullYear(),calendar.month.getMonth()+Number(button.dataset.month),1,12);calendar.focused=localDay(calendar.month.getTime());if(calendar.focused<get(id).dataset.minimumDay)calendar.focused=get(id).dataset.minimumDay;renderCalendar();return;}
-      if(button.dataset.apply){if(!selectableExpiry(calendar.day))return;setExpiry(id,calendar.day,true);get("sharing-inline-message").hidden=true;closeCalendar();return;}
+      if(button.dataset.apply){
+        if(!(editingExpiry(id)&&calendar.unlimited)&&!selectableExpiry(calendar.day,calendarOriginal(id)))return;
+        setExpiry(id,calendar.unlimited?null:calendar.day,editingExpiry(id)?calendar.modified||get(id).dataset.modified==="true":true);
+        get("sharing-inline-message").hidden=true;get("sharing-calendar-message").hidden=true;
+        if(editingExpiry(id))await saveInline();else closeCalendar();return;
+      }
       if(button.dataset.day<get(id).dataset.minimumDay)return;
-      calendar.day=button.dataset.day;calendar.focused=calendar.day;calendar.unlimited=false;renderCalendar(true);
+      calendar.day=button.dataset.day;calendar.focused=calendar.day;calendar.unlimited=false;calendar.modified=true;get("sharing-calendar-message").hidden=true;renderCalendar(true);
     });
     get(id+"-calendar").addEventListener("keydown",event=>{
       if(!calendar||calendar.id!==id||busy)return;
@@ -167,7 +178,7 @@ globalThis.InspectorSharing=(()=>{
   function fieldValue(row,field,text){
     if(row.direction!=="out"&&field!=="label")return `<span title="${label("由提供方管理")}">${text}</span>`;
     const handle=field==="label"?`<button type="button" class="sharing-drag-handle" draggable="true" data-drag-id="${row.id}" title="${label("拖动排序")}" aria-label="${label("拖动排序")} · ${esc(row.label)}" aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"><svg viewBox="0 0 12 18" aria-hidden="true"><circle cx="3" cy="4" r="1"/><circle cx="9" cy="4" r="1"/><circle cx="3" cy="9" r="1"/><circle cx="9" cy="9" r="1"/><circle cx="3" cy="14" r="1"/><circle cx="9" cy="14" r="1"/></svg></button>`:"";
-    return handle+`<button type="button" class="sharing-cell-value${field==="expires_at"?" sharing-expiry-trigger":""}" data-action="field" data-field="${field}" data-id="${row.id}" aria-controls="sharing-inline-editor" aria-expanded="false" title="${label("点击修改")}">${text}</button>`;
+    return handle+`<button type="button" class="sharing-cell-value${field==="expires_at"?" sharing-expiry-trigger":""}" data-action="field" data-field="${field}" data-id="${row.id}" aria-controls="${field==="expires_at"?"sharing-inline-expiry-calendar":"sharing-inline-editor"}" aria-expanded="false" title="${label("点击修改")}">${text}</button>`;
   }
   function weeklyValue(row){
     const value=weeklyDay(row);
@@ -286,6 +297,7 @@ globalThis.InspectorSharing=(()=>{
   });
   function positionInline(){
     if(!editing)return;
+    if(editing.field==="expires_at"){positionCalendar();return;}
     const box=get("sharing-inline-editor"),anchor=editing.anchor.getBoundingClientRect(),rect=box.getBoundingClientRect(),margin=12;
     const left=Math.max(margin,Math.min(anchor.left,innerWidth-rect.width-margin));
     const top=anchor.bottom+6+rect.height<=innerHeight-margin?anchor.bottom+6:Math.max(margin,anchor.top-rect.height-6);
@@ -295,7 +307,7 @@ globalThis.InspectorSharing=(()=>{
     closeCalendar(false);
     if(!editing)return;
     const draft=editing;draft.anchor.setAttribute("aria-expanded","false");editing=null;get("sharing-inline-editor").hidden=true;
-    get("sharing-inline-message").hidden=true;if(renderNow&&current){render(current);get("sharing-cards").querySelector(`[data-action="field"][data-id="${draft.id}"][data-field="${draft.field}"]`)?.focus();}
+    get("sharing-inline-message").hidden=true;get("sharing-calendar-message").hidden=true;if(renderNow&&current){render(current);get("sharing-cards").querySelector(`[data-action="field"][data-id="${draft.id}"][data-field="${draft.field}"]`)?.focus();}
   }
   function openInline(row,field,anchor){
     if(busy||!["label","budget","used","expires_at"].includes(field)||(row.direction!=="out"&&field!=="label")||(["budget","used"].includes(field)&&row.kind!=="quota"))return;
@@ -334,12 +346,12 @@ globalThis.InspectorSharing=(()=>{
       if(value===draft.original){closeInline();return;}
       input.disabled=true;disableExpiry("sharing-inline-expiry",true);get("sharing-inline-cancel").disabled=true;
       try{
-        const result=await action(get("sharing-inline-save"),{action:"credential_edit",id:draft.id,[draft.field]:value},null);
+        const result=await action(get(draft.field==="expires_at"?"sharing-inline-expiry-apply":"sharing-inline-save"),{action:"credential_edit",id:draft.id,[draft.field]:value},null);
         if(result&&editing===draft)closeInline();else positionInline();
       }finally{input.disabled=draft.field==="expires_at";disableExpiry("sharing-inline-expiry",draft.field!=="expires_at");get("sharing-inline-cancel").disabled=false;}
     }catch(error){message(error.message,true);positionInline();}
   }
-  get("sharing-inline-editor").addEventListener("submit",async event=>{event.preventDefault();await saveInline();});
+  get("sharing-inline-editor").addEventListener("submit",async event=>{event.preventDefault();if(editing?.field!=="expires_at")await saveInline();});
   document.addEventListener("pointerdown",event=>{if(calendar&&!busy&&!get(calendar.id+"-calendar").contains(event.target)&&!get(calendar.id+"-date").contains(event.target))closeCalendar(false);if(editing&&!busy&&!get("sharing-inline-editor").contains(event.target)&&!event.target.closest("[data-action=field]"))closeInline(false);});
   document.addEventListener("keydown",event=>{if(!busy&&event.key==="Escape"){if(calendar){event.preventDefault();closeCalendar();}else if(editing){event.preventDefault();closeInline();}}});
   const positionEditors=()=>{positionInline();positionCalendar();};
