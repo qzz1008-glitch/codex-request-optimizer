@@ -184,7 +184,7 @@ globalThis.InspectorSharing=(()=>{
   function weeklyValue(row){
     const value=weeklyDay(row);
     if(value===undefined)return `<small title="${label("由提供方管理")}">—</small>`;
-    return `<select class="sharing-weekly-select" data-action="weekly" data-id="${row.id}" aria-label="${label("每周刷新")}" title="${label(row.direction==="in"?"由提供方管理":"按提供方本机时间，在所选当天零点刷新。")}"${row.direction==="in"?" disabled":""}>${weeklyOptions(value)}</select>`;
+    return `<span class="sharing-weekly-control"><select class="sharing-weekly-select" data-action="weekly" data-id="${row.id}" aria-label="${label("每周刷新")}" title="${label(row.direction==="in"?"由提供方管理":"按提供方本机时间，在所选当天零点刷新。")}"${row.direction==="in"?" disabled":""}>${weeklyOptions(value)}</select></span>`;
   }
   function quotaUsage(row){
     const d=data(row),used=d.period_cost_nanos,budget=d.budget_nanos,knownUsed=Number.isFinite(used)&&used>=0,knownBudget=Number.isFinite(budget)&&budget>=0;
