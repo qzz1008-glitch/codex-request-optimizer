@@ -128,6 +128,7 @@ const uiI18n = (() => {
     "已切换额度来源。请重新加载 Codex 配置或重启 ChatGPT 应用。":"Quota source changed. Reload the Codex configuration or restart ChatGPT.",
     "已更新，新请求使用当前设置。":"Updated. New requests use these settings.",
     "已复制":"Copied",
+    "已复制，仅供一台机器使用":"Copied. For use on one machine only.",
     "复制失败，请点击右侧“凭据”重试。":"Copy failed. Click Credential on the right to try again.",
     "请选择未来的到期时间，或选择无期限。":"Choose a future expiration time or no expiry.",
     "仅显示汇总用量，不保存借用方请求。":"Only aggregate usage is shown; borrower requests are not stored.",
