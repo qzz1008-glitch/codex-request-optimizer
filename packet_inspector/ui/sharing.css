@@ -58,7 +58,6 @@
 .sharing-weekly-cell .sharing-weekly-select:disabled{background-image:none;opacity:0}
 @media(forced-colors:active){.sharing-weekly-select,.sharing-weekly-select:open{appearance:auto;background-image:none}.sharing-weekly-control::after{display:none}.sharing-weekly-control .sharing-weekly-value{visibility:hidden}.sharing-weekly-control .sharing-weekly-select,.sharing-weekly-control .sharing-weekly-select:disabled{opacity:1}.sharing-weekly-control:has(select:focus-visible){outline:none}.sharing-weekly-select:focus-visible{outline:2px solid Highlight;outline-offset:2px;box-shadow:none}}
 .sharing-actions button{width:min(168px,100%);padding:6px 12px;min-height:var(--sharing-control-height);font-size:12px}
-.sharing-local{width:calc(100% - var(--sharing-control-offset));min-height:var(--sharing-control-height);margin:8px 0 0 var(--sharing-control-offset);font-size:12px}
 .sharing-stat-note{font-size:11px;color:var(--muted);line-height:1.7;margin:15px 0 0}
 .sharing-credential-count{color:var(--muted);font-size:12px;font-variant-numeric:tabular-nums}
 .sharing-stat-note{flex:none;margin-top:12px}
