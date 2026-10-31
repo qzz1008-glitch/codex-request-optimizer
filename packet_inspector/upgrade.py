@@ -171,6 +171,16 @@ class Upgrade:
                           "--config", str(self.config)], env={**os.environ, "PYINSTALLER_RESET_ENVIRONMENT": "1"},
                          creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
 
+    def _running_application_hash(self, status):
+        identity = status.get("worker_id")
+        if not identity:
+            return None  # A legacy service cannot prove that its payload matches.
+        worker = worker_info(self.data_dir, identity)
+        executable = Path(worker["executable"]).resolve()
+        if not executable.is_relative_to((self.data_dir / "bin" / "versions").resolve()):
+            raise ValueError("运行中的程序不在版本目录内，未执行升级。")
+        return digest(executable)
+
     def _application_windows(self):
         if os.name != "nt":
             return []
@@ -503,6 +513,17 @@ def run_integrated(arguments, quiet=False, force=False):
     options = argument_parser().parse_args(arguments)
     directory = options.data_dir.resolve()
     engine = Upgrade(directory, directory, options.config, options.port)
+    source_hash = digest(sys.executable)
+    report = {"started": time.time(), "version": VERSION, "source_executable": str(Path(sys.executable).resolve())[:1000],
+              "source_sha256": source_hash}
+    def record(state, **values):
+        report.update(state=state, updated=time.time(), **values)
+        try:
+            atomic_json(directory / "launch-status.json", report)
+        except OSError:
+            pass  # A diagnostic write must not prevent opening the application.
+    record("checking")
+    reason = "service_not_running"
     try:
         health = local_json(options.port, "/health", timeout=2)
         status = local_json(options.port, "/api/status", timeout=3)
@@ -513,12 +534,22 @@ def run_integrated(arguments, quiet=False, force=False):
                 or Path(status.get("profile", {}).get("config_path", "")).resolve() != options.config.resolve()):
             raise ValueError("此端口未使用当前配置，未执行升级。")
         current_version = version_tuple(status["version"])
+        report.update(installed_version=status["version"], active_worker_id=status.get("worker_id", ""))
         if current_version >= version_tuple(VERSION) and not force and engine.canonical.is_file():
-            if not quiet:
-                engine._open_window()
-            return 0
+            installed_hash = engine._running_application_hash(status) if current_version == version_tuple(VERSION) else None
+            report["installed_sha256"] = installed_hash
+            if current_version > version_tuple(VERSION) or source_hash == installed_hash:
+                record("opening_installed", reason="newer_installed" if current_version > version_tuple(VERSION) else "same_payload")
+                if not quiet:
+                    engine._open_window()
+                record("complete", action="open_installed")
+                return 0
         if current_version > version_tuple(VERSION):
             raise ValueError("已安装更新的版本，未执行降级。")
+        reason = "same_version_payload_changed" if current_version == version_tuple(VERSION) else "newer_payload"
+        if force:
+            reason = "explicit_upgrade"
+    record("preparing_upgrade", action="upgrade", reason=reason)
     staging = directory / "updates" / "staging"
     staging.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="application-", dir=staging) as name:
@@ -533,7 +564,9 @@ def run_integrated(arguments, quiet=False, force=False):
                 "--port", str(options.port)]
         if quiet:
             args.append("--quiet")
-        return main(args, default_profile=load_profile(), open_after=not quiet)
+        result = main(args, default_profile=load_profile(), open_after=not quiet)
+        record("complete" if result == 0 else "failed", exit_code=result)
+        return result
 
 
 def main(argv=None, *, default_profile=None, open_after=False):
