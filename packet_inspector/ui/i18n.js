@@ -63,7 +63,6 @@ const uiI18n = (() => {
     "借入":"Borrow",
     "生成凭据":"Generate credential",
     "保存凭据":"Save credential",
-    "使用本机额度":"Use local quota",
     "请选择本机出口或借入出口。":"Choose this computer's exit or a borrowed exit.",
     "借入出口未就绪，请重新启用或停用该凭据。":"The borrowed exit is not ready. Enable the credential again or disable it.",
     "共享出口信息不完整，请更新借用方软件后重试。":"The shared exit information is incomplete. Update the borrowing client and try again.",

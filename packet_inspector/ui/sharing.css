@@ -37,12 +37,13 @@
 .sharing-expiry-trigger::after,.sharing-weekly-control::after{content:"";display:inline-block;flex:none;width:5px;height:5px;margin-left:8px;border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;transform:translateY(-2px) rotate(45deg);opacity:.55}
 .sharing-expiry-trigger[aria-expanded=true]::after,.sharing-weekly-control:has(select:open)::after{transform:translateY(1px) rotate(225deg)}
 .sharing-actions,.sharing-row-actions{display:flex;gap:7px;flex-wrap:wrap;align-items:center}
+.sharing-actions{justify-content:center}
 .sharing-budget-row,.sharing-weekly-row{display:grid;grid-template-columns:var(--sharing-label-width) minmax(0,1fr);align-items:center;gap:var(--sharing-field-gap);min-width:0}
 .sharing-budget-row>label,.sharing-weekly-row>label{display:inline-flex;flex-direction:row;align-items:center;margin:0;white-space:nowrap;font-size:12px;color:var(--muted)}
 .sharing-weekly-select{box-sizing:border-box;appearance:none;min-width:0;min-height:34px;padding:6px 28px 6px 10px;border:1px solid var(--line);border-radius:6px;background-color:var(--panel);background-image:linear-gradient(45deg,transparent 50%,var(--muted) 50%),linear-gradient(135deg,var(--muted) 50%,transparent 50%);background-position:calc(100% - 13px) 50%,calc(100% - 9px) 50%;background-size:4px 4px;background-repeat:no-repeat;color:var(--ink);font:inherit;font-size:12px;cursor:pointer}
 .sharing-weekly-select:open{background-image:linear-gradient(135deg,transparent 50%,var(--muted) 50%),linear-gradient(45deg,var(--muted) 50%,transparent 50%)}
 .sharing-config .sharing-weekly-select{background-color:var(--panel)}
-.sharing-weekly-control{position:relative;display:inline-flex;align-items:center;justify-content:space-between;width:calc(10ch + 32px);border-radius:3px;vertical-align:baseline;color:var(--ink)}
+.sharing-weekly-control{position:relative;display:inline-flex;align-items:center;justify-content:space-between;width:calc(8ch + 20px);border-radius:3px;vertical-align:baseline;color:var(--ink)}
 .sharing-weekly-value{min-width:0;overflow:hidden;text-overflow:ellipsis;text-decoration:underline dotted color-mix(in srgb,var(--ink) 35%,var(--line));text-underline-offset:3px;pointer-events:none}
 .sharing-weekly-control::after{pointer-events:none}
 .sharing-weekly-control:has(select:hover:not(:disabled)){color:var(--accent)}
@@ -58,7 +59,6 @@
 .sharing-weekly-cell .sharing-weekly-select:disabled{background-image:none;opacity:0}
 @media(forced-colors:active){.sharing-weekly-select,.sharing-weekly-select:open{appearance:auto;background-image:none}.sharing-weekly-control::after{display:none}.sharing-weekly-control .sharing-weekly-value{visibility:hidden}.sharing-weekly-control .sharing-weekly-select,.sharing-weekly-control .sharing-weekly-select:disabled{opacity:1}.sharing-weekly-control:has(select:focus-visible){outline:none}.sharing-weekly-select:focus-visible{outline:2px solid Highlight;outline-offset:2px;box-shadow:none}}
 .sharing-actions button{width:min(168px,100%);padding:6px 12px;min-height:var(--sharing-control-height);font-size:12px}
-.sharing-local{width:calc(100% - var(--sharing-control-offset));min-height:var(--sharing-control-height);margin:8px 0 0 var(--sharing-control-offset);font-size:12px}
 .sharing-stat-note{font-size:11px;color:var(--muted);line-height:1.7;margin:15px 0 0}
 .sharing-credential-count{color:var(--muted);font-size:12px;font-variant-numeric:tabular-nums}
 .sharing-stat-note{flex:none;margin-top:12px}
@@ -111,8 +111,8 @@
 .sharing-table .sharing-drag-handle{display:inline-flex;align-items:center;justify-content:center;width:14px;min-height:22px;margin-right:6px;padding:0;border:0;background:transparent;color:var(--muted);vertical-align:middle;opacity:.55;cursor:grab}.sharing-drag-handle svg{width:10px;height:16px;fill:currentColor;pointer-events:none}.sharing-table .sharing-drag-handle:hover{opacity:1;background:transparent}.sharing-drag-handle:active{cursor:grabbing}.sharing-table tr.sharing-drag-preview{background:var(--panel);box-shadow:0 5px 16px #0003}.sharing-table tr.sharing-dragging{visibility:hidden}.sharing-reordering{cursor:grabbing;user-select:none}.sharing-table tbody[aria-busy=true] .sharing-drag-handle{opacity:.3;cursor:wait}
 .sharing-row-actions button{flex:none;padding:3px 7px;min-height:26px;border-color:color-mix(in srgb,var(--accent) 25%,var(--line));border-radius:5px;background:color-mix(in srgb,var(--accent) 6%,var(--panel));color:var(--accent);font-size:11px;font-weight:600}.sharing-row-actions button:hover:not(:disabled){background:color-mix(in srgb,var(--accent) 12%,var(--panel));border-color:color-mix(in srgb,var(--accent) 50%,var(--line))}.sharing-row-actions button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}.sharing-row-actions button:disabled{color:var(--muted);background:var(--bg);border-color:var(--line);opacity:1}
 /* Copy acknowledgement keeps the same button and column width. */
-.sharing-workspace .sharing-copy-button{width:54px;padding-inline:4px}
-.sharing-workspace:lang(en) .sharing-copy-button{width:68px}
+.sharing-row-actions .sharing-copy-button{width:54px;padding-inline:4px}
+.sharing-workspace:lang(en) .sharing-row-actions .sharing-copy-button{width:68px}
 .sharing-workspace .sharing-copy-button[data-copied=true]{color:var(--green);border-color:color-mix(in srgb,var(--green) 35%,var(--line));background:color-mix(in srgb,var(--green) 6%,var(--panel))}
 .sharing-inline-feedback{flex:none;height:18px;margin-top:6px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 .sharing-inline-feedback .sharing-message{font-size:12px;line-height:18px}
