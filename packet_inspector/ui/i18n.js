@@ -95,7 +95,6 @@ const uiI18n = (() => {
     "凭据不存在。":"Credential not found.",
     "停用":"Disable",
     "启用":"Enable",
-    "停用/启用":"Disable/Enable",
     "使用":"Use",
     "暂无凭据":"No credentials yet",
     "每周刷新":"Weekly reset",
