@@ -51,6 +51,9 @@ async function run() {
   assert.equal(await page.locator('.floating-feedback-content').innerText(),error);
   assert.equal(await page.locator('#sharing-message').evaluate(node=>getComputedStyle(node).display),'none');
   assert(await page.locator('.floating-feedback').evaluate(node=>node.matches(':popover-open')));
+  const noticeBounds=await page.locator('.floating-feedback').boundingBox();
+  assert(Math.abs(noticeBounds.x+noticeBounds.width-1260)<=1&&Math.abs(noticeBounds.y+noticeBounds.height-880)<=1,'ordinary notifications stay at the window edge');
+  assert.equal(await page.locator('.floating-feedback').evaluate(node=>getComputedStyle(node).animationName),'none');
   cases++;
 
   await page.keyboard.press('Escape');await visible(page,false);
@@ -143,8 +146,8 @@ async function run() {
   assert.equal(await fallback.locator('.floating-feedback').evaluate(node=>node.parentElement.id),'settings-dialog');
   assert.equal(await fallback.locator('.floating-feedback').evaluate(node=>getComputedStyle(node).position),'fixed');
   assert.deepEqual(await geometry(fallback,['settings-dialog','settings-save']),fallbackBefore);
-  const fallbackToast=await fallback.locator('.floating-feedback').boundingBox(),saveButton=await fallback.locator('#settings-save').boundingBox();
-  assert(Math.abs(fallbackToast.y+fallbackToast.height-saveButton.y)<=12,'dialog feedback should stay near the triggering control');
+  const fallbackToast=await fallback.locator('.floating-feedback').boundingBox();
+  assert(Math.abs(fallbackToast.x+fallbackToast.width-1260)<=1&&Math.abs(fallbackToast.y+fallbackToast.height-880)<=1,'dialog notifications also stay at the window edge');
   cases++;
 
   const sharing=await load('main');

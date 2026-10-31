@@ -1083,22 +1083,9 @@ const uiI18n = (() => {
     content.className="floating-feedback-content";
     popup.append(content);document.body.append(popup);
     if(typeof popup.showPopover==="function")popup.setAttribute("popover","manual");
-    let active=null,locale=language,expiryTimer=null,interaction=null;
-    function reference(node) {
-      return node?{node,id:node.id,action:node.dataset?.action,key:node.dataset?.id}:null;
-    }
+    let active=null,locale=language,expiryTimer=null;
     function resolve(anchor) {
-      if(!anchor)return null;
-      if(anchor.id)return document.getElementById(anchor.id);
-      if(anchor.node?.isConnected)return anchor.node;
-      return anchor.action&&anchor.key?[...document.querySelectorAll("[data-action][data-id]")].find(node=>node.dataset.action===anchor.action&&node.dataset.id===anchor.key):null;
-    }
-    function findAnchor(entry,value) {
-      if(value.anchorId)return {id:value.anchorId};
-      const trigger=resolve(interaction),scope=entry.node.closest("dialog,main");
-      if(trigger&&Date.now()-interaction.time<30000&&(!scope||scope.contains(trigger)||trigger.closest(".app-header")))return interaction;
-      const owner=entry.node.closest("section,form,.settings-footer");
-      return reference(owner?.querySelector('input:not([type="hidden"]),select,button'));
+      return anchor?.id?document.getElementById(anchor.id):null;
     }
     function snapshot(entry) {
       const {node}=entry;
@@ -1120,22 +1107,24 @@ const uiI18n = (() => {
     }
     function hide() {
       clearTimeout(expiryTimer);expiryTimer=null;
+      popup.style.removeProperty("visibility");
       try {if(popup.matches(":popover-open"))popup.hidePopover();}catch(_) {}
       popup.hidden=true;active=null;
     }
     function dismiss() {hide();}
     function place() {
+      // Measure in the top layer, then reveal only at the final position.
+      popup.style.visibility="hidden";
       const dialogs=[...document.querySelectorAll("dialog[open]")];
       const dialog=document.activeElement?.closest("dialog[open]")||dialogs.at(-1),host=dialog||document.body;
       if(popup.parentElement!==host) {
         try {if(popup.matches(":popover-open"))popup.hidePopover();}catch(_) {}
         host.append(popup);
       }
-      const rect=dialog?.getBoundingClientRect(),footer=dialog?.querySelector(".settings-footer,.button-row");
       popup.style.removeProperty("inset");
-      popup.style.setProperty("--feedback-right",rect?Math.max(16,innerWidth-rect.right+16)+"px":"20px");
-      popup.style.setProperty("--feedback-bottom",rect?Math.max(16,innerHeight-rect.bottom+(footer?.getBoundingClientRect().height||32)+12)+"px":"20px");
-      popup.style.setProperty("--feedback-width",rect?Math.max(160,Math.min(360,rect.width-32))+"px":"360px");
+      popup.style.setProperty("--feedback-right","20px");
+      popup.style.setProperty("--feedback-bottom","20px");
+      popup.style.setProperty("--feedback-width","360px");
       if(popup.hasAttribute("popover")) {
         try {if(!popup.matches(":popover-open"))popup.showPopover();}
         catch(_) {popup.removeAttribute("popover");} // Older WebViews use the dialog's own layer.
@@ -1149,11 +1138,12 @@ const uiI18n = (() => {
         const top=Math.max(margin,Math.min(preferred,innerHeight-bounds.height-margin));
         popup.style.inset=top+"px auto auto "+left+"px";
       }else if(active?.anchor)hide();
+      popup.style.removeProperty("visibility");
     }
     function present(entry,value) {
       if(active&&snapshot(active.entry)?.error&&!value.error&&active.entry!==entry&&!value.anchorId)return;
       const changed=!active||active.entry!==entry||active.signature!==value.signature;
-      const anchor=changed?findAnchor(entry,value):active.anchor;
+      const anchor=changed?(value.anchorId?{id:value.anchorId}:null):active.anchor;
       const clone=value.clone;
       for(const node of [clone,...clone.querySelectorAll("[id],[data-feedback-source],[role],[aria-live]")]) {
         for(const attribute of ["id","data-feedback-source","role","aria-live"])node.removeAttribute(attribute);
@@ -1193,21 +1183,20 @@ const uiI18n = (() => {
     }
     for(const owner of owners)observer.observe(owner,{attributes:true,attributeFilter:["hidden","open"]});
     observer.observe(document.documentElement,{attributes:true,attributeFilter:["lang"]});
-    function remember(event) {
+    function resetExpiredNotice(event) {
       const node=event.submitter||event.target?.closest?.('button,input,select,a,[role="button"]');
       if(node) {
-        interaction={...reference(node),time:Date.now()};
         // A new action may fail with the same text after its previous toast expired.
         if(!active) {const notice=document.getElementById("notice");if(notice)notice.hidden=true;}
       }
     }
-    document.addEventListener("pointerdown",remember,true);
-    document.addEventListener("submit",remember,true);
-    document.addEventListener("input",remember,true);
-    document.addEventListener("change",remember,true);
+    document.addEventListener("pointerdown",resetExpiredNotice,true);
+    document.addEventListener("submit",resetExpiredNotice,true);
+    document.addEventListener("input",resetExpiredNotice,true);
+    document.addEventListener("change",resetExpiredNotice,true);
     document.addEventListener("keydown",event=>{
       if(event.key==="Escape"&&active){event.preventDefault();event.stopPropagation();dismiss();}
-      else if(event.key==="Enter"||event.key===" ")remember(event);
+      else if(event.key==="Enter"||event.key===" ")resetExpiredNotice(event);
     },true);
     globalThis.addEventListener("resize",()=>{if(active)place();});
     document.addEventListener("scroll",()=>{if(active?.anchor)place();},true);

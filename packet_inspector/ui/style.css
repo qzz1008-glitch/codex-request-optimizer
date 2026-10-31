@@ -532,7 +532,7 @@ dialog{width:min(760px,calc(var(--desktop-width) - 80px));max-height:calc(var(--
   position:fixed;inset:auto var(--feedback-right,20px) var(--feedback-bottom,20px) auto;
   z-index:1000;box-sizing:border-box;width:max-content;
   max-width:min(var(--feedback-width,360px),calc(100vw - 24px));max-height:min(40vh,320px);
-  margin:0;padding:9px 12px;border-radius:8px;overflow:auto;font-size:13px;line-height:1.6
+  margin:0;padding:9px 12px;border-radius:8px;overflow:auto;font-size:13px;line-height:1.6;transition:none;animation:none
 }
 .floating-feedback:not(.error){pointer-events:none}
 .floating-feedback::backdrop{background:transparent;pointer-events:none}
