@@ -1,4 +1,5 @@
 """Exercise installer feedback with withdrawn windows and temporary data only."""
+import gc
 import json
 from pathlib import Path
 import tempfile
@@ -38,6 +39,10 @@ class UpgradeWindowTests(unittest.TestCase):
     def destroy(self):
         if exists(self.window):
             self.window.destroy()
+        self.window = None
+        # Destroying a Tk window leaves Python cycles behind. Collect them on
+        # the UI thread before a later test starts any background workers.
+        gc.collect()
 
     def test_running_install_cannot_be_closed_or_open_another_application(self):
         opener = Mock()
@@ -145,6 +150,8 @@ class UpgradeWindowRunnerTests(unittest.TestCase):
         # No live service is contacted and these installer windows never become visible.
         probe = hidden_window()
         probe.destroy()
+        del probe
+        gc.collect()
         for fail, open_after, open_error in ((False, False, False), (False, True, False), (True, True, False), (False, True, True)):
             with self.subTest(fail=fail, open_after=open_after, open_error=open_error), tempfile.TemporaryDirectory() as name:
                 root = Path(name)
@@ -169,6 +176,10 @@ class UpgradeWindowRunnerTests(unittest.TestCase):
                         view.window.after(1, view.close)
                 with patch.object(UpgradeWindow, "show", lambda _view: None), patch.object(UpgradeWindow, "finish", render):
                     self.assertEqual(run_upgrade_window(engine, open_after=open_after), 1 if fail else 0)
+                # Production exits the installer process after one window; this
+                # test opens several. Release each destroyed Tk interpreter on
+                # the main thread before the next worker can trigger cyclic GC.
+                gc.collect()
                 self.assertEqual(rendered, [("failed", "50%")] if fail else [("complete", "100%")])
                 self.assertEqual(engine._open_window.call_count, int(open_after and not fail))
 
