@@ -1,4 +1,157 @@
 "use strict";
+
+// Saved configuration can outlive both the desktop page and a relay worker.
+// Older workers use a local ledger until the next normal application upgrade.
+globalThis.InspectorRestartNotice = {
+  create({status, request, openSettings, busy=()=>false}) {
+    const $=id=>document.getElementById(id), labels={connection:"Codex 接入",context_tokens:"有效上下文",
+      compact_tokens:"自动压缩阈值",capacity_retry:"容量不足重试",image_analysis_mode:"图片解析",
+      entry_port:"入口端口",sharing:"共享额度来源",wsl:"WSL 配置",log_dir:"日志目录",cache_dir:"缓存目录"};
+    let ledger={revision:0,items:[]},storageKey="",authoritative=false,ackLegacy=false,details=null,working=false,error="",storageError="",backendError="",renderKey="";
+    function save() {
+      try {localStorage.setItem(storageKey,JSON.stringify({ledger,ackLegacy,details}));storageError="";}
+      catch(_) {storageError="待生效记录无法保存或读取，请勿据此判断配置已生效。";}
+    }
+    function identify(s) {
+      const key="inspector.restart-notice.v1:"+(s?.data_dir||"")+":"+(s?.profile?.config_path||"");
+      if(key===storageKey)return;
+      storageKey=key;ledger={revision:0,items:[]};ackLegacy=false;details=null;error="";backendError="";storageError="";renderKey="";
+      try {
+        const saved=JSON.parse(localStorage.getItem(key)||"null");
+        if(saved?.ledger&&Array.isArray(saved.ledger.items)) {
+          ledger={revision:Number(saved.ledger.revision)||0,items:saved.ledger.items.filter(row=>row&&Object.hasOwn(labels,row.key)&&["chatgpt","wsl"].includes(row.target))};
+          ackLegacy=!!saved.ackLegacy;details=saved.details||null;
+        }
+      } catch(_) {storageError="待生效记录无法保存或读取，请勿据此判断配置已生效。";}
+    }
+    function adopt(value) {
+      if(!value||!Array.isArray(value.items)||!Number.isInteger(value.revision))return;
+      if(value.revision<ledger.revision&&authoritative)return;
+      const next={revision:value.revision,items:value.items.filter(row=>row&&Object.hasOwn(labels,row.key)&&["chatgpt","wsl"].includes(row.target))};
+      const changed=JSON.stringify(next)!==JSON.stringify(ledger);ledger=next;
+      backendError=value.error||"";
+      if(authoritative&&status())status().restart_notice=value;
+      if(changed)save();render();
+    }
+    function mark(key,target="chatgpt",scope="",before,after,changed=false) {
+      if(authoritative)return;
+      const index=ledger.items.findIndex(row=>row.key===key&&row.target===target&&(row.scope||"")===scope);
+      const previous=index<0?null:ledger.items[index];
+      if(changed&&before===after)return;
+      const baseline=previous&&"before" in previous?previous.before:before;
+      if(index>=0)ledger.items.splice(index,1);
+      if(!changed||baseline!==after)ledger.items.push({key,target,scope,...(changed?{before:baseline,after}:{})});
+      ledger.revision++;save();
+    }
+    function ingest(s=status()) {
+      if(!s)return;
+      identify(s);
+      const wasAuthoritative=authoritative;authoritative=!!s.restart_notice;
+      if(authoritative) {
+        // A server's revision starts independently of an older page's fallback.
+        if(!wasAuthoritative)ledger={revision:0,items:[]};
+        adopt(s.restart_notice);
+      } else {
+        if(s.connection_reload_required&&!ackLegacy&&!ledger.items.some(row=>row.key==="connection"))mark("connection");
+        if(s.entry_port?.pending&&!ledger.items.some(row=>row.key==="entry_port"))
+          mark("entry_port","chatgpt","",s.entry_port.current_port,s.entry_port.configured_port,true);
+      }
+      render();
+    }
+    function change(key,before,after) {identify(status());error="";mark(key,"chatgpt","",before,after,true);render();}
+    function connection(which,result={}) {
+      identify(status());error="";
+      const targets=Array.isArray(result.wsl?.targets)?result.wsl.targets:[];
+      details={which,proxy:!!result.loopback_proxy?.changed,providers:result.provider_count,
+        warnings:(Array.isArray(result.warnings)?result.warnings:[]).filter(row=>row?.reason==="unsupported_upstream")
+          .slice(0,20).map(row=>({provider:String(row.provider||"").slice(0,160),file:String(row.file||"").slice(0,500),detail:String(row.detail||row.reason||"").slice(0,500)})),
+        targets:targets.slice(0,32).map(row=>({distribution:String(row.distribution||"").slice(0,160),active:!!row.active})),
+        wslWarnings:(Array.isArray(result.wsl?.warnings)?result.wsl.warnings:[]).slice(0,32)
+          .map(row=>({distribution:String(row.distribution||"").slice(0,160),reason:String(row.reason||"").slice(0,100),detail:String(row.detail||"").slice(0,500)}))};
+      if(result.restart_notice)adopt(result.restart_notice);
+      else {
+        const wslChanged=targets.some(row=>row.changed);
+        if(result.local_reload_required??(result.loopback_proxy?.changed||result.reload_required&&!wslChanged))mark("connection");
+        for(const row of targets)if(row.changed)mark("wsl","wsl",String(row.distribution||""));
+      }
+      save();render();
+    }
+    function sharing(result) {
+      if(result.restart_notice)adopt(result.restart_notice);
+      else if(result.reload_required){identify(status());mark("sharing");render();}
+    }
+    function node(tag,cls,text) {const value=document.createElement(tag);value.className=cls;if(text)value.textContent=text;return value;}
+    function pendingLabel(row) {return t(labels[row.key])+(row.scope?" · "+row.scope:"");}
+    function renderDetails() {
+      const list=$("connection-details-list");if(!list)return;
+      const s=status(),rows=[];
+      const row=(label,value,warning=false)=>{const li=node("li",warning?"connection-detail warning":"connection-detail");li.append(node("span","connection-detail-label",label),node("span","connection-detail-value",value));rows.push(li);};
+      row(t("接入状态"),t(s?.profile?.active?"已接入":"已断开"));
+      if(Number.isInteger(details?.providers))row("Provider",String(details.providers));
+      if(details?.proxy)row(t("本机代理例外"),t("已修复"));
+      for(const warning of s?.provider_warnings||details?.warnings||[])
+        row(warning.provider||"Provider",(warning.file?warning.file+"\n":"")+t(warning.detail||warning.reason||""),true);
+      for(const target of details?.targets||[])row("WSL · "+target.distribution,t(target.active?"已接入":"已恢复原配置。"));
+      const reasons={relay_unreachable:"WSL 无法访问本机中转，未修改配置。",relay_instance_mismatch:"WSL 连接到其他服务，未修改配置。",
+        config_not_found:"未找到该 WSL 用户的 Codex 配置。",restore_pending:"WSL 配置待恢复，请启动该发行版后再次接入并断开。"};
+      for(const warning of details?.wslWarnings||[])row("WSL · "+warning.distribution,t(reasons[warning.reason]||"WSL 操作失败，请查看接入诊断。")+(warning.detail?"\n"+warning.detail:""),true);
+      list.replaceChildren(...rows);
+    }
+    function render() {
+      const card=$("restart-notice"),badge=$("restart-notice-open");if(!card||!badge)return;
+      const items=[...ledger.items],s=status();
+      if(s?.storage_paths_pending)for(const key of ["log_dir","cache_dir"])
+        if(s[key]!==s["active_"+key])items.push({key,target:"optimizer",scope:""});
+      const chatgpt=items.some(row=>row.target==="chatgpt"),wsl=items.some(row=>row.target==="wsl"),optimizer=items.some(row=>row.target==="optimizer");
+      const portPending=!!s?.entry_port?.pending,warning=!!(s?.provider_warnings||details?.warnings)?.length||!!details?.wslWarnings?.length;
+      const failure=error||backendError||storageError,active=items.length>0||!!failure;
+      const nextKey=JSON.stringify([ledger.revision,items,details,status()?.provider_warnings,status()?.profile?.active,portPending,failure,working,!!busy(),uiI18n.language]);
+      if(nextKey===renderKey)return;renderKey=nextKey;
+      card.dataset.state=active?"pending":"ready";
+      badge.dataset.visible=String(active||warning);badge.tabIndex=active||warning?0:-1;
+      badge.textContent=t(items.length?(chatgpt||optimizer?"待重启":"待重新连接"):"接入提醒");
+      badge.setAttribute("aria-label",t("查看待生效配置与接入详情"));
+      $("restart-notice-title").textContent=t(portPending?"先重启优化器，再重启 ChatGPT App":optimizer&&chatgpt?"重启优化器与 ChatGPT App 后生效":optimizer?"重启优化器后生效":chatgpt?"重启 ChatGPT App 后生效":wsl?"重新连接 WSL 会话后生效":failure?"待生效状态暂不可用":"配置生效状态");
+      badge.title=active?$("restart-notice-title").textContent:warning?t("接入详情"):"";
+      const tags=$("restart-notice-items");tags.replaceChildren(...items.map(row=>node("li","restart-notice-tag",pendingLabel(row))));
+      const message=$("restart-notice-message");
+      message.textContent=failure?t(failure):t(chatgpt||wsl?"完成上述操作后再确认；确认只清除提醒。":optimizer?"重启优化器后，状态会自动更新。":"暂无待生效项目；新请求使用已保存的配置。");
+      message.classList.toggle("error",!!failure);
+      for(const target of ["chatgpt","wsl"]) {
+        const button=$("restart-notice-"+target),needed=target==="chatgpt"?chatgpt:wsl;
+        button.hidden=!needed;button.disabled=working||busy()||target==="chatgpt"&&portPending;
+      }
+      for(const wrapper of document.querySelectorAll("[data-settings-field]")) {
+        const field=wrapper.dataset.settingsField,key=["capacity_retry_enabled","capacity_retry_max_retries"].includes(field)?"capacity_retry":field;
+        const pending=items.some(row=>row.key===key);
+        wrapper.classList.toggle("restart-pending-field",pending);
+        if(pending)wrapper.dataset.restartLabel=t("待重启");else delete wrapper.dataset.restartLabel;
+      }
+      const connectionItems=items.filter(row=>["connection","sharing","wsl"].includes(row.key));
+      $("connection-settings").classList.toggle("restart-pending-connection",!!connectionItems.length);
+      $("connection-pending-label").hidden=!connectionItems.length;
+      $("connection-pending-label").textContent=t(connectionItems.some(row=>row.target==="chatgpt")?"待重启":"待重新连接");
+      renderDetails();
+    }
+    async function acknowledge(target) {
+      if(working||busy()||target==="chatgpt"&&status()?.entry_port?.pending)return;
+      working=true;error="";render();
+      try {
+        if(authoritative)adopt(await request("/api/restart-notice",{target,revision:ledger.revision}));
+        else {ledger.items=ledger.items.filter(row=>row.target!==target);ledger.revision++;ackLegacy=true;save();}
+      } catch(failure) {error=failure.message||String(failure);}
+      finally {working=false;render();}
+    }
+    $("restart-notice-open").addEventListener("click",async()=>{
+      await openSettings();render();
+      if(!ledger.items.length&&!status()?.storage_paths_pending&&!status()?.entry_port?.pending)$("connection-details").open=true;
+      $("restart-notice").focus();
+    });
+    for(const target of ["chatgpt","wsl"])$("restart-notice-"+target).addEventListener("click",()=>acknowledge(target));
+    return {ingest,adopt,change,connection,sharing,render,acknowledge};
+  }
+};
+
 const $ = (id) => document.getElementById(id);
 function renderWindowState(value) {
   const enabled=!!value?.enabled,maximized=!!value?.maximized;
@@ -38,7 +191,6 @@ let linkSaving = "", linkRevision = 0;
 let settingsBaseline = null, settingsLanguage = null;
 let interfaceLanguageRevision = 0;
 let settingsSaveProgress = {total:0,steps:[]};
-const settingsRestartChanges = new Map();
 const directoryOpening = new Set();
 // Offline benchmarks, three randomized passes per level. Columns: level,
 // size reduction below / at least 1,500,000 B (%), single-compression median (ms).
@@ -93,7 +245,9 @@ const imageZstdLevelEstimates = [
   [22,72.1248,25.0689,150.028]
 ];
 let compressionTarget = null, compressionSaving = false, compressionRevision = 0;
-let connectionRestartNotified = false;
+const restartNotices = InspectorRestartNotice.create({status:()=>state.status,request:api,openSettings:()=>openSettings(),
+  busy:()=>settingsSaving||linkSaving||compressionSaving||exitSaving||connectSaving});
+globalThis.inspectorRestartNotices=restartNotices;
 let exitRequest = null, exitSaving = false, exitFinished = false, exitRevision = 0;
 let connectSource = null, connectSaving = false, connectChecking = false, startupConnectChecked = false;
 let desktopOpenRevision = null;
@@ -933,10 +1087,7 @@ function renderStatus(fill=false) {
   renderProtectionPanelState();
   renderExitRequest();
   renderConnectPrompt();
-  if(s.connection_reload_required&&!connectionRestartNotified&&!linkSaving&&!connectSaving&&!compressionSaving&&!exitSaving&&!document.querySelector("dialog[open]")) {
-    connectionRestartNotified=true;
-    showConfigurationFeedback([t("Codex 接入与原生压缩")]);
-  }
+  restartNotices.ingest(s);
 }
 function storageLimitSettings(status) {
   const precise=Number.isSafeInteger(status.max_storage_bytes),legacyUnit=1048576;
@@ -1106,35 +1257,8 @@ function renderCompressionMode() {
   setText($("compression-confirm-apply"),t(compressionTarget==="disconnected"?(compressionSaving?"正在取消接入…":"确认断开"):(compressionSaving?"正在切换…":"确认断开")));
   if(!connected&&!compressionSaving&&$("compression-confirm-dialog").open)cancelCompressionChange();
 }
-function showConfigurationFeedback(items,{summary="",reloadRequired=true}={}) {
-  uiI18n.text($("settings-restart-title"),reloadRequired?"重启 ChatGPT App 后生效":"操作已完成");
-  uiI18n.text($("settings-restart-description"),reloadRequired?"设置已保存。以下配置仍需重启 ChatGPT App 后生效：":"配置无需更改，无需重启。");
-  uiI18n.text($("settings-restart-summary"),summary);$("settings-restart-summary").hidden=!summary;
-  $("settings-restart-items").replaceChildren(...items.map(label=>el("li","",label)));
-  $("settings-restart-items").hidden=!items.length;
-  const feedback=$("settings-restart-feedback");
-  feedback.dataset.feedbackTarget=$("settings-dialog").open?"settings-inline-feedback":"connection-inline-feedback";
-  feedback.hidden=false;
-}
 function showConnectionFeedback(which,result={}) {
-  connectionRestartNotified=true;
-  const reloadRequired=result.reload_required??!!state.status?.connection_reload_required;
-  const items=reloadRequired?[t("Codex 接入与原生压缩")]:[];
-  if(result.loopback_proxy?.changed)items.push(t("本机代理例外"));
-  const wslTargets=Array.isArray(result.wsl?.targets)?result.wsl.targets:[];
-  const wslWarnings=Array.isArray(result.wsl?.warnings)?result.wsl.warnings:[];
-  if(wslTargets.some(value=>value.changed))items.push(t("WSL Codex 配置：重新连接 WSL 会话后生效"));
-  const wslReasons={relay_unreachable:"WSL 无法访问本机中转，未修改配置。",relay_instance_mismatch:"WSL 连接到其他服务，未修改配置。",
-    config_not_found:"未找到该 WSL 用户的 Codex 配置。",
-    restore_pending:"WSL 配置待恢复，请启动该发行版后再次接入并断开。"};
-  const warnings=which==="activate"&&Array.isArray(result.warnings)?result.warnings.filter(value=>value?.reason==="unsupported_upstream"):[];
-  showConfigurationFeedback(items,{reloadRequired,
-    summary:()=>(which==="activate"?t("已接入。"):t("已恢复原配置。"))+(result.loopback_proxy?.changed?t("已修复本机代理例外。"):"")+
-      warnings.slice(0,5).map(value=>"\n"+t("未接管 {provider}（{file}）：{reason}。").replace("{provider}",value.provider).replace("{file}",value.file).replace("{reason}",t(value.detail||value.reason))).join("")+
-      (warnings.length>5?"\n"+t("另有 {count} 项配置未接管。").replace("{count}",warnings.length-5):"")+
-      wslTargets.map(value=>"\n"+t(value.active?"WSL {distribution} 已接入。":"WSL {distribution} 已恢复。").replace("{distribution}",value.distribution)).join("")+
-      wslWarnings.map(value=>"\n"+value.distribution+"："+t(wslReasons[value.reason]||"WSL 操作失败，请查看接入诊断。")+" ("+value.reason+")"+
-        (value.detail?"\n"+value.detail:"")).join("")});
+  restartNotices.connection(which,result);
 }
 function requestCompressionChange(mode) {
   if(mode==="connected")return requestConnection("header");
@@ -1313,7 +1437,7 @@ function renderEntryPortStatus() {
   else if(port.error){label=port.error;kind="error";}
   else if(s.profile?.config_error||s.provider_sync_error){label="无法读取 Codex 配置。";kind="error";}
   else if(settingsEditing&&settingsBaseline&&$("entry-port").value!==settingsBaseline.entry_port){label="未保存";kind="unsaved";}
-  else if(port.pending){label="重启 ChatGPT App 生效";kind="pending";}
+  else if(port.pending){label="先重启优化器，再重启 ChatGPT App";kind="pending";}
   else if(s.profile?.active){label="";kind="active";}
   node.textContent=t(label);node.dataset.state=kind;node.hidden=!label;
   node.title=supported?t("当前端口：{port}").replace("{port}",port.current_port)+(port.pending?" · "+t("待生效端口：{port}").replace("{port}",port.configured_port)+"\n"+t("入口服务重新启动后应用新端口，重启 ChatGPT App 生效。"):""):"";
@@ -1437,18 +1561,11 @@ function updateSettingsSaveState(clearMessage=true) {
   if(state.status)renderEntryPortStatus();
 }
 function trackSettingsRestart(field,before,after) {
-  const original=settingsRestartChanges.has(field)?settingsRestartChanges.get(field):before;
-  if(original===after)settingsRestartChanges.delete(field);
-  else settingsRestartChanges.set(field,original);
+  restartNotices.change(field,before,after);
 }
 function finishSettingsSave() {
-  const labels={image_analysis_mode:"图片解析",
-    context_tokens:"有效上下文",compact_tokens:"自动压缩阈值",capacity_retry:"容量不足重试"};
-  const items=[...settingsRestartChanges.keys()].map(field=>t(labels[field]));
-  if(state.status.entry_port?.pending)items.unshift(t("入口端口"));
   setSettingsMessage("设置已保存。");
-  if(items.length)showConfigurationFeedback(items);
-  if(settingsRestartChanges.has("capacity_retry"))connectionRestartNotified=true;
+  restartNotices.ingest();
 }
 async function saveSettings() {
   if(!settingsEditing||settingsSaving||linkSaving||!settingsBaseline)return;
@@ -1484,7 +1601,7 @@ async function saveSettings() {
   const controls=new Map([...$("settings-dialog").querySelectorAll("input,select,button")].map(node=>[node,node.disabled]));
   let saved=0,error=null;
   settingsSaveProgress={total:Number(!!entries.length)+Number(!!contextChanged)+Number(!!portChanged)+Number(changed.has("language")),steps:[]};
-  settingsSaving=true;$("settings-restart-feedback").hidden=true;settingsRevision++;
+  settingsSaving=true;settingsRevision++;
   for(const node of controls.keys())node.disabled=true;
   $("settings-dialog").setAttribute("aria-busy","true");renderSettingsSaveProgress();
   try {
@@ -1498,6 +1615,7 @@ async function saveSettings() {
           values.max_detail_packets=Number(draft.max_packets);
         const result=await api("/api/settings",values);
         state.status={...state.status,...result};
+        restartNotices.ingest();
         for(const [field] of entries)settingsBaseline[field]=draft[field];
         if(entries.some(([field])=>field==="image_analysis_mode"))
           trackSettingsRestart("image_analysis_mode",imageAnalysisMode(s),imageAnalysisMode(result));
@@ -1513,6 +1631,7 @@ async function saveSettings() {
         const values=Object.fromEntries(["context_tokens","compact_tokens"].map(key=>[key,draft[key]===null?null:Math.round(Number(draft[key])*1000)]));
         const previous=contextSettings;
         contextSettings=await api("/api/context-settings",values);
+        if(contextSettings.restart_notice)restartNotices.adopt(contextSettings.restart_notice);
         if(contextSettings.changed||contextSettings.reload_required)
           for(const field of ["context_tokens","compact_tokens"])trackSettingsRestart(field,previous[field],contextSettings[field]);
         settingsBaseline.context_tokens=draft.context_tokens;settingsBaseline.compact_tokens=draft.compact_tokens;
@@ -1521,7 +1640,10 @@ async function saveSettings() {
     }
     if(portChanged) {
       await runSettingsSaveStep("入口端口",async()=>{
+        const previous=state.status.entry_port.configured_port;
         state.status.entry_port=await api("/api/entry-port",{port:Number(draft.entry_port)});
+        if(state.status.entry_port.restart_notice)restartNotices.adopt(state.status.entry_port.restart_notice);
+        else trackSettingsRestart("entry_port",previous,state.status.entry_port.configured_port);
         settingsBaseline.entry_port=draft.entry_port;saved++;
       });
     }
@@ -1596,7 +1718,7 @@ async function openSettings() {
     settingsBaseline=readSettingsDraft();settingsEditing=true;
     resetSettingsSaveProgress();
     renderLanguageSelection();renderConnectionActions();renderUpdates();updateSettingsSaveState();
-    $("settings-dialog").showModal();$("settings-restart-feedback").dataset.feedbackTarget="settings-inline-feedback";
+    $("settings-dialog").showModal();restartNotices.render();
   } finally {settingsOpening=false;}
 }
 async function selectPacket(id,refresh=false,expectedListRequest=null) {
@@ -2118,7 +2240,6 @@ function restoreSettings() {
 function closeSettings() {
   if(settingsSaving)return;
   closeZstdLevelPicker(false);
-  $("settings-restart-feedback").dataset.feedbackTarget="connection-inline-feedback";
   $("settings-dialog").close();return discardSettingsDraft();
 }
 action("settings-close",closeSettings);action("settings-restore",restoreSettings);

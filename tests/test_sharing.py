@@ -440,9 +440,11 @@ class LANSharingTests(unittest.TestCase):
             self.guest.sharing.connect(second.rsplit(".", 1)[0] + "." + "0" * 64)
         self.assertEqual(self.guest.sharing.remote["port"], parse_link(first)[1])
         self.consume()
+        notice = self.guest.restart_notices.snapshot()
         with patch.object(self.guest.sharing.provider, "activate", side_effect=AssertionError("Replacement rewrote native config")):
             result = self.guest.sharing.connect(second)
         self.assertFalse(result["reload_required"])
+        self.assertEqual(self.guest.restart_notices.snapshot(), notice, "Replacing a quota source must not introduce a restart notice")
         current = tomllib.loads(self.guest.link.config.read_text(encoding="utf8"))
         previous = tomllib.loads(connected.decode())
         self.assertNotEqual(current["model_providers"][SHARED_PROVIDER]["name"], previous["model_providers"][SHARED_PROVIDER]["name"])
