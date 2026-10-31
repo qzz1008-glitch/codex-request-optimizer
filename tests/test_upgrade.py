@@ -16,6 +16,58 @@ from packet_inspector.upgrade import Upgrade
 
 
 class UpgradeTests(unittest.TestCase):
+    def test_old_shared_service_is_preserved_before_candidate_or_config_changes(self):
+        scenarios = ({"host": {"running": True}}, {"client": {"active": True}},
+                     {"egress": {"host": {"active": True}}}, {"egress": {"selection": {"mode": "peer"}}})
+        for legacy, shared in ((legacy, shared) for legacy in (False, True) for shared in scenarios):
+            with self.subTest(legacy=legacy, shared=shared):
+                before = self.config.read_bytes()
+                def old_service(_port, path, **_kwargs):
+                    if path == "/health":
+                        return {"app": "codex-packet-inspector", **({} if legacy else {"router_protocol": 1})}
+                    if path == "/api/status":
+                        return {"data_dir": str(self.data), "profile": {"config_path": str(self.config)},
+                                "sharing_settings_supported": True, "upgrade_drain_supported": True}
+                    if path == "/api/sharing":
+                        return shared
+                    self.fail("The old service must not be stopped")
+                with patch("packet_inspector.upgrade.local_json", side_effect=old_service):
+                    with self.assertRaisesRegex(ValueError, "不支持共享无缝交接"):
+                        self.engine.run()
+                self.engine._start_candidate.assert_not_called()
+                self.control.assert_not_called()
+                self.assertEqual(self.config.read_bytes(), before)
+
+    def test_sharing_handover_precedes_switch_and_finishes_before_candidate_cleanup(self):
+        for failed in (False, True):
+            with self.subTest(failed=failed):
+                atomic_json(self.data / "router-state.json", {"active": "1" * 32, "token": "fixture-control"})
+                calls = []
+                def api(port, path, data=None, *args, **kwargs):
+                    if path == "/__router__/switch":
+                        calls.append("switch:" + data["worker_id"][0])
+                    value = self.health(port, path, data, *args, **kwargs)
+                    if path == "/api/status":
+                        value.update(sharing_settings_supported=True, sharing_handover_protocol=1,
+                                     sharing_runtime={"quota_out": True})
+                    return value
+                self.control.side_effect = lambda *_args, **_kwargs: calls.append("refresh")
+                self.engine._stop_candidate.side_effect = lambda: calls.append("stop")
+                self.engine._wait_entry = (Mock(side_effect=RuntimeError("post-switch failure")) if failed
+                                           else Mock(return_value={"worker_id": "2" * 32}))
+                with patch("packet_inspector.upgrade.local_json", side_effect=api), \
+                     patch("packet_inspector.upgrade.prepare_upgrade", side_effect=lambda *_args: calls.append("prepare") or "ticket") as prepare, \
+                     patch("packet_inspector.upgrade.finish_upgrade", side_effect=lambda *_args: calls.append("finish")) as finish:
+                    if failed:
+                        with self.assertRaisesRegex(RuntimeError, "post-switch failure"):
+                            self.engine.run()
+                    else:
+                        self.engine.run()
+                prepare.assert_called_once_with(self.data.resolve(), "1" * 32, "2" * 32)
+                finish.assert_called_once_with(self.data.resolve(), "1" * 32, "2" * 32, "ticket")
+                self.assertEqual(calls, ["prepare", "switch:2", "switch:1", "finish", "stop"] if failed
+                                 else ["prepare", "switch:2", "refresh", "finish"])
+
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)

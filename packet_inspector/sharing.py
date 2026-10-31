@@ -172,16 +172,52 @@ class LANServer(ThreadingHTTPServer):
     def __init__(self, address, controller, context, handler=None):
         self.controller, self.context = controller, context
         self.slots = threading.BoundedSemaphore(8)
+        self.connection_guard = threading.Lock()
+        self.connections = 0
+        self.accept_thread = None
         super().__init__(address, handler or LANHandler)
+        self.socket.setblocking(False)
+
+    def start(self):
+        if self.accept_thread is None or not self.accept_thread.is_alive():
+            self.accept_thread = threading.Thread(target=self.serve_forever, kwargs={"poll_interval": .05},
+                                                  name="codex-sharing-listener", daemon=True)
+            self.accept_thread.start()
+
+    def pause(self):
+        if self.accept_thread is not None and self.accept_thread.is_alive():
+            self.shutdown()
+            self.accept_thread.join(timeout=2)
+
+    @classmethod
+    def adopt(cls, connection, controller, context, handler=None):
+        # A duplicated listening socket keeps the same kernel backlog and port.
+        # No close/rebind interval is introduced during a worker handover.
+        listener = cls.__new__(cls)
+        listener.controller, listener.context = controller, context
+        listener.slots = threading.BoundedSemaphore(8)
+        listener.connection_guard, listener.connections = threading.Lock(), 0
+        listener.accept_thread = None
+        ThreadingHTTPServer.__init__(listener, connection.getsockname(), handler or LANHandler, bind_and_activate=False)
+        listener.socket.close()
+        listener.socket = connection
+        listener.socket.setblocking(False)
+        listener.server_address = connection.getsockname()
+        listener.server_name, listener.server_port = listener.server_address
+        return listener
 
     def process_request(self, request, address):
         if not self.slots.acquire(blocking=False):
             self.shutdown_request(request)
             return
+        with self.connection_guard:
+            self.connections += 1
         try:
             super().process_request(request, address)
         except Exception:
             self.slots.release()
+            with self.connection_guard:
+                self.connections -= 1
             raise
 
     def process_request_thread(self, request, address):
@@ -195,6 +231,8 @@ class LANServer(ThreadingHTTPServer):
             super().process_request_thread(request, address)
         finally:
             self.slots.release()
+            with self.connection_guard:
+                self.connections -= 1
 
     def handle_error(self, *_args):
         pass  # Never echo request headers, URL grants, bodies or native secrets.
@@ -330,7 +368,7 @@ class LANHandler(BaseHTTPRequestHandler):
 
 
 class Sharing:
-    def __init__(self, server, *, authorization_factory=None):
+    def __init__(self, server, *, authorization_factory=None, recover=True):
         self.server = server
         self.guard = threading.RLock()
         self.authorization_factory = authorization_factory or (lambda: NativeAuthorization(native_home=server.link.config.parent))
@@ -350,6 +388,12 @@ class Sharing:
         self.provider = SharedProvider(server.link, server.data_dir / "sharing-provider.json")
         self.recovery_error = ""
         self.recovered = False
+        self.owns_provider_state = False
+        if recover:
+            self.recover_provider()
+
+    def recover_provider(self):
+        self.owns_provider_state = True
         try:
             self.recovered = self.provider.restore()
         except (OSError, ValueError, KeyError, TypeError, AttributeError):
@@ -427,7 +471,7 @@ class Sharing:
                              "fingerprint": fingerprint}
                 self.authorization, self.listener = authorization, listener
                 self.recovered = False
-                threading.Thread(target=listener.serve_forever, name="codex-lan-sharing", daemon=True).start()
+                listener.start()
             except Exception as exc:
                 try:
                     if listener:
@@ -537,7 +581,7 @@ class Sharing:
         if timer:
             timer.cancel()
         if listener:
-            listener.shutdown()
+            listener.pause()
             listener.server_close()
         if authorization:
             authorization.close()
@@ -620,6 +664,7 @@ class Sharing:
                     self.provider.set_label(saved["label"])
                 self.remote = {"host": host, "port": port, "upstream": upstream, "opener": opener, "token": token,
                                "credential_id": saved_id}
+                self.owns_provider_state = True
                 self.recovered = False
                 if not replacing:
                     self.server.connection_reload_required = True
@@ -646,8 +691,9 @@ class Sharing:
     def disconnect(self):
         with self.guard:
             borrowing = self.remote is not None
-            had_remote = self.remote is not None or self.provider.path.exists()
-            self.provider.restore()
+            had_remote = self.owns_provider_state and (self.remote is not None or self.provider.path.exists())
+            if self.owns_provider_state:
+                self.provider.restore()
             self.remote = None
             self.recovered = False
             if borrowing:

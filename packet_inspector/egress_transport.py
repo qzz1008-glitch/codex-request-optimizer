@@ -59,7 +59,7 @@ class ExitResponse:
 
 
 class ExitOpener:
-    def __init__(self, link, *, client_id, ephemeral=False, target_context=None):
+    def __init__(self, link, *, client_id, ephemeral=False, target_context=None, resume_snapshot=None):
         # Import lazily so an unavailable optional dependency cannot affect the
         # original relay, account-sharing tab or an exit-only provider.
         try:
@@ -72,11 +72,18 @@ class ExitOpener:
         try:
             context = pinned_tls_context(host, port, fingerprint)
             probe = build_opener(ProxyHandler({}), HTTPSHandler(context=context), NoRedirect())
-            with probe.open(Request(f"https://{host}:{port}/v1/status",
-                                    headers={"Authorization": "Bearer " + token, CLIENT_HEADER: client_id}), timeout=8) as response:
-                value = json.loads(response.read(256_000))
-            if value.get("protocol") != EGRESS_PROTOCOL or value.get("kind") != "network_exit":
-                raise SharingError("共享出口协议不兼容，请双方更新软件。")
+            if resume_snapshot is None:
+                with probe.open(Request(f"https://{host}:{port}/v1/status",
+                                        headers={"Authorization": "Bearer " + token, CLIENT_HEADER: client_id}), timeout=8) as response:
+                    value = json.loads(response.read(256_000))
+                if value.get("protocol") != EGRESS_PROTOCOL or value.get("kind") != "network_exit":
+                    raise SharingError("共享出口协议不兼容，请双方更新软件。")
+            else:
+                # Verified local handover state; connections still authenticate
+                # and enforce the original TLS certificate pin below.
+                if not isinstance(resume_snapshot, dict):
+                    raise SharingError("共享出口交接状态无效。")
+                value = {"credential": resume_snapshot}
             self.manager = urllib3.ProxyManager(f"https://{host}:{port}",
                 proxy_headers={"Proxy-Authorization": "Bearer " + token, CLIENT_HEADER: client_id}, proxy_ssl_context=context,
                 proxy_assert_fingerprint=fingerprint, use_forwarding_for_https=False,

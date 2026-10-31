@@ -60,6 +60,7 @@ from .image_isolation import ImageIsolation, ImageIsolationFailure, check_image_
 from .sharing import Sharing, SharingError, forwarding_headers, allowed_request as sharing_request_allowed
 from .sharing_errors import prepare_shared_error
 from .shared_egress import SharedEgress
+from .sharing_handover import SharingHandover, PROTOCOL as SHARING_HANDOVER_PROTOCOL, runtime as sharing_runtime
 from .egress_transport import EGRESS_HEADER
 from .sharing_credentials import CLIENT_HEADER
 
@@ -201,8 +202,9 @@ class InspectorServer(ThreadingHTTPServer):
         self.port = self.server_address[1]
         self.public_port = public_port or self.port
         self.provider_guard = threading.RLock()
-        self.sharing = Sharing(self)
+        self.sharing = Sharing(self, recover=not bool(worker_id))
         self.egress = SharedEgress(self)
+        self.sharing_handover = SharingHandover(self)
         self.provider_fingerprint = None
         self.provider_sync_error = ""
         self.provider_sync_result = {}
@@ -262,6 +264,7 @@ class InspectorServer(ThreadingHTTPServer):
         # Update classifications of stored records without delaying list requests.
         while not self.analysis_stop.is_set():
             with self.maintenance_guard:
+                self.sharing_handover.poll()
                 processed = self._maintenance_step() if self.maintenance_enabled else 0
             self.connection_resume.step()
             self.analysis_stop.wait(0.02 if processed else 2)
@@ -297,6 +300,9 @@ class InspectorServer(ThreadingHTTPServer):
                 self.maintenance_enabled = False
                 self.worker_state = "draining"
             elif action == "activate":
+                self.sharing_handover.activate()
+                if not self.sharing.owns_provider_state:
+                    self.sharing.recover_provider()
                 with self.guard:
                     if self.settings_path.exists():
                         saved = json.loads(self.settings_path.read_text(encoding="utf8"))
@@ -314,6 +320,16 @@ class InspectorServer(ThreadingHTTPServer):
                 self.connection_resume.schedule()
             elif action == "maintenance":
                 self.maintenance_enabled = self.worker_state == "active" and bool(data.get("enabled"))
+            elif action == "sharing_export":
+                return self.sharing_handover.export(data.get("target"))
+            elif action == "sharing_stage":
+                self.sharing_handover.stage(data["snapshot"])
+            elif action == "sharing_yield":
+                self.sharing_handover.yield_accept(data.get("ticket"), data.get("peer"))
+            elif action == "sharing_finish":
+                if data.get("ticket") != self.sharing_handover.ticket or type(data.get("committed")) is not bool:
+                    raise ValueError("共享交接标识无效。")
+                self.sharing_handover.finish(data["committed"])
             elif action == "recover":
                 for owner in data.get("owners", []):
                     if not isinstance(owner, str) or not re.fullmatch(r"relay(?::[0-9a-f]{32})?", owner):
@@ -387,6 +403,8 @@ class InspectorServer(ThreadingHTTPServer):
 
     def set_connection(self, connected):
         with self.provider_guard:
+            if self.sharing_handover.pending:
+                raise ValueError("正在交接共享，请稍后修改接入设置。")
             self.connection_resume.cancel()
             if self.sharing.remote:
                 self.sharing.disconnect()
@@ -570,6 +588,9 @@ class InspectorServer(ThreadingHTTPServer):
                 "capacity_retry_mode": "native",
                 "capacity_retry_supported": True,
                 "sharing_settings_supported": True,
+                "sharing_handover_protocol": SHARING_HANDOVER_PROTOCOL if os.name == "nt" else 0,
+                "sharing_runtime": sharing_runtime(self),
+                "sharing_in_flight": self.sharing_handover.connections(),
                 "sharing_port": self.settings["sharing_port"], "egress_port": self.settings["egress_port"],
                 "capacity_retry_diagnostics_supported": True,
                 "capacity_retry_diagnostics_errors": self.retry_journal.errors,
@@ -702,7 +723,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(403, {"error": "worker_control_required"})
                 return
             try:
-                data = json.loads(self._body(8192))
+                data = json.loads(self._body(64 * 1024))
                 if not isinstance(data, dict):
                     raise ValueError("invalid worker control")
                 if data.get("action") == "restart":
@@ -719,7 +740,8 @@ class Handler(BaseHTTPRequestHandler):
                     threading.Thread(target=self.server.shutdown, daemon=True).start()
                 elif data.get("action") == "stop":
                     with self.server.guard:
-                        if self.server.active_requests:
+                        if (self.server.active_requests or self.server.sharing_handover.connections()
+                                or self.server.sharing_handover.pending):
                             self._json(409, {"error": "requests_in_flight"})
                             return
                         self.server.upgrade_draining = True
@@ -750,7 +772,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == "/health" and self.command == "GET":
             self._json(200, {"ok": True, "app": "codex-packet-inspector", "version": VERSION,
-                             "worker_id": self.server.worker_id})
+                             "worker_id": self.server.worker_id, "pid": os.getpid()})
             return
         if path == "/api/wsl-probe" and self.command == "GET":
             self._json(200, {"instance": hashlib.sha256(self.server.endpoint.encode()).hexdigest()})
@@ -788,6 +810,9 @@ class Handler(BaseHTTPRequestHandler):
                 raise ValueError("invalid sharing action")
             try:
                 with self.server.provider_guard:
+                    if self.server.sharing_handover.pending:
+                        self._json(409, {"error": "sharing_upgrade_in_progress"})
+                        return
                     action = data.get("action")
                     if action == "credential_issue":
                         if data.get("kind") == "quota":
@@ -957,6 +982,9 @@ class Handler(BaseHTTPRequestHandler):
             data = json.loads(self._body(8192))
             checked_paths = path_settings(self.server.data_dir, data)
             with self.server.provider_guard, self.server.guard:
+                if self.server.sharing_handover.pending:
+                    self._json(409, {"error": "sharing_upgrade_in_progress"})
+                    return
                 candidate = dict(self.server.settings)
                 candidate.update(checked_paths)
                 image_isolation = self.server.image_isolation
@@ -1089,7 +1117,8 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/upgrade/stop" and self.command == "POST":
             self._body(8192)
             with self.server.guard:
-                if self.server.active_requests:
+                if (self.server.active_requests or self.server.sharing_handover.connections()
+                        or self.server.sharing_handover.pending):
                     self._json(409, {"error": "requests_in_flight", "active_requests": self.server.active_requests})
                     return
                 self.server.upgrade_draining = True
@@ -1098,7 +1127,8 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/stop" and self.command == "POST":
             self._body(8192)
             with self.server.guard:
-                if self.server.active_requests:
+                if (self.server.active_requests or self.server.sharing_handover.connections()
+                        or self.server.sharing_handover.pending):
                     self._json(409, {"error": "requests_in_flight"})
                     return
                 self.server.upgrade_draining = True

@@ -21,6 +21,8 @@ from packet_inspector.window_lifecycle import EXIT_PROPERTY, request_window_exit
 from packet_inspector.frontend_dev import BuildProfile, load_profile, installed_profile, remember_upgrade_profile
 from packet_inspector.router import (PROTOCOL, atomic_json, control_worker, healthy_worker,
                                      local_json, process_alive, start_worker, worker_info)
+from packet_inspector.sharing_handover import (PROTOCOL as SHARING_HANDOVER_PROTOCOL, UNSUPPORTED as SHARING_UPGRADE_UNSUPPORTED,
+                                              active_status as sharing_active, prepare_upgrade, finish_upgrade)
 
 
 def digest(path):
@@ -413,6 +415,7 @@ class Upgrade:
             raise ValueError("入口端口无效。")
         legacy = False
         health = None
+        status = {}
         try:
             health = local_json(self.port, "/health", timeout=2)
             status = local_json(self.port, "/api/status", timeout=3)
@@ -431,6 +434,12 @@ class Upgrade:
                 raise ValueError("旧版不支持安全排空，请先手动关闭旧中转再运行升级程序。")
             if not legacy and health.get("router_protocol") != PROTOCOL:
                 raise ValueError("入口协议不兼容，未修改正在运行的服务。")
+            # This check precedes candidate construction, window changes and
+            # stopping a legacy process. Unknown sharing owners are preserved.
+            if status.get("sharing_settings_supported"):
+                shared = status if "sharing_runtime" in status else local_json(self.port, "/api/sharing", timeout=3)
+                if sharing_active(shared) and (legacy or status.get("sharing_handover_protocol") != SHARING_HANDOVER_PROTOCOL):
+                    raise ValueError(SHARING_UPGRADE_UNSUPPORTED)
         windows = self._application_windows()
         remember_upgrade_profile(self.data_dir, self.default_profile, windows)
         version_dir = self.data_dir / "bin" / "versions" / manifest["sha256"][app.name]
@@ -444,6 +453,7 @@ class Upgrade:
             raise ValueError("已暂存的新版程序校验失败。")
         self._report("正在启动新版服务并检查运行状态…", 2)
         success, backup, reopen = False, None, False
+        sharing_ticket, old = None, None
         try:
             self._start_candidate(version_exe, manifest["version"])
             self._report("新版服务已就绪，正在准备切换…", 3)
@@ -453,8 +463,14 @@ class Upgrade:
                     self._close_windows(windows)
                     reopen = True
                 state = json.loads((self.data_dir / "router-state.json").read_text(encoding="utf8"))
-                self._report("新版已就绪，正在切换新请求；旧请求继续完成…")
                 old = state["active"]
+                if status.get("sharing_handover_protocol") == SHARING_HANDOVER_PROTOCOL:
+                    self._report("正在交接额度与网络共享，已有连接继续完成…")
+                    sharing_ticket = prepare_upgrade(self.data_dir, old, self.candidate)
+                elif status.get("sharing_settings_supported"):
+                    if sharing_active(local_json(self.port, "/api/sharing", timeout=3)):
+                        raise ValueError(SHARING_UPGRADE_UNSUPPORTED)
+                self._report("新版已就绪，正在切换新请求；旧请求继续完成…")
                 local_json(self.port, "/__router__/switch", {"worker_id": self.candidate, "expected_active": old}, state["token"], timeout=40)
                 try:
                     status = self._wait_entry(PROTOCOL, seconds=8)
@@ -472,10 +488,14 @@ class Upgrade:
                     "worker_id": self.candidate, "backup": str(backup) if backup else None,
                     "entry_migrated": health is None or legacy}
         finally:
-            if not success:
-                self._stop_candidate()
-            if reopen:
-                self._open_window()
+            try:
+                if sharing_ticket is not None:
+                    finish_upgrade(self.data_dir, old, self.candidate, sharing_ticket)
+            finally:
+                if not success:
+                    self._stop_candidate()
+                if reopen:
+                    self._open_window()
 
     def run(self):
         self.completed_steps = 0

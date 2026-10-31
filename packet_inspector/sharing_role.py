@@ -16,7 +16,7 @@ class MachineSharingRole:
         self.guard = threading.Lock()
         self.resource = None
 
-    def acquire(self):
+    def acquire(self, *, handover=False):
         with self.guard:
             if self.resource is not None:
                 raise SharingError(BUSY)
@@ -32,13 +32,15 @@ class MachineSharingRole:
                 handle = kernel.CreateMutexW(None, False, "Global\\" + self.name)
                 if not handle:
                     raise SharingError(BUSY)
-                if ctypes.get_last_error() == 183:  # ERROR_ALREADY_EXISTS
+                if ctypes.get_last_error() == 183 and not handover:  # ERROR_ALREADY_EXISTS
                     kernel.CloseHandle(handle)
                     raise SharingError(BUSY)
                 # Hold the named object's lifetime, not thread-affine mutex
                 # ownership. A later HTTP thread can release it safely.
                 self.resource = (kernel, handle)
             else:
+                if handover:
+                    raise SharingError("此平台不支持共享角色交接。")
                 lock = file_lock(Path(tempfile.gettempdir()) / (self.name + ".lock"), blocking=False)
                 try:
                     lock.__enter__()
