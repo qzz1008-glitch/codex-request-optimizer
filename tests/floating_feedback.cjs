@@ -140,6 +140,45 @@ async function run() {
   assert.deepEqual(await geometry(fallback,['settings-dialog','settings-save']),fallbackBefore);
   cases++;
 
+  const sharing=await load('main');
+  await sharing.evaluate(()=>{
+    document.getElementById('records-view').hidden=true;document.getElementById('sharing-view').hidden=false;
+    const snapshot={supported:true,protocol:4,credentials_supported:true,host:{active:true,running:true},client:{active:false},
+      egress:{supported:true,host:{active:false},selection:{mode:'local'}},credentials:[
+        {id:'quota1',kind:'quota',direction:'out',label:'Quota',enabled:true,expires_at:null,budget_nanos:10e9,totals:{}},
+        {id:'exit1',kind:'exit',direction:'out',label:'Exit',enabled:true,expires_at:null,totals:{}}
+      ]};
+    window.fetch=async(_,options)=>{
+      const action=options.body?JSON.parse(options.body).action:null;
+      if(action==='credential_copy')await new Promise(resolve=>{window.finishCopy=resolve;});
+      return {ok:true,json:async()=>({...snapshot,...(action==='credential_copy'?{link:'synthetic-secret'}:{})})};
+    };
+    Object.defineProperty(navigator,'clipboard',{value:{writeText:async value=>{window.copiedValue=value;}},configurable:true});
+  });
+  await sharing.addScriptTag({content:read('sharing.js')});
+  const copyGeometry=()=>sharing.evaluate(()=>[...document.querySelectorAll('.sharing-table th,.sharing-copy-button')].map(node=>{
+    const rect=node.getBoundingClientRect();return [rect.x,rect.y,rect.width,rect.height];
+  }));
+  for(const [language,id] of [['zh','quota1'],['en','exit1']]) {
+    await sharing.evaluate(language=>{uiI18n.setLanguage(language,{persist:false});InspectorSharing.setActive(true);},language);
+    const selector=`[data-action="copy"][data-id="${id}"]`;
+    await sharing.waitForSelector(selector);
+    const copyBefore=await copyGeometry(),caption=await sharing.locator(selector).innerText();
+    await sharing.locator(selector).click();
+    await sharing.waitForFunction(()=>typeof window.finishCopy==='function');
+    assert.deepEqual(await copyGeometry(),copyBefore,'copy progress cannot widen a button or a table column');
+    assert.equal(await sharing.locator(selector).innerText(),caption);
+    await sharing.evaluate(()=>{window.finishCopy();window.finishCopy=null;});await visible(sharing);
+    assert.equal(await sharing.locator('.floating-feedback-content').innerText(),
+      language==='zh'?'已复制，仅供一台机器使用':'Copied. For use on one machine only.');
+    assert.equal(await sharing.evaluate(()=>window.copiedValue),'synthetic-secret');
+    assert.deepEqual(await copyGeometry(),copyBefore,'copy success cannot resize the button or the columns');
+    assert.equal(await sharing.locator(selector).innerText(),caption);
+    assert.equal(await sharing.locator('body').innerText().then(text=>text.includes('synthetic-secret')),false);
+    await sharing.locator('.floating-feedback>button').click();
+    cases++;
+  }
+
   const tray=await load('tray');
   const trayBefore=await geometry(tray,['.tray-panel','tray-open','tray-exit']);
   await tray.evaluate(()=>feedbackText('tray-error','无法完成操作，请稍后重试。',true));await visible(tray);
