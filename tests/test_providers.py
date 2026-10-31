@@ -30,6 +30,83 @@ class ProviderConfigTests(unittest.TestCase):
     def sync(self):
         return self.manager.sync(self.routes, lambda routes: setattr(self, "routes", routes))
 
+    def test_unused_remote_http_provider_does_not_block_openai_or_get_modified(self):
+        self.config.write_text('model="test"\n[model_providers.local]\nbase_url="http://127.0.0.1:8787/v1"\n'
+            '[model_providers.optional]\nname="Keep this name"\nbase_url="http://remote.invalid/v1"\n'
+            'wire_api="responses"\nrequires_openai_auth=true\nsupports_websockets=true\n'
+            'stream_max_retries=7\nrequest_max_retries=2\n', encoding="utf8")
+        original = tomllib.loads(self.config.read_text())["model_providers"]["optional"]
+        result = self.manager.sync(self.routes, lambda routes: setattr(self, "routes", routes), retry_limit=15)
+        after = tomllib.loads(self.config.read_text())
+        self.assertEqual(after["model_providers"]["optional"], original)
+        self.assertTrue(self.link.profile()["active"])
+        self.assertEqual(after["model_provider"], PROVIDER)
+        self.assertTrue(after["model_providers"]["local"]["base_url"].startswith(self.manager.endpoint))
+        self.assertNotIn("optional", {route["provider"] for route in self.routes.values()})
+        self.assertEqual(result["warnings"], [{"file": "config.toml", "provider": "optional",
+            "reason": "unsupported_upstream", "detail": "非本机的上游必须使用 HTTPS"}])
+        self.assertFalse(self.manager.sync(self.routes, lambda routes: setattr(self, "routes", routes), retry_limit=15)["changed"])
+        self.link.restore()
+        self.assertEqual(tomllib.loads(self.config.read_text())["model_providers"]["optional"], original)
+        self.assertTrue(self.sync()["changed"])
+
+    def test_selected_remote_http_provider_still_fails_atomically_with_its_location(self):
+        self.config.write_text('model_provider="selected"\n[model_providers.selected]\n'
+                               'base_url="http://remote.invalid/v1"\n', encoding="utf8")
+        original = self.config.read_bytes()
+        published = []
+        with self.assertRaisesRegex(ValueError, r"config.toml.*model_providers.selected.base_url.*HTTPS"):
+            self.manager.sync({}, published.append)
+        self.assertEqual(self.config.read_bytes(), original)
+        self.assertFalse(published)
+        self.assertFalse(self.link.state_path.exists())
+
+    def test_unselected_native_override_uses_the_same_exclusion_rule(self):
+        self.config.write_text('model_provider="selected"\nopenai_base_url="http://remote.invalid/v1"\n'
+                               '[model_providers.selected]\nbase_url="https://selected.invalid/v1"\n', encoding="utf8")
+        result = self.sync()
+        self.assertTrue(self.link.profile()["active"])
+        self.assertEqual(tomllib.loads(self.config.read_text())["openai_base_url"], "http://remote.invalid/v1")
+        self.assertEqual(result["warnings"][0]["provider"], "openai")
+
+    def test_selected_native_override_reports_the_root_field_without_any_write(self):
+        self.config.write_text('openai_base_url="http://remote.invalid/v1"\n', encoding="utf8")
+        before = self.config.read_bytes()
+        with self.assertRaisesRegex(ValueError, r"config.toml.*openai_base_url.*HTTPS"):
+            self.sync()
+        self.assertEqual(self.config.read_bytes(), before)
+        self.assertFalse(self.routes)
+
+    def test_profile_does_not_modify_an_unsupported_inherited_optional_provider(self):
+        self.config.write_text('[model_providers.optional]\nbase_url="http://remote.invalid/v1"\n', encoding="utf8")
+        profile = self.root / "work.config.toml"
+        profile.write_text('[model_providers.optional]\nsupports_websockets=true\nstream_max_retries=4\n', encoding="utf8")
+        expected = tomllib.loads(profile.read_text())["model_providers"]["optional"]
+        result = self.manager.sync(self.routes, lambda routes: setattr(self, "routes", routes), retry_limit=15)
+        self.assertEqual(tomllib.loads(profile.read_text())["model_providers"]["optional"], expected)
+        self.assertEqual({value["file"] for value in result["warnings"]}, {"config.toml", "work.config.toml"})
+
+    def test_profile_selecting_an_unsupported_inherited_provider_blocks_before_publication(self):
+        self.config.write_text('[model_providers.optional]\nbase_url="http://remote.invalid/v1"\n', encoding="utf8")
+        profile = self.root / "work.config.toml"
+        profile.write_text('model_provider="optional"\n', encoding="utf8")
+        original = self.config.read_bytes()
+        with self.assertRaisesRegex(ValueError, r"work.config.toml.*optional.*HTTPS"):
+            self.sync()
+        self.assertEqual(self.config.read_bytes(), original)
+        self.assertFalse(self.routes)
+        self.assertFalse(self.link.state_path.exists())
+
+    def test_optional_invalid_urls_are_reported_without_echoing_credentials(self):
+        for value in ('https://user:private-credential@remote.invalid/v1',
+                      'https://remote.invalid:private-credential/v1', 'https://[invalid/v1', 7):
+            with self.subTest(value=value):
+                self.config.write_text('model="test"\n[model_providers.optional]\nbase_url=' + json.dumps(value) + '\n', encoding="utf8")
+                result = self.sync()
+                self.assertEqual(result["warnings"][0]["reason"], "unsupported_upstream")
+                self.assertNotIn("private-credential", json.dumps(result))
+                self.link.restore()
+
     def test_native_retry_limits_update_idempotently_and_restore_user_values(self):
         self.config.write_text('model_provider="a"\n[model_providers.a]\nbase_url="https://a.invalid/v1"\n'
                                'stream_max_retries=7\nrequest_max_retries=2\n')

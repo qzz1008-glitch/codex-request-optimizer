@@ -61,6 +61,16 @@ function fixture(connected) {
   assert.deepEqual(element('settings-restart-items').children.map(item=>item.text),['Codex 接入与原生压缩','本机代理例外']);
   assert.equal(element('settings-restart-summary').textContent,'已接入。已修复本机代理例外。');
 
+  ({context,element}=fixture(false));
+  context.linkAction=async()=>{
+    context.state.status.profile={active:true,can_restore:true};
+    return {reload_required:true,warnings:[{file:'config.toml',provider:'optional',reason:'unsupported_upstream',detail:'非本机的上游必须使用 HTTPS'}]};
+  };
+  await context.confirmConnection();
+  assert.equal(element('settings-restart-dialog').open,true);
+  assert.equal(element('settings-restart-summary').textContent,'已接入。\n未接管 optional（config.toml）：非本机的上游必须使用 HTTPS。');
+  assert.equal(element('connect-confirm-message').hidden,true);
+
   ({context,element,calls}=fixture(false));
   context.linkAction=async()=>{
     context.state.status.profile={active:true,can_restore:true};

@@ -302,6 +302,8 @@ const uiI18n = (() => {
     "不支持的 provider 配置类型":"Unsupported provider configuration type",
     "上游地址须为不含密码、查询参数的 HTTP/HTTPS 地址":"The upstream must be an HTTP/HTTPS URL without a password or query parameters",
     "非本机的上游必须使用 HTTPS":"Remote upstreams must use HTTPS",
+    "未接管 {provider}（{file}）：{reason}。":"Not routed: {provider} ({file}): {reason}.",
+    "另有 {count} 项配置未接管。":"{count} more configurations were not routed.",
     "请同时提供上下文窗口和自动压缩阈值；null 表示模型默认":"Provide both the context window and compaction threshold; null uses the default",
     "上下文窗口超过当前模型支持的上限":"The context window exceeds the current model's limit",
     "自动压缩阈值不能大于有效上下文窗口":"The compaction threshold cannot exceed the effective context window",

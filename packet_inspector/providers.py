@@ -92,16 +92,18 @@ class ProviderManager:
             text = path.read_text(encoding="utf-8-sig") if path.exists() else ""
             data = tomllib.loads(text)
             document = tomlkit.parse(text)
+            excluded, skipped = self._unsupported_providers(data, base, path, routes)
+            warnings.extend(skipped)
             standardize(document, data, base,
                         lambda value, provider: self._original(value, provider, routes),
-                        self._native_upstream(), primary=path == self.link.config)
+                        self._native_upstream(), primary=path == self.link.config, excluded=excluded)
             native_compression(document, False)
             data = tomllib.loads(tomlkit.dumps(document))
             records = state["files"].setdefault(str(path.resolve()), [])
             fields = []
             providers = data.get("model_providers", {})
             for provider_id, provider in providers.items():
-                if provider_id == SHARED_PROVIDER:
+                if provider_id == SHARED_PROVIDER or provider_id in excluded:
                     continue
                 if not isinstance(provider, dict):
                     continue
@@ -117,7 +119,7 @@ class ProviderManager:
                 elif not inherited:
                     warnings.append({"file": path.name, "provider": provider_id, "reason": "missing_http_base_url"})
             # Built-in OpenAI uses a root override; its reserved ID cannot be redefined.
-            if path == self.link.config or "openai_base_url" in data:
+            if "openai" not in excluded and (path == self.link.config or "openai_base_url" in data):
                 original = data.get("openai_base_url")
                 native_record = next((r for r in records if r["keys"] == ["openai_base_url"]), None)
                 if native_record and not native_record["present"] and original == native_record["applied"]:
@@ -127,8 +129,10 @@ class ProviderManager:
                 fields.append((["openai_base_url"], "openai", original))
             for keys, provider_id, current in fields:
                 detected.add(provider_id)
-                upstream = self._original(current, provider_id, routes)
-                upstream = validate_upstream(upstream)
+                try:
+                    upstream = validate_upstream(self._original(current, provider_id, routes))
+                except ValueError as exc:
+                    raise ValueError(f"{path.name} · {'.'.join(keys)}: {exc}") from None
                 target = urlsplit(upstream)
                 own = urlsplit(self.endpoint)
                 if target.hostname in {"localhost", "127.0.0.1", "::1"} and target.port == own.port:
@@ -147,7 +151,7 @@ class ProviderManager:
                     self._record(records, data, ws_keys, False)
                     _put(document, ws_keys, False)
             for provider_id, provider in data.get("model_providers", {}).items():
-                if provider_id == SHARED_PROVIDER:
+                if provider_id == SHARED_PROVIDER or provider_id in excluded:
                     continue
                 if not isinstance(provider, dict) or provider.get("wire_api", "responses") != "responses":
                     continue
@@ -180,6 +184,49 @@ class ProviderManager:
         return {"active": True, "changed": bool(plans), "reload_required": bool(plans),
                 "provider_count": len(detected),
                 "config_files": len(paths), "backups": backups, "warnings": warnings}
+
+    def _unsupported_providers(self, data, base, path, routes):
+        """Optional endpoints must not veto a valid default connection.
+
+        Missing local route recovery remains an integration error. Only address
+        validation failures of an unselected endpoint may be excluded.
+        """
+        selected = data.get("model_provider", base.get("model_provider", "openai"))
+        excluded, warnings = set(), []
+        providers = dict(data.get("model_providers", {}))
+        if path != self.link.config and selected in base.get("model_providers", {}):
+            providers.setdefault(selected, {})
+
+        def invalid_reason(value):
+            try:
+                validate_upstream(value)
+            except ValueError as exc:
+                return str(exc)
+            return None
+
+        candidates = []
+        for provider_id, provider in providers.items():
+            if provider_id == SHARED_PROVIDER or not isinstance(provider, dict):
+                continue
+            inherited = base.get("model_providers", {}).get(provider_id, {}) if path != self.link.config else {}
+            effective = {**inherited, **provider}
+            if effective.get("wire_api", "responses") != "responses" or "base_url" not in effective:
+                continue
+            candidates.append((f"model_providers.{provider_id}.base_url", provider_id, effective["base_url"]))
+        if "openai_base_url" in data:
+            candidates.append(("openai_base_url", "openai", data["openai_base_url"]))
+        for field, provider_id, current in candidates:
+            reason = invalid_reason(current)
+            if reason is None:
+                upstream = self._original(current, provider_id, routes)
+                reason = invalid_reason(upstream)
+            if reason is not None:
+                if provider_id == selected:
+                    raise ValueError(f"{path.name} · {field}: {reason}")
+                excluded.add(provider_id)
+                warnings.append({"file": path.name, "provider": provider_id,
+                                 "reason": "unsupported_upstream", "detail": reason})
+        return excluded, warnings
 
     def _original(self, current, provider_id, routes):
         if not isinstance(current, str):
