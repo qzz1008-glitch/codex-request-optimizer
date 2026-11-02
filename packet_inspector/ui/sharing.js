@@ -176,7 +176,7 @@ globalThis.InspectorSharing=(()=>{
   function budget(id,minimum=1){const value=String(get(id).value),n=Number(value);if(!value.trim()||!Number.isFinite(n)||n<minimum||n>1000000)throw new Error(tr(minimum===0?"已用额度应为 0 到 1,000,000 美元。":"额度应为 1 到 1,000,000 美元。"));return value;}
   function defaultCredentialName(kind,direction="out",link=""){
     const used=new Set((current?.credentials||[]).filter(row=>row.kind===kind&&!row.internal).map(row=>String(row.label??"").trim().toLowerCase()));
-    let detail=direction==="out"?localDay(Date.now()).replaceAll("-",""):"";
+    let detail=direction==="out"?localDay(Date.now()).slice(5).replaceAll("-",""):"";
     if(direction==="in"&&link.trim()){
       try {const url=new URL(link.trim());if(url.protocol===(kind==="quota"?"codex-share:":"codex-exit:"))detail=url.hostname;}catch(_) {}
     }
