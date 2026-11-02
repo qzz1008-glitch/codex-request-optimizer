@@ -15,6 +15,11 @@ globalThis.InspectorSharing=(()=>{
     if(!Number.isFinite(instant.getTime()))return "—";
     return localDay(instant.getTime())+" "+[instant.getHours(),instant.getMinutes()].map(n=>String(n).padStart(2,"0")).join(":");
   }
+  function connectionValue(value){
+    const full=connectionTime(value);
+    if(full==="—")return full;
+    return `<time class="sharing-connection-time" datetime="${new Date(value*1000).toISOString()}" title="${esc(full)}"><span class="sharing-connection-date">${esc(full.slice(5,10).replace("-","/"))}</span> <span>${esc(full.slice(11))}</span></time>`;
+  }
   const minimumExpiry=()=>expiryDay((Date.now()+864e5)/1000);
   const defaultExpiry=()=>{const d=new Date();d.setDate(d.getDate()+7);return localDay(d.getTime());};
   function dayEnd(day){
@@ -226,12 +231,33 @@ globalThis.InspectorSharing=(()=>{
     const progress=knownUsed&&knownBudget&&budget>0?`<progress class="sharing-budget-progress" max="${budget}" value="${Math.min(used,budget)}" data-full="${used>=budget}" aria-label="${label("已用 / 额度")}" aria-valuetext="${esc(text)}" title="${esc(text)}"></progress>`:"";
     return `<div class="sharing-budget-cell"><span><span class="sharing-value sharing-used">${knownUsed?fieldValue(row,"used",esc(amount)):"—"}</span><span class="sharing-value-separator"> / </span><span class="sharing-value sharing-limit">${fieldValue(row,"budget",esc(limit))}</span></span>${progress}</div>`;
   }
+  const quotaColumnObserver=typeof ResizeObserver==="function"?new ResizeObserver(alignNetworkColumns):null;
+  function alignNetworkColumns(){
+    const source=get("quota-table-head").closest?.("table"),target=get("exit-table-head").closest?.("table");
+    if(!source||!target)return;
+    const widths=Array.from(get("quota-table-head").querySelectorAll("th"),node=>node.getBoundingClientRect().width);
+    const columns=get("exit-table-columns")?.querySelectorAll("col")||[],width=source.getBoundingClientRect().width;
+    if(widths.length!==7||columns.length!==7||width<=0||widths.some(value=>value<=0))return;
+    target.classList.toggle("sharing-network-narrow-actions",widths[6]<(document.documentElement?.lang?.startsWith("en")?136:112));
+    target.style.width=target.style.minWidth=width+"px";
+    columns.forEach((column,index)=>{column.style.width=widths[index]+"px";});
+  }
+  function watchQuotaColumns(){
+    quotaColumnObserver?.disconnect();
+    const source=get("quota-table-head").closest?.("table");
+    if(!source)return;
+    if(quotaColumnObserver){
+      quotaColumnObserver.observe(source);
+      get("quota-table-head").querySelectorAll("th").forEach(node=>quotaColumnObserver.observe(node));
+    }
+    alignNetworkColumns();
+  }
   function renderList(kind){
     const rows=shownRows(kind),quota=kind==="quota";
     get(kind+"-credential-count").textContent=number(rows.length);
-    get(kind+"-table-head").innerHTML=`<tr>${(quota?["凭据名称","额度使用","累计用量","期限","每周刷新","状态","操作"]:["凭据名称","上传 / 下载流量","连接次数","期限","最近连接","状态","操作"]).map(value=>`<th${value==="状态"?' class="sharing-column-status"':""}>${label(value)}</th>`).join("")}</tr>`;
+    get(kind+"-table-head").innerHTML=`<tr>${(quota?["凭据名称","额度使用","累计用量","期限","每周刷新","状态","操作"]:["凭据名称","上传 / 下载流量","连接次数","期限","最近连接","状态","操作"]).map(value=>`<th${["凭据名称","最近连接","期限","每周刷新","状态","操作"].includes(value)?` class="sharing-column-compact${value==="状态"?" sharing-column-status":""}"`:""}>${label(value)}</th>`).join("")}</tr>`;
     get(kind+"-credential-rows").innerHTML=rows.map(row=>{const d=data(row),out=row.direction==="out";
-      return `<tr class="${[isActive(row)?"current":"",recentId===row.id?"sharing-recent":""].filter(Boolean).join(" ")}" data-credential-id="${esc(row.id)}"><td>${fieldValue(row,"label",`<strong title="${esc(row.label)}">${esc(row.label)}</strong>`)}</td><td>${quota?quotaUsage(row):`<span class="sharing-value sharing-upload" title="${esc(bytes(d.totals?.sent_bytes))}">${esc(bytes(d.totals?.sent_bytes))}</span><span class="sharing-value-separator"> / </span><span class="sharing-value sharing-download" title="${esc(bytes(d.totals?.received_bytes))}">${esc(bytes(d.totals?.received_bytes))}</span>`}</td><td>${esc(quota?money(d.totals?.cost_nanos,[row]):number(d.totals?.requests))}</td><td><span class="sharing-expiry-cell">${fieldValue(row,"expires_at",esc(d.expires_at===undefined?"—":date(d.expires_at)))}</span></td>${quota?`<td class="sharing-weekly-cell">${weeklyValue(row)}</td>`:`<td class="sharing-last-connected">${esc(connectionTime(d.last_seen))}</td>`}<td class="sharing-row-status" data-state="${(out?lending(row):isActive(row))?"enabled":"disabled"}">${statusControl(row)}</td><td><div class="sharing-row-actions">${out?`<button type="button" id="sharing-copy-${row.id}" class="sharing-copy-button" data-copied="${copiedButtons.has("sharing-copy-"+row.id)}" data-action="copy" data-id="${row.id}" title="${label(copiedButtons.has("sharing-copy-"+row.id)?"已复制，仅供一台机器使用":"复制凭据")}" aria-label="${label("复制凭据")}">${label(copyCaption("sharing-copy-"+row.id,"凭据"))}</button>`:""}<button type="button" class="sharing-row-delete" data-action="delete" data-id="${row.id}" title="${label("删除凭据")}">${label("删除")}</button></div></td></tr>`;
+      return `<tr class="${[isActive(row)?"current":"",recentId===row.id?"sharing-recent":""].filter(Boolean).join(" ")}" data-credential-id="${esc(row.id)}"><td>${fieldValue(row,"label",`<strong title="${esc(row.label)}">${esc(row.label)}</strong>`)}</td><td>${quota?quotaUsage(row):`<span class="sharing-value sharing-upload" title="${esc(bytes(d.totals?.sent_bytes))}">${esc(bytes(d.totals?.sent_bytes))}</span><span class="sharing-value-separator"> / </span><span class="sharing-value sharing-download" title="${esc(bytes(d.totals?.received_bytes))}">${esc(bytes(d.totals?.received_bytes))}</span>`}</td><td>${esc(quota?money(d.totals?.cost_nanos,[row]):number(d.totals?.requests))}</td><td><span class="sharing-expiry-cell">${fieldValue(row,"expires_at",esc(d.expires_at===undefined?"—":date(d.expires_at)))}</span></td>${quota?`<td class="sharing-weekly-cell">${weeklyValue(row)}</td>`:`<td class="sharing-last-connected">${connectionValue(d.last_seen)}</td>`}<td class="sharing-row-status" data-state="${(out?lending(row):isActive(row))?"enabled":"disabled"}">${statusControl(row)}</td><td><div class="sharing-row-actions">${out?`<button type="button" id="sharing-copy-${row.id}" class="sharing-copy-button" data-copied="${copiedButtons.has("sharing-copy-"+row.id)}" data-action="copy" data-id="${row.id}" title="${label(copiedButtons.has("sharing-copy-"+row.id)?"已复制，仅供一台机器使用":"复制凭据")}" aria-label="${label("复制凭据")}">${label(copyCaption("sharing-copy-"+row.id,"凭据"))}</button>`:""}<button type="button" class="sharing-row-delete" data-action="delete" data-id="${row.id}" title="${label("删除凭据")}">${label("删除")}</button></div></td></tr>`;
     }).join("");
     get(kind+"-empty").hidden=rows.length>0;
   }
@@ -253,6 +279,7 @@ globalThis.InspectorSharing=(()=>{
       get(kind+"-generate").disabled=busy||(kind==="quota"&&borrowing);get(kind+"-activate").disabled=busy||(kind==="quota"&&hosting);
     }
     for(const kind of ["quota","exit"])renderList(kind);
+    watchQuotaColumns();
     if(recentScroll){const row=get("sharing-cards").querySelector(`[data-credential-id="${recentId}"]`);if(row){row.scrollIntoView({block:"nearest",inline:"nearest"});recentScroll=false;}}
     if(busy)for(const kind of ["quota","exit"])for(const input of get(kind+"-credential-rows").querySelectorAll("button,input,select"))input.disabled=true;
     if(!recoveryShown&&(value.recovery_error||value.recovered)){recoveryShown=true;message(value.recovery_error||"上次共享已结束，已恢复原连接。请重新加载 Codex 配置。",!!value.recovery_error);}
@@ -399,7 +426,7 @@ globalThis.InspectorSharing=(()=>{
   document.addEventListener("pointerdown",event=>{if(calendar&&!busy&&!get(calendar.id+"-calendar").contains(event.target)&&!get(calendar.id+"-date").contains(event.target))closeCalendar(false);if(editing&&!busy&&!get("sharing-inline-editor").contains(event.target)&&!event.target.closest("[data-action=field]"))closeInline(false);});
   document.addEventListener("keydown",event=>{if(!busy&&event.key==="Escape"){if(calendar){event.preventDefault();closeCalendar();}else if(editing){event.preventDefault();closeInline();}}});
   const positionEditors=()=>{positionInline();positionCalendar();};
-  globalThis.addEventListener("resize",positionEditors);
+  globalThis.addEventListener("resize",()=>{positionEditors();alignNetworkColumns();});
   document.addEventListener("scroll",positionEditors,true);
   function openDelete(row){
     controller?.abort();closeInline(false);message("");deleting={id:row.id,kind:row.kind};
