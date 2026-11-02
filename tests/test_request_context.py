@@ -204,6 +204,30 @@ class RequestContextTests(unittest.TestCase):
         self.assertEqual(meta["request_kind"], "next_message_suggestion")
         self.assertEqual(meta["image_paths"], [])
 
+    def test_image_source_metadata_replaces_deleted_upload_path(self):
+        source = r"D:\project\original 原图.png"
+        upload = r"C:\Temp\codex-isolated-vision-123\upload.jpg"
+        marker = {"codex_inspector_request_kind": "image_analysis",
+                  "codex_inspector_image_source_path": source}
+        body = {"input": [{"role": "user", "content": upload}]}
+        for field in ("client_metadata", "metadata"):
+            for container in (marker, {"x-codex-turn-metadata": json.dumps(marker)},
+                              {"x-codex-client-metadata": marker}):
+                with self.subTest(field=field, container=container):
+                    value = {**body, field: container}
+                    self.assertEqual(request_image_paths(value), [source])
+                    meta, _ = inspect_request(json.dumps(value).encode(), {}, "/responses")
+                    self.assertEqual(meta["image_paths"], [source])
+        for container in ({"codex_inspector_image_source_path": source},
+                          {**marker, "codex_inspector_image_source_path": "https://example.org/image.png"},
+                          {**marker, "codex_inspector_image_source_path": "relative.png"},
+                          {"codex_inspector_request_kind": "image_analysis",
+                           "x-codex-turn-metadata": {"codex_inspector_image_source_path": source}},
+                          {"x-codex-turn-metadata": " " * 65537 + json.dumps(marker)}):
+            self.assertEqual(request_image_paths({**body, "client_metadata": container}), [upload])
+        self.assertEqual(request_image_paths({**body, "client_metadata": marker, "metadata": {
+            **marker, "codex_inspector_image_source_path": r"D:\other.png"}}), [upload])
+
 
 if __name__ == "__main__":
     unittest.main()

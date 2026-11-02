@@ -20,6 +20,27 @@ const click=button=>button.onclick({currentTarget:button});
 const directory="D:\\ip-scaling\\.codex_runtime\\marketplace_listing\\browser-blue-icon-fix\\";
 const paths=[directory+"ip-env-scaling-browser-logo.png",directory+"参考图 & icon.PNG","C:\\Other\\second.webp"];
 (async()=>{
+  const upload="C:\\Temp\\codex-isolated-vision-123\\upload.jpg",marker={
+    codex_inspector_request_kind:"image_analysis",codex_inspector_image_source_path:paths[0]};
+  const oldMeta={image_paths:[upload]},body={input:[{role:"user",content:upload}]};
+  for(const field of ["client_metadata","metadata"])for(const value of [marker,
+    {"x-codex-turn-metadata":JSON.stringify(marker)},{"x-codex-client-metadata":marker}]) {
+    const original=Array.from(context.requestImagePaths(oldMeta,{...body,[field]:value}));
+    assert.deepEqual(original,[paths[0]],"An old relay's temporary upload path must yield to the explicit source");
+    const sourceActions=buttons(context.renderImageInfo(original));
+    await click(sourceActions[0]);await click(sourceActions[1]);
+    assert.deepEqual(requests.splice(0).map(({route,data})=>[route,data.path]),[
+      ["/api/open-directory",directory],["/api/open-image",paths[0]]]);
+  }
+  for(const value of [{codex_inspector_image_source_path:paths[0]},
+    {...marker,codex_inspector_image_source_path:"https://example.org/a.png"},
+    {codex_inspector_request_kind:"image_analysis","x-codex-turn-metadata":{codex_inspector_image_source_path:paths[0]}},
+    {"x-codex-turn-metadata":" ".repeat(65537)+JSON.stringify(marker)}])
+    assert.deepEqual(Array.from(context.requestImagePaths(oldMeta,{...body,client_metadata:value})),[upload]);
+  assert.deepEqual(Array.from(context.requestImagePaths(oldMeta,{...body,client_metadata:marker,
+    metadata:{...marker,codex_inspector_image_source_path:paths[1]}})),[upload],"Conflicting sources must not be guessed");
+  assert.deepEqual(Array.from(context.requestImagePaths({...oldMeta,image_path_rewrites:{[paths[0]]:paths[1]}},
+    {...body,client_metadata:marker})),[paths[1]],"An explicit retained clipboard copy still takes precedence");
   const info=context.renderImageInfo(paths),actions=buttons(info);
   assert.equal(actions.length,5,"One folder action per directory and one viewer action per image");
   assert.deepEqual(actions.map(button=>button.title),["打开路径","查看图片","查看图片","打开路径","查看图片"]);

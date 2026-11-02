@@ -117,8 +117,8 @@ def session_id(value):
     return value.lower() if isinstance(value, str) and SESSION_ID.fullmatch(value) else None
 
 
-def request_session_context(body, headers=None):
-    """Use explicit dispatch metadata; shared cache keys and prompt text are not parent IDs."""
+def request_metadata_candidates(body, headers=None):
+    """Read the explicit metadata containers emitted by Codex versions."""
     body = body if isinstance(body, dict) else {}
     candidates = []
     for value in ((body or {}).get("client_metadata"), (body or {}).get("metadata"),
@@ -135,9 +135,14 @@ def request_session_context(body, headers=None):
                     continue
             if isinstance(nested, dict):
                 candidates.append(nested)
+    return candidates
+
+
+def request_session_context(body, headers=None):
+    """Use explicit dispatch metadata; shared cache keys and prompt text are not parent IDs."""
     kind = temporary_request_kind(body)
     parents = set()
-    for candidate in candidates:
+    for candidate in request_metadata_candidates(body, headers):
         if candidate.get("codex_inspector_request_kind") == "image_analysis":
             kind = "image_analysis"
             parent = session_id(candidate.get("codex_inspector_parent_thread_id"))
@@ -178,6 +183,12 @@ def local_image_path(value):
 
 
 def request_image_paths(body):
+    sources = {path for candidate in request_metadata_candidates(body)
+               if candidate.get("codex_inspector_request_kind") == "image_analysis"
+               if (path := local_image_path(candidate.get("codex_inspector_image_source_path")))}
+    if len(sources) == 1:
+        # The tool's upload copy is deleted after analysis; actions use the retained source.
+        return list(sources)
     paths = []
 
     def add(value):

@@ -2191,6 +2191,20 @@ function requestImagePaths(meta,body) {
     for(const [from,to] of Object.entries(meta.image_path_rewrites).slice(0,32)) {
       const source=localImagePath(from),target=localImagePath(to);if(source&&target)rewrites.set(source,target);
     }
+  const sources=new Set();
+  for(const value of [body?.client_metadata,body?.metadata]) {
+    if(!value||typeof value!=="object"||Array.isArray(value))continue;
+    const candidates=[value];
+    for(const key of ["x-codex-turn-metadata","x-codex-client-metadata"]) {
+      let nested=value[key];
+      if(typeof nested==="string"&&nested.length<=65536)try{nested=JSON.parse(nested);}catch(_){continue;}
+      if(nested&&typeof nested==="object"&&!Array.isArray(nested))candidates.push(nested);
+    }
+    for(const candidate of candidates)if(candidate.codex_inspector_request_kind==="image_analysis") {
+      const path=localImagePath(candidate.codex_inspector_image_source_path);if(path)sources.add(path);
+    }
+  }
+  if(sources.size===1)return [...sources].map(path=>rewrites.get(path)||path);
   const paths=new Set(), add=value=>{const path=localImagePath(value);if(path&&paths.size<32)paths.add(rewrites.get(path)||path);};
   if(Array.isArray(meta.image_paths))meta.image_paths.forEach(add);
   for(const item of Array.isArray(body?.input)?body.input:[]) {
