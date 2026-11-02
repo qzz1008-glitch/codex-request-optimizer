@@ -856,6 +856,7 @@ class Handler(BaseHTTPRequestHandler):
                         self._json(409, {"error": "sharing_upgrade_in_progress"})
                         return
                     action = data.get("action")
+                    view = self.server.sharing.view_for_action(data)
                     if action == "credential_issue":
                         if data.get("kind") == "quota":
                             result = self.server.sharing.issue(label=data.get("label", ""),
@@ -942,6 +943,12 @@ class Handler(BaseHTTPRequestHandler):
                             result["egress_link"] = exit_result["link"]
                     else:
                         raise ValueError("invalid sharing action")
+                    if view:
+                        try:
+                            self.server.sharing.vault.remember_view(*view)
+                            result["last_used_views"] = self.server.sharing.vault.last_used_views()
+                        except sqlite3.Error:
+                            pass  # Optional view memory must not fail a completed credential action.
                 result["restart_notice"] = self.server.restart_notices.snapshot()
                 self._json(200, result)
             except SharingError as exc:

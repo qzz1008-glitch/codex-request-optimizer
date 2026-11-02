@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 import secrets
 import socket
+import sqlite3
 import sys
 import tempfile
 import threading
@@ -490,6 +491,90 @@ class LANSharingTests(unittest.TestCase):
         self.assertEqual(self.owner.store.list(), [])
         self.assertTrue(self.guest.sharing.status()["client"]["active"])
         self.assertTrue(second.sharing.status()["client"]["active"])
+
+    def test_credential_actions_remember_direction_only_after_success(self):
+        vault = self.owner.sharing.vault
+        outgoing, _ = vault.issue("quota", "outgoing")
+        incoming = vault.import_link("quota", "synthetic-quota#one", "incoming")
+        network = vault.import_link("exit", "synthetic-exit#one", "network")
+        self.assertEqual(vault.last_used_views(), {})
+        code, result = self.local_api("/api/sharing", {"action": "credential_edit", "id": incoming, "label": "renamed"})
+        self.assertEqual(code, 200)
+        self.assertEqual(result["last_used_views"], {"quota": "in"})
+        code, _ = self.local_api("/api/sharing", {"action": "credential_edit", "id": outgoing, "label": "renamed"})
+        self.assertEqual(code, 400)
+        self.assertEqual(vault.last_used_views(), {"quota": "in"})
+        code, result = self.local_api("/api/sharing", {"action": "credential_edit", "id": network, "label": "network alias"})
+        self.assertEqual(code, 200)
+        self.assertEqual(result["last_used_views"], {"quota": "in", "exit": "in"})
+        vault.refresh_snapshot(incoming, {"enabled": True})
+        client = http.client.HTTPConnection("127.0.0.1", self.owner.port, timeout=HTTP_TIMEOUT)
+        try:
+            client.request("GET", "/api/sharing")
+            response = client.getresponse()
+            self.assertEqual(response.status, 200)
+            self.assertEqual(json.loads(response.read())["last_used_views"], {"quota": "in", "exit": "in"})
+        finally:
+            client.close()
+        code, result = self.local_api("/api/sharing", {"action": "credential_delete", "id": outgoing})
+        self.assertEqual(code, 200)
+        self.assertEqual(result["last_used_views"], {"quota": "out", "exit": "in"})
+        self.assertNotIn(outgoing, [row["id"] for row in result["credentials"]])
+        second, _ = vault.issue("quota", "second")
+        third, _ = vault.issue("quota", "third")
+        code, result = self.local_api("/api/sharing", {"action": "credential_reorder", "id": incoming, "target_id": third})
+        self.assertEqual(code, 400)
+        self.assertEqual(vault.last_used_views()["quota"], "out")
+        code, result = self.local_api("/api/sharing", {"action": "credential_reorder", "id": third, "target_id": second})
+        self.assertEqual(code, 200)
+        self.assertEqual(result["last_used_views"]["quota"], "out")
+
+    def test_issuing_and_copying_credentials_remember_the_lending_view(self):
+        self.owner.settings["sharing_port"] = free_port()
+        with patch("packet_inspector.sharing.automatic_address", return_value="127.0.0.1"), patch.object(
+                self.owner.sharing, "_host_upstream", return_value=self.target):
+            code, issued = self.local_api("/api/sharing", {"action": "credential_issue", "kind": "quota", "label": "colleague"})
+        self.assertEqual(code, 200)
+        self.assertEqual(issued["last_used_views"], {"quota": "out"})
+        incoming = self.owner.sharing.vault.import_link("quota", "synthetic-quota#copy", "incoming")
+        code, _ = self.local_api("/api/sharing", {"action": "credential_edit", "id": incoming, "label": "alias"})
+        self.assertEqual(code, 200)
+        self.assertEqual(self.owner.sharing.vault.last_used_views()["quota"], "in")
+        code, copied = self.local_api("/api/sharing", {"action": "credential_copy", "id": issued["issued_id"]})
+        self.assertEqual(code, 200)
+        self.assertEqual(copied["last_used_views"]["quota"], "out")
+        self.assertEqual(copied["link"], issued["link"])
+
+    def test_borrowed_status_actions_remember_each_resource_even_after_stopping(self):
+        self.guest.sharing.authorization_factory = DummyAuthorization
+        with patch.object(self.guest.sharing, "_host_upstream", return_value=self.target):
+            quota = self.guest.sharing.issue(address="127.0.0.1", port=free_port())["link"]
+        network = self.guest.egress.issue(address="127.0.0.1", port=free_port())["link"]
+        for kind, link in (("quota", quota), ("exit", network)):
+            code, result = self.local_api("/api/sharing", {"action": "credential_use", "kind": kind, "link": link})
+            self.assertEqual(code, 200)
+            self.assertEqual(result["last_used_views"][kind], "in")
+        for kind, stop in (("quota", {"action": "client_disconnect"}), ("exit", {"action": "egress_select", "mode": "local"})):
+            outgoing, _ = self.owner.sharing.vault.issue(kind, kind)
+            code, result = self.local_api("/api/sharing", {"action": "credential_edit", "id": outgoing, "label": kind + " alias"})
+            self.assertEqual(code, 200)
+            self.assertEqual(result["last_used_views"][kind], "out")
+            code, result = self.local_api("/api/sharing", stop)
+            self.assertEqual(code, 200)
+            self.assertEqual(result["last_used_views"][kind], "in")
+        self.assertFalse(result["client"]["active"])
+        self.assertEqual(result["egress"]["selection"]["mode"], "local")
+        self.assertEqual(self.received, [])
+
+    def test_view_memory_failure_does_not_fail_a_completed_credential_action(self):
+        vault = self.owner.sharing.vault
+        outgoing, _ = vault.issue("quota", "colleague")
+        vault.remember_view("quota", "in")
+        with patch.object(vault, "remember_view", side_effect=sqlite3.OperationalError("synthetic storage failure")):
+            code, result = self.local_api("/api/sharing", {"action": "credential_edit", "id": outgoing, "label": "saved"})
+        self.assertEqual(code, 200)
+        self.assertEqual(result["credentials"][0]["label"], "saved")
+        self.assertEqual(vault.last_used_views(), {"quota": "in"})
 
     def test_credential_reorder_api_preserves_services_and_rejects_other_lists(self):
         vault = self.owner.sharing.vault
