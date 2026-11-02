@@ -8,6 +8,7 @@ import subprocess
 import threading
 
 from .router import atomic_json, worker_info
+from .startup_diagnostics import startup_environment
 
 
 class WorkerPresentation:
@@ -63,7 +64,7 @@ class WorkerPresentation:
         elif preload:
             arguments.append("--tray-preload")
         subprocess.Popen(arguments,
-                         env={**os.environ, "PYINSTALLER_RESET_ENVIRONMENT": "1"},
+                         env=startup_environment(),
                          creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
 
     def _exit(self):

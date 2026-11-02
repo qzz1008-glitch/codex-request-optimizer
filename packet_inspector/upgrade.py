@@ -23,6 +23,7 @@ from packet_inspector.router import (PROTOCOL, atomic_json, control_worker, heal
                                      local_json, process_alive, start_worker, worker_info)
 from packet_inspector.sharing_handover import (PROTOCOL as SHARING_HANDOVER_PROTOCOL, UNSUPPORTED as SHARING_UPGRADE_UNSUPPORTED,
                                               active_status as sharing_active, prepare_upgrade, finish_upgrade)
+from packet_inspector.startup_diagnostics import STARTUP_SECONDS, startup_environment
 
 
 def digest(path):
@@ -54,7 +55,7 @@ class Upgrade:
             self.completed_steps = max(self.completed_steps, min(completed, self.total_steps))
         self.progress(message)
 
-    def _wait_worker(self, identity, seconds=30):
+    def _wait_worker(self, identity, seconds=STARTUP_SECONDS):
         deadline = time.monotonic() + seconds
         while time.monotonic() < deadline:
             try:
@@ -170,7 +171,7 @@ class Upgrade:
 
     def _open_window(self):
         subprocess.Popen([str(self.canonical), "--port", str(self.port), "--data-dir", str(self.data_dir),
-                          "--config", str(self.config)], env={**os.environ, "PYINSTALLER_RESET_ENVIRONMENT": "1"},
+                          "--config", str(self.config)], env=startup_environment(),
                          creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
 
     def _running_application_hash(self, status):
@@ -250,10 +251,10 @@ class Upgrade:
     def _start_entry(self):
         return subprocess.Popen([str(self.canonical), "--background", "--tray", "--port", str(self.port),
                                  "--data-dir", str(self.data_dir), "--config", str(self.config)],
-                                env={**os.environ, "PYINSTALLER_RESET_ENVIRONMENT": "1"},
+                                env=startup_environment(),
                                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
 
-    def _wait_entry(self, protocol=None, seconds=30):
+    def _wait_entry(self, protocol=None, seconds=STARTUP_SECONDS):
         deadline = time.monotonic() + seconds
         while time.monotonic() < deadline:
             try:
