@@ -20,6 +20,7 @@ from .app_icon import APP_ICON
 from .frontend_dev import load_profile, validate_ui_dir, resolve_profile, remember_profile, installed_profile
 from .window_lifecycle import WindowLifecycle, window_control_prefix
 from .window_chrome import WindowChrome
+from .startup_diagnostics import StartupTrace, startup_environment, startup_wait_seconds
 
 
 def app_command():
@@ -47,13 +48,24 @@ def start_process(arguments):
     # instance its own extraction directory instead of sharing the launcher's.
     return subprocess.Popen(app_command() + arguments,
                             cwd=None if getattr(sys, "frozen", False) else str(Path(__file__).resolve().parent.parent),
-                            env={**os.environ, "PYINSTALLER_RESET_ENVIRONMENT": "1"},
+                            env=startup_environment(),
                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
 
 
 def ensure_service(options):
+    trace = StartupTrace(options.data_dir, "desktop")
+    try:
+        return _ensure_service(options, trace)
+    except Exception as exc:
+        trace.fail(exc)
+        raise
+
+
+def _ensure_service(options, trace):
     child = None
-    deadline = time.monotonic() + 20
+    last_error = None
+    trace.step("service.wait", port=options.port)
+    deadline = time.monotonic() + startup_wait_seconds()
     while time.monotonic() < deadline:
         try:
             health = local_api(options.port, "/health")
@@ -68,15 +80,20 @@ def ensure_service(options):
                     and status.get("profile", {}).get("active")):
                 local_api(options.port, "/api/providers/sync", {}, timeout=10)
                 status = local_api(options.port, "/api/status")
+            trace.ready()
             return status
-        except (URLError, TimeoutError, ConnectionError, OSError):
+        except (URLError, TimeoutError, ConnectionError, OSError) as exc:
+            last_error = exc
             if child is None:
                 child = start_process(["--background", "--tray"] + service_arguments(options))
+                trace.step("service.wait", child_pid=child.pid, port=options.port)
             elif child.poll() is not None:
                 # A concurrent launcher may have started the same service.
                 time.sleep(.2)
             time.sleep(.15)
-    raise RuntimeError("后台服务未能启动，请查看数据目录中的 startup-error.txt。")
+    if child is not None:
+        trace.record["details"]["child_exit_code"] = child.poll()
+    raise RuntimeError("后台服务未能启动，请查看日志目录中的 startup 文件夹。") from last_error
 
 
 def tray_available(data_dir, status):

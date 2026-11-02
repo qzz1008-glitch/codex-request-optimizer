@@ -20,7 +20,7 @@ import time
 import traceback
 from urllib import request as urllib_request
 from urllib.parse import unquote, urlsplit, urlunsplit
-from urllib.request import HTTPHandler, HTTPSHandler
+from urllib.request import HTTPHandler, HTTPSHandler, ProxyHandler
 import uuid
 import zlib
 
@@ -303,7 +303,9 @@ class NetworkDiagnostics:
                         (time.time() - RETENTION_SECONDS, MAX_RECORDS))]
         except Exception:
             self.errors += 1
-        return {"version": 1, "application_version": VERSION, "records": records, "write_errors": self.errors,
+        from .startup_diagnostics import startup_records
+        return {"version": 1, "application_version": VERSION, "records": records,
+                "startup": startup_records(self.path.parent), "write_errors": self.errors,
                 "last_write_error": self.last_error,
                 "retention_days": 14, "max_records": MAX_RECORDS, "max_bytes": MAX_BYTES}
 
@@ -397,8 +399,8 @@ class NetworkDiagnostics:
             with self.lock:
                 self.probing = False
 
-    def request(self, upstream, method, headers, body, *, packet_id=None, session_id=None, kind="responses", **sizes):
-        return RequestTrace(self, upstream, method, headers, body, packet_id, session_id, kind, sizes)
+    def request(self, upstream, method, headers, body, *, packet_id=None, session_id=None, kind="responses", opener=None, **sizes):
+        return RequestTrace(self, upstream, method, headers, body, packet_id, session_id, kind, sizes, opener)
 
     def local_error(self, upstream, method, headers, body, exc, status, packet_id=None):
         try:
@@ -410,13 +412,17 @@ class NetworkDiagnostics:
 
 
 class RequestTrace:
-    def __init__(self, journal, upstream, method, headers, body, packet_id, session_id, kind, sizes):
+    def __init__(self, journal, upstream, method, headers, body, packet_id, session_id, kind, sizes, opener=None):
         self.journal, self.body = journal, body
+        proxies = journal.proxies if opener is None else getattr(opener, "inspector_proxies", None)
+        if proxies is None:
+            proxies = next((h.proxies for h in getattr(opener, "handlers", ()) if isinstance(h, ProxyHandler)), {})
+        self.proxies = dict(proxies)
         self.start = time.monotonic()
         self.secrets = [str(v) for k, v in headers.items() if k.lower() in {
             "authorization", "proxy-authorization", "cookie", "x-api-key", "api-key", "x-inspector-shared-egress", "x-inspector-client"} and v]
         self.secrets.extend(value.split(" ", 1)[1] for value in list(self.secrets) if " " in value)
-        for value in journal.proxies.values():
+        for value in self.proxies.values():
             try:
                 p = urlsplit(value if "://" in value else "http://" + value)
                 self.secrets.extend(unquote(v) for v in (p.username, p.password) if v)
@@ -431,6 +437,11 @@ class RequestTrace:
                        "request_headers": {k.lower(): safe_text(v, self.secrets, 500) for k, v in headers.items()
                                            if k.lower() in {"content-type", "content-encoding", "accept", "accept-encoding", "user-agent"}},
                        "phase": "prepare", "response_headers": {}}
+        if opener is not None:
+            for field in ("generation", "created"):
+                value = getattr(opener, "inspector_transport_" + field, None)
+                if type(value) in (int, float):
+                    self.record["transport_" + field] = value
         self.failed = False
         self.capture_http_body = False
         self.finished = False
@@ -531,11 +542,11 @@ class RequestTrace:
             if self.captured:
                 self.record["error_body"] = error_body(bytes(self.captured), self.record["response_headers"],
                                                          self.secrets, self.response_bytes > len(self.captured))
-            self.record["environment"] = environment_snapshot(self.journal.proxies)
+            self.record["environment"] = environment_snapshot(self.proxies)
             self.record["process"] = process_identity()
             destination = urlsplit(self.record["upstream"])
-            self.record["configured_proxy_for_scheme"] = (safe_proxy(self.journal.proxies[destination.scheme])
-                if self.record["proxy_policy"] != "direct_for_loopback" and destination.scheme in self.journal.proxies else None)
+            self.record["configured_proxy_for_scheme"] = (safe_proxy(self.proxies[destination.scheme])
+                if self.record["proxy_policy"] != "direct_for_loopback" and destination.scheme in self.proxies else None)
             self.journal._save(self.record)
         except Exception:
             self.journal.errors += 1
