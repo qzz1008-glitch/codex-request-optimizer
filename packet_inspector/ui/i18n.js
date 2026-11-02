@@ -927,6 +927,7 @@ const uiI18n = (() => {
     "其他":"Other",
     "图片解析":"Image",
     "消息建议":"Suggest",
+    "任务推荐":"Task suggestions",
     "自动标题":"Title",
     "会话索引":"Index",
     "子任务":"Subagent",

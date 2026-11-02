@@ -26,6 +26,7 @@ assert.equal(storage.get('packet-inspector-language'),'zh','preview must not cha
 assert.equal(notice.textContent,'PowerShell was not found. The image tool could not be installed.');
 assert.equal(progress.textContent,'Saving settings… 2/3');
 assert.equal(i18n.t('已接入'),'Connected');assert.equal(i18n.t('未接入'),'Disconnected');
+assert.equal(i18n.t('任务推荐'),'Task suggestions');
 assert.equal(i18n.t('目录无法写入：PermissionError'),'The folder is not writable: PermissionError');
 assert.equal(i18n.t('检查或升级失败：正式版文件 SHA-256 校验失败。'),
   'Update check or upgrade failed: The release file failed SHA-256 verification.');
