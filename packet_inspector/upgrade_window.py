@@ -127,14 +127,14 @@ class UpgradeWindow:
         self.completed, self.state = 0, "running"
         self.scale = window.winfo_fpixels("1i") / 96
         self.font = "Segoe UI" if language == "en" else "Microsoft YaHei UI"
-        window.title(self.t("安装与升级"))
+        window.title(self.t("Codex请求优化器") + " · " + self.t("安装与升级"))
         window.configure(background=COLORS["paper"])
         window.resizable(False, False)
         try:
             window.iconbitmap(str(APP_ICON))
         except tk.TclError:
             pass
-        self.chrome = UpgradeChrome(window, self.u, self.font, self.t("安装与升级"), self.close)
+        self.chrome = UpgradeChrome(window, self.u, self.font, self.t("Codex请求优化器"), self.close)
         style = ttk.Style(window)
         style.theme_use("clam")
         style.layout("Upgrade.Vertical.TScrollbar", [("Vertical.Scrollbar.trough", {"sticky": "ns", "children": [
@@ -143,8 +143,6 @@ class UpgradeWindow:
                         background=COLORS["line"], troughcolor=COLORS["paper"], bordercolor=COLORS["paper"])
         body = tk.Frame(window, bg=COLORS["paper"])
         body.pack(fill="both", expand=True, padx=self.u(28), pady=(self.u(12), self.u(12)))
-        self.product_label = self.label(body, "Codex请求优化器", size=18, weight="bold")
-        self.product_label.pack(anchor="w", pady=(0, self.u(8)))
         summary = tk.Frame(body, bg=COLORS["paper"])
         summary.pack(fill="x")
         self.heading = self.label(summary, "正在安装更新", size=10, color="muted")
