@@ -3,11 +3,14 @@ const fs=require('node:fs');
 const path=require('node:path');
 const vm=require('node:vm');
 const source=fs.readFileSync(path.join(__dirname,'../packet_inspector/ui/app.js'),'utf8');
-const helpers=source.slice(source.indexOf('function hasModelTokenUsage('),source.indexOf('const filterLabels ='))+
+const helpers=source.match(/^const auxiliaryLabels=.*$/m)[0]+'\n'+
+  source.match(/^function auxiliarySessionKind\(row\).*$/m)[0]+'\n'+
+  source.slice(source.indexOf('function purposeFromMetadata('),source.indexOf('function cacheRequestPurpose('))+
+  source.slice(source.indexOf('function hasModelTokenUsage('),source.indexOf('const filterLabels ='))+
   source.slice(source.indexOf('async function refreshFilters('),source.indexOf('\n}',source.indexOf('async function refreshFilters('))+2);
 const selected={};
-const context={t:value=>value,uiI18n:{labels:value=>value},purposeFromMetadata:()=>null,
-  requestPurposeCache:new Map(),auxiliarySessionKind:()=>null,auxiliaryLabels:{},
+const context={t:value=>value,uiI18n:{labels:value=>value},
+  requestPurposeCache:new Map(),
   state:{status:{storage:{revision:1}}},sessionSummaries:[],
   api:async()=>({kinds:['generation','compaction','image_generation','image_edit','other'],statuses:[],threads:[]}),
   setFilterOptions:(key,values)=>{selected[key]=values;},statusLabel:value=>value,
@@ -24,6 +27,13 @@ async function main(){
   assert.equal(context.requestKind({method:'POST',request_kind:'image_generation'}),'图片生成');
   assert.equal(context.requestKind({method:'POST',path:'/alpha/search'}),'工具搜索');
   assert.equal(context.requestKind({method:'POST',path:'/responses',is_compaction:true}),'上下文压缩');
+  for(const field of ['request_purpose','request_kind','session_kind']){
+    const packet={method:'POST',path:'/responses',request_kind:'turn',[field]:'ambient_suggestions'};
+    assert.equal(context.requestKind(packet),'任务推荐');
+    assert.equal(context.hasModelTokenUsage(packet),true);
+  }
+  context.sessionSummaries=[{thread_id:'recommendations',session_kind:'ambient_suggestions'}];
+  assert.equal(context.requestKind({method:'POST',thread_id:'recommendations',request_kind:'turn'}),'任务推荐');
   await context.refreshFilters();
   assert.deepEqual(Array.from(selected.kind,entry=>entry.value),['generation','compaction','image_generation','image_edit','other']);
   console.log('request classification and filters passed');
