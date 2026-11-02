@@ -2218,20 +2218,40 @@ function imagePathGroups(paths) {
   }
   return [...groups.values()];
 }
+const imagePathOpening=new Set();
+function imagePathAction(kind,path) {
+  const directory=kind==="directory",label=t(directory?"打开路径":"查看图片"),capability=directory?"open_directory_supported":"open_image_supported";
+  const key=kind+":"+path,button=el("button","image-path-action");
+  button.type="button";button.title=label;button.setAttribute("aria-label",label);button.dataset.renderKey="image-action:"+key;
+  button.disabled=!state.status?.[capability]||imagePathOpening.has(key);
+  button.setAttribute("aria-busy",String(imagePathOpening.has(key)));
+  const icon=document.createElementNS("http://www.w3.org/2000/svg","svg"),shape=document.createElementNS(icon.namespaceURI,"path");
+  icon.setAttribute("viewBox","0 0 24 24");icon.setAttribute("aria-hidden","true");icon.setAttribute("focusable","false");
+  shape.setAttribute("d",directory?"M3 20h18V7h-9l-2-3H3z":"M3 3h18v18H3zM3 16l5-5 5 5 3-3 5 5M16 8h.01");icon.append(shape);button.append(icon);
+  button.onclick=async event=>{
+    if(!state.status?.[capability]||imagePathOpening.has(key))return;
+    const target=event.currentTarget;imagePathOpening.add(key);target.disabled=true;target.setAttribute("aria-busy","true");
+    try {await api(directory?"/api/open-directory":"/api/open-image",{path});}
+    catch(error) {fail(error);}
+    finally {imagePathOpening.delete(key);target.disabled=!state.status?.[capability];target.setAttribute("aria-busy","false");}
+  };
+  return button;
+}
 function renderImageInfo(paths) {
   const images=panel(t("图片信息"));images.id="request-image-info";
   if(!paths.length) {images.append(el("p","muted",t("未记录图片路径")));return images;}
   for(const group of imagePathGroups(paths)) {
     const section=el("section","image-path-group");section.dataset.renderKey="image-folder:"+group.directory;section.setAttribute("aria-label",t("图片目录")+"："+group.directory);
     const directory=el("code","image-path-directory",group.directory);directory.title=group.directory;
+    const heading=el("div","image-path-directory-row");heading.append(directory,imagePathAction("directory",group.directory));
     const list=el("ul","image-path-list");
     for(const {name,path} of group.files) {
       const item=el("li","image-path-item"),filename=el("code","image-path-name",name);
       item.dataset.renderKey="image:"+path;
       filename.title=path;
-      item.append(filename);list.append(item);
+      item.append(filename,imagePathAction("image",path));list.append(item);
     }
-    section.append(directory,list);images.append(section);
+    section.append(heading,list);images.append(section);
   }
   return images;
 }
