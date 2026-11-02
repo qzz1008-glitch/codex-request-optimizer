@@ -236,10 +236,13 @@ class InspectorServer(ThreadingHTTPServer):
         self.image_config = ImageToolConfig(self.link, self.data_dir, lambda: self.endpoint)
         self.image_isolation = ImageIsolation(self.data_dir, self.settings["image_save_dir"])
         self.default_image_save_dir = resolve_image_directory(self.data_dir)
-        if self.settings["image_isolation_enabled"] and self.image_config.state.get("enabled"):
+        managed_image_mode = self.image_config.mode()
+        if (managed_image_mode in {"optimized", "disabled"}
+                and self.settings["image_analysis_mode"] == managed_image_mode):
             try:
-                with self.image_config.change("optimized"):
-                    pass
+                if managed_image_mode == "optimized" or self.image_config.needs_native_refresh():
+                    with self.image_config.change(managed_image_mode):
+                        pass
             except (OSError, ValueError) as exc:
                 self.image_config.installation_error = clean_text(str(exc))[:250]
         self.updates = Updates(self.data_dir, self.link.config, self.public_port)

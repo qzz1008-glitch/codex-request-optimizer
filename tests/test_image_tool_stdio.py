@@ -25,6 +25,12 @@ def desktop_cli():
 
 class ToolMigrationTests(unittest.TestCase):
     def setUp(self):
+        probe = patch("packet_inspector.image_config.verify_view_image_feature")
+        probe.start()
+        self.addCleanup(probe.stop)
+        stamp = patch.object(ImageToolConfig, "native_configuration_stamp", return_value={"build": "fixture"})
+        stamp.start()
+        self.addCleanup(stamp.stop)
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
@@ -65,8 +71,8 @@ class ToolMigrationTests(unittest.TestCase):
         with self.manager.change("native"):
             pass
         data = tomllib.loads(self.config.read_text(encoding="utf8"))
-        self.assertTrue(data["tools"]["view_image"])
-        self.assertNotIn("view_image", data["features"])
+        self.assertNotIn("view_image", data.get("features", {}))
+        self.assertNotIn("view_image", data.get("tools", {}))
         self.assertIs(data["features"]["js_repl"], False)
         self.assertNotIn("isolated_vision", data.get("mcp_servers", {}))
         self.assertFalse(self.manager.installation.directory.exists())
@@ -135,8 +141,8 @@ class ToolMigrationTests(unittest.TestCase):
         with self.manager.change("native"):
             pass
         data = tomllib.loads(self.config.read_text(encoding="utf8"))
-        self.assertTrue(data["tools"]["view_image"])
-        self.assertNotIn("view_image", data["features"])
+        self.assertNotIn("view_image", data.get("features", {}))
+        self.assertNotIn("view_image", data.get("tools", {}))
 
     def test_failed_uninstall_keeps_optimized_settings_and_registration(self):
         self.enable()
@@ -224,6 +230,108 @@ class ToolMigrationTests(unittest.TestCase):
         with self.manager.change("native"):
             pass
         self.assertIs(tomllib.loads(self.config.read_text(encoding="utf-8"))["features"]["view_image"], True)
+
+
+    def test_failed_capability_probe_leaves_configuration_and_tool_untouched(self):
+        config = self.config.read_bytes()
+        for mode in ("disabled", "optimized"):
+            with self.subTest(mode=mode), patch("packet_inspector.image_config.verify_view_image_feature",
+                    side_effect=ValueError("native capability unavailable")), self.assertRaisesRegex(ValueError, "capability"):
+                with self.manager.change(mode):
+                    pass
+            self.assertEqual(self.config.read_bytes(), config)
+            self.assertFalse(self.manager.path.exists())
+            self.assertFalse(self.manager.installation.directory.exists())
+
+    def test_successful_detection_is_reused_until_the_build_or_runtime_changes(self):
+        self.enable()
+        with patch("packet_inspector.image_config.verify_view_image_feature") as probe, patch.object(
+                self.manager, "native_configuration_stamp", return_value={"build": "fixture"}) as stamp:
+            with self.manager.change("optimized"):
+                pass
+            probe.assert_not_called()
+            stamp.return_value = {"build": "next-release"}
+            with self.manager.change("optimized"):
+                pass
+            self.assertEqual(probe.call_count, 1)
+            with self.manager.change("optimized"):
+                pass
+            self.assertEqual(probe.call_count, 1)
+            stamp.return_value = {"build": "next-release", "runtime": "new-core"}
+            with self.manager.change("optimized"):
+                pass
+            self.assertEqual(probe.call_count, 2)
+
+    def test_metadata_only_upgrade_check_rolls_back_when_settings_fail(self):
+        self.enable()
+        config, state = self.config.read_bytes(), self.manager.path.read_bytes()
+        with patch.object(self.manager, "native_configuration_stamp", return_value={"build": "next-release"}), self.assertRaisesRegex(RuntimeError, "settings failed"):
+            with self.manager.change("optimized") as changed:
+                self.assertFalse(changed)
+                self.assertEqual(self.manager.state["native_capability"], {"build": "next-release"})
+                raise RuntimeError("settings failed")
+        self.assertEqual(self.config.read_bytes(), config)
+        self.assertEqual(self.manager.path.read_bytes(), state)
+
+    def legacy_tools_alias(self):
+        self.enable()
+        document = tomlkit.parse(self.config.read_text(encoding="utf8"))
+        document["tools"] = {"view_image": False, "web_search": False}
+        self.config.write_text(tomlkit.dumps(document), encoding="utf8")
+        state = deepcopy(self.manager.state)
+        state["originals"].insert(0, {"table": "tools", "name": "view_image", "present": True, "value": False})
+        self.manager._save(state)
+
+    def test_optimized_refresh_removes_only_legacy_alias_and_is_idempotent(self):
+        self.legacy_tools_alias()
+        with patch.object(self.manager, "_validate"), self.manager.change("optimized") as changed:
+            self.assertTrue(changed)
+        data = tomllib.loads(self.config.read_text(encoding="utf8"))
+        self.assertEqual(data["tools"], {"web_search": False})
+        self.assertIs(data["features"]["view_image"], False)
+        with patch.object(self.manager, "_validate"), self.manager.change("optimized") as changed:
+            self.assertFalse(changed)
+        with self.manager.change("native"):
+            pass
+        data = tomllib.loads(self.config.read_text(encoding="utf8"))
+        self.assertEqual(data["tools"], {"web_search": False})
+        self.assertNotIn("view_image", data.get("features", {}))
+
+    def test_removed_legacy_alias_does_not_block_existing_installation(self):
+        self.legacy_tools_alias()
+        document = tomlkit.parse(self.config.read_text(encoding="utf8"))
+        document["tools"].pop("view_image")
+        self.config.write_text(tomlkit.dumps(document), encoding="utf8")
+        with patch.object(self.manager, "_validate"), self.manager.change("optimized"):
+            pass
+        with self.manager.change("native"):
+            pass
+        data = tomllib.loads(self.config.read_text(encoding="utf8"))
+        self.assertNotIn("view_image", data["tools"])
+        self.assertNotIn("view_image", data.get("features", {}))
+
+    def test_disabled_refresh_removes_legacy_alias_without_enabling_images(self):
+        with self.manager.change("disabled"):
+            pass
+        document = tomlkit.parse(self.config.read_text(encoding="utf8"))
+        document["tools"] = {"view_image": False, "web_search": False}
+        self.config.write_text(tomlkit.dumps(document), encoding="utf8")
+        with self.manager.change("disabled") as changed:
+            self.assertTrue(changed)
+        data = tomllib.loads(self.config.read_text(encoding="utf8"))
+        self.assertEqual(data["tools"], {"web_search": False})
+        self.assertIs(data["features"]["view_image"], False)
+        with self.manager.change("disabled") as changed:
+            self.assertFalse(changed)
+
+    def test_legacy_alias_cleanup_rolls_back_with_caller_settings(self):
+        self.legacy_tools_alias()
+        config, state = self.config.read_bytes(), self.manager.path.read_bytes()
+        with patch.object(self.manager, "_validate"), self.assertRaisesRegex(RuntimeError, "settings failed"):
+            with self.manager.change("optimized"):
+                raise RuntimeError("settings failed")
+        self.assertEqual(self.config.read_bytes(), config)
+        self.assertEqual(self.manager.path.read_bytes(), state)
 
 
 @unittest.skipUnless(os.name == "nt" and desktop_cli(), "Installed native Codex CLI")

@@ -127,7 +127,7 @@ def main():
             image_config=tomllib.loads(config.read_text(encoding="utf8"))
             assert image_config.get("model_providers")==original_config.get("model_providers")
             assert image_config.get("model_provider")==original_config.get("model_provider")
-            assert image_config["tools"]["view_image"] is False
+            assert image_config["features"]["view_image"] is False
             registration=image_config["mcp_servers"]["isolated_vision"]
             assert "command" in registration and "url" not in registration
             tool_file=Path(registration["args"][-1])
@@ -165,10 +165,12 @@ def main():
             expected_native=json.loads(json.dumps(disconnected_config))
             expected_native["mcp_servers"].pop("isolated_vision")
             if not expected_native["mcp_servers"]:expected_native.pop("mcp_servers")
-            expected_native.setdefault("tools",{})["view_image"]=True
             if expected_native.get("features",{}).get("view_image") is False:
                 expected_native["features"].pop("view_image")
                 if not expected_native["features"]:expected_native.pop("features")
+            if "view_image" in expected_native.get("tools",{}):
+                expected_native["tools"].pop("view_image")
+                if not expected_native["tools"]:expected_native.pop("tools")
             assert tomllib.loads(config.read_text(encoding="utf8"))==expected_native
             assert not tool_file.exists()
             assert len(upstream.requests)==model_requests+2
