@@ -95,7 +95,7 @@ const row=(kind,direction,created_at,extra={})=>({id:kind+direction,kind,directi
   row("exit","out",1,{last_seen:outTime}),
   row("exit","in",2,{last_seen:connectedAt+86400,snapshot:{last_seen:inTime}})]});
  const connections=ui(connectionState(connectedAt,connectedAt-60));await connections.open();
- const connectedText=()=>connections.node("exit-credential-rows").innerHTML.match(/<td class="sharing-last-connected">([^<]+)<\/td>/)?.[1];
+ const connectedText=()=>{const cell=connections.node("exit-credential-rows").innerHTML.match(/<td class="sharing-last-connected">([\s\S]*?)<\/td>/)?.[1];return cell?.match(/title="([^"]+)"/)?.[1]??cell;};
  assert.equal(connectedText(),"2026-11-02 13:07","Outgoing rows show the provider's latest authenticated connection, without seconds");
  connections.select("exit","in");
  assert.equal(connectedText(),"2026-11-02 13:06","Borrowed rows use the provider snapshot rather than the local snapshot-refresh time");
