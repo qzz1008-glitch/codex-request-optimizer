@@ -10,7 +10,6 @@ import queue
 import re
 import threading
 import tkinter as tk
-from tkinter import ttk
 
 from .app_icon import APP_ICON
 from .upgrade_chrome import UpgradeChrome
@@ -34,7 +33,7 @@ ENGLISH = {
     "正在更新桌面窗口，固定入口继续转发…": "Updating the desktop window. The relay entry remains available…",
     "新版已就绪，正在切换新请求；旧请求继续完成…": "Switching new requests. Existing requests continue to completion…",
     "正在交接额度与网络共享，已有连接继续完成…": "Handing over quota and network sharing. Existing connections continue…",
-    "当前运行版本不支持共享无缝交接，已保留当前服务。请先停止共享或断开借入，再升级一次。": "This running version cannot hand over sharing without interruption. The service was preserved. Stop sharing and disconnect borrowed connections before this one-time update.",
+    "当前运行版本不支持共享无缝交接，已保留当前服务，本次升级未执行。": "This version cannot hand over sharing without interruption. The current service was preserved and the update was not applied.",
     "正在更新托盘、快捷方式和启动入口…": "Refreshing the tray, shortcuts and startup entry…",
     "正在关闭旧版优化器窗口，中转继续运行…": "Closing the previous window. The relay remains running…",
     "首次安装固定入口，正在等待旧服务空闲…": "Installing the stable entry. Waiting for existing requests to finish…",
@@ -42,6 +41,22 @@ ENGLISH = {
     "升级未完成，正在恢复旧入口…": "The update could not finish. Restoring the previous entry…",
     "正在整理版本与安装记录…": "Finishing version cleanup and installation records…",
     "升级完成。旧服务会在请求结束后退出。": "Update complete. The old service exits after its requests finish.",
+    "升级包校验通过，正在检查当前服务…": "Package verified. Checking the running service…",
+    "正在备份本次更新涉及的配置…": "Backing up configuration for this update…",
+    "正在检查并更新兼容配置…": "Checking and updating configuration compatibility…",
+    "正在准备交接服务，现有请求继续运行…": "Preparing service handover. Existing requests keep running…",
+    "正在交接新请求，已有连接继续完成…": "Handing over new requests. Existing connections keep running…",
+    "正在启用服务入口…": "Starting the service entry…",
+    "正在确认服务与接入状态…": "Verifying the service and connection state…",
+    "正在确认服务、接入与借用状态…": "Verifying the service, connection and borrowing state…",
+    "正在保存更新结果…": "Saving the update result…",
+    "正在清理旧版本文件，服务已正常运行…": "Removing old application files. Services are running…",
+    "升级完成，部分旧文件将在后续清理。": "Update complete. Some old files will be cleaned up later.",
+    "升级完成，部分收尾操作未完成。": "Update complete. Some finalization tasks could not finish.",
+    "当前版本暂不支持不中断服务的升级，已保留现有服务。": "This version cannot update without interrupting services. The current service was preserved.",
+    "升级后服务状态不一致，正在恢复原服务。": "Service states changed during the update. Restoring the previous service.",
+    "升级配置无效，已保留当前服务。": "The update configuration is invalid. The current service was preserved.",
+    "升级期间入口文件被修改，已保留当前文件与备份。": "Entry files changed during the update. Current files and backups were preserved.",
     "升级包的入口协议不兼容。": "The update package uses an incompatible entry protocol.",
     "升级包的入口模式不兼容。": "The update package uses an incompatible entry mode.",
     "升级包校验失败。": "The update package failed verification.",
@@ -125,6 +140,7 @@ class UpgradeWindow:
     def __init__(self, window, total_steps, language="zh", current="", target=""):
         self.window, self.total_steps, self.language = window, total_steps, language
         self.completed, self.state = 0, "running"
+        self.animation_timer, self.pulse = None, 0
         self.scale = window.winfo_fpixels("1i") / 96
         self.font = "Segoe UI" if language == "en" else "Microsoft YaHei UI"
         window.title(self.t("Codex请求优化器") + " · " + self.t("安装与升级"))
@@ -135,12 +151,6 @@ class UpgradeWindow:
         except tk.TclError:
             pass
         self.chrome = UpgradeChrome(window, self.u, self.font, self.t("Codex请求优化器"), self.close)
-        style = ttk.Style(window)
-        style.theme_use("clam")
-        style.layout("Upgrade.Vertical.TScrollbar", [("Vertical.Scrollbar.trough", {"sticky": "ns", "children": [
-            ("Vertical.Scrollbar.thumb", {"sticky": "nswe", "expand": "1"})]})])
-        style.configure("Upgrade.Vertical.TScrollbar", width=self.u(6), borderwidth=0, arrowsize=0,
-                        background=COLORS["line"], troughcolor=COLORS["paper"], bordercolor=COLORS["paper"])
         body = tk.Frame(window, bg=COLORS["paper"])
         body.pack(fill="both", expand=True, padx=self.u(28), pady=(self.u(12), self.u(12)))
         summary = tk.Frame(body, bg=COLORS["paper"])
@@ -156,24 +166,20 @@ class UpgradeWindow:
         self.version_label.configure(bg=COLORS["soft"], padx=self.u(8), pady=self.u(3))
         self.version_label.pack(side="left")
         progress = tk.Frame(body, bg=COLORS["paper"])
-        progress.pack(fill="x", pady=(self.u(12), self.u(8)))
-        self.timeline = tk.Canvas(progress, bg=COLORS["paper"], height=self.u(50), highlightthickness=0)
-        self.timeline.pack(fill="x", pady=(self.u(2), 0))
-        details = tk.Frame(body, bg=COLORS["paper"])
-        details.pack(fill="both", expand=True)
-        details.columnconfigure(0, weight=1)
-        details.columnconfigure(1, minsize=self.u(10))
-        details.rowconfigure(0, weight=1)
-        self.detail = tk.Text(details, width=1, height=2, font=(self.font, 10), wrap="word", bg=COLORS["paper"], fg=COLORS["muted"],
+        progress.pack(fill="x", pady=(self.u(16), self.u(12)))
+        self.bar = tk.Canvas(progress, bg=COLORS["paper"], height=self.u(8), highlightthickness=0)
+        self.bar.pack(fill="x")
+        self.detail = tk.Text(body, width=1, height=1, font=(self.font, 10), wrap="none", bg=COLORS["paper"], fg=COLORS["muted"],
                               relief="flat", borderwidth=0, highlightthickness=0, padx=0, pady=0, cursor="arrow", state="disabled")
-        self.detail.grid(row=0, column=0, sticky="nsew")
-        self.scrollbar = ttk.Scrollbar(details, orient="vertical", style="Upgrade.Vertical.TScrollbar", command=self.detail.yview)
-        self.scrollbar.grid(row=0, column=1, sticky="ns", padx=(self.u(4), 0))
-        self.detail.configure(yscrollcommand=self.scroll_detail)
-        self.timeline.bind("<Configure>", lambda _event: self.draw_progress())
+        self.detail.pack(fill="x")
+        self.detail.bind("<Shift-MouseWheel>", self.scroll_log)
+        self.detail.bind("<Control-a>", self.select_log)
+        self.bar.bind("<Configure>", lambda _event: self.draw_progress())
+        self.bar.bind("<Destroy>", lambda _event: self.stop_animation())
         window.protocol("WM_DELETE_WINDOW", self.close)
         window.bind("<Escape>", lambda _event: self.close())
         self.update_progress(0, "正在校验升级包…")
+        self.animate()
 
     def u(self, value):
         return round(value * self.scale)
@@ -186,7 +192,7 @@ class UpgradeWindow:
 
     def dimensions(self):
         self.window.update_idletasks()
-        return self.u(536), max(self.u(200), self.window.winfo_reqheight())
+        return self.u(536), max(self.u(144), self.window.winfo_reqheight())
 
     def show(self):
         width, height = self.dimensions()
@@ -220,17 +226,19 @@ class UpgradeWindow:
                 pass
         self.window.attributes("-alpha", 1)
 
-    def scroll_detail(self, start, end):
-        self.scrollbar.set(start, end)
-        if float(start) <= 0 and float(end) >= 1:
-            self.scrollbar.grid_remove()
-        else:
-            self.scrollbar.grid()
+    def scroll_log(self, event):
+        self.detail.xview_scroll(-3 if event.delta > 0 else 3, "units")
+        return "break"
+
+    def select_log(self, _event):
+        self.detail.tag_add("sel", "1.0", "end-1c")
+        return "break"
 
     def set_detail(self, text, error=False):
         self.detail.configure(state="normal", fg=COLORS["error" if error else "muted"])
         self.detail.delete("1.0", "end")
-        self.detail.insert("1.0", self.t(text))
+        self.detail.insert("1.0", " ".join(self.t(text).splitlines()))
+        self.detail.xview_moveto(0)
         self.detail.configure(state="disabled")
 
     def update_progress(self, completed, text):
@@ -240,42 +248,36 @@ class UpgradeWindow:
 
     def draw_progress(self):
         color = COLORS[{"complete": "success", "failed": "error"}.get(self.state, "accent")]
-        self.timeline.delete("all")
-        width, y, radius = self.timeline.winfo_width(), self.u(14), self.u(9)
-        if width <= self.u(76):
+        self.bar.delete("all")
+        width, height = self.bar.winfo_width(), self.u(8)
+        if width <= height:
             return
-        fraction = self.completed / self.total_steps
-        # Equally spaced milestones use real checkpoint boundaries.
-        # Each connecting segment fills as work within that stage completes.
-        stops = (0, 1 / 3, 1 / 2, 1)
-        positions = [self.u(38) + (width - self.u(76)) * index / 3 for index in range(4)]
-        self.timeline.create_line(positions[0], y, positions[-1], y,
-                                  fill=COLORS["line"], width=self.u(4), capstyle="round", tags="track")
-        phase = max(index for index, stop in enumerate(stops) if fraction >= stop)
-        reached = positions[phase]
-        if phase < len(stops) - 1:
-            within_stage = (fraction - stops[phase]) / (stops[phase + 1] - stops[phase])
-            reached += (positions[phase + 1] - positions[phase]) * within_stage
+        left, right, y = height / 2, width - height / 2, height / 2
+        reached = left + (right - left) * self.completed / max(1, self.total_steps)
+        self.bar.create_line(left, y, right, y, fill=COLORS["line"], width=height, capstyle="round", tags="track")
         if self.completed:
-            self.timeline.create_line(positions[0], y, reached, y,
-                                      fill=color, width=self.u(4), capstyle="round", tags="progress")
-        for index, x in enumerate(positions):
-            done = self.state == "complete" or index < phase
-            active = index == phase
-            fill = COLORS["success"] if self.state == "complete" else COLORS["accent"] if done else color if active else COLORS["paper"]
-            self.timeline.create_oval(x - radius, y - radius, x + radius, y + radius, fill=fill,
-                                      outline=fill if done or active else COLORS["line"], tags="milestone")
-            if done:
-                self.timeline.create_line(x - self.u(4), y, x - self.u(1), y + self.u(3), x + self.u(5), y - self.u(4),
-                                          fill="white", width=self.u(1.5), capstyle="round", joinstyle="round")
-            else:
-                self.timeline.create_text(x, y, text="×" if active and self.state == "failed" else str(index + 1),
-                                          fill="white" if active else COLORS["muted"], font=(self.font, 9))
-            self.timeline.create_text(x, self.u(40), text=self.t(("校验与准备", "安装新版", "切换服务", "完成")[index]),
-                                      fill=COLORS["ink"] if active or done else COLORS["muted"], font=(self.font, 9), tags="stage-label")
+            self.bar.create_line(left, y, reached, y, fill=color, width=height, capstyle="round", tags="progress")
+        if self.state == "running" and reached < right:
+            # A moving highlight indicates ongoing work without inventing
+            # completed progress while a checkpoint is still being verified.
+            span = min(self.u(48), (right - reached) / 3)
+            start = reached + (right - reached - span) * self.pulse / 24
+            self.bar.create_line(start, y, start + span, y, fill=COLORS["accent"],
+                                 width=height, capstyle="round", tags="activity")
+
+    def animate(self):
+        self.pulse = (self.pulse + 1) % 25
+        self.draw_progress()
+        self.animation_timer = self.window.after(80, self.animate)
+
+    def stop_animation(self):
+        if self.animation_timer is not None:
+            self.window.after_cancel(self.animation_timer)
+            self.animation_timer = None
 
     def finish(self, success, detail=""):
         self.state = "complete" if success else "failed"
+        self.stop_animation()
         self.chrome.close_button.set_enabled(True)
         self.heading.configure(text=self.t("升级已完成" if success else "升级未完成"),
                                fg=COLORS["success" if success else "error"])
@@ -314,7 +316,12 @@ def run_upgrade_window(engine, *, open_after=False):
             except Exception as exc:
                 events.put(("open_failed", 0, str(exc)))
                 return
-        events.put(("complete", 0, "正在打开新版应用…" if open_after else ""))
+        journal = getattr(engine, "journal", None) or {}
+        warning = any(key.endswith("_warning") and value for key, value in journal.items())
+        events.put(("complete_warning" if warning else "complete", 0,
+                    ("升级完成，部分旧文件将在后续清理。" if journal.get("cleanup_warning")
+                     else "升级完成，部分收尾操作未完成。") if warning
+                    else "正在打开新版应用…" if open_after else ""))
     def refresh():
         while True:
             try:
