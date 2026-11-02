@@ -427,6 +427,35 @@ class ImageConfigurationTests(unittest.TestCase):
 
 
 class ImageDirectoryStartupTests(unittest.TestCase):
+    def test_standby_worker_never_migrates_shared_configuration(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            config, directory = self.legacy_disabled_installation(Path(temporary))
+            paths = [config, directory / "settings.json", directory / "image-tool.json"]
+            before = {path: path.read_bytes() for path in paths}
+            with patch("packet_inspector.image_config.verify_view_image_feature") as probe, fixtures.InspectorServer(
+                    ("127.0.0.1", 0), directory, config, "http://127.0.0.1:9/v1", worker_id="a" * 32) as server:
+                for path, raw in before.items():
+                    self.assertEqual(path.read_bytes(), raw, path.name)
+                probe.assert_not_called()
+                server.worker_control({"action": "upgrade_prepare"})
+                for path, raw in before.items():
+                    self.assertEqual(path.read_bytes(), raw, path.name)
+                self.assertEqual(server.worker_state, "standby")
+
+    def test_cold_worker_activation_still_refreshes_native_runtime_compatibility(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            config, directory = self.legacy_disabled_installation(Path(temporary))
+            with patch("packet_inspector.image_config.verify_view_image_feature") as probe, patch.object(
+                    ImageToolConfig, "native_configuration_stamp", return_value={"build": "new-release"}), fixtures.InspectorServer(
+                    ("127.0.0.1", 0), directory, config, "http://127.0.0.1:9/v1", worker_id="a" * 32) as server:
+                probe.assert_not_called()
+                server.worker_control({"action": "activate", "maintenance": False})
+                self.assertEqual(tomllib.loads(config.read_text(encoding="utf8"))["tools"], {"web_search": False})
+                probe.assert_called_once()
+                server.worker_control({"action": "pause"})
+                server.worker_control({"action": "activate", "maintenance": False})
+                probe.assert_called_once()
+
     def test_old_settings_migrate_without_changing_the_selected_behavior(self):
         cases = [({}, "native"), ({"image_isolation_enabled": True}, "optimized"),
                  ({"image_isolation_enabled": False}, "native"),

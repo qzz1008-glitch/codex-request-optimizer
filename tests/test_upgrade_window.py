@@ -73,6 +73,31 @@ class UpgradeWindowTests(unittest.TestCase):
         view.chrome.close_button.invoke()
         self.assertFalse(exists(self.window))
 
+    def test_progress_has_no_milestones_and_only_the_latest_log_line(self):
+        view = UpgradeWindow(self.window, 9)
+        self.window.update_idletasks()
+        view.update_progress(3, "previous log")
+        view.update_progress(4, "latest log\nsecond physical line")
+        self.assertEqual(view.detail.get("1.0", "end-1c"), "latest log second physical line")
+        self.assertEqual(view.detail.cget("wrap"), "none")
+        self.assertEqual(view.detail.cget("height"), 1)
+        with patch.object(view.bar, "winfo_width", return_value=480):
+            view.draw_progress()
+        self.assertTrue(view.bar.find_withtag("progress"))
+        self.assertFalse(view.bar.find_withtag("stage-label"))
+        self.assertFalse(view.bar.find_withtag("milestone"))
+        self.assertIsNotNone(view.animation_timer)
+        view.finish(True)
+        self.assertIsNone(view.animation_timer)
+
+    def test_long_error_remains_complete_selectable_and_on_one_line(self):
+        view = UpgradeWindow(self.window, 9)
+        message = "failure: " + "diagnostic detail " * 100
+        view.finish(False, message)
+        self.assertEqual(view.detail.get("1.0", "end-1c"), message)
+        view.select_log(None)
+        self.assertEqual(view.detail.get("sel.first", "sel.last"), message)
+
     def test_white_caption_minimizes_and_close_hover_matches_desktop(self):
         view = UpgradeWindow(self.window, 6)
         self.assertEqual(view.chrome.frame.cget("bg"), "#ffffff")
