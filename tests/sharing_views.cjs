@@ -80,5 +80,22 @@ const row=(kind,direction,created_at,extra={})=>({id:kind+direction,kind,directi
  await invalid.open();invalid.expect("out","out");
  const beforeData=ui({...idle,last_used_views:{quota:"out",exit:"out"}});
  beforeData.select("quota","in");await beforeData.open();beforeData.expect("in","out");
+ const connectedAt=new Date(2026,10,2,13,7,59).getTime()/1000;
+ const connectionState=(outTime,inTime)=>({...idle,last_used_views:{exit:"out"},credentials:[
+  row("exit","out",1,{last_seen:outTime}),
+  row("exit","in",2,{last_seen:connectedAt+86400,snapshot:{last_seen:inTime}})]});
+ const connections=ui(connectionState(connectedAt,connectedAt-60));await connections.open();
+ const connectedText=()=>connections.node("exit-credential-rows").innerHTML.match(/<td class="sharing-last-connected">([^<]+)<\/td>/)?.[1];
+ assert.equal(connectedText(),"2026-11-02 13:07","Outgoing rows show the provider's latest authenticated connection, without seconds");
+ connections.select("exit","in");
+ assert.equal(connectedText(),"2026-11-02 13:06","Borrowed rows use the provider snapshot rather than the local snapshot-refresh time");
+ await connections.poll(connectionState(connectedAt,connectedAt+120));
+ assert.equal(connectedText(),"2026-11-02 13:09","New connection times refresh with the table");
+ for(const missing of [undefined,null,"not-a-timestamp"]){
+  await connections.poll(connectionState(connectedAt,missing));
+  assert.equal(connectedText(),"—","Missing or invalid provider timestamps remain unknown");
+ }
+ connections.select("exit","out");assert.equal(connectedText(),"2026-11-02 13:07");
+ connections.close();
  console.log(JSON.stringify({sharing_views:"passed",checks:["default","independent_resources","remembered_operations","same_window_state","no_tab_writes","poll_does_not_jump","cold_reopen","active_fallback","lending_fallback","legacy_creation_fallback","passive_stats_ignored","invalid_memory","early_manual_choice"]}));
 })().catch(error=>{console.error(error);process.exitCode=1;});
