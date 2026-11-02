@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import ExitStack
 import hashlib
 import http.client
 import json
@@ -24,6 +25,11 @@ from packet_inspector.router import (PROTOCOL, atomic_json, control_worker, heal
 from packet_inspector.sharing_handover import (PROTOCOL as SHARING_HANDOVER_PROTOCOL, UNSUPPORTED as SHARING_UPGRADE_UNSUPPORTED,
                                               active_status as sharing_active, prepare_upgrade, finish_upgrade)
 from packet_inspector.startup_diagnostics import STARTUP_SECONDS, startup_environment, wait_for_startup
+from packet_inspector.upgrade_compatibility import configuration_upgrade
+
+
+PHASES = ("validate", "backup", "candidate", "compatibility", "handover", "switch", "verify", "record", "cleanup")
+CONTINUITY_UNSUPPORTED = "当前版本暂不支持不中断服务的升级，已保留现有服务。"
 
 
 def digest(path):
@@ -38,7 +44,7 @@ def free_port():
 
 
 class Upgrade:
-    total_steps = 6
+    total_steps = len(PHASES)
 
     def __init__(self, payload, data_dir, config, port=None, progress=None, default_profile=None):
         self.payload, self.data_dir, self.config = Path(payload), Path(data_dir).resolve(), Path(config).resolve()
@@ -48,12 +54,43 @@ class Upgrade:
         self.canonical = self.data_dir / "bin" / "CodexPacketInspector.exe"
         self.candidate = ""
         self.candidate_process = None
+        self.entry_running = False
         self.default_profile = default_profile or BuildProfile()
+        self.journal = None
+
+    def _stage(self, phase, message):
+        if self.journal is not None:
+            phases = self.journal["phases"]
+            if phases:
+                phases[-1].update(state="complete", finished=time.time())
+            phases.append({"id": phase, "state": "running", "started": time.time()})
+            self.journal["phase"] = phase
+        self._report(message, PHASES.index(phase))
 
     def _report(self, message, completed=None):
         if completed is not None:
             self.completed_steps = max(self.completed_steps, min(completed, self.total_steps))
+        if self.journal is not None:
+            self.journal.update(completed_steps=self.completed_steps, total_steps=self.total_steps,
+                                message=" ".join(str(message).splitlines())[:500])
+            # UI messages stay in memory until the commit/error record. Avoid
+            # rewriting the shared result file for every line of progress.
+            if self.completed_steps == self.total_steps:
+                self._save_journal()
         self.progress(message)
+
+    def _save_journal(self):
+        # Existing services can read this file without FILE_SHARE_DELETE.
+        # Windows then briefly denies atomic replacement. Bound the wait to
+        # half a second; other errors retain their original failure semantics.
+        for attempt in range(5):
+            try:
+                atomic_json(self.data_dir / "upgrade-result.json", self.journal)
+                return
+            except PermissionError as exc:
+                if os.name != "nt" or getattr(exc, "winerror", None) not in {5, 32, 33} or attempt == 4:
+                    raise
+                time.sleep(.05 * (attempt + 1))
 
     def _wait_worker(self, identity, seconds=STARTUP_SECONDS):
         def ready():
@@ -76,15 +113,8 @@ class Upgrade:
         self._wait_worker(self.candidate)
 
     def _stop_candidate(self):
-        if not self.candidate:
+        if not self.candidate or self._candidate_active() is not False:
             return
-        state = self.data_dir / "router-state.json"
-        if state.exists():
-            try:
-                if json.loads(state.read_text(encoding="utf8")).get("active") == self.candidate:
-                    return  # A failed rollback must never shut down the active relay.
-            except (OSError, ValueError, TypeError):
-                return  # Unclear ownership is not permission to stop a worker.
         try:
             control_worker(self.data_dir, self.candidate, "stop")
         except (OSError, ValueError, http.client.HTTPException):
@@ -94,22 +124,6 @@ class Upgrade:
                 self.candidate_process.wait(timeout=8)
             except subprocess.TimeoutExpired:
                 pass  # Do not force-stop a process that may own a request.
-
-    def _legacy_processes(self):
-        if os.name != "nt":
-            return []
-        # Return only identity and a mode flag. Never echo command lines.
-        code = ("$taskPath=$env:INSPECTOR_UPGRADE_EXE; Get-CimInstance Win32_Process | "
-                "Where-Object {$_.ExecutablePath -eq $taskPath} | "
-                "ForEach-Object {[pscustomobject]@{pid=$_.ProcessId; background=($_.CommandLine -match '--background')}} | ConvertTo-Json -Compress")
-        result = subprocess.run(["powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", code],
-                                env={**os.environ, "INSPECTOR_UPGRADE_EXE": str(self.canonical)},
-                                capture_output=True, encoding="utf8", errors="replace", timeout=15,
-                                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-        if result.returncode:
-            raise RuntimeError("无法确认旧程序状态，升级未中断现有中转。")
-        values = json.loads(result.stdout or "[]")
-        return values if isinstance(values, list) else [values]
 
     def _close_windows(self, processes):
         if os.name != "nt" or not processes:
@@ -221,19 +235,25 @@ class Upgrade:
         values = json.loads(result.stdout or "[]")
         return values if isinstance(values, list) else [values]
 
-    def _backup(self):
+    def _backup(self, *, include_entry=False):
         backup = self.data_dir / "upgrade-backups" / (time.strftime("%Y%m%dT%H%M%S", time.gmtime()) + "-" + secrets.token_hex(4))
         backup.mkdir(parents=True)
         paths = [self.config, self.data_dir / "settings.json", self.data_dir / "codex-link.json",
-                 self.data_dir / "router-state.json", self.canonical]
+                 self.data_dir / "router-state.json", self.data_dir / "image-tool.json"]
+        if include_entry:
+            paths.append(self.canonical)
         paths.extend(self.config.parent.glob("*.config.toml"))
+        from .image_tool_install import ASSETS, ImageToolInstallation
+        tool = ImageToolInstallation(self.config.parent)
+        paths.extend(tool.directory / name for name in (*ASSETS, tool.manifest.name))
         manifest = []
         for path in dict.fromkeys(paths):
             saved = backup / (str(len(manifest)) + ".backup")
             exists = path.is_file()
             if exists:
                 shutil.copy2(path, saved)
-            manifest.append({"path": str(path), "saved": str(saved), "existed": exists})
+            manifest.append({"path": str(path), "saved": str(saved), "existed": exists,
+                             "sha256": digest(saved) if exists else None})
         atomic_json(backup / "manifest.json", manifest)
         return backup, manifest
 
@@ -265,7 +285,7 @@ class Upgrade:
             timeout=lambda: RuntimeError("入口服务健康检查超时。"), chain_error=False)
 
     def _refresh_integration(self, status):
-        self._report("正在更新托盘、快捷方式和启动入口…", 4)
+        self._report("正在更新托盘、快捷方式和启动入口…")
         control_worker(self.data_dir, self.candidate, "installation_refresh")
         if status.get("desktop_refresh_supported"):
             try:
@@ -308,62 +328,29 @@ class Upgrade:
                     time.sleep(.1)
             raise RuntimeError("旧后台恢复超时，已保留当前中转。") from None
 
-    def _migrate(self, entry_payload, legacy):
-        processes = self._legacy_processes() if legacy else []
-        had_window = any(not item["background"] for item in processes)
-        if had_window:
-            self._report("正在关闭旧版优化器窗口，中转继续运行…")
-            self._close_windows(processes)
-        backup, manifest = self._backup()
-        stopped, router_started = False, False
+    def _install_entry(self, entry_payload, manifest):
+        """Install an entry only when preflight proved that no service is running."""
+        router_started = False
+        applied = {}
         try:
-            if legacy:
-                self._report("首次安装固定入口，正在等待旧服务空闲…")
-                deadline = time.monotonic() + 60
-                while time.monotonic() < deadline:
-                    current = local_json(self.port, "/api/status", timeout=3)
-                    if current.get("relay_active_requests", current.get("active_requests", 0)) == 0:
-                        try:
-                            local_json(self.port, "/api/upgrade/stop", {}, timeout=3)
-                            stopped = True
-                            break
-                        except (OSError, ValueError, http.client.HTTPException):
-                            pass
-                    time.sleep(.25)
-                if not stopped:
-                    raise RuntimeError("旧服务仍有请求，已取消本次升级。现有中转继续运行。")
-                for item in processes:
-                    deadline = time.monotonic() + 8
-                    while process_alive(item["pid"]) and time.monotonic() < deadline:
-                        time.sleep(.1)
-                    if process_alive(item["pid"]):
-                        raise RuntimeError("旧服务尚未退出，取消替换。")
-                deadline = time.monotonic() + 10
-                while time.monotonic() < deadline:
-                    with socket.socket() as probe:
-                        probe.settimeout(.3)
-                        if probe.connect_ex(("127.0.0.1", self.port)) != 0:
-                            break
-                    time.sleep(.1)
-                else:
-                    raise RuntimeError("旧监听端口未释放，取消替换。")
             self.canonical.parent.mkdir(parents=True, exist_ok=True)
             self._copy_retry(entry_payload, self.canonical)
-            atomic_json(self.data_dir / "router-state.json", {"protocol": PROTOCOL, "port": self.port,
+            applied[self.canonical] = digest(self.canonical)
+            state_path = self.data_dir / "router-state.json"
+            atomic_json(state_path, {"protocol": PROTOCOL, "port": self.port,
                         "token": secrets.token_urlsafe(32), "config": str(self.config),
                         "active": self.candidate, "draining": []})
+            applied[state_path] = digest(state_path)
             self._report("启动固定入口并检查前后端…")
             self._start_entry()
             router_started = True
+            self.entry_running = True
             status = self._wait_entry(PROTOCOL)
             if status.get("provider_sync_error"):
                 raise RuntimeError("接入配置验证失败。")
-            if legacy:
-                control_worker(self.data_dir, self.candidate, "recover", owners=["relay"])
+            self._stage("verify", "正在确认服务与接入状态…")
             self._refresh_integration(status)
-            if had_window:
-                self._open_window()
-            return backup
+            return status
         except Exception:
             self._report("升级未完成，正在恢复旧入口…")
             if router_started:
@@ -375,24 +362,27 @@ class Upgrade:
                     deadline = time.monotonic() + 8
                     while process_alive(runtime["pid"]) and time.monotonic() < deadline:
                         time.sleep(.1)
+                    if process_alive(runtime["pid"]):
+                        raise RuntimeError("新版入口仍在运行，未覆盖它的程序或配置，请查看升级结果。")
+                    self.entry_running = False
                 except (OSError, ValueError, KeyError, http.client.HTTPException):
                     raise RuntimeError("新版入口仍在运行，未覆盖它的程序或配置，请查看升级结果。") from None
-            self._stop_candidate()
+            # Config migrations have their own conflict-aware rollback. Never
+            # restore a whole settings snapshot over a concurrent user edit.
             for entry in manifest:
                 path = Path(entry["path"])
+                if path not in applied:
+                    continue
+                if not path.exists() or digest(path) != applied[path]:
+                    raise RuntimeError("升级期间入口文件被修改，已保留当前文件与备份。") from None
                 if entry["existed"]:
                     self._copy_retry(entry["saved"], path)
                 else:
                     path.unlink(missing_ok=True)
-            if stopped:
-                self._start_entry()
-                self._wait_entry()
-            if had_window:
-                self._open_window()
             raise
 
     def _run(self):
-        self._report("正在校验升级包…")
+        self._stage("validate", "正在校验升级包…")
         manifest = json.loads((self.payload / "manifest.json").read_text(encoding="utf8"))
         if manifest.get("router_protocol") != PROTOCOL:
             raise ValueError("升级包的入口协议不兼容。")
@@ -405,7 +395,7 @@ class Upgrade:
         for path in dict.fromkeys((app, entry)):
             if digest(path) != manifest["sha256"][path.name]:
                 raise ValueError("升级包校验失败。")
-        self._report("升级包校验通过，正在准备新版前后端…", 1)
+        self._report("升级包校验通过，正在检查当前服务…")
         if self.port is None:
             runtime_file = self.data_dir / "runtime.json"
             self.port = json.loads(runtime_file.read_text(encoding="utf8"))["port"] if runtime_file.exists() else configured_port(self.data_dir)
@@ -428,8 +418,6 @@ class Upgrade:
                     or Path(status["profile"]["config_path"]).resolve() != self.config):
                 raise ValueError("端口属于其他服务或配置，未修改它。")
             legacy = health.get("router_protocol") is None
-            if legacy and not status.get("upgrade_drain_supported"):
-                raise ValueError("旧版不支持安全排空，请先手动关闭旧中转再运行升级程序。")
             if not legacy and health.get("router_protocol") != PROTOCOL:
                 raise ValueError("入口协议不兼容，未修改正在运行的服务。")
             # This check precedes candidate construction, window changes and
@@ -438,6 +426,13 @@ class Upgrade:
                 shared = status if "sharing_runtime" in status else local_json(self.port, "/api/sharing", timeout=3)
                 if sharing_active(shared) and (legacy or status.get("sharing_handover_protocol") != SHARING_HANDOVER_PROTOCOL):
                     raise ValueError(SHARING_UPGRADE_UNSUPPORTED)
+            if legacy:
+                # Even an idle direct relay owns its listening port. Replacing
+                # it would create an outage for the next request.
+                raise ValueError(CONTINUITY_UNSUPPORTED)
+            self.entry_running = True
+        self._stage("backup", "正在备份本次更新涉及的配置…")
+        backup, backup_manifest = self._backup(include_entry=health is None)
         windows = self._application_windows()
         remember_upgrade_profile(self.data_dir, self.default_profile, windows)
         version_dir = self.data_dir / "bin" / "versions" / manifest["sha256"][app.name]
@@ -449,17 +444,17 @@ class Upgrade:
             staging.replace(version_exe)
         if digest(version_exe) != manifest["sha256"][app.name]:
             raise ValueError("已暂存的新版程序校验失败。")
-        self._report("正在启动新版服务并检查运行状态…", 2)
-        success, backup, reopen = False, None, False
+        self._stage("candidate", "正在启动新版服务并检查运行状态…")
+        success, reopen = False, False
         sharing_ticket, old = None, None
+        compatibility = ExitStack()
         try:
             self._start_candidate(version_exe, manifest["version"])
-            self._report("新版服务已就绪，正在准备切换…", 3)
-            if health and not legacy:
-                if windows:
-                    self._report("正在更新桌面窗口，固定入口继续转发…")
-                    self._close_windows(windows)
-                    reopen = True
+            self._stage("compatibility", "正在检查并更新兼容配置…")
+            migrations = compatibility.enter_context(configuration_upgrade(self.data_dir, self.config))
+            control_worker(self.data_dir, self.candidate, "upgrade_prepare")
+            self._stage("handover", "正在准备交接服务，现有请求继续运行…")
+            if health:
                 state = json.loads((self.data_dir / "router-state.json").read_text(encoding="utf8"))
                 old = state["active"]
                 if status.get("sharing_handover_protocol") == SHARING_HANDOVER_PROTOCOL:
@@ -468,23 +463,45 @@ class Upgrade:
                 elif status.get("sharing_settings_supported"):
                     if sharing_active(local_json(self.port, "/api/sharing", timeout=3)):
                         raise ValueError(SHARING_UPGRADE_UNSUPPORTED)
-                self._report("新版已就绪，正在切换新请求；旧请求继续完成…")
-                local_json(self.port, "/__router__/switch", {"worker_id": self.candidate, "expected_active": old}, state["token"], timeout=40)
+                baseline = local_json(self.port, "/api/status", timeout=3)
+                if windows:
+                    self._report("正在更新桌面窗口，固定入口继续转发…")
+                    reopen = True
+                    self._close_windows(windows)
+                self._stage("switch", "正在交接新请求，已有连接继续完成…")
                 try:
+                    local_json(self.port, "/__router__/switch", {"worker_id": self.candidate, "expected_active": old}, state["token"], timeout=40)
                     status = self._wait_entry(PROTOCOL, seconds=8)
                     if status.get("worker_id") != self.candidate or status.get("provider_sync_error"):
                         raise ValueError("切换后验证失败。")
+                    self._stage("verify", "正在确认服务、接入与借用状态…")
+                    self._verify_continuity(baseline, status)
                     self._refresh_integration(status)
                 except Exception:
                     if not self._presentation_committed():
-                        self._rollback_switch(old, state["token"])
+                        if self._candidate_active() is not False:
+                            self._rollback_switch(old, state["token"])
                     raise
             else:
-                backup = self._migrate(entry, legacy)
+                self._stage("switch", "正在启用服务入口…")
+                self._install_entry(entry, backup_manifest)
+            if sharing_ticket is not None:
+                ticket, sharing_ticket = sharing_ticket, None
+                finish_upgrade(self.data_dir, old, self.candidate, ticket)
+            compatibility.close()
             success = True
             return {"state": "complete", "version": manifest["version"], "port": self.port,
-                    "worker_id": self.candidate, "backup": str(backup) if backup else None,
-                    "entry_migrated": health is None or legacy}
+                    "worker_id": self.candidate, "backup": str(backup), "migrations": migrations,
+                    "entry_migrated": health is None}
+        except BaseException:
+            if self._candidate_active() is not False:
+                # If rollback cannot restore the old owner, retain the active
+                # relay and its compatible configuration, rather than undoing
+                # files underneath a service that is already serving requests.
+                compatibility.close()
+            else:
+                compatibility.__exit__(*sys.exc_info())
+            raise
         finally:
             try:
                 if sharing_ticket is not None:
@@ -493,16 +510,41 @@ class Upgrade:
                 if not success:
                     self._stop_candidate()
                 if reopen:
-                    self._open_window()
+                    try:
+                        self._open_window()
+                    except (OSError, ValueError, RuntimeError):
+                        if self.journal is not None:
+                            self.journal["window_refresh_warning"] = True
+
+    def _candidate_active(self):
+        path = self.data_dir / "router-state.json"
+        if not path.exists():
+            return None if self.entry_running else False
+        try:
+            return json.loads(path.read_text(encoding="utf8"))["active"] == self.candidate
+        except (OSError, ValueError, KeyError, TypeError):
+            return None
+
+    @staticmethod
+    def _verify_continuity(before, after):
+        for key in ("connection_state", "sharing_runtime"):
+            if key in before and before[key] != after.get(key):
+                raise ValueError("升级后服务状态不一致，正在恢复原服务。")
 
     def run(self):
         self.completed_steps = 0
         self.data_dir.mkdir(parents=True, exist_ok=True)
         with file_lock(self.data_dir / "upgrade.lock", blocking=False):
-            atomic_json(self.data_dir / "upgrade-result.json", {"state": "running", "started": time.time()})
+            self.journal = {"state": "running", "started": time.time(), "phases": []}
+            self._save_journal()
+            result = None
             try:
                 result = self._run()
-                self._report("正在整理版本与安装记录…", 5)
+                # The verified service handover is the commit boundary. Later
+                # bookkeeping or cleanup must never roll it back or report a
+                # working upgrade as failed.
+                self.journal.update(result)
+                self._stage("record", "正在保存更新结果…")
                 runtime_path = self.data_dir / "runtime.json"
                 if runtime_path.exists():
                     try:
@@ -513,14 +555,40 @@ class Upgrade:
                             atomic_json(runtime_path, {**runtime, "version": result["version"], "worker_id": self.candidate})
                     except (OSError, ValueError, TypeError):
                         result["runtime_refresh_warning"] = True
+                self.journal.update(result)
+                self._save_journal()
+                self._stage("cleanup", "正在清理旧版本文件，服务已正常运行…")
                 from .upgrade_cleanup import cleanup_versions
-                result["cleanup"] = cleanup_versions(self.data_dir)
-                atomic_json(self.data_dir / "upgrade-result.json", {**result, "finished": time.time()})
-                self._report("升级完成。旧服务会在请求结束后退出。", self.total_steps)
-                return result
+                try:
+                    result["cleanup"] = cleanup_versions(self.data_dir)
+                    if result["cleanup"].get("skipped"):
+                        result["cleanup_warning"] = result["cleanup"]["skipped"]
+                except Exception as exc:
+                    result["cleanup_warning"] = type(exc).__name__
+                self.journal.update(result, finished=time.time())
+                self.journal["phases"][-1].update(
+                    state="warning" if result.get("cleanup_warning") else "complete", finished=time.time())
+                self._report("升级完成，部分旧文件将在后续清理。" if result.get("cleanup_warning")
+                             else "升级完成。旧服务会在请求结束后退出。", self.total_steps)
             except Exception as exc:
-                atomic_json(self.data_dir / "upgrade-result.json", {"state": "failed", "error": str(exc)[:500], "finished": time.time()})
-                raise
+                if result is None:
+                    self.journal.update(state="failed", error=str(exc)[:500], finished=time.time())
+                    if self.journal["phases"]:
+                        self.journal["phases"][-1].update(state="failed", finished=time.time())
+                    try:
+                        self._save_journal()
+                    except OSError:
+                        pass
+                    raise
+                result["finalization_warning"] = type(exc).__name__
+                self.journal.update(result, finished=time.time(), completed_steps=self.total_steps)
+                self.completed_steps = self.total_steps
+                try:
+                    self._save_journal()
+                except OSError:
+                    pass
+                self.progress("升级完成，部分收尾操作未完成。")
+            return result
 
 
 def run_integrated(arguments, quiet=False, force=False):

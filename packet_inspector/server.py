@@ -249,15 +249,9 @@ class InspectorServer(ThreadingHTTPServer):
         self.image_config = ImageToolConfig(self.link, self.data_dir, lambda: self.endpoint)
         self.image_isolation = ImageIsolation(self.data_dir, self.settings["image_save_dir"])
         self.default_image_save_dir = resolve_image_directory(self.data_dir)
-        managed_image_mode = self.image_config.mode()
-        if (managed_image_mode in {"optimized", "disabled"}
-                and self.settings["image_analysis_mode"] == managed_image_mode):
-            try:
-                if managed_image_mode == "optimized" or self.image_config.needs_native_refresh():
-                    with self.image_config.change(managed_image_mode):
-                        pass
-            except (OSError, ValueError) as exc:
-                self.image_config.installation_error = clean_text(str(exc))[:250]
+        self.configuration_prepared = False
+        if not worker_id:
+            self._refresh_image_configuration()
         self.updates = Updates(self.data_dir, self.link.config, self.public_port)
         self.analysis_errors = 0
         self.maintenance_errors = 0
@@ -335,13 +329,43 @@ class InspectorServer(ThreadingHTTPServer):
             self.maintenance_errors += 1
         return processed
 
+    def _refresh_image_configuration(self):
+        managed_mode = self.image_config.mode()
+        if managed_mode in {"optimized", "disabled"} and self.settings["image_analysis_mode"] == managed_mode:
+            try:
+                if managed_mode == "optimized" or self.image_config.needs_native_refresh():
+                    with self.image_config.change(managed_mode):
+                        pass
+            except (OSError, ValueError) as exc:
+                self.image_config.installation_error = clean_text(str(exc))[:250]
+        self.configuration_prepared = True
+
     def worker_control(self, data):
         action = data.get("action")
         with self.maintenance_guard:
             if action == "pause":
                 self.maintenance_enabled = False
                 self.worker_state = "draining"
+            elif action == "upgrade_prepare":
+                if self.worker_state != "standby":
+                    raise ValueError("升级准备只能在待机服务中执行。")
+                # Compatibility migrations belong to the upgrader transaction.
+                # Read its finished files, and the latest user choices, without
+                # writing shared configuration from a standby process.
+                with self.guard:
+                    if self.settings_path.exists():
+                        saved = json.loads(self.settings_path.read_text(encoding="utf8"))
+                        self.settings = {**self.settings, **protection_settings(saved)}
+                        self.settings["image_analysis_mode"] = image_mode(saved)
+                        self.settings["image_isolation_enabled"] = self.settings["image_analysis_mode"] == "optimized"
+                    self.image_config = ImageToolConfig(self.link, self.data_dir, lambda: self.endpoint)
+                    self.image_isolation = ImageIsolation(self.data_dir, self.settings["image_save_dir"])
+                    self.configuration_prepared = True
             elif action == "activate":
+                # Normal cold starts still refresh a changed native runtime.
+                # Explicit upgrades already performed this work transactionally.
+                if not self.configuration_prepared:
+                    self._refresh_image_configuration()
                 self.sharing_handover.activate()
                 if not self.sharing.owns_provider_state:
                     self.sharing.recover_provider()
@@ -630,6 +654,7 @@ class InspectorServer(ThreadingHTTPServer):
                 "capacity_retry_mode": "native",
                 "capacity_retry_supported": True,
                 "sharing_settings_supported": True,
+                "upgrade_prepare_supported": True,
                 "sharing_handover_protocol": SHARING_HANDOVER_PROTOCOL if os.name == "nt" else 0,
                 "sharing_runtime": sharing_runtime(self),
                 "sharing_in_flight": self.sharing_handover.connections(),
