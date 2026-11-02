@@ -139,7 +139,7 @@ class UpgradeWindow:
         style.configure("Upgrade.Vertical.TScrollbar", width=self.u(6), borderwidth=0, arrowsize=0,
                         background=COLORS["line"], troughcolor=COLORS["paper"], bordercolor=COLORS["paper"])
         body = tk.Frame(window, bg=COLORS["paper"])
-        body.pack(fill="both", expand=True, padx=self.u(28), pady=(self.u(24), self.u(14)))
+        body.pack(fill="both", expand=True, padx=self.u(28), pady=(self.u(20), self.u(20)))
         self.heading = self.label(body, "正在安装更新", size=18, weight="bold")
         self.heading.pack(anchor="w", pady=(0, self.u(6)))
         versions = tk.Frame(body, bg=COLORS["paper"])
@@ -151,11 +151,11 @@ class UpgradeWindow:
         self.version_label.configure(bg=COLORS["soft"], padx=self.u(8), pady=self.u(3))
         self.version_label.pack(side="left")
         progress = tk.Frame(body, bg=COLORS["paper"])
-        progress.pack(fill="x", pady=(self.u(16), self.u(12)))
+        progress.pack(fill="x", pady=(self.u(12), self.u(8)))
         self.percentage = self.label(progress, "0%", size=10, weight="bold")
         self.percentage.pack(anchor="e")
-        self.timeline = tk.Canvas(progress, bg=COLORS["paper"], height=self.u(54), highlightthickness=0)
-        self.timeline.pack(fill="x", pady=(self.u(6), 0))
+        self.timeline = tk.Canvas(progress, bg=COLORS["paper"], height=self.u(50), highlightthickness=0)
+        self.timeline.pack(fill="x", pady=(self.u(2), 0))
         details = tk.Frame(body, bg=COLORS["paper"])
         details.pack(fill="both", expand=True)
         details.columnconfigure(0, weight=1)
@@ -181,10 +181,13 @@ class UpgradeWindow:
     def label(self, parent, text, size=10, weight="normal", color="ink"):
         return tk.Label(parent, text=self.t(text), font=(self.font, size, weight), bg=COLORS["paper"], fg=COLORS[color], padx=0, pady=0)
 
-    def show(self):
+    def dimensions(self):
         self.window.update_idletasks()
+        return self.u(536), max(self.u(260), self.window.winfo_reqheight())
+
+    def show(self):
+        width, height = self.dimensions()
         left, top, right, bottom = _work_area(self.window)
-        width, height = self.u(536), max(self.u(404), self.window.winfo_reqheight())
         x, y = left + max(0, (right - left - width) // 2), top + max(0, (bottom - top - height) // 2)
         self.window.geometry(f"{width}x{height}+{max(0, x)}+{max(0, y)}")
         self.window.attributes("-alpha", 0)
@@ -264,7 +267,7 @@ class UpgradeWindow:
             else:
                 self.timeline.create_text(x, y, text="×" if active and self.state == "failed" else str(index + 1),
                                           fill="white" if active else COLORS["muted"], font=(self.font, 9))
-            self.timeline.create_text(x, self.u(42), text=self.t(("校验与准备", "安装新版", "切换服务", "完成")[index]),
+            self.timeline.create_text(x, self.u(40), text=self.t(("校验与准备", "安装新版", "切换服务", "完成")[index]),
                                       fill=COLORS["ink"] if active or done else COLORS["muted"], font=(self.font, 9), tags="stage-label")
 
     def finish(self, success, detail=""):

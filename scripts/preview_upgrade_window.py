@@ -86,8 +86,8 @@ class UpgradePreview:
         self.window.protocol("WM_DELETE_WINDOW", self.close)
         self.window.bind("<Escape>", lambda _event: self.close())
         self.controls.bind("<Escape>", lambda _event: self.close())
-        self.window.update_idletasks()
-        self.window.geometry(f"{self.view.u(536)}x{max(self.view.u(404), self.window.winfo_reqheight())}")
+        width, height = self.view.dimensions()
+        self.window.geometry(f"{width}x{height}")
 
     def show(self):
         self.view.show()
