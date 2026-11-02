@@ -18,6 +18,42 @@ TERMINAL_EVENTS = {*TERMINAL_STATUSES, "error"}
 EVENT_BOUNDARY = re.compile(br"\r?\n\r?\n")
 
 
+class SSEBuffer:
+    """Incremental SSE framing shared by observers and byte-preserving rewriting.
+
+    Keep delimiters verbatim and retain three suffix bytes when dropping an
+    oversized frame, so a CRLF delimiter split across reads is still found.
+    Consumers keep their own media sniffing, limits and end-of-stream policy.
+    """
+    def __init__(self, limit):
+        self.limit = limit
+        self.buffer = bytearray()
+        self.dropping = False
+
+    def frames(self):
+        while match := EVENT_BOUNDARY.search(self.buffer):
+            frame = bytes(self.buffer[:match.start()])
+            separator = bytes(self.buffer[match.start():match.end()])
+            del self.buffer[:match.end()]
+            skipped = self.dropping or len(frame) > self.limit
+            self.dropping = False
+            yield frame, separator, skipped
+
+    def discard_excess(self):
+        if len(self.buffer) <= self.limit:
+            return False
+        del self.buffer[:-3]
+        self.dropping = True
+        return True
+
+    def release_excess(self):
+        if len(self.buffer) <= self.limit:
+            return b""
+        prefix = bytes(self.buffer[:-3])
+        self.discard_excess()
+        return prefix
+
+
 def response_media_type(headers):
     kind = headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
     return "application/json" if kind.startswith("application/") and kind.endswith("+json") else kind

@@ -5,7 +5,7 @@ import json
 import re
 
 from .analyzer import KEY_PATTERN, clean_text, encode
-from .response_events import EVENT_BOUNDARY as BOUNDARY, decode_sse, response_media_type, TERMINAL_STATUSES
+from .response_events import SSEBuffer, decode_sse, response_media_type, TERMINAL_STATUSES
 
 MAX_EVENT_BYTES = 4 * 1024 * 1024
 MAX_TEXT = 500
@@ -25,8 +25,8 @@ class ResponseSummary:
         self.mode = response_media_type(response.headers)
         self.enabled = response.headers.get("Content-Encoding", "identity").lower() in {"", "identity"} and self.mode in {
             "", "text/event-stream", "application/json"}
-        self.pending = bytearray()
-        self.skipping = False
+        self.sse = SSEBuffer(MAX_EVENT_BYTES)
+        self.pending = self.sse.buffer
         self.text = ""
         self.text_truncated = False
         self.tools = []
@@ -138,21 +138,18 @@ class ResponseSummary:
                 if len(self.pending) > MAX_EVENT_BYTES:
                     self.pending.clear(); self.enabled = False; self.observation_limited = True
                 return
-            while match := BOUNDARY.search(self.pending):
-                frame = bytes(self.pending[:match.start()])
-                del self.pending[:match.end()]
-                if not self.skipping and len(frame) <= MAX_EVENT_BYTES:
+            for frame, _separator, skipped in self.sse.frames():
+                if not skipped:
                     self._frame(frame)
                 else:
                     self.observation_limited = True
-                self.skipping = False
-            if len(self.pending) > MAX_EVENT_BYTES:
-                del self.pending[:-3]; self.skipping = True; self.observation_limited = True
+            if self.sse.discard_excess():
+                self.observation_limited = True
         except (ValueError, TypeError, UnicodeError):
             self.pending.clear(); self.enabled = False; self.observation_limited = True
 
     def finish(self, relay_state):
-        if self.enabled and self.pending and not self.skipping:
+        if self.enabled and self.pending and not self.sse.dropping:
             try:
                 if self.mode == "application/json":
                     self._consume(json.loads(self.pending), event=False)
