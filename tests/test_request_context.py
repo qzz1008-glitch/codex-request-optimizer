@@ -103,6 +103,27 @@ class RequestContextTests(unittest.TestCase):
         self.assertEqual(request_session_context(body), {})
         self.assertIsNone(temporary_request_kind(body))
 
+    def test_native_title_dispatch_identifies_parent_without_relying_on_prompt_wording(self):
+        parent = "01a15d9a-f5e3-73c1-b4e7-87b3c5db9a3c"
+        for marker in ("thread_source", "turn_trigger"):
+            dispatch = {marker: "thread_title", "forked_from_thread_id": parent}
+            for body, headers in (
+                ({"client_metadata": dispatch}, {}),
+                ({"metadata": {"x-codex-client-metadata": dispatch}}, {}),
+                ({"client_metadata": {"x-codex-turn-metadata": json.dumps(dispatch)}}, {}),
+                ({}, {"X-Codex-Turn-Metadata": json.dumps(dispatch)}),
+            ):
+                with self.subTest(marker=marker, body=body, headers=headers):
+                    body = {**body, "input": [{"role": "user", "content": "用新版提示生成标题。"}]}
+                    self.assertEqual(request_session_context(body, headers), {
+                        "session_kind": "title_generation", "parent_thread_id": parent})
+                    meta, _ = inspect_request(json.dumps(body).encode(), headers, "/responses")
+                    self.assertEqual(temporary_kind_from_metadata(meta), "title_generation")
+                    self.assertEqual(meta["parent_thread_id"], parent)
+        self.assertEqual(request_session_context({"client_metadata": {"thread_source": "thread_title"}}), {
+            "session_kind": "title_generation"})
+        self.assertEqual(request_session_context({"input": [{"role": "user", "content": "Explain thread_source=thread_title"}]}), {})
+
     def test_parent_ids_require_explicit_unambiguous_metadata(self):
         parent = "01a15d9a-f5e3-73c1-b4e7-87b3c5db9a3c"
         other = "01a166b7-e4a7-7550-8eaa-06e64a78e986"

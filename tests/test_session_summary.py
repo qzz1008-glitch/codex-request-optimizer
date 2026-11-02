@@ -369,6 +369,40 @@ class SessionSummaryTests(unittest.TestCase):
         self.assertIsNone(row["title"])
         self.assertNotIn("parent_thread_id", row)
 
+    def test_title_parent_survives_metadata_only_retention_without_native_child_history(self):
+        child = "00000000-0000-0000-0000-000000000001"
+        capture = self.root / "title-capture"
+        store = Store(capture, max_detail_count=0)
+        body = {"input": [{"role": "user", "content": "用新版提示生成标题。"}],
+                "client_metadata": {"x-codex-turn-metadata": json.dumps({
+                    "thread_source": "thread_title", "forked_from_thread_id": THREAD})}}
+        meta, content = inspect_request(json.dumps(body).encode(), {"x-codex-thread-id": child}, "/responses")
+        packet_id = store.add({**meta, "method": "POST"}, content)
+        self.assertIsNone(store.get(packet_id, content=True)[1])
+        rows = {r["thread_id"]: r for r in self.reader.read(capture)["sessions"]}
+        self.assertEqual(rows[child]["session_kind"], "title_generation")
+        self.assertEqual(rows[child]["parent_thread_id"], THREAD)
+        self.assertIsNone(rows[child]["title"])
+        self.assertEqual(rows[THREAD]["title"], "会话名称")
+        self.assertEqual(rows[THREAD]["packet_count"], 0)
+
+    def test_legacy_title_dispatch_recovers_parent_without_rewriting_capture(self):
+        self.index_request()
+        parent = "01a15d9a-f5e3-73c1-b4e7-87b3c5db9a3c"
+        body = {"input": [{"role": "user", "content": "用新版提示生成标题。"}],
+                "client_metadata": {"x-codex-turn-metadata": json.dumps({
+                    "thread_source": "thread_title", "forked_from_thread_id": parent})}}
+        meta = {"request_kind": "turn", "top_fields": [{"name": "client_metadata"}]}
+        with closing(sqlite3.connect(self.capture / "packets.sqlite")) as db:
+            db.execute("UPDATE packets SET meta=?,content=?", (json.dumps(meta), zlib.compress(json.dumps({"body": body}).encode())))
+            db.commit()
+        before = (self.capture / "packets.sqlite").read_bytes()
+        row = next(r for r in self.reader.read(self.capture)["sessions"] if r["thread_id"] == THREAD)
+        self.assertEqual(row["session_kind"], "title_generation")
+        self.assertEqual(row["parent_thread_id"], parent)
+        self.assertIsNone(row["title"])
+        self.assertEqual((self.capture / "packets.sqlite").read_bytes(), before)
+
     def test_legacy_recommendation_session_reads_explicit_source_without_inventing_a_title(self):
         self.index_request()
         body = {"input": [{"type": "custom_tool_call_output", "output": "repository details"}],

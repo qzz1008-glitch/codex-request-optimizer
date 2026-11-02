@@ -145,7 +145,9 @@ def request_session_context(body, headers=None):
                 parents.add(parent)
         source = candidate.get("thread_source")
         trigger = candidate.get("turn_trigger")
-        if source == "thread_description" or trigger == "thread_description":
+        if source == "thread_title" or trigger == "thread_title":
+            kind = "title_generation"
+        elif source == "thread_description" or trigger == "thread_description":
             kind = "session_index"
         elif source == "ambient_suggestions" or trigger == "ambient_suggestions":
             kind = "ambient_suggestions"
