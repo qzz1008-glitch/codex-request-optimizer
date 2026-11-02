@@ -20,7 +20,7 @@ from .app_icon import APP_ICON
 from .frontend_dev import load_profile, validate_ui_dir, resolve_profile, remember_profile, installed_profile
 from .window_lifecycle import WindowLifecycle, window_control_prefix
 from .window_chrome import WindowChrome
-from .startup_diagnostics import StartupTrace, startup_environment, startup_wait_seconds
+from .startup_diagnostics import StartupTrace, startup_environment, startup_wait_seconds, wait_for_startup
 
 
 def app_command():
@@ -63,37 +63,40 @@ def ensure_service(options):
 
 def _ensure_service(options, trace):
     child = None
-    last_error = None
     trace.step("service.wait", port=options.port)
-    deadline = time.monotonic() + startup_wait_seconds()
-    while time.monotonic() < deadline:
-        try:
-            health = local_api(options.port, "/health")
-            if health.get("app") != "codex-packet-inspector":
-                raise RuntimeError("此端口被其他程序占用，请先释放端口。")
+
+    def ready():
+        health = local_api(options.port, "/health")
+        if health.get("app") != "codex-packet-inspector":
+            raise RuntimeError("此端口被其他程序占用，请先释放端口。")
+        status = local_api(options.port, "/api/status")
+        if Path(status["data_dir"]).resolve() != options.data_dir.resolve():
+            raise RuntimeError("此端口正在使用另一个数据目录。")
+        if Path(status["profile"]["config_path"]).resolve() != options.config.resolve():
+            raise RuntimeError("此端口正在使用另一份 Codex 配置。")
+        if (status.get("provider_routing_supported") and status.get("auto_detect_providers")
+                and status.get("profile", {}).get("active")):
+            local_api(options.port, "/api/providers/sync", {}, timeout=10)
             status = local_api(options.port, "/api/status")
-            if Path(status["data_dir"]).resolve() != options.data_dir.resolve():
-                raise RuntimeError("此端口正在使用另一个数据目录。")
-            if Path(status["profile"]["config_path"]).resolve() != options.config.resolve():
-                raise RuntimeError("此端口正在使用另一份 Codex 配置。")
-            if (status.get("provider_routing_supported") and status.get("auto_detect_providers")
-                    and status.get("profile", {}).get("active")):
-                local_api(options.port, "/api/providers/sync", {}, timeout=10)
-                status = local_api(options.port, "/api/status")
-            trace.ready()
-            return status
-        except (URLError, TimeoutError, ConnectionError, OSError) as exc:
-            last_error = exc
-            if child is None:
-                child = start_process(["--background", "--tray"] + service_arguments(options))
-                trace.step("service.wait", child_pid=child.pid, port=options.port)
-            elif child.poll() is not None:
-                # A concurrent launcher may have started the same service.
-                time.sleep(.2)
-            time.sleep(.15)
-    if child is not None:
-        trace.record["details"]["child_exit_code"] = child.poll()
-    raise RuntimeError("后台服务未能启动，请查看日志目录中的 startup 文件夹。") from last_error
+        trace.ready()
+        return status
+
+    def retry(_error):
+        nonlocal child
+        if child is None:
+            child = start_process(["--background", "--tray"] + service_arguments(options))
+            trace.step("service.wait", child_pid=child.pid, port=options.port)
+        elif child.poll() is not None:
+            # A concurrent launcher may have started the same service.
+            time.sleep(.2)
+
+    def failed():
+        if child is not None:
+            trace.record["details"]["child_exit_code"] = child.poll()
+        return RuntimeError("后台服务未能启动，请查看日志目录中的 startup 文件夹。")
+
+    return wait_for_startup(ready, startup_wait_seconds(),
+        errors=(URLError, TimeoutError, ConnectionError, OSError), timeout=failed, on_retry=retry, interval=.15)
 
 
 def tray_available(data_dir, status):

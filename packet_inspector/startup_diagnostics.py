@@ -34,6 +34,37 @@ def startup_wait_seconds():
         return STARTUP_SECONDS
 
 
+def wait_for_startup(check, seconds, *, errors, timeout, before=None, on_retry=None,
+                     interval=.1, wait=None, wait_first=False, chain_error=True):
+    """Poll local readiness; entry-specific validation and exit rules stay with callers.
+
+    A true return from ``wait`` cancels polling (threading.Event.wait). Ordinary
+    readiness probes run immediately; the background monitor waits first.
+    ``check`` returns None while not ready, or its result when ready.
+    """
+    pause = time.sleep if wait is None else wait
+    deadline = time.monotonic() + seconds
+    last_error = None
+    if wait_first and pause(interval):
+        return
+    while time.monotonic() < deadline:
+        if before:
+            before()
+        try:
+            result = check()
+            if result is not None:
+                return result
+        except errors as exc:
+            last_error = exc
+            if on_retry:
+                on_retry(exc)
+        if pause(interval):
+            return
+    failure = timeout()
+    if failure is not None:
+        raise failure from (last_error if chain_error else None)
+
+
 def log_directory(data_dir):
     root = Path(data_dir)
     try:
