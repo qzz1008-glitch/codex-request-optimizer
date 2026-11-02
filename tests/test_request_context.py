@@ -103,10 +103,9 @@ class RequestContextTests(unittest.TestCase):
         self.assertEqual(request_session_context(body), {})
         self.assertIsNone(temporary_request_kind(body))
 
-    def test_native_title_dispatch_identifies_parent_without_relying_on_prompt_wording(self):
-        parent = "01a15d9a-f5e3-73c1-b4e7-87b3c5db9a3c"
+    def test_native_title_dispatch_identifies_purpose_without_relying_on_prompt_wording(self):
         for marker in ("thread_source", "turn_trigger"):
-            dispatch = {marker: "thread_title", "forked_from_thread_id": parent}
+            dispatch = {marker: "thread_title"}
             for body, headers in (
                 ({"client_metadata": dispatch}, {}),
                 ({"metadata": {"x-codex-client-metadata": dispatch}}, {}),
@@ -116,10 +115,10 @@ class RequestContextTests(unittest.TestCase):
                 with self.subTest(marker=marker, body=body, headers=headers):
                     body = {**body, "input": [{"role": "user", "content": "用新版提示生成标题。"}]}
                     self.assertEqual(request_session_context(body, headers), {
-                        "session_kind": "title_generation", "parent_thread_id": parent})
+                        "session_kind": "title_generation"})
                     meta, _ = inspect_request(json.dumps(body).encode(), headers, "/responses")
                     self.assertEqual(temporary_kind_from_metadata(meta), "title_generation")
-                    self.assertEqual(meta["parent_thread_id"], parent)
+                    self.assertNotIn("parent_thread_id", meta)
         self.assertEqual(request_session_context({"client_metadata": {"thread_source": "thread_title"}}), {
             "session_kind": "title_generation"})
         self.assertEqual(request_session_context({"input": [{"role": "user", "content": "Explain thread_source=thread_title"}]}), {})

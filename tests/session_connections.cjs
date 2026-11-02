@@ -91,11 +91,13 @@ test('missing or cyclic image parent metadata never assigns a request to an arbi
  assert.deepEqual(groups.find(group=>group.thread_id==='group:other').members.map(row=>row.thread_id),['orphan','self','a','b']);
 });
 
-test('unparented recommendations stay in other even when a temporary title exists',()=>{
- const groups=grouped([session('main',{title:'Main'}),
-  session('recommendations',{session_kind:'ambient_suggestions',title:'Temporary recommendation task'})]);
- assert.deepEqual(groups.find(group=>group.thread_id==='group:other').members.map(row=>row.thread_id),['recommendations']);
- assert.deepEqual(groups.find(group=>group.thread_id==='main').members.map(row=>row.thread_id),['main']);
+test('unparented title and recommendation requests stay in other even when a temporary title exists',()=>{
+  for(const kind of ['ambient_suggestions','title_generation']){
+    const groups=grouped([session('main',{title:'Main'}),
+      session('temporary',{session_kind:kind,title:'Temporary task'})]);
+    assert.deepEqual(groups.find(group=>group.thread_id==='group:other').members.map(row=>row.thread_id),['temporary']);
+    assert.deepEqual(groups.find(group=>group.thread_id==='main').members.map(row=>row.thread_id),['main']);
+  }
 });
 test('parent metadata refresh moves an image out of other and resolves child selections to the owner',()=>{
  const rows=[session('main',{title:'Frontend'}),session('image',{session_kind:'image_analysis'})];
@@ -105,27 +107,5 @@ test('parent metadata refresh moves an image out of other and resolves child sel
  assert.equal(groups.length,1);assert.equal(context.selectedSessionGroup().thread_id,'main');
  assert.equal(context.otherTaskSessions().length,0);
  rows[0].title='Renamed frontend';assert.equal(grouped(rows)[0].title,'Renamed frontend');
-});
-test('title tasks join their explicit conversation or subtask before parent requests and names arrive',()=>{
-  const rows=[session('main',{title:'Frontend'}),session('child',{parent_thread_id:'main',session_kind:'subagent',title:'Builder'}),
-    session('title',{parent_thread_id:'main',session_kind:'title_generation'}),
-    session('child-title',{parent_thread_id:'child',session_kind:'title_generation'}),
-    session('pending-title',{parent_thread_id:'pending',session_kind:'title_generation'})];
-  const groups=grouped(rows);
-  assert.deepEqual(groups.map(group=>[group.thread_id,group.members.map(row=>row.thread_id)]),[
-    ['main',['main','title']],['child',['child','child-title']],['pending',['pending-title']]]);
-  assert.equal(groups[2].title,'pending');assert.equal(groups[2].packet_count,1);
-  assert.equal(groups[0].members[1].session_kind,'title_generation');
-  context.state.filters.thread='thread:title';assert.equal(context.selectedSessionGroup().thread_id,'main');
-  assert.equal(context.otherTaskSessions().length,0);
-});
-test('title tasks without an unambiguous parent remain in other',()=>{
-  const groups=grouped([session('main',{title:'Frontend'}),
-    session('unparented',{title:'Temporary title',session_kind:'title_generation'}),
-    session('self',{parent_thread_id:'self',session_kind:'title_generation'}),
-    session('a',{parent_thread_id:'b',session_kind:'title_generation'}),
-    session('b',{parent_thread_id:'a',session_kind:'title_generation'})]);
-  assert.deepEqual(groups.find(group=>group.thread_id==='main').members.map(row=>row.thread_id),['main']);
-  assert.deepEqual(groups.find(group=>group.thread_id==='group:other').members.map(row=>row.thread_id),['unparented','self','a','b']);
 });
 console.log(JSON.stringify({passed}));
