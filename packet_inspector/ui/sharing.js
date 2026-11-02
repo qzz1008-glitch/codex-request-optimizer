@@ -21,7 +21,7 @@ globalThis.InspectorSharing=(()=>{
   let feedbackKind="quota";
   const copiedButtons=new Map();
   const copyCaption=(anchor,caption)=>copiedButtons.has(anchor)?"已复制":caption;
-  const views={quota:"out",exit:"out"};
+  const views={quota:null,exit:null};
   const message=(value,error=false,anchor="")=>{
     const box=get("sharing-message");box.textContent=tr(value);box.hidden=!value||!!(error&&(editing||deleting));box.classList.toggle("error",error);
     box.dataset.feedbackTarget=feedbackKind+"-inline-feedback";
@@ -215,6 +215,14 @@ globalThis.InspectorSharing=(()=>{
   }
   function render(value){
     if(!value.credentials_supported||value.protocol<4){closeInline(false);closeDelete(false);current=null;get("sharing-cards").hidden=true;message("当前后台不支持凭据管理，请更新软件。",true);return;}
+    for(const kind of ["quota","exit"]){
+      if(views[kind]!==null)continue;
+      const remembered=value.last_used_views?.[kind];
+      const borrowing=kind==="quota"?value.client?.active===true:value.egress?.selection?.mode==="peer";
+      const hosting=kind==="quota"?value.host?.running===true:value.egress?.host?.active===true;
+      const latest=(value.credentials||[]).filter(row=>row.kind===kind&&!row.internal&&["out","in"].includes(row.direction)).reduce((last,row)=>Number.isFinite(row.created_at)&&(!last||row.created_at>last.created_at)?row:last,null);
+      views[kind]=["out","in"].includes(remembered)?remembered:borrowing?"in":hosting?"out":latest?.direction||"out";
+    }
     current=value;if(editing||deleting||dragging||weeklyPickerOpen())return;get("sharing-cards").hidden=false;
     const hosting=value.host?.running===true,borrowing=value.client?.active===true;
     for(const kind of ["quota","exit"]){const out=views[kind]==="out";get(kind+"-issue").hidden=!out;get(kind+"-borrow").hidden=out;
