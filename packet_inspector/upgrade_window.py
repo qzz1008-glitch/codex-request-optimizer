@@ -152,8 +152,6 @@ class UpgradeWindow:
         self.version_label.pack(side="left")
         progress = tk.Frame(body, bg=COLORS["paper"])
         progress.pack(fill="x", pady=(self.u(12), self.u(8)))
-        self.percentage = self.label(progress, "0%", size=10, weight="bold")
-        self.percentage.pack(anchor="e")
         self.timeline = tk.Canvas(progress, bg=COLORS["paper"], height=self.u(50), highlightthickness=0)
         self.timeline.pack(fill="x", pady=(self.u(2), 0))
         details = tk.Frame(body, bg=COLORS["paper"])
@@ -183,7 +181,7 @@ class UpgradeWindow:
 
     def dimensions(self):
         self.window.update_idletasks()
-        return self.u(536), max(self.u(260), self.window.winfo_reqheight())
+        return self.u(536), max(self.u(240), self.window.winfo_reqheight())
 
     def show(self):
         width, height = self.dimensions()
@@ -230,7 +228,6 @@ class UpgradeWindow:
 
     def update_progress(self, completed, text):
         self.completed = max(self.completed, min(completed, self.total_steps))
-        self.percentage.configure(text=f"{round(self.completed / self.total_steps * 100)}%")
         self.set_detail(text)
         self.draw_progress()
 
