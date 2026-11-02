@@ -14,7 +14,7 @@ import threading
 import time
 
 from packet_inspector.router import control_worker, local_json, process_alive, worker_info
-from packet_inspector.upgrade import Upgrade, digest, free_port
+from packet_inspector.upgrade import CONTINUITY_UNSUPPORTED, Upgrade, digest, free_port
 from packet_inspector.window_lifecycle import request_window_exit, tray_panel_host_running
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -152,13 +152,17 @@ def main():
     def api(path, value=None):
         return local_json(port, path, value, timeout=5)
 
-    def upgrade():
+    def upgrade(expected_error=None):
         nonlocal updater
         updater = subprocess.Popen([str(release / "CodexPacketInspector.exe"), "--upgrade", "--quiet",
                                     "--port", str(port), "--data-dir", str(data), "--config", str(config)],
                                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         code = updater.wait(timeout=100)
         result = json.loads((data / "upgrade-result.json").read_text(encoding="utf8"))
+        if expected_error is not None:
+            assert code != 0 and result["state"] == "failed"
+            assert result.get("error") == expected_error
+            return result
         if code or result["state"] != "complete":
             raise RuntimeError("Packaged upgrade failed: " + result.get("error", str(code)))
         return result
@@ -183,7 +187,20 @@ def main():
         historic_view = api("/api/packets/" + historic["id"] + "/export")["view"]
         database = data / "packets.sqlite"
         database_identity = (database.stat().st_dev, database.stat().st_ino)
-        print(json.dumps({"phase": "legacy_to_stable_entry"}), flush=True)
+        # A direct legacy relay cannot transfer its listening port without an
+        # outage. Verify refusal preserves it, then explicitly stop this idle,
+        # disposable fixture before testing installation of the stable entry.
+        print(json.dumps({"phase": "legacy_rejection_preserves_service"}), flush=True)
+        upgrade(expected_error=CONTINUITY_UNSUPPORTED)
+        assert legacy.poll() is None
+        assert api("/health").get("router_protocol") is None
+        assert config.read_bytes() == original_config
+        assert (database.stat().st_dev, database.stat().st_ino) == database_identity
+        assert api("/api/packets/" + historic["id"] + "/export")["view"] == historic_view
+        assert not (data / "router-state.json").exists()
+        api("/api/upgrade/stop", {})
+        legacy.wait(timeout=15)
+        print(json.dumps({"phase": "explicitly_stopped_legacy_to_stable_entry"}), flush=True)
         migrated = upgrade()
         assert migrated["entry_migrated"] is True
         assert digest(canonical) == digest(release / "CodexPacketInspector.exe")
@@ -279,6 +296,7 @@ def main():
         print(json.dumps({"packaged_upgrade": "ok", "version": current["version"],
                           "entry_pid_preserved": True, "port_preserved": True,
                           "open_response_preserved": True, "new_requests_use_new_worker": True,
+                          "legacy_rejection_preserves_service": True,
                           "old_worker_retired": True, "inference_requests": len(requests),
                            "shared_application_entry": True, "fresh_install_verified": True,
                           "same_database_file": True, "historic_records_and_statistics_preserved": True,
