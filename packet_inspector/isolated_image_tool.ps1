@@ -151,7 +151,8 @@ function Invoke-ImageAnalysis($Arguments, [string]$ParentThreadId) {
         $cliArguments = @('exec','--profile','isolated-vision','--ephemeral',
             '--skip-git-repo-check','--sandbox','read-only','--color','never',
             '--output-last-message',$resultPath,'-C',$work,'-c',$override,
-            '-c','responses_api_metadata.codex_inspector_request_kind="image_analysis"')
+            '-c','responses_api_metadata.codex_inspector_request_kind="image_analysis"',
+            '-c',('responses_api_metadata.codex_inspector_image_source_path=' + ($image.FullName | ConvertTo-Json -Compress)))
         if ($ParentThreadId -match '\A[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}\z') {
             $cliArguments += @('-c',('responses_api_metadata.codex_inspector_parent_thread_id="' +
                 $ParentThreadId.ToLowerInvariant() + '"'))

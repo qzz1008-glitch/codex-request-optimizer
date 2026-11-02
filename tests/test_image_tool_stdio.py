@@ -472,6 +472,7 @@ $arguments = $script:ObservedArguments
                                    "codex_app": {"enabled": False, "url": "http://127.0.0.1:9/mcp"}})
         self.assertEqual(report["metadata"], [
             'responses_api_metadata.codex_inspector_request_kind="image_analysis"',
+            'responses_api_metadata.codex_inspector_image_source_path=' + json.dumps(str(image.resolve())),
             'responses_api_metadata.codex_inspector_parent_thread_id="01a15d9a-f5e3-73c1-b4e7-87b3c5db9a3c"'])
         cli = desktop_cli()
         if cli:
@@ -480,13 +481,48 @@ $arguments = $script:ObservedArguments
             home = self.root / "native-cli-home"
             home.mkdir()
             (home / "config.toml").write_text("", encoding="utf-8")
-            result = subprocess.run([str(cli), "-c", report["override"], "mcp", "list", "--json"],
+            metadata_arguments = [argument for value in report["metadata"] for argument in ("-c", value)]
+            result = subprocess.run([str(cli), "-c", report["override"], *metadata_arguments, "mcp", "list", "--json"],
                 env={**os.environ, "CODEX_HOME": str(home)}, cwd=home, capture_output=True,
                 text=True, encoding="utf-8", timeout=10, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
             self.assertEqual(result.returncode, 0, result.stderr[:700])
             listed = json.loads(result.stdout)
             self.assertEqual({server["name"] for server in listed}, set(servers))
             self.assertTrue(all(server["enabled"] is False for server in listed))
+
+    def test_compressed_upload_keeps_explicit_source_after_temporary_copy_is_removed(self):
+        image = self.root / "source 原图.png"
+        with image.open("wb") as fixture:
+            fixture.truncate(409601)
+        path = str(image).replace("'", "''")
+        report = self.powershell("""
+function Find-CodexCli { return 'fake-codex' }
+function Invoke-ToolProcess($Executable, $Arguments, $TimeoutSeconds, $WorkingDirectory, $InputText) {
+    if ($Arguments[0] -eq '--profile') { return @{ExitCode=0;Output='[]'} }
+    if ('-OutputPath' -in $Arguments) {
+        $target = $Arguments[[array]::IndexOf($Arguments,'-OutputPath')+1]
+        [IO.File]::WriteAllText($target,'synthetic compressed fixture')
+        return @{ExitCode=0;Output=''}
+    }
+    $script:ObservedArguments = $Arguments
+    $result = $Arguments[[array]::IndexOf($Arguments,'--output-last-message')+1]
+    [IO.File]::WriteAllText($result,'Analysis completed')
+    return @{ExitCode=0;Output=''}
+}
+$answer = Invoke-ImageAnalysis ([pscustomobject]@{path='""" + path + """'}) $null
+$arguments = $script:ObservedArguments
+$upload = $arguments[[array]::IndexOf($arguments,'--image')+1]
+@{answer=$answer;upload=$upload;uploadExists=(Test-Path -LiteralPath $upload);
+  sourceExists=(Test-Path -LiteralPath '""" + path + """');
+  metadata=@($arguments | Where-Object {$_ -like 'responses_api_metadata.*'})} | ConvertTo-Json -Compress
+""")
+        self.assertEqual(report["answer"], "Analysis completed")
+        self.assertEqual(Path(report["upload"]).name, "upload.jpg")
+        self.assertFalse(report["uploadExists"])
+        self.assertTrue(report["sourceExists"])
+        override = next(value for value in report["metadata"] if "image_source_path=" in value)
+        self.assertEqual(tomllib.loads(override)["responses_api_metadata"]["codex_inspector_image_source_path"],
+                         str(image.resolve()))
 
     def test_native_process_quoting_preserves_spaces_quotes_and_unicode(self):
         echo = self.root / "echo.ps1"
@@ -525,6 +561,9 @@ $arguments = $script:ObservedArguments
         self.assertEqual(arguments[arguments.index("--image") + 1], str(image.resolve()))
         self.assertIn("-", arguments)
         self.assertIn('responses_api_metadata.codex_inspector_request_kind="image_analysis"', arguments)
+        source = next(value for value in arguments if value.startswith('responses_api_metadata.codex_inspector_image_source_path='))
+        self.assertEqual(tomllib.loads(source)["responses_api_metadata"]["codex_inspector_image_source_path"],
+                         str(image.resolve()))
         self.assertTrue(report["stdin"].endswith("\n\nRequest: " + instruction))
         self.assertFalse(any(instruction in argument for argument in arguments))
 
