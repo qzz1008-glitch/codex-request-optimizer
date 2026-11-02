@@ -96,7 +96,6 @@ const uiI18n = (() => {
     "额度换算参考":"Quota cost reference",
     "套餐（月费）":"Plan (monthly price)",
     "1% 周额度对应费用":"Cost per 1% of weekly quota",
-    "按 $200 套餐当前样本估算 API 参考费用；$20 / $100 档按月费比例推算，未实测。非官方兑换率。":"API reference costs estimated from current samples on the $200 plan. The $20 and $100 figures are extrapolated by monthly price and have not been measured. These are not official conversion rates.",
     "出口":"Exit",
     "借出":"Lend",
     "借入":"Borrow",
