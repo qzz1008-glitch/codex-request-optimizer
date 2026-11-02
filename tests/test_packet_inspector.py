@@ -394,6 +394,34 @@ class ConfigTests(unittest.TestCase):
 
 
 class StorageTests(unittest.TestCase):
+    def test_legacy_recommendations_recover_purpose_without_changing_recorded_requests(self):
+        store = Store(self.path)
+        body = {"model": "m", "input": [{"type": "custom_tool_call_output", "output": "repository details"}],
+                "client_metadata": {"x-codex-turn-metadata": json.dumps({
+                    "request_kind": "turn", "thread_source": "ambient_suggestions"})}}
+        meta, content = inspect_request(encode(body), {}, "/responses")
+        meta.pop("session_kind")
+        meta.update(method="POST", path="/responses", thread_id="recommendations", classification_version=3)
+        packet_id = store.add(meta, content)
+        store.update(packet_id, state="complete", status=200, outbound_wire_bytes=30000,
+                     upstream_usage={"input_tokens": 17195, "output_tokens": 15, "total_tokens": 17210})
+        with store.connect() as connection:
+            original = connection.execute("SELECT content FROM packets WHERE id=?", (packet_id,)).fetchone()[0]
+        self.assertNotIn("request_purpose", store.list()[0])
+        self.assertEqual(store.reclassify_pending(), 1)
+        for saved in (store.get(packet_id)[0], store.list()[0], store.list(trend=True)[0]):
+            self.assertEqual(saved["request_kind"], "turn")
+            self.assertEqual(saved["session_kind"], "ambient_suggestions")
+            self.assertEqual(saved["request_purpose"], "ambient_suggestions")
+            self.assertEqual(saved["upstream_usage"]["input_tokens"], 17195)
+            self.assertEqual((saved["status"], saved["outbound_wire_bytes"]), (200, 30000))
+        saved, viewing_copy = store.get(packet_id, True)
+        self.assertEqual(saved["classification_version"], CLASSIFICATION_VERSION)
+        self.assertEqual(viewing_copy, content)
+        with store.connect() as connection:
+            self.assertEqual(connection.execute("SELECT content FROM packets WHERE id=?", (packet_id,)).fetchone()[0], original)
+        self.assertEqual(store.reclassify_pending(), 0)
+
     def test_legacy_tool_search_is_reclassified_without_changing_the_packet(self):
         store = Store(self.path)
         meta, content = inspect_request(encode({"query": "find a tool", "model": "m"}), {}, "/alpha/search")
