@@ -534,10 +534,10 @@ dialog{width:min(760px,calc(var(--desktop-width) - 80px));max-height:calc(var(--
 .inline-feedback>p,.inline-feedback .sharing-message{margin:0;padding:0;border:0;background:none}
 .requests-inline-feedback{flex:none;height:18px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 .requests-inline-feedback .list-loading{margin:0;line-height:18px;text-align:left}
-#settings-dialog .settings-inline-feedback{height:34px;overflow:auto;overscroll-behavior:contain;scrollbar-width:none;line-height:17px}
-#settings-dialog .settings-inline-feedback .help{max-height:34px;margin:0;line-height:17px;overflow:auto}
-#settings-dialog .settings-inline-feedback .settings-feedback:has(.settings-save-log)>.help{max-height:17px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
-#settings-dialog .settings-inline-feedback .settings-save-log{max-height:17px;margin:0;gap:0;font-size:11px;line-height:17px;scrollbar-width:none;overscroll-behavior:contain}
+#settings-dialog .settings-inline-feedback{display:grid;align-items:center;height:var(--settings-control-height);overflow:auto;overscroll-behavior:contain;scrollbar-width:none;font-size:14px;line-height:18px}
+#settings-dialog .settings-inline-feedback .help{max-height:var(--settings-control-height);margin:0;font-size:inherit;line-height:18px;overflow:auto}
+#settings-dialog .settings-inline-feedback .settings-feedback:has(.settings-save-log:not([hidden]))>.help{max-height:18px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+#settings-dialog .settings-inline-feedback .settings-save-log{max-height:18px;margin:0;gap:0;font-size:12px;line-height:18px;scrollbar-width:none;overscroll-behavior:contain}
 #settings-dialog .settings-inline-feedback .settings-step-label{overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 .header-compression{position:relative}
 .restart-notice-badge{width:92px;flex:none;min-height:26px;padding:3px 8px;border:1px solid #e6c178;border-radius:7px;background:#fff7e7;color:#875309;font-size:12px;font-weight:600;white-space:nowrap}
