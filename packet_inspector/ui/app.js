@@ -112,7 +112,7 @@ const listTokenObserver = new IntersectionObserver(entries=>{
 let sessionSummaries = [], sessionMetadataAt = 0, sessionMetadataProbeAt = 0, sessionMetadataLoading = false, sessionMetadataSupported = null;
 const sessionConnectionObserver=new ResizeObserver(()=>renderSessionConnections());
 const OTHER_SESSION_GROUP="group:other";
-const auxiliaryLabels={image_analysis:"图片解析",next_message_suggestion:"消息建议",title_generation:"自动标题",session_index:"会话索引",subagent:"子任务"};
+const auxiliaryLabels={image_analysis:"图片解析",next_message_suggestion:"消息建议",title_generation:"自动标题",session_index:"会话索引",ambient_suggestions:"任务推荐",subagent:"子任务"};
 const requestPurposeCache=new Map();
 function auxiliarySessionKind(row) {return Object.hasOwn(auxiliaryLabels,row?.session_kind)?row.session_kind:row?.title_source==="index_task"?"session_index":row?.title_source==="subagent"?"subagent":null;}
 function sessionGroups() {
