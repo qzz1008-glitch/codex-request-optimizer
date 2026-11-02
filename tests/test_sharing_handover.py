@@ -1,4 +1,5 @@
 """Live TLS streams cross worker switches using isolated fake accounts and exits."""
+import hashlib
 import http.client
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
@@ -14,7 +15,7 @@ import tempfile
 import threading
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 from urllib.request import ProxyHandler, build_opener
 
 from packet_inspector import VERSION
@@ -25,6 +26,7 @@ from packet_inspector.sharing import parse_link, pinned_tls_context
 from packet_inspector.sharing_credentials import CLIENT_HEADER, CredentialVault
 from packet_inspector.sharing_handover import prepare_upgrade, finish_upgrade
 from packet_inspector.sharing_role import MachineSharingRole
+from packet_inspector.upgrade import Upgrade
 from tests.test_sharing import DummyAuthorization, free_port
 
 
@@ -203,6 +205,42 @@ class SharingHandoverTests(unittest.TestCase):
         self.assertIn(b'"response.completed"', response.read())
         self.assertEqual(self.bodies.count(b'"held"'), 2)
 
+    def full_upgrade(self):
+        payload = self.root / "payload"
+        payload.mkdir()
+        raw = b"synthetic upgrade executable - never launched"
+        (payload / "CodexPacketInspector.exe").write_bytes(raw)
+        atomic_json(payload / "manifest.json", {"version": VERSION, "router_protocol": 1,
+                    "entry_mode": "shared", "sha256": {"CodexPacketInspector.exe": hashlib.sha256(raw).hexdigest()}})
+        engine = Upgrade(payload, self.data, self.config, self.router.port)
+        engine._start_candidate = Mock(side_effect=lambda *_: setattr(engine, "candidate", self.new.worker_id))
+        engine._application_windows = Mock(return_value=[])
+        engine._refresh_integration = Mock()
+        result = engine.run()
+        self.assertEqual(result["state"], "complete")
+
+    def test_full_upgrade_preserves_open_shared_and_local_streams_and_settings(self):
+        link = self.share_quota()
+        shared = self.quota_request(b'"held"')
+        local = http.client.HTTPConnection("127.0.0.1", self.router.port, timeout=5)
+        self.clients.append(local)
+        path = "/relay/" + self.old.settings["relay_token"] + "/responses"
+        local.request("POST", path, b'"held"', headers={"Authorization": "Bearer synthetic-local"})
+        response = local.getresponse()
+        self.assertEqual(response.status, 200)
+        before = self.config.read_bytes()
+        token = self.old.settings["relay_token"]
+        self.full_upgrade()
+        self.assertEqual(self.config.read_bytes(), before)
+        self.assertEqual(self.new.settings["relay_token"], token)
+        self.assertEqual(self.new.sharing.credential_link(self.new.sharing.host["last_credential_id"]), link)
+        self.assertEqual(self.new.sharing.host["port"], self.port)
+        self.assertIn(b'"response.completed"', self.quota_request(b'"after full upgrade"').read())
+        self.gate.set()
+        self.assertIn(b'"response.completed"', shared.read())
+        self.assertIn(b'"response.completed"', response.read())
+        self.assertEqual(self.bodies.count(b'"held"'), 2)
+
     def test_borrowed_quota_and_exit_keep_provider_and_selected_credentials(self):
         peer = self.quota_peer()
         quota_link = peer.sharing.start_host("127.0.0.1", free_port())["link"]
@@ -212,8 +250,7 @@ class SharingHandoverTests(unittest.TestCase):
         self.old.egress.select("peer", exit_link, label="network fixture")
         selected = self.old.sharing.remote["credential_id"], self.old.egress.peer_id
         before = self.config.read_bytes()
-        ticket = self.switch()
-        finish_upgrade(self.data, self.old.worker_id, self.new.worker_id, ticket)
+        self.full_upgrade()
         self.assertEqual(self.config.read_bytes(), before)
         self.assertEqual(self.new.sharing.client_route()["credential_id"], selected[0])
         self.assertEqual(self.new.egress.peer_id, selected[1])
