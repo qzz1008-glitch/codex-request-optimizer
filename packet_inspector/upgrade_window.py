@@ -151,14 +151,12 @@ class UpgradeWindow:
         self.version_label = self.label(versions, target or "—", size=10, color="accent", weight="bold")
         self.version_label.configure(bg=COLORS["soft"], padx=self.u(8), pady=self.u(3))
         self.version_label.pack(side="left")
-        self.timeline = tk.Canvas(body, bg=COLORS["paper"], height=self.u(52), highlightthickness=0)
-        self.timeline.pack(fill="x", pady=(self.u(16), self.u(10)))
-        progress_heading = tk.Frame(body, bg=COLORS["paper"])
-        progress_heading.pack(fill="x")
-        self.percentage = self.label(progress_heading, "0%", size=10, weight="bold")
-        self.percentage.pack(side="right")
-        self.bar = tk.Canvas(body, bg=COLORS["paper"], height=self.u(8), highlightthickness=0)
-        self.bar.pack(fill="x", pady=(self.u(7), self.u(12)))
+        progress = tk.Frame(body, bg=COLORS["paper"])
+        progress.pack(fill="x", pady=(self.u(16), self.u(12)))
+        self.percentage = self.label(progress, "0%", size=10, weight="bold")
+        self.percentage.pack(anchor="e")
+        self.timeline = tk.Canvas(progress, bg=COLORS["paper"], height=self.u(54), highlightthickness=0)
+        self.timeline.pack(fill="x", pady=(self.u(6), 0))
         details = tk.Frame(body, bg=COLORS["paper"])
         details.pack(fill="both", expand=True)
         details.columnconfigure(0, weight=1)
@@ -170,8 +168,7 @@ class UpgradeWindow:
         self.scrollbar = ttk.Scrollbar(details, orient="vertical", style="Upgrade.Vertical.TScrollbar", command=self.detail.yview)
         self.scrollbar.grid(row=0, column=1, sticky="ns", padx=(self.u(4), 0))
         self.detail.configure(yscrollcommand=self.scroll_detail)
-        for canvas in (self.timeline, self.bar):
-            canvas.bind("<Configure>", lambda _event: self.draw_progress())
+        self.timeline.bind("<Configure>", lambda _event: self.draw_progress())
         window.protocol("WM_DELETE_WINDOW", self.close)
         window.bind("<Escape>", lambda _event: self.close())
         self.update_progress(0, "正在校验升级包…")
@@ -237,23 +234,27 @@ class UpgradeWindow:
 
     def draw_progress(self):
         color = COLORS[{"complete": "success", "failed": "error"}.get(self.state, "accent")]
-        self.bar.delete("all")
-        width, middle = self.bar.winfo_width(), self.u(4)
-        self.bar.create_line(middle, middle, max(middle, width - middle), middle, width=self.u(6), fill=COLORS["line"], capstyle="round")
-        if self.completed:
-            self.bar.create_line(middle, middle, middle + max(0, width - 2 * middle) * self.completed / self.total_steps, middle,
-                                 width=self.u(6), fill=color, capstyle="round")
         self.timeline.delete("all")
-        width, y, radius = self.timeline.winfo_width(), self.u(12), self.u(10)
-        positions = [self.u(38) + (width - self.u(76)) * index / 3 for index in range(4)]
-        phase = 0 if self.completed < 2 else 1 if self.completed < 3 else 2 if self.completed < 5 else 3
+        width, y, radius = self.timeline.winfo_width(), self.u(14), self.u(9)
+        if width <= self.u(76):
+            return
+        fraction = self.completed / self.total_steps
+        # Stage boundaries share the same scale as the completed checkpoints.
+        # The final milestone is reached only when installation actually finishes.
+        stops = (0, 1 / 3, 1 / 2, 1)
+        positions = [self.u(38) + (width - self.u(76)) * stop for stop in stops]
+        self.timeline.create_line(positions[0], y, positions[-1], y,
+                                  fill=COLORS["line"], width=self.u(4), capstyle="round", tags="track")
+        if self.completed:
+            self.timeline.create_line(positions[0], y, positions[0] + (positions[-1] - positions[0]) * fraction, y,
+                                      fill=color, width=self.u(4), capstyle="round", tags="progress")
+        phase = max(index for index, stop in enumerate(stops) if fraction >= stop)
         for index, x in enumerate(positions):
-            if index:
-                self.timeline.create_line(positions[index - 1] + radius, y, x - radius, y, fill=COLORS["line"], width=self.u(2))
             done = self.state == "complete" or index < phase
             active = index == phase
             fill = COLORS["success"] if self.state == "complete" else COLORS["accent"] if done else color if active else COLORS["paper"]
-            self.timeline.create_oval(x - radius, y - radius, x + radius, y + radius, fill=fill, outline=fill if done or active else COLORS["line"])
+            self.timeline.create_oval(x - radius, y - radius, x + radius, y + radius, fill=fill,
+                                      outline=fill if done or active else COLORS["line"], tags="milestone")
             if done:
                 self.timeline.create_line(x - self.u(4), y, x - self.u(1), y + self.u(3), x + self.u(5), y - self.u(4),
                                           fill="white", width=self.u(1.5), capstyle="round", joinstyle="round")
@@ -261,7 +262,7 @@ class UpgradeWindow:
                 self.timeline.create_text(x, y, text="×" if active and self.state == "failed" else str(index + 1),
                                           fill="white" if active else COLORS["muted"], font=(self.font, 9))
             self.timeline.create_text(x, self.u(42), text=self.t(("校验与准备", "安装新版", "切换服务", "完成")[index]),
-                                      fill=COLORS["ink"] if active or done else COLORS["muted"], font=(self.font, 9))
+                                      fill=COLORS["ink"] if active or done else COLORS["muted"], font=(self.font, 9), tags="stage-label")
 
     def finish(self, success, detail=""):
         self.state = "complete" if success else "failed"
