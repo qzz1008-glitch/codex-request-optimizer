@@ -7,7 +7,7 @@ from urllib.parse import urlsplit
 
 from .analyzer import classify_request, decode_body
 from .response_usage import compact_usage, token_values
-from .response_events import EVENT_BOUNDARY as BOUNDARY, response_media_type, sse_fields, sse_payload
+from .response_events import SSEBuffer, response_media_type, sse_fields, sse_payload
 
 DEFAULT_BUDGET_BYTES = 1_000_000
 TOKEN_HEADROOM_BYTES = 50_000
@@ -126,28 +126,24 @@ class UsageStream:
 
     def _observe(self):
         """Inspect bounded copies; forward each original chunk without buffering it."""
-        pending = bytearray()
-        passthrough = False
+        sse = SSEBuffer(MAX_EVENT_BYTES)
+        pending = sse.buffer
+        json_oversized = False
         for chunk in raw_chunks(self.response):
             pending.extend(chunk)
             if not self.mode:
                 self._sniff_mode(pending)
             if self.mode == "application/json":
                 if len(pending) > MAX_EVENT_BYTES:
-                    passthrough = True
+                    json_oversized = True
                     pending.clear()
             elif self.mode:
-                while match := BOUNDARY.search(pending):
-                    frame = bytes(pending[:match.start()])
-                    del pending[:match.end()]
-                    if not passthrough and len(frame) <= MAX_EVENT_BYTES:
+                for frame, _separator, skipped in sse.frames():
+                    if not skipped:
                         self._frame(frame)
-                    passthrough = False
-                if len(pending) > MAX_EVENT_BYTES:
-                    del pending[:-3]
-                    passthrough = True
+                sse.discard_excess()
             yield chunk
-        if pending and not passthrough:
+        if pending and not json_oversized and not sse.dropping:
             if self.mode == "application/json":
                 try:
                     self._rewrite(json.loads(pending))
@@ -163,7 +159,8 @@ class UsageStream:
         if not self.rewrite_response:
             yield from self._observe()
             return
-        pending = bytearray()
+        sse = SSEBuffer(MAX_EVENT_BYTES)
+        pending = sse.buffer
         chunks = raw_chunks(self.response)
         if not self.mode:
             # Some compatible upstreams omit Content-Type even for native SSE.
@@ -190,18 +187,11 @@ class UsageStream:
             else:
                 yield bytes(pending)
             return
-        passthrough = False
         for chunk in chunks:
             pending.extend(chunk)
-            while match := BOUNDARY.search(pending):
-                frame, separator = bytes(pending[:match.start()]), bytes(pending[match.start():match.end()])
-                del pending[:match.end()]
-                yield (frame if passthrough or len(frame) > MAX_EVENT_BYTES else self._frame(frame)) + separator
-                passthrough = False
-            if len(pending) > MAX_EVENT_BYTES:
-                # Keep enough suffix to recognize a delimiter crossing reads.
-                yield bytes(pending[:-3])
-                del pending[:-3]
-                passthrough = True
+            for frame, separator, skipped in sse.frames():
+                yield (frame if skipped else self._frame(frame)) + separator
+            if excess := sse.release_excess():
+                yield excess
         if pending:
-            yield bytes(pending) if passthrough else self._frame(bytes(pending))
+            yield bytes(pending) if sse.dropping else self._frame(bytes(pending))

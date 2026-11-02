@@ -128,6 +128,26 @@ class CredentialVault:
     def _save(db, identifier, data):
         db.execute("UPDATE credentials SET data=? WHERE id=?", (json.dumps(data, separators=(",", ":")), identifier))
 
+    def last_used_views(self):
+        with self.connection() as db:
+            rows = db.execute("SELECT key,value FROM meta WHERE key IN (?,?)",
+                              ("sharing-view:quota", "sharing-view:exit"))
+            views = {}
+            for row in rows:
+                value = row["value"]
+                if value in (b"in", b"out"):
+                    value = value.decode("ascii")
+                if value in ("in", "out"):
+                    views[row["key"].split(":", 1)[1]] = value
+            return views
+
+    def remember_view(self, kind, direction):
+        if kind not in {"quota", "exit"} or direction not in {"in", "out"}:
+            raise ValueError("invalid sharing view")
+        with self.connection() as db:
+            db.execute("INSERT INTO meta(key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                       ("sharing-view:" + kind, direction.encode("ascii")))
+
     @staticmethod
     def _roll(data):
         if not data.get("weekly_reset"):

@@ -10,7 +10,7 @@ import threading
 import time
 import uuid
 
-from .response_events import (EVENT_BOUNDARY, MAX_OBSERVATION_BYTES, TERMINAL_EVENTS as TERMINALS,
+from .response_events import (SSEBuffer, MAX_OBSERVATION_BYTES, TERMINAL_EVENTS as TERMINALS,
                              TERMINAL_STATUSES, capacity_error, event_shape, notify,
                              response_media_type, sse_fields, sse_payload, stream_event_class)
 from .maintenance import SQLiteReclaimer
@@ -268,7 +268,8 @@ class ResponseObservation:
         self.on_error = on_error
         kind = response_media_type(headers)
         self.mode = "sse" if kind == "text/event-stream" else "json" if kind == "application/json" else None
-        self.buffer, self.dropping, self.output_seen = bytearray(), False, False
+        self.sse = SSEBuffer(MAX_OBSERVATION_BYTES)
+        self.buffer, self.output_seen = self.sse.buffer, False
         self.unknown_seen = False
         self.warnings = set()
         self.stopped = False
@@ -352,12 +353,10 @@ class ResponseObservation:
                 self.stop("unknown_format")
                 return
         if self.mode == "sse":
-            while (boundary := EVENT_BOUNDARY.search(self.buffer)) is not None:
-                frame = bytes(self.buffer[:boundary.start()])
-                del self.buffer[:boundary.end()]
+            for frame, _separator, skipped in self.sse.frames():
                 if len(frame) > MAX_OBSERVATION_BYTES:
                     self.warn("frame_limit")
-                elif not self.dropping:
+                elif not skipped:
                     try:
                         data, name = sse_fields(frame)
                         terminal_hint = (name in TERMINALS or
@@ -366,12 +365,10 @@ class ResponseObservation:
                             self._payload(sse_payload(data, name))
                     except (ValueError, UnicodeError):
                         self.warn("malformed_event")
-                self.dropping = False
         if len(self.buffer) > MAX_OBSERVATION_BYTES:
             if self.mode == "sse":
                 self.warn("frame_limit")
-                self.dropping = True
-                del self.buffer[:-3]
+                self.sse.discard_excess()
             else:
                 self.stop("body_limit")
 
