@@ -14,7 +14,7 @@ import zlib
 
 from .analyzer import CLASSIFICATION_VERSION, classify_request, encode, compare_packets
 from .maintenance import SQLiteReclaimer
-from .request_context import packet_metadata, trend_packet_metadata
+from .request_context import packet_metadata, request_session_context, temporary_request_kind, trend_packet_metadata
 from .response_usage import compact_packet_usage, packet_usage
 from .token_estimate import request_basis, calibrate, overflow_applied, unavailable
 from .token_window import is_token_request
@@ -329,7 +329,12 @@ class Store:
             elif row["content"]:
                 try:
                     view = json.loads(zlib.decompress(row["content"]))
-                    fields.update(classify_request(view.get("body"), meta.get("headers"), meta.get("path", "")))
+                    body = view.get("body")
+                    fields.update(classify_request(body, meta.get("headers"), meta.get("path", "")))
+                    fields.update(request_session_context(body, meta.get("headers")))
+                    kind = temporary_request_kind(body)
+                    if kind:
+                        fields["request_kind"] = kind
                 except (ValueError, zlib.error, AttributeError) as exc:
                     fields["classification_error"] = type(exc).__name__
             elif meta.get("path", "").split("?", 1)[0].rstrip("/").endswith(("/compact", "/alpha/search")):

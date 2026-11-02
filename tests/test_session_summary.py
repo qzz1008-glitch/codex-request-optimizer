@@ -353,6 +353,37 @@ class SessionSummaryTests(unittest.TestCase):
         self.assertEqual(sessions[THREAD]["title"], "会话名称")
         self.assertEqual(sessions[THREAD]["packet_count"], 0)
 
+    def test_recommendation_purpose_survives_metadata_only_retention(self):
+        child = "00000000-0000-0000-0000-000000000001"
+        capture = self.root / "recommendation-capture"
+        store = Store(capture, max_detail_count=0)
+        body = {"input": [{"type": "custom_tool_call_output", "output": "repository details"}],
+                "client_metadata": {"x-codex-turn-metadata": json.dumps({
+                    "request_kind": "turn", "thread_source": "ambient_suggestions"})}}
+        meta, content = inspect_request(json.dumps(body).encode(), {"x-codex-thread-id": child}, "/responses")
+        packet_id = store.add({**meta, "method": "POST"}, content)
+        self.assertIsNone(store.get(packet_id, content=True)[1])
+        row = self.reader.read(capture)["sessions"][0]
+        self.assertEqual(row["thread_id"], child)
+        self.assertEqual(row["session_kind"], "ambient_suggestions")
+        self.assertIsNone(row["title"])
+        self.assertNotIn("parent_thread_id", row)
+
+    def test_legacy_recommendation_session_reads_explicit_source_without_inventing_a_title(self):
+        self.index_request()
+        body = {"input": [{"type": "custom_tool_call_output", "output": "repository details"}],
+                "client_metadata": {"x-codex-turn-metadata": json.dumps({"thread_source": "ambient_suggestions"})}}
+        meta = {"request_kind": "turn", "top_fields": [{"name": "client_metadata"}]}
+        with closing(sqlite3.connect(self.capture / "packets.sqlite")) as db:
+            db.execute("UPDATE packets SET meta=?,content=?", (json.dumps(meta), zlib.compress(json.dumps({"body": body}).encode())))
+            db.commit()
+        before = (self.capture / "packets.sqlite").read_bytes()
+        row = next(r for r in self.reader.read(self.capture)["sessions"] if r["thread_id"] == THREAD)
+        self.assertEqual(row["session_kind"], "ambient_suggestions")
+        self.assertIsNone(row["title"])
+        self.assertNotIn("parent_thread_id", row)
+        self.assertEqual((self.capture / "packets.sqlite").read_bytes(), before)
+
     def test_ordinary_image_request_keeps_missing_name_state(self):
         self.image_request(text='<image name=[Image #1] path="C:\\example.png">\n</image>\n帮我看看这张图')
         row = next(r for r in self.reader.read(self.capture)["sessions"] if r["thread_id"] == THREAD)

@@ -9,7 +9,7 @@ import sqlite3
 import threading
 import zlib
 
-from .request_context import (IMAGE_ANALYST_PREFIXES, last_user_text, temporary_kind_from_metadata,
+from .request_context import (AUXILIARY_KINDS, IMAGE_ANALYST_PREFIXES, last_user_text, temporary_kind_from_metadata,
                               temporary_request_kind, request_session_context, session_id)
 from .response_usage import packet_usage
 from .native_state import read_state, state_databases
@@ -238,7 +238,7 @@ class SessionSummaries:
                                    if session_id(meta.get("parent_thread_id")) else {}),
                                 **({"session_kind": meta["session_kind"]}
                                    if isinstance(meta.get("session_kind"), str) and meta["session_kind"] in
-                                      {"image_analysis", "next_message_suggestion", "title_generation", "session_index", "subagent"} else {})})
+                                      AUXILIARY_KINDS else {})})
         labels = self._labels([r["thread_id"] for r in records if r["thread_id"]])
         missing = [r["thread_id"] for r in records if r["thread_id"] and not labels.get(r["thread_id"], {}).get("title")]
         for thread, label in self._index_labels(missing).items():
