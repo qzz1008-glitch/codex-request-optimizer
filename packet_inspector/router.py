@@ -18,7 +18,7 @@ import time
 from urllib.parse import urlsplit
 
 from .http_io import discard_small_body
-from .startup_diagnostics import STARTUP_SECONDS, StartupTrace, startup_environment, startup_wait_seconds
+from .startup_diagnostics import STARTUP_SECONDS, StartupTrace, startup_environment, startup_wait_seconds, wait_for_startup
 
 ROUTER_VERSION = "1.0.0"
 PROTOCOL = 1
@@ -282,23 +282,24 @@ class RouterServer(ThreadingHTTPServer):
                 trace.step("worker.launch", worker_id=identity)
                 child = start_worker(self.data_dir, self.config, identity, self.port)
                 trace.step("worker.wait", worker_id=identity, child_pid=child.pid)
-                deadline = time.monotonic() + STARTUP_SECONDS
-                last_error = None
-                while not self.monitor_stop.wait(.1) and time.monotonic() < deadline:
+
+                def running():
                     if child.poll() is not None:
                         trace.record["details"]["child_exit_code"] = child.poll()
                         raise RuntimeError("worker startup failed; exit code " + str(child.poll()))
-                    try:
-                        healthy_worker(self.data_dir, identity)
-                        trace.step("worker.activate", worker_id=identity)
-                        control_worker(self.data_dir, identity, "activate", public_port=self.port,
-                                       maintenance=not self.state.get("draining"))
-                        trace.ready()
-                        return
-                    except (OSError, ValueError, http.client.HTTPException) as exc:
-                        last_error = exc
-                if not self.monitor_stop.is_set():
-                    raise TimeoutError("worker startup timed out") from last_error
+
+                def ready():
+                    healthy_worker(self.data_dir, identity)
+                    trace.step("worker.activate", worker_id=identity)
+                    control_worker(self.data_dir, identity, "activate", public_port=self.port,
+                                   maintenance=not self.state.get("draining"))
+                    trace.ready()
+                    return True
+
+                wait_for_startup(ready, STARTUP_SECONDS,
+                    errors=(OSError, ValueError, http.client.HTTPException), before=running,
+                    timeout=lambda: None if self.monitor_stop.is_set() else TimeoutError("worker startup timed out"),
+                    wait=self.monitor_stop.wait, wait_first=True)
             except (OSError, ValueError, KeyError, RuntimeError, http.client.HTTPException) as exc:
                 # Retry later; the public listener stays alive throughout.
                 if trace:
@@ -526,21 +527,20 @@ def ensure_entry(args, state, trace=None):
                              creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     if trace:
         trace.step("entry.wait", child_pid=child.pid, port=port)
-    deadline = time.monotonic() + startup_wait_seconds()
-    last_error = None
-    while time.monotonic() < deadline:
-        try:
-            return ready(port)
-        except (OSError, http.client.HTTPException) as exc:
-            last_error = exc
-            if child.poll() not in {None, 0}:
-                if trace:
-                    trace.record["details"]["child_exit_code"] = child.poll()
-                raise RuntimeError("entry startup failed; exit code " + str(child.poll())) from exc
-            time.sleep(.1)
-    if trace:
-        trace.record["details"]["child_exit_code"] = child.poll()
-    raise RuntimeError("entry startup timed out") from last_error
+
+    def retry(exc):
+        if child.poll() not in {None, 0}:
+            if trace:
+                trace.record["details"]["child_exit_code"] = child.poll()
+            raise RuntimeError("entry startup failed; exit code " + str(child.poll())) from exc
+
+    def failed():
+        if trace:
+            trace.record["details"]["child_exit_code"] = child.poll()
+        return RuntimeError("entry startup timed out")
+
+    return wait_for_startup(lambda: ready(port), startup_wait_seconds(),
+        errors=(OSError, http.client.HTTPException), timeout=failed, on_retry=retry)
 
 
 def main(argv=None):
@@ -595,21 +595,22 @@ def run_entry(args, trace):
             trace.step("worker.launch", worker_id=identity)
             process = start_worker(args.data_dir, args.config, identity, server.port)
             trace.step("worker.wait", worker_id=identity, child_pid=process.pid)
-            deadline = time.monotonic() + startup_wait_seconds()
-            last_error = None
-            while time.monotonic() < deadline:
+
+            def running():
                 if process.poll() is not None:
                     trace.record["details"]["child_exit_code"] = process.poll()
                     raise RuntimeError("worker startup failed; exit code " + str(process.poll()))
-                try:
-                    healthy_worker(args.data_dir, identity)
-                    break
-                except (OSError, ValueError, http.client.HTTPException) as exc:
-                    last_error = exc
-                    time.sleep(.1)
-            else:
+
+            def ready():
+                healthy_worker(args.data_dir, identity)
+                return True
+
+            def failed():
                 trace.record["details"]["child_exit_code"] = process.poll()
-                raise RuntimeError("worker startup timed out") from last_error
+                return RuntimeError("worker startup timed out")
+
+            wait_for_startup(ready, startup_wait_seconds(),
+                errors=(OSError, ValueError, http.client.HTTPException), timeout=failed, before=running)
         trace.step("worker.activate", worker_id=identity)
         control_worker(args.data_dir, identity, "activate", public_port=server.port, maintenance=not state.get("draining"))
         server.state["port"] = server.port
