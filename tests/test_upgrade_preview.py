@@ -4,7 +4,7 @@ import tempfile
 import unittest
 
 from tests.test_upgrade_window import exists, hidden_window
-from scripts.preview_upgrade_window import SOURCE, UpgradePreview
+from scripts.preview_upgrade_window import CHROME_SOURCE, SOURCE, UpgradePreview
 
 
 class UpgradePreviewTests(unittest.TestCase):
@@ -34,7 +34,7 @@ class UpgradePreviewTests(unittest.TestCase):
         self.assertEqual(preview.view.completed, 0)
         self.assertEqual(preview.view.state, "running")
         # Unlike the installer, X / Escape may close a running simulation.
-        self.window.tk.call(self.window.protocol("WM_DELETE_WINDOW"))
+        preview.view.chrome.close_button.invoke()
         self.assertFalse(exists(self.window))
 
     def test_demo_stays_open_at_completion(self):
@@ -55,6 +55,8 @@ class UpgradePreviewTests(unittest.TestCase):
         original = SOURCE.read_bytes()
         with tempfile.TemporaryDirectory() as name:
             preview.source = Path(name) / "upgrade_window.py"
+            preview.chrome_source = Path(name) / "upgrade_chrome.py"
+            preview.chrome_source.write_bytes(CHROME_SOURCE.read_bytes())
             preview.source.write_bytes(original.replace(b'"#315fd7"', b'"#6655cc"'))
             preview.reload_if_changed()
             self.assertEqual(preview.module.COLORS["accent"], "#6655cc")
@@ -68,6 +70,10 @@ class UpgradePreviewTests(unittest.TestCase):
                 self.assertTrue(preview.view.heading.winfo_exists())
             preview.source.write_bytes(original)
             preview.reload_if_changed()
+            preview.chrome_source.write_bytes(CHROME_SOURCE.read_bytes().replace(b'"#c42b1c"', b'"#b42b1c"'))
+            preview.reload_if_changed()
+            preview.view.chrome.close_button.hover(True)
+            self.assertEqual(preview.view.chrome.close_button.cget("bg"), "#b42b1c")
         self.assertEqual(preview.module.COLORS["accent"], "#315fd7")
         self.assertEqual(preview.language, "en")
         self.assertEqual(preview.view.completed, 3)

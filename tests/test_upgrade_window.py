@@ -1,6 +1,7 @@
 """Exercise installer feedback with withdrawn windows and temporary data only."""
 import gc
 import json
+import os
 from pathlib import Path
 import tempfile
 import threading
@@ -50,6 +51,7 @@ class UpgradeWindowTests(unittest.TestCase):
         view.update_progress(2, "正在启动新版服务并检查运行状态…")
         self.assertEqual(view.completed, 3)
         view.close()
+        view.chrome.close_button.invoke()
         self.assertTrue(self.window.winfo_exists())
 
     def test_failure_keeps_the_error_selectable_and_can_be_closed(self):
@@ -60,7 +62,7 @@ class UpgradeWindowTests(unittest.TestCase):
         self.assertEqual(view.completed, 4)
         self.assertEqual(view.detail.get("1.0", "end-1c"), "The update package failed verification.")
         self.assertEqual(str(view.detail.cget("state")), "disabled")
-        view.close()
+        view.chrome.close_button.invoke()
         self.assertFalse(exists(self.window))
 
     def test_success_reaches_full_progress_and_can_be_closed(self):
@@ -68,8 +70,48 @@ class UpgradeWindowTests(unittest.TestCase):
         view.finish(True)
         self.assertEqual(view.completed, 6)
         self.assertEqual(view.heading.cget("text"), "升级已完成")
-        view.close()
+        view.chrome.close_button.invoke()
         self.assertFalse(exists(self.window))
+
+    def test_white_caption_minimizes_and_close_hover_matches_desktop(self):
+        view = UpgradeWindow(self.window, 6)
+        self.assertEqual(view.chrome.frame.cget("bg"), "#ffffff")
+        self.assertEqual(view.chrome.title_label.cget("text"), "Codex请求优化器")
+        with patch.object(view.chrome, "minimize") as minimize:
+            view.chrome.minimize_button.invoke()
+        minimize.assert_called_once_with()
+        view.finish(True)
+        view.chrome.close_button.hover(True)
+        self.assertEqual(view.chrome.close_button.cget("bg"), "#c42b1c")
+        view.chrome.close_button.hover(False)
+        self.assertEqual(view.chrome.close_button.cget("bg"), "#ffffff")
+
+    @unittest.skipUnless(os.name == "nt", "Windows non-client frame")
+    def test_native_caption_stays_removed_and_client_size_survives_minimize(self):
+        import ctypes
+        from ctypes import wintypes
+        from packet_inspector.upgrade_chrome import _native
+        view = UpgradeWindow(self.window, 6)
+        self.window.attributes("-alpha", 0)
+        dimensions = view.dimensions()
+        view.chrome.fit(*dimensions)
+        self.window.deiconify()
+        self.window.update()
+        user, handle = _native(), view.chrome._handle()
+        user.SendMessageW(handle, 0x0010, 0, 0)  # WM_CLOSE must still respect installation in progress.
+        self.window.update()
+        self.assertTrue(exists(self.window))
+        for restore in (False, True):
+            if restore:
+                view.chrome.minimize_button.invoke()
+                self.window.update()
+                self.window.deiconify()
+                self.window.update()
+            self.assertEqual(user.GetWindowLongW(handle, -16) & 0x00C00000, 0)
+            self.assertTrue(user.GetWindowLongW(handle, -20) & 0x00040000)
+            bounds = wintypes.RECT()
+            self.assertTrue(user.GetClientRect(handle, ctypes.byref(bounds)))
+            self.assertEqual((bounds.right, bounds.bottom), dimensions)
 
     def test_bilingual_headings_and_versions_fit_at_common_display_scales(self):
         for scale in (1, 1.5, 2):
@@ -78,6 +120,9 @@ class UpgradeWindowTests(unittest.TestCase):
                     self.window.tk.call("tk", "scaling", scale * 96 / 72)
                     view = UpgradeWindow(self.window, 6, language, "v0.8.0 · abcdef01", "v0.8.0 · 23456789")
                     self.window.update_idletasks()
+                    title = "Codex Request Optimizer" if language == "en" else "Codex请求优化器"
+                    self.assertEqual(view.chrome.title_label.cget("text"), title)
+                    self.assertLessEqual(view.chrome.title_label.winfo_reqwidth() + view.u(92), view.u(536))
                     for success in (False, True):
                         view.finish(success, "fixture")
                         self.window.update_idletasks()
