@@ -66,7 +66,7 @@ globalThis.InspectorSharing=(()=>{
         ${expiryField(kind+"-expiry")}
         ${kind==="quota"?`<div class="sharing-budget-row"><span class="sharing-budget-label"><label id="quota-budget-label" for="quota-budget">${label("额度")}</label><button id="quota-reference-open" class="sharing-quota-help" type="button" aria-label="${label("额度换算参考")}" aria-haspopup="dialog" aria-controls="quota-reference-dialog">?</button></span><span class="sharing-amount-field"><input id="quota-budget" type="number" value="1" min="1" max="1000000" step="0.01" required aria-labelledby="quota-budget-label" aria-describedby="quota-budget-unit" title="${label("最低 1 美元。")}"><span id="quota-budget-unit" class="sharing-amount-unit">${label("美元")}</span></span></div><div class="sharing-weekly-row"><label for="quota-weekly">${label("每周刷新")}</label><select id="quota-weekly" class="sharing-weekly-select" title="${label("按提供方本机时间，在所选当天零点刷新。")}">${weeklyOptions()}</select></div>`:""}
       </form>
-      <form id="${kind}-borrow" class="sharing-form" hidden><label>${label("名称")}<input id="${kind}-borrow-label" maxlength="80" placeholder="${esc(defaultCredentialName(kind))}" autocomplete="off"></label><label>${label("凭据")}<input id="${kind}-borrow-link" type="password" autocomplete="off" spellcheck="false" required placeholder="${kind==="quota"?"codex-share":"codex-exit"}://…"></label></form>
+      <form id="${kind}-borrow" class="sharing-form" hidden><label>${label("名称")}<input id="${kind}-borrow-label" maxlength="80" placeholder="${esc(defaultCredentialName(kind,"in"))}" autocomplete="off"></label><label>${label("凭据")}<input id="${kind}-borrow-link" type="password" autocomplete="off" spellcheck="false" required placeholder="${kind==="quota"?"codex-share":"codex-exit"}://…"></label></form>
       <div class="sharing-actions"><button class="primary sharing-copy-button" type="submit" form="${kind}-issue" id="${kind}-generate">${label("生成凭据")}</button><button class="primary" type="submit" form="${kind}-borrow" id="${kind}-activate" hidden>${label("保存凭据")}</button></div>
     </div>`;
   }
@@ -163,14 +163,21 @@ globalThis.InspectorSharing=(()=>{
   function expiryTime(value,original){if(Number.isFinite(original)&&value===expiryDay(original))return original;const n=dayEnd(value);if(!Number.isFinite(n)||n<Date.now()/1000+86400)throw new Error(tr("期限至少为一天，也可选择无期限。"));return n;}
   function expiry(id,original){const input=get(id);return input.dataset.unlimited==="true"?null:expiryTime(get(id+"-date").value,input.dataset.modified==="true"?undefined:original);}
   function budget(id,minimum=1){const value=String(get(id).value),n=Number(value);if(!value.trim()||!Number.isFinite(n)||n<minimum||n>1000000)throw new Error(tr(minimum===0?"已用额度应为 0 到 1,000,000 美元。":"额度应为 1 到 1,000,000 美元。"));return value;}
-  function defaultCredentialName(kind){
+  function defaultCredentialName(kind,direction="out",link=""){
     const used=new Set((current?.credentials||[]).filter(row=>row.kind===kind&&!row.internal).map(row=>String(row.label??"").trim().toLowerCase()));
-    const base=tr("凭据");let index=1;
-    while(used.has(`${base} ${index}`.toLowerCase()))index++;
-    return `${base} ${index}`;
+    let detail=direction==="out"?localDay(Date.now()):"";
+    if(direction==="in"&&link.trim()){
+      try {const url=new URL(link.trim());if(url.protocol===(kind==="quota"?"codex-share:":"codex-exit:"))detail=url.hostname;}catch(_) {}
+    }
+    const base=tr("凭据")+(detail?"-"+detail:"");let index=1;
+    while(used.has(`${base}-${index}`.toLowerCase()))index++;
+    return `${base}-${index}`;
   }
   function refreshDefaultNames(){
-    for(const kind of ["quota","exit"])for(const suffix of ["-label","-borrow-label"])get(kind+suffix).placeholder=defaultCredentialName(kind);
+    for(const kind of ["quota","exit"]){
+      get(kind+"-label").placeholder=defaultCredentialName(kind);
+      get(kind+"-borrow-label").placeholder=defaultCredentialName(kind,"in",get(kind+"-borrow-link").value);
+    }
   }
   function credentialName(kind,value,identifier=null){
     const name=String(value??"").trim();
@@ -418,8 +425,9 @@ globalThis.InspectorSharing=(()=>{
   }
   async function copy(value,anchor){try{await navigator.clipboard.writeText(value);showCopied(anchor);}catch(_){message("复制失败，请点击右侧“凭据”重试。",true);}}
   for(const kind of ["quota","exit"]){
+    get(kind+"-borrow-link").addEventListener("input",refreshDefaultNames);
     get(kind+"-issue").addEventListener("submit",async event=>{event.preventDefault();feedbackKind=kind;try{const result=await action(get(kind+"-generate"),{action:"credential_issue",kind,label:credentialName(kind,get(kind+"-label").value.trim()||defaultCredentialName(kind)),expires_at:expiry(kind+"-expiry"),...(kind==="quota"?{budget:budget("quota-budget"),...weeklySettings(get("quota-weekly").value)}:{})},null);if(result)resetIssue(kind);}catch(error){message(error.message,true);}});
-    get(kind+"-borrow").addEventListener("submit",async event=>{event.preventDefault();const result=await action(get(kind+"-activate"),{action:"credential_use",kind,label:get(kind+"-borrow-label").value.trim()||defaultCredentialName(kind),link:get(kind+"-borrow-link").value.trim()});if(result){get(kind+"-borrow-label").value="";get(kind+"-borrow-link").value="";}});
+    get(kind+"-borrow").addEventListener("submit",async event=>{event.preventDefault();const result=await action(get(kind+"-activate"),{action:"credential_use",kind,label:get(kind+"-borrow-label").value.trim()||defaultCredentialName(kind,"in",get(kind+"-borrow-link").value),link:get(kind+"-borrow-link").value.trim()});if(result){get(kind+"-borrow-label").value="";get(kind+"-borrow-link").value="";refreshDefaultNames();}});
   }
   get("sharing-cards").addEventListener("click",async event=>{const button=event.target.closest("[data-view],[data-action]");if(!button||busy)return;const {kind,view,action:command}=button.dataset;
     if(view){closeInline(false);views[kind]=view;if(current)render(current);return;}
