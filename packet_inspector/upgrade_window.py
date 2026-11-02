@@ -20,7 +20,8 @@ COLORS = {"paper": "#ffffff", "ink": "#1e293b", "muted": "#748093",
           "success": "#247558", "error": "#bc3d37"}
 ENGLISH = {
     "安装与升级": "Install & update",
-    "Codex请求优化器 更新中": "Updating Codex Request Optimizer", "升级已完成": "Update complete", "升级未完成": "Update interrupted",
+    "Codex请求优化器": "Codex Request Optimizer",
+    "正在安装更新": "Installing update", "升级已完成": "Update complete", "升级未完成": "Update interrupted",
     "校验与准备": "Prepare", "安装新版": "Install", "切换服务": "Switch", "完成": "Finish",
     "新版已就绪。": "The new version is ready.",
     "正在打开新版应用…": "Opening the updated application…",
@@ -140,7 +141,8 @@ class UpgradeWindow:
                         background=COLORS["line"], troughcolor=COLORS["paper"], bordercolor=COLORS["paper"])
         body = tk.Frame(window, bg=COLORS["paper"])
         body.pack(fill="both", expand=True, padx=self.u(28), pady=(self.u(20), self.u(20)))
-        self.heading = self.label(body, "Codex请求优化器 更新中", size=18, weight="bold")
+        self.label(body, "Codex请求优化器", size=10, color="muted").pack(anchor="w", pady=(0, self.u(6)))
+        self.heading = self.label(body, "正在安装更新", size=18, weight="bold")
         self.heading.pack(anchor="w", pady=(0, self.u(6)))
         versions = tk.Frame(body, bg=COLORS["paper"])
         versions.pack(anchor="w", fill="x")
