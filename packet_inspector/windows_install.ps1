@@ -4,6 +4,8 @@ param(
     [string]$DataDirectory,
     [string]$ConfigPath,
     [string]$IconPath,
+    [string]$LauncherExecutable,
+    [switch]$RouterLaunch,
     [ValidateRange(1, 65535)][int]$Port = 47844
 )
 $ErrorActionPreference = 'Stop'
@@ -15,6 +17,15 @@ if ([IO.Path]::GetFullPath($DataDirectory) -ne $taskExpectedDirectory) {
 }
 $taskBinDirectory = Join-Path $taskExpectedDirectory 'bin'
 $taskInstalledExecutable = Join-Path $taskBinDirectory 'CodexPacketInspector.exe'
+if (-not $LauncherExecutable) { $LauncherExecutable = $taskInstalledExecutable }
+$taskLauncherExecutable = [IO.Path]::GetFullPath($LauncherExecutable)
+$taskVersionsPrefix = (Join-Path $taskBinDirectory 'versions') + [IO.Path]::DirectorySeparatorChar
+if ($taskLauncherExecutable -ne $taskInstalledExecutable -and -not (
+    $taskLauncherExecutable.StartsWith($taskVersionsPrefix, [StringComparison]::OrdinalIgnoreCase) -and
+    [IO.Path]::GetFileName($taskLauncherExecutable) -eq 'CodexPacketInspector.exe')) {
+    throw 'The launcher must belong to this managed installation.'
+}
+$taskRoleArguments = if ($RouterLaunch) { '--router ' } else { '' }
 $taskShortcut = Join-Path ([Environment]::GetFolderPath('Programs')) 'Codex Request Optimizer.lnk'
 $taskLegacyShortcut = Join-Path ([Environment]::GetFolderPath('Programs')) 'Codex Packet Inspector.lnk'
 function Get-OptimizerFileHash {
@@ -25,7 +36,8 @@ function Get-OptimizerFileHash {
     finally { $algorithm.Dispose(); $stream.Dispose() }
 }
 function Update-OwnedOptimizerShortcut {
-    param([string]$Path, [string]$BinDirectory, [string]$DataDirectory, [string]$ConfigPath, [string]$IconPath)
+    param([string]$Path, [string]$BinDirectory, [string]$DataDirectory, [string]$ConfigPath, [string]$IconPath,
+          [string]$LauncherExecutable, [switch]$RouterLaunch)
     $shell = New-Object -ComObject WScript.Shell
     $link = $shell.CreateShortcut($Path)
     if (-not $link.TargetPath) { return $false }
@@ -40,16 +52,24 @@ function Update-OwnedOptimizerShortcut {
             if ([IO.Path]::GetFullPath($value) -ne [IO.Path]::GetFullPath($setting[1])) { return $false }
         }
     }
-    $link.TargetPath = $canonical
-    $link.Arguments = '--data-dir "' + $DataDirectory + '" --config "' + $ConfigPath + '"'
+    $link.TargetPath = if ($LauncherExecutable) { $LauncherExecutable } else { $canonical }
+    $roleArguments = if ($RouterLaunch) { '--router ' } else { '' }
+    $link.Arguments = $roleArguments + '--data-dir "' + $DataDirectory + '" --config "' + $ConfigPath + '"'
     $link.WorkingDirectory = $BinDirectory
     $link.IconLocation = $IconPath + ',0'
     $link.Save()
     return $true
 }
 $taskExisting = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
-if ($taskExisting -and (@($taskExisting.Actions).Count -ne 1 -or $taskExisting.Actions[0].Execute -ne $taskInstalledExecutable)) {
-    throw 'A task with this name belongs to another installation and was left unchanged.'
+if ($taskExisting) {
+    $ownedTask = @($taskExisting.Actions).Count -eq 1
+    if ($ownedTask) {
+        $taskTarget = [IO.Path]::GetFullPath($taskExisting.Actions[0].Execute)
+        $ownedTask = $taskTarget -eq $taskInstalledExecutable -or (
+            $taskTarget.StartsWith($taskVersionsPrefix, [StringComparison]::OrdinalIgnoreCase) -and
+            [IO.Path]::GetFileName($taskTarget) -eq 'CodexPacketInspector.exe')
+    }
+    if (-not $ownedTask) { throw 'A task with this name belongs to another installation and was left unchanged.' }
 }
 if ($Action -eq 'Install') {
     $taskSource = (Resolve-Path -LiteralPath $Executable).Path
@@ -61,11 +81,12 @@ if ($Action -eq 'Install') {
         }
         if ($taskCopyRequired) { Copy-Item -LiteralPath $taskSource -Destination $taskInstalledExecutable -Force }
     }
+    if (-not (Test-Path -LiteralPath $taskLauncherExecutable -PathType Leaf)) { throw 'The installed launcher is missing.' }
     # Installation preserves an existing login task; enabling startup is an explicit setting.
     $taskShell = New-Object -ComObject WScript.Shell
     $taskLink = $taskShell.CreateShortcut($taskShortcut)
-    $taskLink.TargetPath = $taskInstalledExecutable
-    $taskLink.Arguments = '--data-dir "' + $taskExpectedDirectory + '" --config "' + $ConfigPath + '"'
+    $taskLink.TargetPath = $taskLauncherExecutable
+    $taskLink.Arguments = $taskRoleArguments + '--data-dir "' + $taskExpectedDirectory + '" --config "' + $ConfigPath + '"'
     $taskLink.WorkingDirectory = $taskBinDirectory
     if ($IconPath) {
         $taskIconSource = (Resolve-Path -LiteralPath $IconPath).Path
@@ -84,7 +105,7 @@ if ($Action -eq 'Install') {
         $taskPinned = Join-Path $env:APPDATA 'Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar'
         if (Test-Path -LiteralPath $taskPinned -PathType Container) {
             Get-ChildItem -LiteralPath $taskPinned -File -Filter '*.lnk' | ForEach-Object {
-                Update-OwnedOptimizerShortcut -Path $_.FullName -BinDirectory $taskBinDirectory -DataDirectory $taskExpectedDirectory -ConfigPath $ConfigPath -IconPath $taskInstalledIcon | Out-Null
+                Update-OwnedOptimizerShortcut -Path $_.FullName -BinDirectory $taskBinDirectory -DataDirectory $taskExpectedDirectory -ConfigPath $ConfigPath -IconPath $taskInstalledIcon -LauncherExecutable $taskLauncherExecutable -RouterLaunch:$RouterLaunch | Out-Null
             }
         }
     }
@@ -103,12 +124,13 @@ if ($Action -eq 'Install') {
     $taskExisting = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
 } elseif ($Action -eq 'EnableStartup') {
     if (-not (Test-Path -LiteralPath $taskInstalledExecutable) -or
+        -not (Test-Path -LiteralPath $taskLauncherExecutable -PathType Leaf) -or
         [IO.Path]::GetFullPath($Executable) -ne [IO.Path]::GetFullPath($taskInstalledExecutable)) {
         throw 'Enable startup from the installed application.'
     }
     $taskIdentity = [Security.Principal.WindowsIdentity]::GetCurrent().Name
-    $taskArguments = '--background --tray --data-dir "' + $taskExpectedDirectory + '" --config "' + $ConfigPath + '"'
-    $taskAction = New-ScheduledTaskAction -Execute $taskInstalledExecutable -Argument $taskArguments -WorkingDirectory $taskBinDirectory
+    $taskArguments = $taskRoleArguments + '--background --tray --data-dir "' + $taskExpectedDirectory + '" --config "' + $ConfigPath + '"'
+    $taskAction = New-ScheduledTaskAction -Execute $taskLauncherExecutable -Argument $taskArguments -WorkingDirectory $taskBinDirectory
     $taskTrigger = New-ScheduledTaskTrigger -AtLogOn -User $taskIdentity
     $taskPrincipal = New-ScheduledTaskPrincipal -UserId $taskIdentity -LogonType Interactive -RunLevel Limited
     $taskSettings = New-ScheduledTaskSettingsSet -Hidden -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)

@@ -21,7 +21,8 @@ from .sharing_credentials import CLIENT_HEADER, ExitMachineMismatch
 
 def physical_tunnel(server, host, port):
     """Use OS/environment proxy settings, never another shared exit selection."""
-    proxies = next((handler.proxies for handler in server.opener.handlers if isinstance(handler, ProxyHandler)), {})
+    opener = server.outgoing_opener()
+    proxies = next((handler.proxies for handler in opener.handlers if isinstance(handler, ProxyHandler)), {})
     value = None if proxy_bypass(host) else proxies.get("https")
     if not value:
         return socket.create_connection((host, port), timeout=8)
@@ -313,7 +314,7 @@ class SharedEgress:
                     if self.peer_opener is None:
                         raise SharingError("借入出口未就绪，请重新启用或停用该凭据。")
                     return self.peer_opener
-            return self.server.opener
+            return self.server.outgoing_opener()
         raise SharingError(MISSING_EXIT_ROUTE_MESSAGE, code="sharing_exit_metadata_missing")
 
     def status(self):

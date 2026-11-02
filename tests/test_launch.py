@@ -50,6 +50,31 @@ class LaunchRoutingTests(unittest.TestCase):
         entry.assert_not_called()
         service.assert_called_once_with(arguments, on_started=None)
 
+    def test_current_installed_version_can_launch_the_router_explicitly(self):
+        executable = self.data / "bin" / "versions" / "fixture" / "CodexPacketInspector.exe"
+        for flags in ([], ["--background", "--tray"]):
+            with self.subTest(flags=flags), \
+                    patch.object(launch.sys, "frozen", True, create=True), \
+                    patch.object(launch.sys, "executable", str(executable)), \
+                    patch("packet_inspector.router.main", return_value=0) as entry, \
+                    patch.object(launch, "service_main") as service:
+                self.assertEqual(launch.main(["--router", *flags, *self.arguments]), 0)
+            entry.assert_called_once_with([*flags, *self.arguments])
+            service.assert_not_called()
+
+    def test_router_role_rejects_workers_and_uninstalled_executables(self):
+        for executable, flags in ((self.root / "download.exe", []),
+                                  (self.data / "bin" / "versions" / "fixture" / "CodexPacketInspector.exe",
+                                   ["--worker-id", "a" * 32])):
+            with self.subTest(executable=executable), \
+                    patch.object(launch.sys, "frozen", True, create=True), \
+                    patch.object(launch.sys, "executable", str(executable)), \
+                    patch("packet_inspector.router.main") as entry, \
+                    patch.object(launch, "service_main") as service:
+                self.assertEqual(launch.main(["--router", "--background", *flags, *self.arguments]), 1)
+            entry.assert_not_called()
+            service.assert_not_called()
+
     def test_unmigrated_installation_still_starts_as_legacy_service(self):
         self.state.unlink()
         with patch.object(launch.sys, "frozen", True, create=True), \

@@ -23,6 +23,8 @@ def main(argv=None):
     upgrade_requested = "--upgrade" in provided
     quiet = "--quiet" in provided
     provided = [arg for arg in provided if arg not in {"--upgrade", "--quiet"}]
+    router_requested = "--router" in provided
+    provided = [arg for arg in provided if arg != "--router"]
     background, use_tray = "--background" in provided, "--tray" in provided
     arguments = [arg for arg in provided if arg not in {"--background", "--tray"}]
     tray, preload = None, None
@@ -30,7 +32,14 @@ def main(argv=None):
         if upgrade_requested:
             from packet_inspector.upgrade import run_integrated
             return run_integrated(arguments, quiet=quiet, force=True)
-        if installed_entry(arguments):
+        if router_requested or installed_entry(arguments):
+            if router_requested:
+                options = argument_parser().parse_args(arguments)
+                installed = options.data_dir.resolve() / "bin" / "CodexPacketInspector.exe"
+                executable = Path(sys.executable).resolve()
+                if (options.worker_id or not getattr(sys, "frozen", False)
+                        or not (executable == installed or executable.is_relative_to(installed.parent / "versions"))):
+                    raise ValueError("The entry role is only available to an installed EXE launcher.")
             from packet_inspector.router import main as entry_main
             return entry_main(provided)
         if not background:
@@ -101,7 +110,10 @@ def main(argv=None):
         except (Exception, SystemExit):
             folder = default_data_dir()
         folder.mkdir(parents=True, exist_ok=True)
-        (folder / "startup-error.txt").write_text(type(exc).__name__ + ": " + str(exc), encoding="utf8")
+        from packet_inspector.startup_diagnostics import StartupTrace
+        from packet_inspector.network_diagnostics import safe_text
+        StartupTrace(folder, "launcher_error").fail(exc)
+        (folder / "startup-error.txt").write_text(type(exc).__name__ + ": " + safe_text(exc, limit=1600), encoding="utf8")
         if sys.platform == "win32" and not background and "--desktop-check" not in arguments:
             ctypes.windll.user32.MessageBoxW(0, "启动失败：" + str(exc)[:350] + "\n\n详细记录：" + str(folder / "startup-error.txt"),
                                            "Codex 请求优化器", 0x10)

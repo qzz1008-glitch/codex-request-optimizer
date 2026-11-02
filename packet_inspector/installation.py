@@ -18,12 +18,17 @@ def manage_installation(action, data_dir, config, port):
         return {"supported": False, "installed": False}
     executable = Path(sys.executable).resolve()
     installed = Path(data_dir).resolve() / "bin" / "CodexPacketInspector.exe"
-    if installed.is_file() and executable.is_relative_to(installed.parent / "versions"):
+    router_launch = installed.is_file() and executable.is_relative_to(installed.parent / "versions")
+    launcher = executable if router_launch else installed
+    if router_launch:
         executable = installed
     command = ["powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden",
                "-ExecutionPolicy", "Bypass", "-File", str(Path(__file__).with_name("windows_install.ps1")),
                "-Action", action, "-Executable", str(executable), "-DataDirectory", str(data_dir),
-                "-ConfigPath", str(config), "-Port", str(port), "-IconPath", str(APP_ICON)]
+               "-ConfigPath", str(config), "-Port", str(port), "-IconPath", str(APP_ICON),
+               "-LauncherExecutable", str(launcher)]
+    if router_launch:
+        command.append("-RouterLaunch")
     result = subprocess.run(command, capture_output=True, encoding="utf-8", errors="replace", timeout=30,
                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     if result.returncode:

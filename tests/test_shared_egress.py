@@ -286,6 +286,7 @@ class SharedEgressTests(unittest.TestCase):
         threading.Thread(target=proxy.serve_forever, kwargs={'poll_interval':.05}, daemon=True).start()
         server = SimpleNamespace(opener=build_opener(ProxyHandler(
             {'https': f'http://dummy-user:dummy-pass@127.0.0.1:{proxy.server_port}'})))
+        server.outgoing_opener = lambda: server.opener
         try:
             with patch('packet_inspector.shared_egress.proxy_bypass', return_value=False):
                 physical_tunnel(server, 'api.openai.com', 443).close()

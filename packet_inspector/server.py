@@ -60,6 +60,7 @@ from .image_isolation import ImageIsolation, ImageIsolationFailure, check_image_
 from .sharing import Sharing, SharingError, forwarding_headers, allowed_request as sharing_request_allowed
 from .sharing_errors import prepare_shared_error
 from .shared_egress import SharedEgress
+from .startup_diagnostics import StartupTrace
 from .sharing_handover import SharingHandover, PROTOCOL as SHARING_HANDOVER_PROTOCOL, runtime as sharing_runtime
 from .egress_transport import EGRESS_HEADER
 from .sharing_credentials import CLIENT_HEADER
@@ -147,7 +148,9 @@ class InspectorServer(ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = True
 
-    def __init__(self, address, data_dir, config_path, upstream=None, *, worker_id="", public_port=None, worker_token=""):
+    def __init__(self, address, data_dir, config_path, upstream=None, *, worker_id="", public_port=None, worker_token="", startup=None):
+        self.startup = startup
+        self._startup_step("settings.read")
         self.data_dir = Path(data_dir)
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.settings_path = self.data_dir / "settings.json"
@@ -198,10 +201,12 @@ class InspectorServer(ThreadingHTTPServer):
         self.worker_state = "standby" if worker_id else "active"
         self.maintenance_guard = threading.RLock()
         self.maintenance_enabled = not bool(worker_id)
+        self._startup_step("server.bind")
         super().__init__(address, Handler)
         self.port = self.server_address[1]
         self.public_port = public_port or self.port
         self.provider_guard = threading.RLock()
+        self._startup_step("sharing.initialize")
         self.sharing = Sharing(self, recover=not bool(worker_id))
         self.egress = SharedEgress(self)
         self.sharing_handover = SharingHandover(self)
@@ -220,19 +225,27 @@ class InspectorServer(ThreadingHTTPServer):
         self.log_dir = resolve_directory(self.data_dir, self.settings["log_dir"])
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.log_dir.mkdir(parents=True, exist_ok=True)
+        self._startup_step("records.open")
         self.store = Store(self.cache_dir, self.settings["max_storage_bytes"],
                            self.settings["max_packets"], capture_owner="relay:" + worker_id if worker_id else "relay")
         self.retry_journal = RetryJournal(self.log_dir)
         if not worker_id:
             self.save_settings()
+        self._startup_step("tls.initialize")
         ssl_context = ssl.create_default_context()
         proxies = outbound_proxies()
+        self.transport_guard = threading.Lock()
+        self.transport_proxies = dict(proxies)
+        self.transport_generation = 0
+        self.transport_context = ssl_context
         self.network_diagnostics = NetworkDiagnostics(self.log_dir, proxies)
         self.opener = build_opener(ProxyHandler(proxies), DiagnosticHTTPHandler(),
                                   DiagnosticHTTPSHandler(context=ssl_context), NoRedirect())
+        self._describe_transport(self.opener)
         self.local_opener = build_opener(ProxyHandler({}), DiagnosticHTTPHandler(), DiagnosticHTTPSHandler(), NoRedirect())
         self.overflow = OverflowCompactor(self.cache_dir)
         self.compression_policy = CompressionPolicy(self.store)
+        self._startup_step("image_tools.initialize")
         self.image_config = ImageToolConfig(self.link, self.data_dir, lambda: self.endpoint)
         self.image_isolation = ImageIsolation(self.data_dir, self.settings["image_save_dir"])
         self.default_image_save_dir = resolve_image_directory(self.data_dir)
@@ -250,6 +263,7 @@ class InspectorServer(ThreadingHTTPServer):
         self.maintenance_errors = 0
         self.installation_guard = threading.Lock()
         self.startup_state_known = True
+        self._startup_step("installation.inspect")
         if not worker_id and startup_supported(self.data_dir):
             # Reflect the existing login task without changing it during upgrade.
             try:
@@ -258,10 +272,35 @@ class InspectorServer(ThreadingHTTPServer):
             except Exception:
                 # An optional Windows setting must not prevent the relay from starting.
                 self.startup_state_known = False
+        self._startup_step("background.initialize")
         self.analysis_stop = threading.Event()
         self.connection_resume = ConnectionResume(self)
         self.analysis_thread = threading.Thread(target=self._classify_pending, daemon=True)
         self.analysis_thread.start()
+
+    def _startup_step(self, phase):
+        if self.startup is not None:
+            self.startup.step(phase)
+
+    def _describe_transport(self, opener):
+        opener.inspector_proxies = dict(self.transport_proxies)
+        opener.inspector_transport_generation = self.transport_generation
+        opener.inspector_transport_created = time.time()
+
+    def outgoing_opener(self):
+        # Re-read local configuration for each new route, never probe or retry
+        # upstream. Requests already holding an opener keep their own snapshot.
+        with self.transport_guard:
+            proxies = outbound_proxies()
+            if proxies != self.transport_proxies:
+                opener = build_opener(ProxyHandler(proxies), DiagnosticHTTPHandler(),
+                    DiagnosticHTTPSHandler(context=self.transport_context), NoRedirect())
+                self.transport_proxies = dict(proxies)
+                self.transport_generation += 1
+                self._describe_transport(opener)
+                self.opener = opener
+                self.network_diagnostics.proxies = dict(proxies)
+            return self.opener
 
     def _classify_pending(self):
         # Update classifications of stored records without delaying list requests.
@@ -1209,13 +1248,14 @@ class Handler(BaseHTTPRequestHandler):
                   "x-request-id", "x-codex-turn-metadata"}
         compact_headers = {k: v for k, v in headers.items() if k.lower() not in remove}
         compact_headers.update({"Content-Encoding": encoding, "Accept": "text/event-stream", "Accept-Encoding": "identity"})
+        if opener is None:
+            local = urlsplit(upstream).hostname in {"localhost", "127.0.0.1", "::1"}
+            opener = self.server.local_opener if local else self.server.egress.outgoing(own_request=True)
         trace = self.server.network_diagnostics.request(upstream + suffix, "POST", compact_headers, body,
-            packet_id=packet_id, session_id=session_id, kind="relay_compaction", outgoing_encoding=encoding)
+            packet_id=packet_id, session_id=session_id, kind="relay_compaction", outgoing_encoding=encoding, opener=opener)
         try:
             with trace.active():
-                if opener is not None:
-                    return self._checkpoint_request(upstream, suffix, compact_headers, body, trace, opener=opener)
-                return self._checkpoint_request(upstream, suffix, compact_headers, body, trace)
+                return self._checkpoint_request(upstream, suffix, compact_headers, body, trace, opener=opener)
         except Exception as exc:
             trace.finish(exc)
             raise
@@ -1522,6 +1562,7 @@ class Handler(BaseHTTPRequestHandler):
                           data=outbound_body if body or self.command in {"POST", "PUT", "PATCH"} else None,
                           headers=headers, method=self.command)
         network_trace = self.server.network_diagnostics.request(upstream + suffix, self.command, headers, outbound_body,
+            opener=request_opener,
             packet_id=packet_id, session_id=capture_meta.get("thread_id"),
             kind="compact" if response_path.endswith("/compact") else "responses",
             ingress_bytes=len(body), ingress_encoding=self.headers.get("Content-Encoding", "identity"),
@@ -1661,6 +1702,15 @@ def argument_parser():
 
 def main(argv=None, on_started=None):
     args = argument_parser().parse_args(argv)
+    trace = StartupTrace(args.data_dir, "worker" if args.worker_id else "relay", worker_id=args.worker_id)
+    try:
+        return run_server(args, on_started, trace)
+    except Exception as exc:
+        trace.fail(exc)
+        raise
+
+
+def run_server(args, on_started, trace):
     worker_token = ""
     if args.worker_id:
         if not re.fullmatch(r"[0-9a-f]{32}", args.worker_id):
@@ -1669,7 +1719,7 @@ def main(argv=None, on_started=None):
         worker_token = control["token"]
     try:
         server = InspectorServer(("127.0.0.1", args.port), args.data_dir, args.config, args.upstream,
-                                 worker_id=args.worker_id, public_port=args.public_port, worker_token=worker_token)
+                                 worker_id=args.worker_id, public_port=args.public_port, worker_token=worker_token, startup=trace)
     except OSError as exc:
         if args.worker_id:
             raise RuntimeError("worker port is occupied") from None
@@ -1691,27 +1741,34 @@ def main(argv=None, on_started=None):
                         json.load(urlopen(sync, timeout=10))
                     if args.open:
                         webbrowser.open(url + "/")
+                    trace.ready()
                     return 0
             except Exception:
                 pass
         raise RuntimeError("本地端口已被占用或程序无法启动: " + type(exc).__name__) from None
+    trace.step("runtime.publish")
     runtime = {"pid": os.getpid(), "port": server.port, "version": VERSION}
     runtime_path = (args.data_dir / "router-workers" / (args.worker_id + ".runtime.json")
                     if args.worker_id else args.data_dir / "runtime.json")
     runtime_path.write_text(json.dumps(runtime), encoding="utf8")
     try:
         if args.worker_id:
+            trace.step("desktop.initialize")
             from .presentation import WorkerPresentation
             server.presentation = WorkerPresentation(server, enabled=os.name == "nt" and control.get("desktop_tray") is True).start()
         if not args.worker_id and server.settings["auto_detect_providers"]:
+            trace.step("providers.synchronize")
             try:
                 server.auto_sync_providers()
             except (OSError, ValueError, TypeError):
                 pass  # Keep already-published routes serving; expose the error in status.
         if on_started:
+            trace.step("desktop.tray")
             on_started(server)
         if args.open:
             threading.Timer(0.4, lambda: webbrowser.open(server.ui_url)).start()
+        trace.step("listening", port=server.port)
+        trace.ready()
         server.serve_forever(poll_interval=0.3)
     except KeyboardInterrupt:
         pass
