@@ -27,7 +27,7 @@ def cleanup_versions(data_dir, *, now=None):
     """Fail closed on unclear ownership; cleanup failures never undo an upgrade."""
     directory = Path(data_dir).resolve()
     versions = directory / "bin" / "versions"
-    result = {"versions_removed": 0, "worker_records_removed": 0, "downloads_removed": 0}
+    result = {"versions_removed": 0, "worker_records_removed": 0, "downloads_removed": 0, "backups_removed": 0}
     if not versions.exists():
         return result
     try:
@@ -105,9 +105,48 @@ def cleanup_versions(data_dir, *, now=None):
                     except OSError:
                         pass
         result["downloads_removed"] = _cleanup_downloads(directory, cutoff)
+        result["backups_removed"] = _cleanup_backups(directory, cutoff)
     except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
         result["skipped"] = type(exc).__name__
     return result
+
+
+def _cleanup_backups(directory, cutoff):
+    backups = directory / "upgrade-backups"
+    if not backups.exists():
+        return 0
+    if backups.resolve() != backups or backups.is_symlink() or backups.is_junction():
+        raise ValueError("backup directory is redirected")
+    folders = [path for path in backups.iterdir()
+               if re.fullmatch(r"\d{8}T\d{6}-[0-9a-f]{8}", path.name)
+               and path.is_dir() and not path.is_symlink() and not path.is_junction()
+               and path.resolve().parent == backups]
+    folders.sort(key=lambda path: path.stat().st_mtime, reverse=True)
+    removed = 0
+    for folder in folders[ROLLBACK_COPIES:]:
+        contents = list(folder.iterdir())
+        if (not contents or any(item.is_symlink() or not item.is_file()
+                or not (item.name == "manifest.json" or re.fullmatch(r"\d+\.backup", item.name)) for item in contents)
+                or max([folder.stat().st_mtime, *[item.stat().st_mtime for item in contents]]) >= cutoff):
+            continue
+        manifest_path = folder / "manifest.json"
+        if not manifest_path.exists() or manifest_path.stat().st_size > 65536:
+            continue
+        manifest = json.loads(manifest_path.read_text(encoding="utf8"))
+        if not isinstance(manifest, list) or not all(isinstance(row, dict) and isinstance(row.get("saved"), str)
+                and Path(row["saved"]).resolve().parent == folder for row in manifest):
+            continue
+        owned = {Path(row["saved"]).resolve() for row in manifest if row.get("existed") is True}
+        if owned != {item for item in contents if item.name != "manifest.json"}:
+            continue
+        try:
+            for item in sorted(contents, key=lambda item: item.name == "manifest.json"):
+                item.unlink()
+            folder.rmdir()
+            removed += 1
+        except OSError:
+            pass
+    return removed
 
 
 def _cleanup_downloads(directory, cutoff):

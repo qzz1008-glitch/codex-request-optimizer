@@ -54,7 +54,8 @@ class UpgradeTests(unittest.TestCase):
                 self.control.side_effect = lambda *_args, **_kwargs: calls.append("refresh")
                 self.engine._stop_candidate.side_effect = lambda: calls.append("stop")
                 self.engine._wait_entry = (Mock(side_effect=RuntimeError("post-switch failure")) if failed
-                                           else Mock(return_value={"worker_id": "2" * 32}))
+                                           else Mock(return_value={"worker_id": "2" * 32,
+                                                                   "sharing_runtime": {"quota_out": True}}))
                 with patch("packet_inspector.upgrade.local_json", side_effect=api), \
                      patch("packet_inspector.upgrade.prepare_upgrade", side_effect=lambda *_args: calls.append("prepare") or "ticket") as prepare, \
                      patch("packet_inspector.upgrade.finish_upgrade", side_effect=lambda *_args: calls.append("finish")) as finish:
@@ -65,8 +66,8 @@ class UpgradeTests(unittest.TestCase):
                         self.engine.run()
                 prepare.assert_called_once_with(self.data.resolve(), "1" * 32, "2" * 32)
                 finish.assert_called_once_with(self.data.resolve(), "1" * 32, "2" * 32, "ticket")
-                self.assertEqual(calls, ["prepare", "switch:2", "switch:1", "finish", "stop"] if failed
-                                 else ["prepare", "switch:2", "refresh", "finish"])
+                self.assertEqual(calls, ["refresh", "prepare", "switch:2", "switch:1", "finish", "stop"] if failed
+                                 else ["refresh", "prepare", "switch:2", "refresh", "finish"])
 
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
@@ -96,6 +97,11 @@ class UpgradeTests(unittest.TestCase):
             return {"app": "codex-packet-inspector", "router_protocol": 1}
         if path == "/api/status":
             return {"data_dir": str(self.data), "profile": {"config_path": str(self.config)}}
+        if path == "/__router__/switch":
+            state_path = self.data / "router-state.json"
+            state = json.loads(state_path.read_text(encoding="utf8"))
+            state["active"] = data["worker_id"]
+            atomic_json(state_path, state)
         return {}
 
     def test_corrupted_payload_never_starts_or_stops_a_service(self):
@@ -114,7 +120,7 @@ class UpgradeTests(unittest.TestCase):
         with patch("packet_inspector.upgrade.local_json", side_effect=self.health):
             self.engine.run()
         self.assertEqual([call.args[2] for call in self.control.call_args_list],
-                         ["installation_refresh", "desktop_refresh"])
+                         ["upgrade_prepare", "installation_refresh", "desktop_refresh"])
         self.engine._stop_candidate.assert_not_called()
 
     def test_progress_reaches_complete_only_after_cleanup_and_result_are_saved(self):
@@ -133,23 +139,87 @@ class UpgradeTests(unittest.TestCase):
         self.assertEqual(list(dict.fromkeys(events)), list(range(self.engine.total_steps + 1)))
         self.assertEqual(events, sorted(events))
 
-    def test_cleanup_failure_keeps_progress_below_complete(self):
+    def test_cleanup_failure_preserves_success_and_the_active_service(self):
         atomic_json(self.data / "router-state.json", {"active": "1" * 32, "token": "fixture-control"})
         self.engine._wait_entry = Mock(return_value={"worker_id": "2" * 32})
         events = []
         self.engine.progress = lambda message: events.append(self.engine.completed_steps)
         with patch("packet_inspector.upgrade.local_json", side_effect=self.health), \
                 patch("packet_inspector.upgrade_cleanup.cleanup_versions", side_effect=OSError("fixture cleanup failure")):
-            with self.assertRaisesRegex(OSError, "fixture cleanup failure"):
+            result = self.engine.run()
+        self.assertEqual(events[-1], self.engine.total_steps)
+        self.assertEqual(result["state"], "complete")
+        self.assertEqual(result["cleanup_warning"], "OSError")
+        self.assertEqual(json.loads((self.data / "upgrade-result.json").read_text(encoding="utf8"))["state"], "complete")
+        self.engine._stop_candidate.assert_not_called()
+
+    def test_backup_is_complete_before_a_candidate_can_touch_configuration(self):
+        settings = self.data / "settings.json"
+        settings.parent.mkdir(parents=True)
+        atomic_json(settings, {"relay_token": "keep", "image_analysis_mode": "native"})
+        tools = self.config.parent / "tools" / "codex-inspector-image-tool"
+        tools.mkdir(parents=True)
+        (tools / "server.ps1").write_text("original tool", encoding="utf8")
+        atomic_json(self.data / "router-state.json", {"active": "1" * 32, "token": "fixture-control"})
+        def start(*_args):
+            backups = list((self.data / "upgrade-backups").glob("*/manifest.json"))
+            self.assertEqual(len(backups), 1)
+            rows = json.loads(backups[0].read_text(encoding="utf8"))
+            for path in (self.config, settings, tools / "server.ps1"):
+                row = next(row for row in rows if Path(row["path"]).resolve() == path.resolve())
+                self.assertEqual(Path(row["saved"]).read_bytes(), path.read_bytes())
+            self.assertNotIn(str(self.engine.canonical), [row["path"] for row in rows])
+            self.engine.candidate = "2" * 32
+        self.engine._start_candidate.side_effect = start
+        self.engine._wait_entry = Mock(return_value={"worker_id": "2" * 32})
+        with patch("packet_inspector.upgrade.local_json", side_effect=self.health):
+            self.engine.run()
+
+    def test_failed_compatibility_preparation_never_switches_or_changes_user_settings(self):
+        atomic_json(self.data / "router-state.json", {"active": "1" * 32, "token": "fixture-control"})
+        before = self.config.read_bytes()
+        self.control.side_effect = ValueError("compatibility validation failed")
+        with patch("packet_inspector.upgrade.local_json", side_effect=self.health) as api:
+            with self.assertRaisesRegex(ValueError, "compatibility validation failed"):
                 self.engine.run()
-        self.assertNotIn(self.engine.total_steps, events)
-        self.assertEqual(events[-1], self.engine.total_steps - 1)
-        self.assertEqual(json.loads((self.data / "upgrade-result.json").read_text(encoding="utf8"))["state"], "failed")
+        self.assertFalse(any(call.args[1] == "/__router__/switch" for call in api.call_args_list))
+        self.assertEqual(self.config.read_bytes(), before)
+        report = json.loads((self.data / "upgrade-result.json").read_text(encoding="utf8"))
+        self.assertEqual(report["phase"], "compatibility")
+        self.assertEqual(report["phases"][-1]["state"], "failed")
+
+    def test_changed_connection_or_borrowing_state_aborts_handover_and_restores_old_owner(self):
+        baseline = {"connection_state": "connected", "sharing_runtime": {"quota_in": True, "network_in": True}}
+        for changed in ({"connection_state": "disconnected"}, {"sharing_runtime": {"quota_in": False}}):
+            with self.subTest(changed=changed):
+                atomic_json(self.data / "router-state.json", {"active": "1" * 32, "token": "fixture-control"})
+                def api(port, path, data=None, *args, **kwargs):
+                    value = self.health(port, path, data, *args, **kwargs)
+                    return {**value, **baseline} if path == "/api/status" else value
+                self.engine._wait_entry = Mock(return_value={"worker_id": "2" * 32, **baseline, **changed})
+                with patch("packet_inspector.upgrade.local_json", side_effect=api):
+                    with self.assertRaisesRegex(ValueError, "服务状态不一致"):
+                        self.engine.run()
+                self.assertEqual(json.loads((self.data / "router-state.json").read_text(encoding="utf8"))["active"], "1" * 32)
+
+    def test_post_commit_bookkeeping_failure_keeps_upgrade_successful(self):
+        atomic_json(self.data / "router-state.json", {"active": "1" * 32, "token": "fixture-control"})
+        self.engine._wait_entry = Mock(return_value={"worker_id": "2" * 32})
+        def write(path, value):
+            if Path(path).name == "upgrade-result.json" and value.get("state") == "complete":
+                raise OSError("fixture storage failure")
+            return atomic_json(path, value)
+        with patch("packet_inspector.upgrade.local_json", side_effect=self.health), \
+                patch("packet_inspector.upgrade.atomic_json", side_effect=write):
+            result = self.engine.run()
+        self.assertEqual(result["state"], "complete")
+        self.assertEqual(result["finalization_warning"], "OSError")
+        self.engine._stop_candidate.assert_not_called()
 
     def test_failed_native_refresh_rolls_back_before_retiring_the_old_tray(self):
         atomic_json(self.data / "router-state.json", {"active": "1" * 32, "token": "fixture-control"})
         self.engine._wait_entry = Mock(return_value={"worker_id": "2" * 32, "desktop_refresh_supported": True})
-        self.control.side_effect = lambda _data, _worker, action: (_ for _ in ()).throw(RuntimeError("tray failed")) if action == "desktop_refresh" else None
+        self.control.side_effect = lambda _data, _worker, action, **_kwargs: (_ for _ in ()).throw(RuntimeError("tray failed")) if action == "desktop_refresh" else None
         with patch("packet_inspector.upgrade.local_json", side_effect=self.health) as api:
             with self.assertRaisesRegex(RuntimeError, "tray failed"):
                 self.engine.run()
@@ -161,6 +231,15 @@ class UpgradeTests(unittest.TestCase):
         self.engine.candidate = "2" * 32
         atomic_json(self.data / "router-state.json", {"active": self.engine.candidate})
         self.engine.candidate_process = Mock()
+        Upgrade._stop_candidate(self.engine)
+        self.control.assert_not_called()
+        self.engine.candidate_process.wait.assert_not_called()
+
+    def test_missing_owner_record_never_authorizes_stopping_a_live_entry_worker(self):
+        self.engine.candidate = "2" * 32
+        self.engine.entry_running = True
+        self.engine.candidate_process = Mock()
+        self.assertIsNone(self.engine._candidate_active())
         Upgrade._stop_candidate(self.engine)
         self.control.assert_not_called()
         self.engine.candidate_process.wait.assert_not_called()
@@ -296,7 +375,6 @@ class UpgradeTests(unittest.TestCase):
                     atomic_json(data / "router-state.json", {"active": "1" * 32, "token": "fixture-control"})
                     engine = Upgrade(self.payload, data, config, 48765)
                     engine._application_windows = Mock(return_value=[])
-                    engine._legacy_processes = Mock(return_value=[])
                     engine._start_candidate = Mock(side_effect=lambda *_: setattr(engine, "candidate", "2" * 32))
                     engine._start_entry = Mock()
                     engine._wait_entry = Mock(return_value={"worker_id": "2" * 32})
@@ -315,7 +393,13 @@ class UpgradeTests(unittest.TestCase):
                             patch("packet_inspector.upgrade.control_worker"), \
                             patch("packet_inspector.upgrade.socket.socket") as socket:
                         socket.return_value.__enter__.return_value.connect_ex.return_value = 1
-                        self.assertEqual(engine.run()["state"], "complete")
+                        if kind == "legacy":
+                            with self.assertRaisesRegex(ValueError, "不中断服务"):
+                                engine.run()
+                            engine._start_candidate.assert_not_called()
+                            engine._start_entry.assert_not_called()
+                        else:
+                            self.assertEqual(engine.run()["state"], "complete")
                     for path, raw in before.items():
                         self.assertEqual(path.read_bytes(), raw, path.name)
 
