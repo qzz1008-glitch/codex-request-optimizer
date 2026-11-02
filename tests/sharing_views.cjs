@@ -10,10 +10,10 @@ class Element{
 }
 const idle={protocol:4,credentials_supported:true,host:{running:false},client:{active:false},egress:{host:{active:false},selection:{mode:"local"}},credentials:[]};
 const tick=()=>new Promise(resolve=>setImmediate(resolve));
-function ui(value){
+function ui(value,translate=value=>value){
  let state=value,interval=null;
  const elements=new Map(),node=id=>{if(!elements.has(id))elements.set(id,new Element());return elements.get(id);};
- const requests=[],context={console,AbortController,Date,Number,Set,Map,innerWidth:1360,innerHeight:960,t:value=>value,
+ const requests=[],context={console,AbortController,Date,Number,Set,Map,innerWidth:1360,innerHeight:960,t:translate,
   document:{hidden:false,getElementById:node,addEventListener(){}},addEventListener(){},
   navigator:{clipboard:{writeText:async()=>{}}},setTimeout:()=>1,clearTimeout(){},
   setInterval:callback=>{interval=callback;return 1;},clearInterval:()=>{interval=null;},
@@ -24,11 +24,40 @@ function ui(value){
   close:()=>context.InspectorSharing.setActive(false),
   select:(kind,view)=>{const button=new Element();button.dataset={kind,view};node("sharing-cards").handlers.click({target:{closest:()=>button}});},
   poll:async value=>{state=value;await interval();},
+  submit:async id=>node(id).handlers.submit({preventDefault(){}}),
   expect:(quota,exit)=>{for(const [kind,view] of [["quota",quota],["exit",exit]]){assert.equal(node(kind+"-issue").hidden,view!=="out",kind+" issue form");assert.equal(node(kind+"-borrow").hidden,view!=="in",kind+" borrow form");}}};
 }
 const row=(kind,direction,created_at,extra={})=>({id:kind+direction,kind,direction,created_at,label:kind+direction,...extra});
 (async()=>{
  const fresh=ui(idle);await fresh.open();fresh.expect("out","out");
+ for(const kind of ["quota","exit"]){
+  for(const suffix of ["-label","-borrow-label"]){
+   assert.equal(fresh.node(kind+suffix).placeholder,"凭据 1");
+   const markup=fresh.node(kind+"-config").innerHTML.match(new RegExp('<input id="'+kind+suffix+'"[^>]*>'))?.[0];
+   assert.ok(markup);assert.doesNotMatch(markup,/\brequired\b/,"Blank names must pass native form validation");
+  }
+  if(kind==="quota")fresh.node("quota-budget").value="1";
+  await fresh.submit(kind+"-issue");
+  let sent=JSON.parse(fresh.requests.at(-1).body);
+  assert.equal(sent.action,"credential_issue");assert.equal(sent.label,"凭据 1");
+  fresh.node(kind+"-borrow-link").value=kind==="quota"?"codex-share://test":"codex-exit://test";
+  fresh.node(kind+"-borrow-label").value="   ";
+  await fresh.submit(kind+"-borrow");sent=JSON.parse(fresh.requests.at(-1).body);
+  assert.equal(sent.action,"credential_use");assert.equal(sent.label,"凭据 1");assert.equal(fresh.node(kind+"-borrow-link").value,"");
+ }
+ const namedState={...idle,credentials:[row("quota","out",1,{label:"凭据 1",enabled:false}),row("quota","in",2,{label:"  凭据 3  "}),row("quota","out",3,{id:"internal",label:"凭据 2",internal:true}),row("exit","out",4,{label:"凭据 2"})]};
+ const defaults=ui(namedState);await defaults.open();
+ assert.equal(defaults.node("quota-label").placeholder,"凭据 2");assert.equal(defaults.node("quota-borrow-label").placeholder,"凭据 2");assert.equal(defaults.node("exit-label").placeholder,"凭据 1");
+ defaults.node("quota-budget").value="1";await defaults.submit("quota-issue");assert.equal(JSON.parse(defaults.requests.at(-1).body).label,"凭据 2");
+ defaults.node("quota-label").value="  Custom colleague  ";await defaults.submit("quota-issue");assert.equal(JSON.parse(defaults.requests.at(-1).body).label,"Custom colleague");
+ defaults.node("quota-borrow-label").value="Custom provider";defaults.node("quota-borrow-link").value="codex-share://test";
+ await defaults.submit("quota-borrow");assert.equal(JSON.parse(defaults.requests.at(-1).body).label,"Custom provider");
+ defaults.node("quota-label").value="Unsent draft";
+ await defaults.poll({...namedState,credentials:[...namedState.credentials,row("quota","out",5,{id:"new",label:"凭据 2"})]});
+ assert.equal(defaults.node("quota-label").placeholder,"凭据 4");assert.equal(defaults.node("quota-borrow-label").placeholder,"凭据 4");assert.equal(defaults.node("quota-label").value,"Unsent draft","Refreshing default names preserves typed names");
+ defaults.close();
+ const english=ui({...idle,credentials:[row("quota","in",1,{label:"credential 1"})]},value=>value==="凭据"?"Credential":value);await english.open();
+ assert.equal(english.node("quota-label").placeholder,"Credential 2");assert.equal(english.node("exit-borrow-label").placeholder,"Credential 1");english.close();
  const remembered={...idle,last_used_views:{quota:"in",exit:"out"},client:{active:true,active_id:"quotain"},credentials:[row("quota","in",1),row("quota","out",20),row("exit","in",30)]};
  const current=ui(remembered);await current.open();current.expect("in","out");
  const requests=current.requests.length;current.select("quota","out");current.select("exit","in");current.expect("out","in");
