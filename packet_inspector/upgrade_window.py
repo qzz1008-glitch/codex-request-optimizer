@@ -140,7 +140,7 @@ class UpgradeWindow:
         style.configure("Upgrade.Vertical.TScrollbar", width=self.u(6), borderwidth=0, arrowsize=0,
                         background=COLORS["line"], troughcolor=COLORS["paper"], bordercolor=COLORS["paper"])
         body = tk.Frame(window, bg=COLORS["paper"])
-        body.pack(fill="both", expand=True, padx=self.u(28), pady=(self.u(20), self.u(20)))
+        body.pack(fill="both", expand=True, padx=self.u(28), pady=(self.u(20), self.u(12)))
         self.product_label = self.label(body, "Codex请求优化器", size=18, weight="bold")
         self.product_label.pack(anchor="w", pady=(0, self.u(8)))
         summary = tk.Frame(body, bg=COLORS["paper"])
@@ -186,7 +186,7 @@ class UpgradeWindow:
 
     def dimensions(self):
         self.window.update_idletasks()
-        return self.u(536), max(self.u(240), self.window.winfo_reqheight())
+        return self.u(536), max(self.u(200), self.window.winfo_reqheight())
 
     def show(self):
         width, height = self.dimensions()
