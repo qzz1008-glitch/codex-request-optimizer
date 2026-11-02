@@ -11,6 +11,7 @@ const links=(rows,selected)=>JSON.parse(JSON.stringify(context.sessionConnection
 const session=(id,extra={})=>({thread_id:id,packet_count:1,updated_at:100,...extra});
 const grouped=rows=>{
  context.sessionSummaries=rows;
+  context.sessionMetadataAt=1;
  context.state={sessions:rows.filter(row=>row.packet_count!==0).map(row=>row.thread_id),filters:{thread:''}};
  return JSON.parse(JSON.stringify(context.sessionGroups()));
 };
@@ -108,4 +109,37 @@ test('parent metadata refresh moves an image out of other and resolves child sel
  assert.equal(context.otherTaskSessions().length,0);
  rows[0].title='Renamed frontend';assert.equal(grouped(rows)[0].title,'Renamed frontend');
 });
-console.log(JSON.stringify({passed}));
+(async()=>{
+  const saved=Object.fromEntries(['AbortSignal','api','state','sessionSummaries','sessionMetadataAt','sessionMetadataProbeAt','sessionMetadataLoading','sessionMetadataSupported','enrichSessionPurposes','renderSessions','renderStorageInfo','setFilterOptions','renderList','selectSession'].map(key=>[key,context[key]]));
+  const requests=[],renders=[],selections=[];
+  let resolveSummaries,resolveEnrichment;
+  const summaries=new Promise(resolve=>{resolveSummaries=resolve;}),enrichment=new Promise(resolve=>{resolveEnrichment=resolve;});
+  try {
+    vm.runInContext(source.slice(source.indexOf('async function refreshFilters('),source.indexOf('function hasTextSelectionWithin(')),context);
+    Object.assign(context,{
+      AbortSignal,state:{status:{storage:{revision:1}},sessions:[],filters:{thread:''}},sessionSummaries:[],
+      sessionMetadataAt:0,sessionMetadataProbeAt:0,sessionMetadataLoading:false,sessionMetadataSupported:null,
+      api:async path=>{requests.push(path);if(path==='/api/packet-filters')return {kinds:[],statuses:[],threads:['main','image']};if(path==='/api/session-summaries')return summaries;throw Error('Unexpected API request: '+path);},
+      requestKinds:{generation:'Generation',compaction:'Compaction'},statusLabel:value=>value,
+      setFilterOptions(){},renderStorageInfo(){},renderList(){},
+      enrichSessionPurposes:async rows=>{await enrichment;return rows;},
+      renderSessions:()=>renders.push(JSON.parse(JSON.stringify(context.sessionGroups()))),
+      selectSession:async value=>{selections.push(value);context.state.filters.thread=value;context.renderSessions();},
+    });
+    await context.refreshFilters();
+    assert.deepEqual(renders,[[]],'Raw session IDs must not be published as Other during startup');
+    const loading=context.refreshSessionSummaries();
+    context.renderSessions();
+    assert.equal(context.sessionMetadataLoading,true);assert.deepEqual(renders.at(-1),[]);
+    resolveSummaries({state:'available',sessions:[session('main',{title:'Frontend'}),session('image',{parent_thread_id:'main',session_kind:'image_analysis'})]});
+    await new Promise(resolve=>setImmediate(resolve));context.renderSessions();
+    assert.deepEqual(renders.at(-1),[],'Awaiting purpose enrichment must not expose provisional categories');
+    resolveEnrichment();await loading;
+    assert.deepEqual(selections,['thread:main']);
+    assert.deepEqual(renders.at(-1).map(group=>[group.thread_id,group.members.map(row=>row.thread_id)]),[['main',['main','image']]]);
+    assert.ok(renders.every(rows=>rows.every(group=>group.thread_id!=='group:other')));
+    assert.deepEqual(requests,['/api/packet-filters','/api/session-summaries']);
+    assert.equal(context.sessionMetadataLoading,false);passed++;
+  } finally {Object.assign(context,saved);}
+  console.log(JSON.stringify({passed}));
+})().catch(error=>{console.error(error);process.exitCode=1;});
