@@ -13,6 +13,7 @@ from packet_inspector import VERSION
 
 
 SOURCE = Path(__file__).resolve().parents[1] / "packet_inspector" / "upgrade_window.py"
+CHROME_SOURCE = SOURCE.with_name("upgrade_chrome.py")
 STATES = (
     ("校验", 0, "正在校验升级包…", None),
     ("准备", 1, "升级包校验通过，正在准备新版前后端…", None),
@@ -26,20 +27,25 @@ STATES = (
 )
 
 
-def load_view(source):
+def load_view(source, chrome_source):
     # Compile the saved file directly: color edits can keep the same byte length
     # within one second, which can otherwise reuse timestamp-based Python caches.
     module = ModuleType("packet_inspector._upgrade_preview")
     module.__package__, module.__file__ = "packet_inspector", str(SOURCE)
     exec(compile(source, str(SOURCE), "exec"), module.__dict__)
+    chrome = ModuleType("packet_inspector._upgrade_chrome_preview")
+    chrome.__package__, chrome.__file__ = "packet_inspector", str(CHROME_SOURCE)
+    exec(compile(chrome_source, str(CHROME_SOURCE), "exec"), chrome.__dict__)
+    module.UpgradeChrome = chrome.UpgradeChrome
     return module
 
 
 class UpgradePreview:
-    def __init__(self, window, *, language="zh", state=3, source=SOURCE):
+    def __init__(self, window, *, language="zh", state=3, source=SOURCE, chrome_source=CHROME_SOURCE):
         self.window, self.source = window, Path(source)
-        self.saved = self.source.read_bytes()
-        self.module = load_view(self.saved)
+        self.chrome_source = Path(chrome_source)
+        self.saved = self.source.read_bytes(), self.chrome_source.read_bytes()
+        self.module = load_view(*self.saved)
         self.state, self.language, self.timer, self.playing = state, language, None, False
         self.watch_timer = None
         self.controls = tk.Toplevel(window)
@@ -61,7 +67,7 @@ class UpgradePreview:
             ttk.Radiobutton(languages, text=label, variable=self.lang, value=value, command=self.change_language).pack(side="left")
         self.play_button = ttk.Button(panel, text="播放演示", command=self.toggle_play)
         self.play_button.grid(row=0, column=2, padx=(10, 0))
-        self.note = tk.Label(panel, text="仅模拟流程 · 保存 upgrade_window.py 后自动刷新", anchor="w", height=1, width=1,
+        self.note = tk.Label(panel, text="仅模拟流程 · 保存窗口或顶栏代码后自动刷新", anchor="w", height=1, width=1,
                              fg="#748093", font=("Microsoft YaHei UI", 9))
         self.note.grid(row=1, column=0, columnspan=3, pady=(8, 0), sticky="ew")
         self.controls.protocol("WM_DELETE_WINDOW", self.close)
@@ -86,8 +92,10 @@ class UpgradePreview:
         self.window.protocol("WM_DELETE_WINDOW", self.close)
         self.window.bind("<Escape>", lambda _event: self.close())
         self.controls.bind("<Escape>", lambda _event: self.close())
+        self.view.chrome.on_close = self.close
+        self.view.chrome.close_button.set_enabled(True)
         width, height = self.view.dimensions()
-        self.window.geometry(f"{width}x{height}")
+        self.view.chrome.fit(width, height)
 
     def show(self):
         self.view.show()
@@ -154,10 +162,10 @@ class UpgradePreview:
 
     def reload_if_changed(self):
         try:
-            saved = self.source.read_bytes()
+            saved = self.source.read_bytes(), self.chrome_source.read_bytes()
             if saved != self.saved:
                 self.saved = saved
-                module = load_view(saved)
+                module = load_view(*saved)
                 previous = self.module
                 self.module = module
                 try:

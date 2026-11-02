@@ -13,6 +13,7 @@ import tkinter as tk
 from tkinter import ttk
 
 from .app_icon import APP_ICON
+from .upgrade_chrome import UpgradeChrome
 
 
 COLORS = {"paper": "#ffffff", "ink": "#1e293b", "muted": "#748093",
@@ -126,13 +127,14 @@ class UpgradeWindow:
         self.completed, self.state = 0, "running"
         self.scale = window.winfo_fpixels("1i") / 96
         self.font = "Segoe UI" if language == "en" else "Microsoft YaHei UI"
-        window.title(self.t("安装与升级"))
+        window.title(self.t("Codex请求优化器") + " · " + self.t("安装与升级"))
         window.configure(background=COLORS["paper"])
         window.resizable(False, False)
         try:
             window.iconbitmap(str(APP_ICON))
         except tk.TclError:
             pass
+        self.chrome = UpgradeChrome(window, self.u, self.font, self.t("Codex请求优化器"), self.close)
         style = ttk.Style(window)
         style.theme_use("clam")
         style.layout("Upgrade.Vertical.TScrollbar", [("Vertical.Scrollbar.trough", {"sticky": "ns", "children": [
@@ -140,9 +142,7 @@ class UpgradeWindow:
         style.configure("Upgrade.Vertical.TScrollbar", width=self.u(6), borderwidth=0, arrowsize=0,
                         background=COLORS["line"], troughcolor=COLORS["paper"], bordercolor=COLORS["paper"])
         body = tk.Frame(window, bg=COLORS["paper"])
-        body.pack(fill="both", expand=True, padx=self.u(28), pady=(self.u(20), self.u(20)))
-        self.product_label = self.label(body, "Codex请求优化器", size=18, weight="bold")
-        self.product_label.pack(anchor="w", pady=(0, self.u(8)))
+        body.pack(fill="both", expand=True, padx=self.u(28), pady=(self.u(12), self.u(12)))
         summary = tk.Frame(body, bg=COLORS["paper"])
         summary.pack(fill="x")
         self.heading = self.label(summary, "正在安装更新", size=10, color="muted")
@@ -186,7 +186,7 @@ class UpgradeWindow:
 
     def dimensions(self):
         self.window.update_idletasks()
-        return self.u(536), max(self.u(240), self.window.winfo_reqheight())
+        return self.u(536), max(self.u(200), self.window.winfo_reqheight())
 
     def show(self):
         width, height = self.dimensions()
@@ -194,8 +194,10 @@ class UpgradeWindow:
         x, y = left + max(0, (right - left - width) // 2), top + max(0, (bottom - top - height) // 2)
         self.window.geometry(f"{width}x{height}+{max(0, x)}+{max(0, y)}")
         self.window.attributes("-alpha", 0)
+        self.chrome.fit(width, height)
         self.window.deiconify()
         self.window.update_idletasks()
+        self.chrome.fit(width, height)
         if os.name == "nt":
             try:
                 user = ctypes.WinDLL("user32", use_last_error=True)
@@ -274,6 +276,7 @@ class UpgradeWindow:
 
     def finish(self, success, detail=""):
         self.state = "complete" if success else "failed"
+        self.chrome.close_button.set_enabled(True)
         self.heading.configure(text=self.t("升级已完成" if success else "升级未完成"),
                                fg=COLORS["success" if success else "error"])
         if success:
