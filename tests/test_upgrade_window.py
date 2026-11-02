@@ -48,7 +48,7 @@ class UpgradeWindowTests(unittest.TestCase):
         view = UpgradeWindow(self.window, 6)
         view.update_progress(3, "新版服务已就绪，正在准备切换…")
         view.update_progress(2, "正在启动新版服务并检查运行状态…")
-        self.assertEqual(view.percentage.cget("text"), "50%")
+        self.assertEqual(view.completed, 3)
         view.close()
         self.assertTrue(self.window.winfo_exists())
 
@@ -57,7 +57,7 @@ class UpgradeWindowTests(unittest.TestCase):
         view.update_progress(4, "正在更新托盘、快捷方式和启动入口…")
         view.finish(False, "升级包校验失败。")
         self.assertEqual(view.heading.cget("text"), "Update interrupted")
-        self.assertEqual(view.percentage.cget("text"), "67%")
+        self.assertEqual(view.completed, 4)
         self.assertEqual(view.detail.get("1.0", "end-1c"), "The update package failed verification.")
         self.assertEqual(str(view.detail.cget("state")), "disabled")
         view.close()
@@ -66,7 +66,7 @@ class UpgradeWindowTests(unittest.TestCase):
     def test_success_reaches_full_progress_and_can_be_closed(self):
         view = UpgradeWindow(self.window, 6, "zh", "v0.7.9", "v0.8.0")
         view.finish(True)
-        self.assertEqual(view.percentage.cget("text"), "100%")
+        self.assertEqual(view.completed, 6)
         self.assertEqual(view.heading.cget("text"), "升级已完成")
         view.close()
         self.assertFalse(exists(self.window))
@@ -156,7 +156,7 @@ class UpgradeWindowRunnerTests(unittest.TestCase):
                 def render(view, success, detail):
                     self.assertIs(threading.current_thread(), threading.main_thread())
                     finish(view, success, detail)
-                    rendered.append((view.state, view.percentage.cget("text")))
+                    rendered.append((view.state, view.completed))
                     if not success or not open_after or open_error:
                         view.window.after(1, view.close)
                 with patch.object(UpgradeWindow, "show", lambda _view: None), patch.object(UpgradeWindow, "finish", render):
@@ -165,7 +165,7 @@ class UpgradeWindowRunnerTests(unittest.TestCase):
                 # test opens several. Release each destroyed Tk interpreter on
                 # the main thread before the next worker can trigger cyclic GC.
                 gc.collect()
-                self.assertEqual(rendered, [("failed", "50%")] if fail else [("complete", "100%")])
+                self.assertEqual(rendered, [("failed", 3)] if fail else [("complete", 6)])
                 self.assertEqual(engine._open_window.call_count, int(open_after and not fail))
 
 
