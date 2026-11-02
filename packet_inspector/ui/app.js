@@ -277,6 +277,7 @@ const auxiliaryLabels={image_analysis:"图片解析",next_message_suggestion:"�
 const requestPurposeCache=new Map();
 function auxiliarySessionKind(row) {return Object.hasOwn(auxiliaryLabels,row?.session_kind)?row.session_kind:row?.title_source==="index_task"?"session_index":row?.title_source==="subagent"?"subagent":null;}
 function sessionGroups() {
+  if(!sessionMetadataAt)return [];
   const rows=new Map(sessionSummaries.map(row=>[row.thread_id,row]));
   for(const id of state.sessions)if(!rows.has(id))rows.set(id,{thread_id:id});
   const imageParents=new Set([...rows.values()].filter(row=>auxiliarySessionKind(row)==="image_analysis"&&
@@ -624,7 +625,7 @@ function renderSessions() {
   const ids=groups.map(group=>group.thread_id),selected=state.filters.thread;
   ids.sort((a,b)=>(summaries.get(b)?.updated_at||0)-(summaries.get(a)?.updated_at||0));
   const query=$("session-search").value.trim().toLowerCase();
-  const signature=JSON.stringify([ids,selected,groups,sessionMetadataSupported,query]);
+  const signature=JSON.stringify([ids,selected,groups,sessionMetadataSupported,!!sessionMetadataAt,query]);
   if(signature===state.sessionVersion)return;
   state.sessionVersion=signature;
   const scrollTop=list.scrollTop, bounds=list.getBoundingClientRect();
@@ -671,10 +672,11 @@ function renderSessions() {
     });fragment.append(item);
   }
   if(!fragment.childElementCount) {
-    const empty=el("p","session-empty",query?t("未找到匹配的会话"):t("暂无会话"));
+    const empty=el("p","session-empty",!sessionMetadataAt?t("加载中…"):query?t("未找到匹配的会话"):t("暂无会话"));
     empty.setAttribute("role","status");fragment.append(empty);
   }
   sessionConnectionObserver.disconnect();
+  list.setAttribute("aria-busy",String(!sessionMetadataAt));
   reconcileContent(list,fragment);
   renderSessionConnections();
   const sessionItems=list.querySelector(".session-items");

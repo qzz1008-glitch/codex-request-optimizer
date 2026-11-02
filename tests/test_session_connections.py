@@ -13,4 +13,4 @@ class SessionConnectionContracts(unittest.TestCase):
                                 cwd=Path(__file__).resolve().parents[1], capture_output=True,
                                 text=True, encoding="utf8", timeout=15)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(json.loads(result.stdout)["passed"], 14)
+        self.assertEqual(json.loads(result.stdout)["passed"], 15)
