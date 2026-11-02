@@ -23,7 +23,7 @@ from packet_inspector.router import (PROTOCOL, atomic_json, control_worker, heal
                                      local_json, process_alive, start_worker, worker_info)
 from packet_inspector.sharing_handover import (PROTOCOL as SHARING_HANDOVER_PROTOCOL, UNSUPPORTED as SHARING_UPGRADE_UNSUPPORTED,
                                               active_status as sharing_active, prepare_upgrade, finish_upgrade)
-from packet_inspector.startup_diagnostics import STARTUP_SECONDS, startup_environment
+from packet_inspector.startup_diagnostics import STARTUP_SECONDS, startup_environment, wait_for_startup
 
 
 def digest(path):
@@ -56,16 +56,16 @@ class Upgrade:
         self.progress(message)
 
     def _wait_worker(self, identity, seconds=STARTUP_SECONDS):
-        deadline = time.monotonic() + seconds
-        while time.monotonic() < deadline:
-            try:
-                healthy_worker(self.data_dir, identity)
-                return
-            except (OSError, ValueError, http.client.HTTPException):
-                if self.candidate_process and self.candidate_process.poll() is not None:
-                    raise RuntimeError("新版中转未能启动，原服务保持运行。") from None
-                time.sleep(.1)
-        raise RuntimeError("新版中转健康检查超时，原服务保持运行。")
+        def ready():
+            healthy_worker(self.data_dir, identity)
+            return True
+
+        def retry(_error):
+            if self.candidate_process and self.candidate_process.poll() is not None:
+                raise RuntimeError("新版中转未能启动，原服务保持运行。") from None
+
+        wait_for_startup(ready, seconds, errors=(OSError, ValueError, http.client.HTTPException),
+            timeout=lambda: RuntimeError("新版中转健康检查超时，原服务保持运行。"), on_retry=retry, chain_error=False)
 
     def _start_candidate(self, executable, version):
         self.candidate = secrets.token_hex(16)
@@ -255,17 +255,14 @@ class Upgrade:
                                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
 
     def _wait_entry(self, protocol=None, seconds=STARTUP_SECONDS):
-        deadline = time.monotonic() + seconds
-        while time.monotonic() < deadline:
-            try:
-                health = local_json(self.port, "/health", timeout=2)
-                status = local_json(self.port, "/api/status", timeout=2)
-                if health.get("app") == "codex-packet-inspector" and (protocol is None or health.get("router_protocol") == protocol):
-                    return status
-            except (OSError, ValueError, http.client.HTTPException):
-                pass
-            time.sleep(.1)
-        raise RuntimeError("入口服务健康检查超时。")
+        def ready():
+            health = local_json(self.port, "/health", timeout=2)
+            status = local_json(self.port, "/api/status", timeout=2)
+            if health.get("app") == "codex-packet-inspector" and (protocol is None or health.get("router_protocol") == protocol):
+                return status
+
+        return wait_for_startup(ready, seconds, errors=(OSError, ValueError, http.client.HTTPException),
+            timeout=lambda: RuntimeError("入口服务健康检查超时。"), chain_error=False)
 
     def _refresh_integration(self, status):
         self._report("正在更新托盘、快捷方式和启动入口…", 4)
