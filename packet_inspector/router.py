@@ -18,6 +18,7 @@ import time
 from urllib.parse import urlsplit
 
 from .http_io import discard_small_body
+from .startup_diagnostics import STARTUP_SECONDS, StartupTrace, startup_environment, startup_wait_seconds
 
 ROUTER_VERSION = "1.0.0"
 PROTOCOL = 1
@@ -88,7 +89,7 @@ def start_worker(data_dir, config, identity, public_port):
     return subprocess.Popen([str(executable), "--background", "--worker-id", identity,
                              "--public-port", str(public_port), "--port", str(worker["port"]),
                              "--data-dir", str(Path(data_dir).resolve()), "--config", str(Path(config).resolve())],
-                            env={**os.environ, "PYINSTALLER_RESET_ENVIRONMENT": "1"},
+                            env=startup_environment(),
                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
 
 
@@ -266,6 +267,7 @@ class RouterServer(ThreadingHTTPServer):
 
     def _restart_exited_backend(self):
         with self.change_guard:
+            trace = None
             identity = self.state["active"]
             try:
                 healthy_worker(self.data_dir, identity)
@@ -276,20 +278,31 @@ class RouterServer(ThreadingHTTPServer):
                 runtime = json.loads((self.data_dir / "router-workers" / (identity + ".runtime.json")).read_text(encoding="utf8"))
                 if process_alive(runtime.get("pid")):
                     return  # Never terminate a busy or unresponsive process.
+                trace = StartupTrace(self.data_dir, "worker_restart", worker_id=identity, wait_seconds=STARTUP_SECONDS)
+                trace.step("worker.launch", worker_id=identity)
                 child = start_worker(self.data_dir, self.config, identity, self.port)
-                deadline = time.monotonic() + 25
+                trace.step("worker.wait", worker_id=identity, child_pid=child.pid)
+                deadline = time.monotonic() + STARTUP_SECONDS
+                last_error = None
                 while not self.monitor_stop.wait(.1) and time.monotonic() < deadline:
                     if child.poll() is not None:
-                        return
+                        trace.record["details"]["child_exit_code"] = child.poll()
+                        raise RuntimeError("worker startup failed; exit code " + str(child.poll()))
                     try:
                         healthy_worker(self.data_dir, identity)
+                        trace.step("worker.activate", worker_id=identity)
                         control_worker(self.data_dir, identity, "activate", public_port=self.port,
                                        maintenance=not self.state.get("draining"))
+                        trace.ready()
                         return
-                    except (OSError, ValueError, http.client.HTTPException):
-                        pass
-            except (OSError, ValueError, KeyError, http.client.HTTPException):
-                pass  # Retry later; the public listener stays alive throughout.
+                    except (OSError, ValueError, http.client.HTTPException) as exc:
+                        last_error = exc
+                if not self.monitor_stop.is_set():
+                    raise TimeoutError("worker startup timed out") from last_error
+            except (OSError, ValueError, KeyError, RuntimeError, http.client.HTTPException) as exc:
+                # Retry later; the public listener stays alive throughout.
+                if trace:
+                    trace.fail(exc)
 
     def server_close(self):
         self.monitor_stop.set()
@@ -491,7 +504,7 @@ def startup_port(args, state):
     return port
 
 
-def ensure_entry(args, state):
+def ensure_entry(args, state, trace=None):
     """A foreground launch must restore the router, never start a direct backend."""
     def ready(port):
         health = local_json(port, "/health", timeout=2)
@@ -506,20 +519,28 @@ def ensure_entry(args, state):
     except (OSError, http.client.HTTPException):
         pass
     port = startup_port(args, state)
-    command = [sys.executable] if getattr(sys, "frozen", False) else [sys.executable, "-m", "packet_inspector.router"]
+    command = [sys.executable, "--router"] if getattr(sys, "frozen", False) else [sys.executable, "-m", "packet_inspector.router"]
     child = subprocess.Popen(command + ["--background", "--tray", "--port", str(port),
                                        "--data-dir", str(args.data_dir), "--config", str(args.config)],
-                             env={**os.environ, "PYINSTALLER_RESET_ENVIRONMENT": "1"},
+                             env=startup_environment(),
                              creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-    deadline = time.monotonic() + 35
+    if trace:
+        trace.step("entry.wait", child_pid=child.pid, port=port)
+    deadline = time.monotonic() + startup_wait_seconds()
+    last_error = None
     while time.monotonic() < deadline:
         try:
             return ready(port)
-        except (OSError, http.client.HTTPException):
+        except (OSError, http.client.HTTPException) as exc:
+            last_error = exc
             if child.poll() not in {None, 0}:
-                raise RuntimeError("entry startup failed") from None
+                if trace:
+                    trace.record["details"]["child_exit_code"] = child.poll()
+                raise RuntimeError("entry startup failed; exit code " + str(child.poll())) from exc
             time.sleep(.1)
-    raise RuntimeError("entry startup timed out")
+    if trace:
+        trace.record["details"]["child_exit_code"] = child.poll()
+    raise RuntimeError("entry startup timed out") from last_error
 
 
 def main(argv=None):
@@ -530,16 +551,30 @@ def main(argv=None):
     parser.add_argument("--background", action="store_true")
     parser.add_argument("--tray", action="store_true")
     args = parser.parse_args(argv)
+    trace = StartupTrace(args.data_dir, "entry")
+    try:
+        return run_entry(args, trace)
+    except Exception as exc:
+        trace.fail(exc)
+        raise
+
+
+def run_entry(args, trace):
+    trace.record.update(background=args.background, tray=args.tray)
+    trace.step("entry.configuration")
     state = json.loads((args.data_dir / "router-state.json").read_text(encoding="utf8"))
     if not args.background:
-        port = ensure_entry(args, state)
+        port = ensure_entry(args, state, trace)
+        trace.step("desktop.launch")
         state = json.loads((args.data_dir / "router-state.json").read_text(encoding="utf8"))
         worker = worker_info(args.data_dir, state["active"])
         subprocess.Popen([worker["executable"], "--data-dir", str(args.data_dir), "--config", str(args.config),
-                          "--port", str(port)], env={**os.environ, "PYINSTALLER_RESET_ENVIRONMENT": "1"},
+                          "--port", str(port)], env=startup_environment(),
                          creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        trace.ready()
         return 0
     port = startup_port(args, state)
+    trace.step("entry.bind", port=port)
     try:
         server = RouterServer(("127.0.0.1", port), args.data_dir, args.config)
     except OSError:
@@ -547,6 +582,8 @@ def main(argv=None):
         status = local_json(port, "/api/status", timeout=2)
         if (health.get("router_protocol") == PROTOCOL and Path(status["data_dir"]).resolve() == args.data_dir.resolve()
                 and Path(status["profile"]["config_path"]).resolve() == args.config.resolve()):
+            trace.step("entry.reuse", port=port)
+            trace.ready()
             return 0
         raise RuntimeError("entry port is occupied by another profile") from None
     identity = state["active"]
@@ -555,24 +592,32 @@ def main(argv=None):
         try:
             healthy_worker(args.data_dir, identity)
         except (OSError, ValueError, http.client.HTTPException):
+            trace.step("worker.launch", worker_id=identity)
             process = start_worker(args.data_dir, args.config, identity, server.port)
-            deadline = time.monotonic() + 25
+            trace.step("worker.wait", worker_id=identity, child_pid=process.pid)
+            deadline = time.monotonic() + startup_wait_seconds()
+            last_error = None
             while time.monotonic() < deadline:
                 if process.poll() is not None:
-                    raise RuntimeError("worker startup failed")
+                    trace.record["details"]["child_exit_code"] = process.poll()
+                    raise RuntimeError("worker startup failed; exit code " + str(process.poll()))
                 try:
                     healthy_worker(args.data_dir, identity)
                     break
-                except (OSError, ValueError, http.client.HTTPException):
+                except (OSError, ValueError, http.client.HTTPException) as exc:
+                    last_error = exc
                     time.sleep(.1)
             else:
-                raise RuntimeError("worker startup timed out")
+                trace.record["details"]["child_exit_code"] = process.poll()
+                raise RuntimeError("worker startup timed out") from last_error
+        trace.step("worker.activate", worker_id=identity)
         control_worker(args.data_dir, identity, "activate", public_port=server.port, maintenance=not state.get("draining"))
         server.state["port"] = server.port
         atomic_json(server.state_path, server.state)
         atomic_json(args.data_dir / "runtime.json", {"pid": os.getpid(), "port": server.port,
                     "version": worker_info(args.data_dir, identity)["version"], "router_version": ROUTER_VERSION})
         server.start_monitor()
+        trace.step("desktop.tray", worker_id=identity)
         if args.tray and os.name == "nt" and worker_info(args.data_dir, identity).get("desktop_tray"):
             control_worker(args.data_dir, identity, "desktop_refresh")
         elif args.tray and os.name == "nt":
@@ -590,7 +635,7 @@ def main(argv=None):
                              "--config", str(args.config)]
                 if panel:
                     arguments.append("--tray-preload")
-                subprocess.Popen(arguments, env={**os.environ, "PYINSTALLER_RESET_ENVIRONMENT": "1"},
+                subprocess.Popen(arguments, env=startup_environment(),
                                  creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
                 return False if panel else None
             def exit_app():
@@ -602,6 +647,8 @@ def main(argv=None):
             tray = NativeTray(open_window, exit_app,
                               status_reader=lambda: local_json(server.port, "/api/tray-status", timeout=2),
                               show_panel=lambda: open_window(True)).start()
+        trace.step("listening", port=server.port, worker_id=identity)
+        trace.ready()
         server.serve_forever(poll_interval=.1)
     finally:
         if tray:
