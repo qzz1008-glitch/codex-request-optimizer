@@ -570,7 +570,6 @@ dialog{width:min(760px,calc(var(--desktop-width) - 80px));max-height:calc(var(--
 .connection-detail.warning{background:#fff8eb;color:#875309}
 @container settings-dialog (max-width:650px){#settings-dialog>.restart-notice{margin-inline:20px}.restart-notice-heading strong{font-size:12px}.restart-notice-actions{gap:4px}}
 #zstd-level-message{height:34px;max-height:34px;margin:0;overflow:auto;line-height:17px}
-#zstd-level-message[hidden]{display:block!important;visibility:hidden}
 .confirmation-feedback,.sharing-edit-message{height:34px;max-height:34px;margin:0;overflow:auto;line-height:17px}
 .confirmation-feedback[hidden],.sharing-edit-message[hidden]{display:block!important;visibility:hidden}
 [data-feedback-source]{display:none!important}
