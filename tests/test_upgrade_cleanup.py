@@ -47,6 +47,25 @@ class UpgradeCleanupTests(unittest.TestCase):
         for name in ["packets.sqlite", "settings.json", "codex-link.json"]:
             self.assertEqual((self.data / name).read_bytes(), b"shared data")
 
+    def test_backup_retention_keeps_two_recent_copies_and_unknown_contents(self):
+        folders = []
+        for number in range(5):
+            folder = self.data / "upgrade-backups" / ("20261031T120000-" + format(number, "08x"))
+            folder.mkdir(parents=True)
+            saved = folder / "0.backup"
+            saved.write_text("configuration backup", encoding="utf8")
+            atomic_json(folder / "manifest.json", [{"path": str(self.data / "settings.json"),
+                        "saved": str(saved), "existed": True}])
+            if number == 3:
+                (folder / "user-notes.txt").write_text("keep", encoding="utf8")
+            age = 100 if number == 4 else GRACE_SECONDS + 100 + number
+            for item in [*folder.iterdir(), folder]:
+                os.utime(item, (self.now - age, self.now - age))
+            folders.append(folder)
+        result = cleanup_versions(self.data, now=self.now)
+        self.assertEqual(result["backups_removed"], 2)
+        self.assertEqual([folder.exists() for folder in folders], [True, False, False, True, True])
+
     def test_live_worker_and_desktop_versions_are_protected(self):
         self.worker("3" * 32, self.paths[4])
         atomic_json(self.data / "router-workers" / ("3" * 32 + ".runtime.json"), {"pid": 1234})

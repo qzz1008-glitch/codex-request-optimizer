@@ -18,7 +18,7 @@ from .sharing import LANServer, parse_link, pinned_opener, tls_context
 from .shared_egress import ExitHandler
 
 PROTOCOL = 1
-UNSUPPORTED = "当前运行版本不支持共享无缝交接，已保留当前服务。请先停止共享或断开借入，再升级一次。"
+UNSUPPORTED = "当前运行版本不支持共享无缝交接，已保留当前服务，本次升级未执行。"
 
 
 def runtime(server):
