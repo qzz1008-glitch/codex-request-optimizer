@@ -6,6 +6,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import tempfile
+import threading
 import unittest
 from unittest.mock import Mock, patch
 
@@ -346,6 +347,39 @@ class UpgradeTests(unittest.TestCase):
                 self.engine.run()
         self.assertEqual(json.loads((self.data / "upgrade-result.json").read_text(encoding="utf8")), {"state": "running", "started": 123})
         self.engine._start_candidate.assert_not_called()
+
+    @unittest.skipUnless(os.name == "nt", "Windows file replacement sharing")
+    def test_upgrade_result_can_be_replaced_after_an_existing_reader_closes(self):
+        path = self.data / "upgrade-result.json"
+        atomic_json(path, {"state": "old"})
+        reader = path.open("rb")
+        timer = threading.Timer(.075, reader.close)
+        timer.start()
+        try:
+            self.engine.journal = {"state": "new"}
+            self.engine._save_journal()
+        finally:
+            reader.close()
+            timer.join()
+        self.assertEqual(json.loads(path.read_text(encoding="utf8"))["state"], "new")
+        self.assertFalse(list(self.data.glob("upgrade-result.json.*.tmp")))
+
+    @unittest.skipUnless(os.name == "nt", "Windows file replacement sharing")
+    def test_persistent_replacement_denial_is_bounded_and_other_errors_are_not_retried(self):
+        error = PermissionError("replacement denied")
+        error.winerror = 5
+        with patch("packet_inspector.upgrade.atomic_json", side_effect=error) as write, \
+                patch("packet_inspector.upgrade.time.sleep") as wait:
+            with self.assertRaises(PermissionError):
+                self.engine._save_journal()
+            self.assertEqual(write.call_count, 5)
+            self.assertAlmostEqual(sum(call.args[0] for call in wait.call_args_list), .5)
+        with patch("packet_inspector.upgrade.atomic_json", side_effect=OSError("disk failure")) as write, \
+                patch("packet_inspector.upgrade.time.sleep") as wait:
+            with self.assertRaises(OSError):
+                self.engine._save_journal()
+            write.assert_called_once()
+            wait.assert_not_called()
 
     def test_all_upgrade_paths_keep_existing_configuration(self):
         for mode in ("dev", "release"):

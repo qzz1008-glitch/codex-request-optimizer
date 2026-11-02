@@ -205,17 +205,7 @@ class SharingHandoverTests(unittest.TestCase):
         self.assertIn(b'"response.completed"', response.read())
         self.assertEqual(self.bodies.count(b'"held"'), 2)
 
-    def test_full_upgrade_preserves_open_shared_and_local_streams_and_settings(self):
-        link = self.share_quota()
-        shared = self.quota_request(b'"held"')
-        local = http.client.HTTPConnection("127.0.0.1", self.router.port, timeout=5)
-        self.clients.append(local)
-        path = "/relay/" + self.old.settings["relay_token"] + "/responses"
-        local.request("POST", path, b'"held"', headers={"Authorization": "Bearer synthetic-local"})
-        response = local.getresponse()
-        self.assertEqual(response.status, 200)
-        before = self.config.read_bytes()
-        token = self.old.settings["relay_token"]
+    def full_upgrade(self):
         payload = self.root / "payload"
         payload.mkdir()
         raw = b"synthetic upgrade executable - never launched"
@@ -228,6 +218,19 @@ class SharingHandoverTests(unittest.TestCase):
         engine._refresh_integration = Mock()
         result = engine.run()
         self.assertEqual(result["state"], "complete")
+
+    def test_full_upgrade_preserves_open_shared_and_local_streams_and_settings(self):
+        link = self.share_quota()
+        shared = self.quota_request(b'"held"')
+        local = http.client.HTTPConnection("127.0.0.1", self.router.port, timeout=5)
+        self.clients.append(local)
+        path = "/relay/" + self.old.settings["relay_token"] + "/responses"
+        local.request("POST", path, b'"held"', headers={"Authorization": "Bearer synthetic-local"})
+        response = local.getresponse()
+        self.assertEqual(response.status, 200)
+        before = self.config.read_bytes()
+        token = self.old.settings["relay_token"]
+        self.full_upgrade()
         self.assertEqual(self.config.read_bytes(), before)
         self.assertEqual(self.new.settings["relay_token"], token)
         self.assertEqual(self.new.sharing.credential_link(self.new.sharing.host["last_credential_id"]), link)
@@ -247,8 +250,7 @@ class SharingHandoverTests(unittest.TestCase):
         self.old.egress.select("peer", exit_link, label="network fixture")
         selected = self.old.sharing.remote["credential_id"], self.old.egress.peer_id
         before = self.config.read_bytes()
-        ticket = self.switch()
-        finish_upgrade(self.data, self.old.worker_id, self.new.worker_id, ticket)
+        self.full_upgrade()
         self.assertEqual(self.config.read_bytes(), before)
         self.assertEqual(self.new.sharing.client_route()["credential_id"], selected[0])
         self.assertEqual(self.new.egress.peer_id, selected[1])
