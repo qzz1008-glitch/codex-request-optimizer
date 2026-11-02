@@ -12,7 +12,7 @@ from .request_context import is_delegation_notice, request_image_paths, request_
 from .request_types import image_request_kind
 
 MAX_BODY = 128 * 1024 * 1024
-CLASSIFICATION_VERSION = 3
+CLASSIFICATION_VERSION = 4
 SECRET_KEYS = {"authorization", "proxy-authorization", "cookie", "set-cookie",
                "x-api-key", "api-key", "api_key", "apikey", "access_token",
                "refresh_token", "id_token", "client_secret", "password",
