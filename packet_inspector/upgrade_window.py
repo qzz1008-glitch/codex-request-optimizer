@@ -4,12 +4,15 @@ from __future__ import annotations
 import ctypes
 from ctypes import wintypes
 import json
+import math
 import os
 from pathlib import Path
 import queue
 import re
 import threading
 import tkinter as tk
+
+from PIL import Image, ImageDraw, ImageTk
 
 from .app_icon import APP_ICON
 from .upgrade_chrome import UpgradeChrome
@@ -141,6 +144,7 @@ class UpgradeWindow:
         self.window, self.total_steps, self.language = window, total_steps, language
         self.completed, self.state = 0, "running"
         self.animation_timer, self.pulse = None, 0
+        self.bar_fraction, self.bar_key, self.bar_photo = 0.0, None, None
         self.scale = window.winfo_fpixels("1i") / 96
         self.font = "Segoe UI" if language == "en" else "Microsoft YaHei UI"
         window.title(self.t("Codex请求优化器") + " · " + self.t("安装与升级"))
@@ -167,7 +171,7 @@ class UpgradeWindow:
         self.version_label.pack(side="left")
         progress = tk.Frame(body, bg=COLORS["paper"])
         progress.pack(fill="x", pady=(self.u(16), self.u(12)))
-        self.bar = tk.Canvas(progress, bg=COLORS["paper"], height=self.u(8), highlightthickness=0)
+        self.bar = tk.Canvas(progress, bg=COLORS["paper"], height=self.u(12), highlightthickness=0)
         self.bar.pack(fill="x")
         self.detail = tk.Text(body, width=1, height=1, font=(self.font, 10), wrap="none", bg=COLORS["paper"], fg=COLORS["muted"],
                               relief="flat", borderwidth=0, highlightthickness=0, padx=0, pady=0, cursor="arrow", state="disabled")
@@ -248,27 +252,48 @@ class UpgradeWindow:
 
     def draw_progress(self):
         color = COLORS[{"complete": "success", "failed": "error"}.get(self.state, "accent")]
-        self.bar.delete("all")
-        width, height = self.bar.winfo_width(), self.u(8)
+        width, height = self.bar.winfo_width(), self.u(12)
         if width <= height:
             return
-        left, right, y = height / 2, width - height / 2, height / 2
-        reached = left + (right - left) * self.completed / max(1, self.total_steps)
-        self.bar.create_line(left, y, right, y, fill=COLORS["line"], width=height, capstyle="round", tags="track")
-        if self.completed:
-            self.bar.create_line(left, y, reached, y, fill=color, width=height, capstyle="round", tags="progress")
-        if self.state == "running" and reached < right:
-            # A moving highlight indicates ongoing work without inventing
-            # completed progress while a checkpoint is still being verified.
-            span = min(self.u(48), (right - reached) / 3)
-            start = reached + (right - reached - span) * self.pulse / 24
-            self.bar.create_line(start, y, start + span, y, fill=COLORS["accent"],
-                                 width=height, capstyle="round", tags="activity")
+        if self.state != "running":
+            self.bar_fraction = self.completed / max(1, self.total_steps)
+        filled = min(width, max(0, round(width * self.bar_fraction)))
+        tint = round(2 * (1 - math.cos(2 * math.pi * self.pulse / 120))) if self.state == "running" else 0
+        key = (width, height, filled, color, tint)
+        if key == self.bar_key:
+            return
+        self.bar_key = key
+
+        # Supersampling keeps the six-pixel pill smooth on Windows at every
+        # display scale. Only the continuous completed portion is colored.
+        sample = 4
+        size = (width * sample, height * sample)
+        surface = Image.new("RGB", size, COLORS["paper"])
+        inset, thickness = self.u(3) * sample, self.u(6) * sample
+        bounds = (0, inset, size[0] - 1, inset + thickness - 1)
+        ImageDraw.Draw(surface).rounded_rectangle(bounds, radius=thickness / 2, fill="#edf1f7")
+        if filled:
+            mask = Image.new("L", size, 0)
+            ImageDraw.Draw(mask).rounded_rectangle((0, inset, filled * sample - 1, bounds[3]),
+                                                   radius=thickness / 2, fill=255)
+            rgb = tuple(int(color[index:index + 2], 16) for index in (1, 3, 5))
+            gradient = Image.new("RGB", (2, 1))
+            gradient.putdata([tuple(min(255, channel + 18 + tint) for channel in rgb),
+                              tuple(min(255, channel + tint) for channel in rgb)])
+            surface.paste(gradient.resize(size, Image.Resampling.BILINEAR), (0, 0), mask)
+        self.bar_photo = ImageTk.PhotoImage(surface.resize((width, height), Image.Resampling.LANCZOS), master=self.window)
+        self.bar.delete("all")
+        self.bar.create_image(0, 0, image=self.bar_photo, anchor="nw",
+                              tags=("track", "progress") if self.completed else ("track",))
 
     def animate(self):
-        self.pulse = (self.pulse + 1) % 25
+        self.pulse = (self.pulse + 1) % 120
+        target = self.completed / max(1, self.total_steps)
+        self.bar_fraction += (target - self.bar_fraction) * .22
+        if abs(target - self.bar_fraction) < .001:
+            self.bar_fraction = target
         self.draw_progress()
-        self.animation_timer = self.window.after(80, self.animate)
+        self.animation_timer = self.window.after(33, self.animate)
 
     def stop_animation(self):
         if self.animation_timer is not None:
