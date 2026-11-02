@@ -34,40 +34,40 @@ const row=(kind,direction,created_at,extra={})=>({id:kind+direction,kind,directi
  const fresh=ui(idle,undefined,Clock);await fresh.open();fresh.expect("out","out");
  for(const kind of ["quota","exit"]){
   for(const suffix of ["-label","-borrow-label"]){
-   assert.equal(fresh.node(kind+suffix).placeholder,suffix==="-label"?"凭据-2026-11-02-1":"凭据-1");
+   assert.equal(fresh.node(kind+suffix).placeholder,suffix==="-label"?"凭据-20261102":"凭据");
    const markup=fresh.node(kind+"-config").innerHTML.match(new RegExp('<input id="'+kind+suffix+'"[^>]*>'))?.[0];
    assert.ok(markup);assert.doesNotMatch(markup,/\brequired\b/,"Blank names must pass native form validation");
   }
   if(kind==="quota")fresh.node("quota-budget").value="1";
   await fresh.submit(kind+"-issue");
   let sent=JSON.parse(fresh.requests.at(-1).body);
-  assert.equal(sent.action,"credential_issue");assert.equal(sent.label,"凭据-2026-11-02-1");
+   assert.equal(sent.action,"credential_issue");assert.equal(sent.label,"凭据-20261102");
   fresh.node(kind+"-borrow-link").value=(kind==="quota"?"codex-share":"codex-exit")+"://10.0.0.8:47846/#secret-token.fingerprint";
   fresh.node(kind+"-borrow-link").handlers.input();
-  assert.equal(fresh.node(kind+"-borrow-label").placeholder,"凭据-10.0.0.8-1");
+   assert.equal(fresh.node(kind+"-borrow-label").placeholder,"凭据-10.0.0.8");
   fresh.node(kind+"-borrow-label").value="   ";
   await fresh.submit(kind+"-borrow");sent=JSON.parse(fresh.requests.at(-1).body);
-  assert.equal(sent.action,"credential_use");assert.equal(sent.label,"凭据-10.0.0.8-1");assert.doesNotMatch(sent.label,/secret-token|fingerprint/);assert.equal(fresh.node(kind+"-borrow-link").value,"");assert.equal(fresh.node(kind+"-borrow-label").placeholder,"凭据-1");
+   assert.equal(sent.action,"credential_use");assert.equal(sent.label,"凭据-10.0.0.8");assert.doesNotMatch(sent.label,/secret-token|fingerprint/);assert.equal(fresh.node(kind+"-borrow-link").value,"");assert.equal(fresh.node(kind+"-borrow-label").placeholder,"凭据");
  }
- const namedState={...idle,credentials:[row("quota","out",1,{label:"凭据-2026-11-02-1",enabled:false}),row("quota","in",2,{label:"  凭据-2026-11-02-3  "}),row("quota","out",3,{id:"internal",label:"凭据-2026-11-02-2",internal:true}),row("quota","in",4,{id:"ip",label:"凭据-10.0.0.8-1"}),row("exit","out",5,{label:"凭据-2026-11-02-2"})]};
+  const namedState={...idle,credentials:[row("quota","out",1,{label:"凭据-20261102",enabled:false}),row("quota","in",2,{label:"  凭据-20261102-2  "}),row("quota","out",3,{id:"internal",label:"凭据-20261102-1",internal:true}),row("quota","in",4,{id:"ip",label:"凭据-10.0.0.8"}),row("exit","out",5,{label:"凭据-20261102-1"})]};
  const defaults=ui(namedState,undefined,Clock);await defaults.open();
  defaults.node("quota-borrow-link").value="codex-share://10.0.0.8:47846/#token.fingerprint";defaults.node("quota-borrow-link").handlers.input();
- assert.equal(defaults.node("quota-label").placeholder,"凭据-2026-11-02-2");assert.equal(defaults.node("quota-borrow-label").placeholder,"凭据-10.0.0.8-2");assert.equal(defaults.node("exit-label").placeholder,"凭据-2026-11-02-1");
- defaults.node("quota-budget").value="1";await defaults.submit("quota-issue");assert.equal(JSON.parse(defaults.requests.at(-1).body).label,"凭据-2026-11-02-2");
+  assert.equal(defaults.node("quota-label").placeholder,"凭据-20261102-1");assert.equal(defaults.node("quota-borrow-label").placeholder,"凭据-10.0.0.8-1");assert.equal(defaults.node("exit-label").placeholder,"凭据-20261102","A used suffix does not require numbering an unused base name");
+  defaults.node("quota-budget").value="1";await defaults.submit("quota-issue");assert.equal(JSON.parse(defaults.requests.at(-1).body).label,"凭据-20261102-1");
  const custom='Team A / 临时 <x> & "quoted"';
  defaults.node("quota-label").value="  "+custom+"  ";await defaults.submit("quota-issue");assert.equal(JSON.parse(defaults.requests.at(-1).body).label,custom);
  defaults.node("quota-borrow-label").value=custom;
  await defaults.submit("quota-borrow");assert.equal(JSON.parse(defaults.requests.at(-1).body).label,custom);
  defaults.node("quota-label").value="Unsent draft";
  defaults.node("quota-borrow-label").value="Unsent provider";defaults.node("quota-borrow-link").value="codex-share://10.0.0.8:47846/#token.fingerprint";
- await defaults.poll({...namedState,credentials:[...namedState.credentials,row("quota","out",6,{id:"new",label:"凭据-2026-11-02-2"})]});
- assert.equal(defaults.node("quota-label").placeholder,"凭据-2026-11-02-4");assert.equal(defaults.node("quota-borrow-label").placeholder,"凭据-10.0.0.8-2");assert.equal(defaults.node("quota-label").value,"Unsent draft","Refreshing default names preserves typed names");
- defaults.node("quota-borrow-link").value="codex-share://10.0.0.9:47846/#other-token.fingerprint";defaults.node("quota-borrow-link").handlers.input();assert.equal(defaults.node("quota-borrow-label").placeholder,"凭据-10.0.0.9-1");assert.equal(defaults.node("quota-borrow-label").value,"Unsent provider");
- defaults.node("quota-borrow-link").value="invalid credential";defaults.node("quota-borrow-link").handlers.input();assert.equal(defaults.node("quota-borrow-label").placeholder,"凭据-1");
+  await defaults.poll({...namedState,credentials:[...namedState.credentials,row("quota","out",6,{id:"new",label:"凭据-20261102-1"})]});
+  assert.equal(defaults.node("quota-label").placeholder,"凭据-20261102-3");assert.equal(defaults.node("quota-borrow-label").placeholder,"凭据-10.0.0.8-1");assert.equal(defaults.node("quota-label").value,"Unsent draft","Refreshing default names preserves typed names");
+  defaults.node("quota-borrow-link").value="codex-share://10.0.0.9:47846/#other-token.fingerprint";defaults.node("quota-borrow-link").handlers.input();assert.equal(defaults.node("quota-borrow-label").placeholder,"凭据-10.0.0.9");assert.equal(defaults.node("quota-borrow-label").value,"Unsent provider");
+  defaults.node("quota-borrow-link").value="invalid credential";defaults.node("quota-borrow-link").handlers.input();assert.equal(defaults.node("quota-borrow-label").placeholder,"凭据");
  defaults.close();
- const english=ui({...idle,credentials:[row("quota","in",1,{label:"credential-2026-11-02-1"})]},value=>value==="凭据"?"Credential":value,Clock);await english.open();
- assert.equal(english.node("quota-label").placeholder,"Credential-2026-11-02-2");assert.equal(english.node("exit-borrow-label").placeholder,"Credential-1");english.close();
- const nextDay=ui(idle,undefined,Clock);await nextDay.open();clockNow=new Date(2026,10,3,12).getTime();await nextDay.poll(idle);assert.equal(nextDay.node("quota-label").placeholder,"凭据-2026-11-03-1");nextDay.close();
+  const english=ui({...idle,credentials:[row("quota","in",1,{label:"credential-20261102"})]},value=>value==="凭据"?"Credential":value,Clock);await english.open();
+  assert.equal(english.node("quota-label").placeholder,"Credential-20261102-1");assert.equal(english.node("exit-borrow-label").placeholder,"Credential");english.close();
+  const nextDay=ui(idle,undefined,Clock);await nextDay.open();clockNow=new Date(2026,10,3,12).getTime();await nextDay.poll(idle);assert.equal(nextDay.node("quota-label").placeholder,"凭据-20261103");nextDay.close();
  const remembered={...idle,last_used_views:{quota:"in",exit:"out"},client:{active:true,active_id:"quotain"},credentials:[row("quota","in",1),row("quota","out",20),row("exit","in",30)]};
  const current=ui(remembered);await current.open();current.expect("in","out");
  const requests=current.requests.length;current.select("quota","out");current.select("exit","in");current.expect("out","in");
