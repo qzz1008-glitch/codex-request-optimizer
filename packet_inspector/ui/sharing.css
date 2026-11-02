@@ -136,6 +136,8 @@
 .sharing-inline-editor{position:fixed;z-index:30;display:grid;gap:10px;box-sizing:border-box;width:256px;max-width:calc(100vw - 24px);padding:14px;border:1px solid var(--line);border-radius:9px;background:var(--panel);color:var(--ink);box-shadow:0 5px 24px #0002}
 .sharing-inline-editor[data-field=expires_at],.sharing-inline-editor[data-field=expires_at] #sharing-inline-expiry-container,.sharing-inline-editor[data-field=expires_at] .sharing-expiry-control{display:contents}
 .sharing-inline-editor[data-field=expires_at]>label,.sharing-inline-editor[data-field=expires_at]>input,.sharing-inline-editor[data-field=expires_at]>.sharing-edit-message,.sharing-inline-editor[data-field=expires_at]>.sharing-inline-footer,#sharing-inline-expiry-date{display:none}
+/* Date edits report errors inside the calendar; its display:contents form must not reserve a feedback row. */
+.sharing-inline-editor[data-field=expires_at]>.sharing-edit-message{display:none!important}
 .sharing-inline-editor>label{margin:0;font-size:12px;color:var(--muted);white-space:nowrap}
 .sharing-inline-footer{display:flex;align-items:center;gap:12px}
 .sharing-inline-actions{display:flex;justify-content:flex-end;gap:7px;margin-left:auto}.sharing-inline-actions button{min-height:28px;padding:4px 10px;font-size:12px}
