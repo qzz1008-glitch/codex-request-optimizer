@@ -21,7 +21,7 @@ globalThis.InspectorSharing=(()=>{
   let feedbackKind="quota";
   const copiedButtons=new Map();
   const copyCaption=(anchor,caption)=>copiedButtons.has(anchor)?"已复制":caption;
-  const views={quota:"out",exit:"out"};
+  const views={quota:null,exit:null};
   const message=(value,error=false,anchor="")=>{
     const box=get("sharing-message");box.textContent=tr(value);box.hidden=!value||!!(error&&(editing||deleting));box.classList.toggle("error",error);
     box.dataset.feedbackTarget=feedbackKind+"-inline-feedback";
@@ -64,13 +64,14 @@ globalThis.InspectorSharing=(()=>{
     return `<div class="sharing-card" data-kind="${kind}">
       <form id="${kind}-issue" class="sharing-form"><label>${label("名称")}<input id="${kind}-label" maxlength="80" required autocomplete="off"></label>
         ${expiryField(kind+"-expiry")}
-        ${kind==="quota"?`<div class="sharing-budget-row"><label id="quota-budget-label" for="quota-budget">${label("额度")}</label><span class="sharing-amount-field"><input id="quota-budget" type="number" value="1" min="1" max="1000000" step="0.01" required aria-labelledby="quota-budget-label" aria-describedby="quota-budget-unit" title="${label("最低 1 美元。")}"><span id="quota-budget-unit" class="sharing-amount-unit">${label("美元")}</span></span></div><div class="sharing-weekly-row"><label for="quota-weekly">${label("每周刷新")}</label><select id="quota-weekly" class="sharing-weekly-select" title="${label("按提供方本机时间，在所选当天零点刷新。")}">${weeklyOptions()}</select></div>`:""}
+        ${kind==="quota"?`<div class="sharing-budget-row"><span class="sharing-budget-label"><label id="quota-budget-label" for="quota-budget">${label("额度")}</label><button id="quota-reference-open" class="sharing-quota-help" type="button" aria-label="${label("额度换算参考")}" aria-haspopup="dialog" aria-controls="quota-reference-dialog">?</button></span><span class="sharing-amount-field"><input id="quota-budget" type="number" value="1" min="1" max="1000000" step="0.01" required aria-labelledby="quota-budget-label" aria-describedby="quota-budget-unit" title="${label("最低 1 美元。")}"><span id="quota-budget-unit" class="sharing-amount-unit">${label("美元")}</span></span></div><div class="sharing-weekly-row"><label for="quota-weekly">${label("每周刷新")}</label><select id="quota-weekly" class="sharing-weekly-select" title="${label("按提供方本机时间，在所选当天零点刷新。")}">${weeklyOptions()}</select></div>`:""}
       </form>
       <form id="${kind}-borrow" class="sharing-form" hidden><label>${label("名称")}<input id="${kind}-borrow-label" maxlength="80" required autocomplete="off"></label><label>${label("凭据")}<input id="${kind}-borrow-link" type="password" autocomplete="off" spellcheck="false" required placeholder="${kind==="quota"?"codex-share":"codex-exit"}://…"></label></form>
       <div class="sharing-actions"><button class="primary sharing-copy-button" type="submit" form="${kind}-issue" id="${kind}-generate">${label("生成凭据")}</button><button class="primary" type="submit" form="${kind}-borrow" id="${kind}-activate" hidden>${label("保存凭据")}</button></div>
     </div>`;
   }
   for(const kind of ["quota","exit"])get(kind+"-config").innerHTML=card(kind);
+  get("quota-reference-open").addEventListener("click",()=>get("quota-reference-dialog").showModal());
   get("sharing-inline-expiry-container").innerHTML=expiryControl("sharing-inline-expiry","sharing-inline-label");
   function disableExpiry(id,disabled=false){
     get(id+"-unlimited").disabled=disabled;
@@ -214,6 +215,14 @@ globalThis.InspectorSharing=(()=>{
   }
   function render(value){
     if(!value.credentials_supported||value.protocol<4){closeInline(false);closeDelete(false);current=null;get("sharing-cards").hidden=true;message("当前后台不支持凭据管理，请更新软件。",true);return;}
+    for(const kind of ["quota","exit"]){
+      if(views[kind]!==null)continue;
+      const remembered=value.last_used_views?.[kind];
+      const borrowing=kind==="quota"?value.client?.active===true:value.egress?.selection?.mode==="peer";
+      const hosting=kind==="quota"?value.host?.running===true:value.egress?.host?.active===true;
+      const latest=(value.credentials||[]).filter(row=>row.kind===kind&&!row.internal&&["out","in"].includes(row.direction)).reduce((last,row)=>Number.isFinite(row.created_at)&&(!last||row.created_at>last.created_at)?row:last,null);
+      views[kind]=["out","in"].includes(remembered)?remembered:borrowing?"in":hosting?"out":latest?.direction||"out";
+    }
     current=value;if(editing||deleting||dragging||weeklyPickerOpen())return;get("sharing-cards").hidden=false;
     const hosting=value.host?.running===true,borrowing=value.client?.active===true;
     for(const kind of ["quota","exit"]){const out=views[kind]==="out";get(kind+"-issue").hidden=!out;get(kind+"-borrow").hidden=out;

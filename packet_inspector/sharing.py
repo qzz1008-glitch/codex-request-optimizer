@@ -778,6 +778,23 @@ class Sharing:
                     self.refreshed_at = time.monotonic()
         threading.Thread(target=refresh, name="sharing-peer-statistics", daemon=True).start()
 
+    def view_for_action(self, data):
+        action, kind = data.get("action"), data.get("kind")
+        if not isinstance(action, str):
+            return None
+        if kind in ("quota", "exit") and action in {"credential_issue", "credential_use"}:
+            return kind, "out" if action == "credential_issue" else "in"
+        if action in {"credential_edit", "credential_reset", "credential_copy", "credential_delete", "credential_reorder"}:
+            row = next((row for row in self.vault.rows() if row["id"] == data.get("id") and not row.get("internal")), None)
+            if row:
+                return row["kind"], row["direction"]
+        if action == "client_disconnect" and self.remote:
+            return "quota", "in"
+        egress = getattr(self.server, "egress", None)
+        if action == "egress_select" and egress is not None and egress.peer_id:
+            return "exit", "in"
+        return None
+
     def status(self):
         with self.guard:
             if not self.closed and (not self.address_time or time.monotonic() - self.address_time > 30):
@@ -797,6 +814,7 @@ class Sharing:
                     "weekly_reset_days_supported": True,
                     "used_quota_edit_supported": True,
                     "credentials": self.vault.rows() if not self.closed else [],
+                    "last_used_views": self.vault.last_used_views() if not self.closed else {},
                     "egress": egress.status() if egress is not None else {"supported": False},
                     "recovery_error": self.recovery_error, "recovered": self.recovered}
 

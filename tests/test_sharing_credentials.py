@@ -43,6 +43,27 @@ class CredentialVaultTests(unittest.TestCase):
         identifier, token = self.vault.issue("quota", label, **kwargs)
         return identifier, "Bearer " + token
 
+    def test_view_memory_survives_reopening_and_keeps_resources_independent(self):
+        self.assertEqual(self.vault.last_used_views(), {})
+        self.vault.remember_view("quota", "in")
+        self.vault.remember_view("exit", "out")
+        reopened = CredentialVault(self.root)
+        self.assertEqual(reopened.last_used_views(), {"quota": "in", "exit": "out"})
+        reopened.remember_view("quota", "out")
+        self.assertEqual(self.vault.last_used_views(), {"quota": "out", "exit": "out"})
+        self.assertEqual(reopened.client_id, self.vault.client_id)
+        self.assertEqual(self.vault.rows(), [])
+
+    def test_invalid_view_memory_is_ignored_without_affecting_credentials(self):
+        identifier, _ = self.grant()
+        before = self.vault.rows()
+        self.vault.remember_view("exit", "in")
+        with self.vault.connection() as db:
+            db.execute("INSERT INTO meta VALUES (?,?)", ("sharing-view:quota", b"invalid"))
+        self.assertEqual(self.vault.last_used_views(), {"exit": "in"})
+        self.assertEqual(self.vault.rows(), before)
+        self.assertEqual(self.vault.rows()[0]["id"], identifier)
+
     def test_manual_order_persists_without_changing_credentials_or_other_lists(self):
         first, token = self.vault.issue("quota", "first")
         second, _ = self.vault.issue("quota", "second")
