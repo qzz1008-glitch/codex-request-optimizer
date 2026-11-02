@@ -5,6 +5,7 @@
 本次更新重点改善升级过程中的连接连续性、启动恢复、图片配置兼容性和共享管理体验。
 
 - **升级与连接保留**：完善本地中转、借入额度及网络共享在升级切换和回滚时的交接，保留有效凭据与进行中的连接；修复 Windows 升级结果文件被占用等问题。
+- **旧版迁移提示**：不支持无中断切换的旧服务会被保留，升级器不会强行停止它。请按提示主动退出旧版，或停止旧版共享借入／借出后重新运行安装包。
 - **启动与配置恢复**：减少冷启动等待，新请求重新读取已变化的代理配置；完善待生效配置提示、服务重启确认和启动诊断。
 - **图片与请求兼容性**：依据已安装 Codex 的实际能力迁移原生图片开关，保留其他配置；改善共享额度转发中的原生协议、增量响应事件及用量识别。
 - **共享管理**：改进默认凭据命名、最近连接时间、有效期与每周刷新布局；保留共享页签选择，统一表格列宽并减少无用计数。
@@ -20,6 +21,7 @@ For Windows x64 (64-bit).
 This release improves connection continuity during upgrades, startup recovery, image configuration compatibility, and sharing management.
 
 - **Upgrade continuity**: improve handover and rollback for the local relay, borrowed quota, and shared network access, preserving valid credentials and active connections. Fix Windows sharing violations affecting upgrade result files.
+- **Legacy migration**: preserve running services that cannot switch without interruption instead of forcibly stopping them. Follow the prompt to exit the older version, or stop its borrowed or lent sharing services, before running the installer again.
 - **Startup and configuration recovery**: reduce cold-start waits and refresh changed proxy settings for new requests. Improve pending-configuration notices, service restart confirmation, and startup diagnostics.
 - **Image and request compatibility**: migrate native image switches according to the capabilities of the installed Codex runtime while preserving other settings. Improve native protocol forwarding, incremental response events, and usage recognition through quota sharing.
 - **Sharing management**: improve default credential names, recent connection times, expiry controls, and weekly reset layouts. Preserve the selected sharing tab, align table columns, and remove unnecessary counts.
