@@ -90,6 +90,13 @@ test('missing or cyclic image parent metadata never assigns a request to an arbi
  assert.deepEqual(groups.find(group=>group.thread_id==='main').members.map(row=>row.thread_id),['main']);
  assert.deepEqual(groups.find(group=>group.thread_id==='group:other').members.map(row=>row.thread_id),['orphan','self','a','b']);
 });
+
+test('unparented recommendations stay in other even when a temporary title exists',()=>{
+ const groups=grouped([session('main',{title:'Main'}),
+  session('recommendations',{session_kind:'ambient_suggestions',title:'Temporary recommendation task'})]);
+ assert.deepEqual(groups.find(group=>group.thread_id==='group:other').members.map(row=>row.thread_id),['recommendations']);
+ assert.deepEqual(groups.find(group=>group.thread_id==='main').members.map(row=>row.thread_id),['main']);
+});
 test('parent metadata refresh moves an image out of other and resolves child selections to the owner',()=>{
  const rows=[session('main',{title:'Frontend'}),session('image',{session_kind:'image_analysis'})];
  assert.equal(grouped(rows).find(group=>group.thread_id==='group:other').members[0].thread_id,'image');

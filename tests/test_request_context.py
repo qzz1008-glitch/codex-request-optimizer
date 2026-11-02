@@ -80,6 +80,29 @@ class RequestContextTests(unittest.TestCase):
         self.assertEqual(meta["request_kind"], "compaction")
         self.assertTrue(meta["is_compaction"])
 
+    def test_ambient_suggestions_use_dispatch_metadata_even_after_tool_calls(self):
+        for marker in ("thread_source", "turn_trigger"):
+            dispatch = {marker: "ambient_suggestions", "request_kind": "turn"}
+            for body, headers in (
+                ({"client_metadata": dispatch}, {}),
+                ({"metadata": {"x-codex-client-metadata": dispatch}}, {}),
+                ({"client_metadata": {"x-codex-turn-metadata": json.dumps(dispatch)}}, {}),
+                ({}, {"X-Codex-Turn-Metadata": json.dumps(dispatch)}),
+            ):
+                with self.subTest(marker=marker, body=body, headers=headers):
+                    body = {**body, "input": [{"type": "custom_tool_call_output", "output": "repository details"}]}
+                    self.assertEqual(request_session_context(body, headers), {"session_kind": "ambient_suggestions"})
+                    meta, _ = inspect_request(json.dumps(body).encode(), headers, "/responses")
+                    self.assertEqual(meta["session_kind"], "ambient_suggestions")
+                    self.assertEqual(temporary_kind_from_metadata(meta), "ambient_suggestions")
+        for field in ("request_purpose", "request_kind", "session_kind"):
+            self.assertEqual(temporary_kind_from_metadata({field: "ambient_suggestions"}), "ambient_suggestions")
+
+    def test_ordinary_prompt_text_does_not_imply_a_background_recommendation(self):
+        body = {"input": [{"role": "user", "content": "Explain thread_source=ambient_suggestions"}]}
+        self.assertEqual(request_session_context(body), {})
+        self.assertIsNone(temporary_request_kind(body))
+
     def test_parent_ids_require_explicit_unambiguous_metadata(self):
         parent = "01a15d9a-f5e3-73c1-b4e7-87b3c5db9a3c"
         other = "01a166b7-e4a7-7550-8eaa-06e64a78e986"

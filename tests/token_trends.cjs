@@ -155,7 +155,7 @@ function eventRows(){return [
   assert.ok(View.events(packet(1,{relay_error:'overflow_prepare_failed'})).includes('overflow'));
  });
  await test('automatic auxiliary requests do not distort session context',()=>{
-  for(const kind of ['prewarm','title_generation','next_message_suggestion','session_index','tool_search','image_analysis','image_generation','image_edit','other'])
+  for(const kind of ['prewarm','title_generation','next_message_suggestion','ambient_suggestions','session_index','tool_search','image_analysis','image_generation','image_edit','other'])
    for(const field of ['request_kind','request_purpose','session_kind'])assert.equal(context.isGeneration(packet(1,{[field]:kind})),false);
   assert.equal(context.isGeneration(packet(1,{image_isolation_worker:true})),false);
   assert.equal(context.isGeneration(packet(1,{request_kind:'turn',session_kind:'subagent',request_purpose:'image_analysis'})),false);
@@ -169,7 +169,8 @@ function eventRows(){return [
     packet(202,{is_compaction:true,request_kind:'compaction',outbound_wire_bytes:800}),
     packet(203,{thread_id:'image-first',request_kind:'image_analysis',session_kind:'image_analysis',request_purpose:'image_analysis',upstream_usage:{input_tokens:999999},outbound_wire_bytes:99999999}),
     packet(204,{thread_id:'image-second',image_isolation_worker:true,upstream_usage:{input_tokens:999999},outbound_wire_bytes:99999999}),
-    packet(205,{thread_id:'title',request_kind:'title_generation',upstream_usage:{input_tokens:999999},outbound_wire_bytes:99999999})];
+    packet(205,{thread_id:'title',request_kind:'title_generation',upstream_usage:{input_tokens:999999},outbound_wire_bytes:99999999}),
+    packet(206,{thread_id:'recommendations',request_kind:'turn',session_kind:'ambient_suggestions',upstream_usage:{input_tokens:999999},outbound_wire_bytes:99999999})];
    const {result,ids}=rendered(rows),model=result.model();
    assert.deepEqual(Array.from(model.series,series=>series.id),['session-a']);
    assert.deepEqual(Array.from(model.series[0].points,point=>point.packet.id).sort(),[id(201),id(202)]);
@@ -178,7 +179,7 @@ function eventRows(){return [
    assert.deepEqual(ids.get('trend-series').children.filter(node=>node.dataset.renderKey).map(node=>node.dataset.renderKey),['trend-series:session-a']);
   });
   await test('auxiliary-only history produces no points or session legend entries',()=>{
-   const {result,ids}=rendered(['image_analysis','title_generation','next_message_suggestion','session_index','prewarm'].map((kind,i)=>
+   const {result,ids}=rendered(['image_analysis','title_generation','next_message_suggestion','ambient_suggestions','session_index','prewarm'].map((kind,i)=>
     packet(210+i,{thread_id:'auxiliary-'+i,request_kind:kind,upstream_usage:{input_tokens:100},outbound_wire_bytes:1000})));
    assert.equal(result.model().series.length,0);
    assert.ok(result.charts.every(chart=>chart.points.length===0));
