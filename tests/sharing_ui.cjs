@@ -16,7 +16,7 @@ const host={...idle,host:{active:true,running:true},credentials:[outgoing,incomi
 const requests=[],pending=[],copies=[];let copied="",clipboardError=false,interval=null;
 const documentEvents={};
 const timeouts=new Map();let timeoutId=0;
-const context={console,AbortController,Date,Number,Set,Map,innerWidth:1360,innerHeight:960,addEventListener(){},document:{hidden:false,getElementById:node,addEventListener:(type,fn)=>{documentEvents[type]=fn;}},navigator:{clipboard:{writeText:async value=>{if(clipboardError)throw Error("clipboard unavailable");copied=value;copies.push(value);}}},setInterval:fn=>{interval=fn;return 1;},clearInterval:()=>{interval=null;},t:x=>x,
+const context={console,AbortController,Date,URL,Number,Set,Map,innerWidth:1360,innerHeight:960,addEventListener(){},document:{hidden:false,getElementById:node,addEventListener:(type,fn)=>{documentEvents[type]=fn;}},navigator:{clipboard:{writeText:async value=>{if(clipboardError)throw Error("clipboard unavailable");copied=value;copies.push(value);}}},setInterval:fn=>{interval=fn;return 1;},clearInterval:()=>{interval=null;},t:x=>x,
  fetch:async(url,options)=>{requests.push({url,data:options.body?JSON.parse(options.body):null});const r=await(pending.shift()||{status:200,data:idle});return {status:r.status,ok:r.status<400,json:async()=>r.data};}};
 context.setTimeout=fn=>{timeouts.set(++timeoutId,fn);return timeoutId;};context.clearTimeout=id=>timeouts.delete(id);
 let weeklyDropdownOpen=false;
