@@ -18,7 +18,7 @@ globalThis.InspectorSharing=(()=>{
   function connectionValue(value){
     const full=connectionTime(value);
     if(full==="—")return full;
-    return `<time class="sharing-connection-time" datetime="${new Date(value*1000).toISOString()}" title="${esc(full)}"><span class="sharing-connection-date">${esc(full.slice(5,10).replace("-","/"))}</span> <span>${esc(full.slice(11))}</span></time>`;
+    return `<time class="sharing-connection-time" datetime="${new Date(value*1000).toISOString()}" title="${esc(full)}">${esc(full)}</time>`;
   }
   const minimumExpiry=()=>expiryDay((Date.now()+864e5)/1000);
   const defaultExpiry=()=>{const d=new Date();d.setDate(d.getDate()+7);return localDay(d.getTime());};
@@ -238,8 +238,11 @@ globalThis.InspectorSharing=(()=>{
     const widths=Array.from(get("quota-table-head").querySelectorAll("th"),node=>node.getBoundingClientRect().width);
     const columns=get("exit-table-columns")?.querySelectorAll("col")||[],width=source.getBoundingClientRect().width;
     if(widths.length!==7||columns.length!==7||width<=0||widths.some(value=>value<=0))return;
+    // Preserve the leading columns; give the timestamp spare width and a single-line minimum.
+    const fixedWidth=widths.reduce((total,value,index)=>total+(index===4?0:value),0);
+    widths[4]=Math.max(124,Math.max(width,target.parentElement.clientWidth)-fixedWidth);
     target.classList.toggle("sharing-network-narrow-actions",widths[6]<(document.documentElement?.lang?.startsWith("en")?136:112));
-    target.style.width=target.style.minWidth=width+"px";
+    target.style.width=target.style.minWidth=(fixedWidth+widths[4])+"px";
     columns.forEach((column,index)=>{column.style.width=widths[index]+"px";});
   }
   function watchQuotaColumns(){
