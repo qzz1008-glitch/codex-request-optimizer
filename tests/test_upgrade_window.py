@@ -76,6 +76,7 @@ class UpgradeWindowTests(unittest.TestCase):
     def test_white_caption_minimizes_and_close_hover_matches_desktop(self):
         view = UpgradeWindow(self.window, 6)
         self.assertEqual(view.chrome.frame.cget("bg"), "#ffffff")
+        self.assertEqual(view.chrome.title_label.cget("text"), "Codex请求优化器")
         with patch.object(view.chrome, "minimize") as minimize:
             view.chrome.minimize_button.invoke()
         minimize.assert_called_once_with()
@@ -119,6 +120,9 @@ class UpgradeWindowTests(unittest.TestCase):
                     self.window.tk.call("tk", "scaling", scale * 96 / 72)
                     view = UpgradeWindow(self.window, 6, language, "v0.8.0 · abcdef01", "v0.8.0 · 23456789")
                     self.window.update_idletasks()
+                    title = "Codex Request Optimizer" if language == "en" else "Codex请求优化器"
+                    self.assertEqual(view.chrome.title_label.cget("text"), title)
+                    self.assertLessEqual(view.chrome.title_label.winfo_reqwidth() + view.u(92), view.u(536))
                     for success in (False, True):
                         view.finish(success, "fixture")
                         self.window.update_idletasks()

@@ -79,14 +79,14 @@ class UpgradeChrome:
         if os.name == "nt":
             self.frame.pack(side="top", fill="x")
         self.frame.pack_propagate(False)
-        title_label = tk.Label(self.frame, text=title, bg="#ffffff", fg="#748093", font=(font, 10), padx=scale(14), anchor="w")
-        title_label.pack(side="left", fill="both", expand=True, anchor="w")
+        self.title_label = tk.Label(self.frame, text=title, bg="#ffffff", fg="#1e293b", font=(font, 12, "bold"), padx=scale(14), anchor="w")
+        self.title_label.pack(side="left", fill="both", expand=True, anchor="w")
         self.close_button = _CaptionButton(self.frame, scale, "close", lambda: self.on_close())
         self.close_button.pack(side="right")
         self.close_button.set_enabled(False)
         self.minimize_button = _CaptionButton(self.frame, scale, "minimize", lambda: self.minimize())
         self.minimize_button.pack(side="right")
-        for node in (self.frame, title_label):
+        for node in (self.frame, self.title_label):
             node.bind("<ButtonPress-1>", self.begin_drag)
         window.bind("<Map>", self._mapped)
 
