@@ -132,6 +132,16 @@
     </form>
   </main>
   <footer id="app-inline-feedback" class="inline-feedback app-inline-feedback" data-feedback-inline role="status" aria-live="polite"></footer>
+  <dialog id="quota-reference-dialog" aria-labelledby="quota-reference-title" aria-describedby="quota-reference-note">
+    <form method="dialog">
+      <header class="quota-reference-heading"><h2 id="quota-reference-title">额度换算参考</h2><button type="submit" aria-label="关闭" autofocus>×</button></header>
+      <table class="quota-reference-table">
+        <thead><tr><th scope="col">套餐（月费）</th><th scope="col">1% 周额度对应费用</th></tr></thead>
+        <tbody><tr><td>Plus · $20</td><td>≈ $1</td></tr><tr><td>Pro · $100</td><td>≈ $5</td></tr><tr><td>Pro · $200</td><td>≈ $10</td></tr></tbody>
+      </table>
+      <p id="quota-reference-note">按 $200 套餐当前样本估算 API 参考费用；$20 / $100 档按月费比例推算，未实测。非官方兑换率。</p>
+    </form>
+  </dialog>
   <dialog id="sharing-delete-dialog" aria-labelledby="sharing-delete-title" aria-describedby="sharing-delete-name sharing-delete-description sharing-delete-hint">
     <h2 id="sharing-delete-title">删除凭据</h2>
     <p id="sharing-delete-name" class="sharing-delete-name"></p>
