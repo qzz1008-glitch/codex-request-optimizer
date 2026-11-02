@@ -135,7 +135,7 @@ const visualOrder=kind=>node(kind+"-credential-rows").rows.map(row=>row.querySel
  pending.push({status:400,data:{error:"synthetic quota start failure"}});await click("sharing-cards",{action:"use",id:"q2"});assert.deepEqual(requests.at(-1).data,{action:"credential_use",kind:"quota",id:"q2"});borrowedStatus("quota","q2",false);
  pending.push({status:200,data:borrowing});await click("sharing-cards",{action:"use",id:"q2"});borrowedStatus("quota","q2",true);
  click("sharing-cards",{kind:"exit",view:"in"});assert.match(node("exit-credential-rows").innerHTML,/Exit provider/);assert.equal(node("exit-activate").disabled,false,"Exit and quota sources stay independent");
- assert.deepEqual(Array.from(node("exit-table-head").innerHTML.matchAll(/<th\b[^>]*>([^<]+)<\/th>/g),match=>match[1]),["凭据名称","上传 / 下载流量","连接次数","期限","最近连接","状态","操作"]);assert.doesNotMatch(node("exit-credential-rows").innerHTML,/<progress/);
+ assert.deepEqual(Array.from(node("exit-table-head").innerHTML.matchAll(/<th\b[^>]*>([^<]+)<\/th>/g),match=>match[1]),["凭据名称","上传 / 下载流量","期限","最近连接","状态","操作"]);assert.doesNotMatch(node("exit-credential-rows").innerHTML,/<progress/);
  assert.doesNotMatch(node("exit-credential-rows").innerHTML,/class="sharing-direction"/);
  assert.doesNotMatch(formMarkup(),/exit-local|sharing-exit-source|>本机出口<\/button>/);
  borrowedStatus("exit","e1",false);
