@@ -141,11 +141,14 @@ class UpgradeWindow:
                         background=COLORS["line"], troughcolor=COLORS["paper"], bordercolor=COLORS["paper"])
         body = tk.Frame(window, bg=COLORS["paper"])
         body.pack(fill="both", expand=True, padx=self.u(28), pady=(self.u(20), self.u(20)))
-        self.label(body, "Codex请求优化器", size=10, color="muted").pack(anchor="w", pady=(0, self.u(6)))
-        self.heading = self.label(body, "正在安装更新", size=18, weight="bold")
-        self.heading.pack(anchor="w", pady=(0, self.u(6)))
-        versions = tk.Frame(body, bg=COLORS["paper"])
-        versions.pack(anchor="w", fill="x")
+        self.product_label = self.label(body, "Codex请求优化器", size=18, weight="bold")
+        self.product_label.pack(anchor="w", pady=(0, self.u(8)))
+        summary = tk.Frame(body, bg=COLORS["paper"])
+        summary.pack(fill="x")
+        self.heading = self.label(summary, "正在安装更新", size=10, color="muted")
+        self.heading.pack(side="left", padx=(0, self.u(12)))
+        versions = tk.Frame(summary, bg=COLORS["paper"])
+        versions.pack(side="right")
         if current:
             self.label(versions, current, size=10, color="muted").pack(side="left")
             self.label(versions, "  →  ", size=11, color="muted").pack(side="left")
@@ -271,7 +274,8 @@ class UpgradeWindow:
 
     def finish(self, success, detail=""):
         self.state = "complete" if success else "failed"
-        self.heading.configure(text=self.t("升级已完成" if success else "升级未完成"))
+        self.heading.configure(text=self.t("升级已完成" if success else "升级未完成"),
+                               fg=COLORS["success" if success else "error"])
         if success:
             self.update_progress(self.total_steps, detail or "新版已就绪。")
         else:
