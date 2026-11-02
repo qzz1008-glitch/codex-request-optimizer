@@ -14,13 +14,13 @@ from packet_inspector import VERSION
 
 SOURCE = Path(__file__).resolve().parents[1] / "packet_inspector" / "upgrade_window.py"
 STATES = (
-    ("校验 · 0%", 0, "正在校验升级包…", None),
-    ("准备 · 17%", 1, "升级包校验通过，正在准备新版前后端…", None),
-    ("安装 · 33%", 2, "正在启动新版服务并检查运行状态…", None),
-    ("切换 · 50%", 3, "新版服务已就绪，正在准备切换…", None),
-    ("刷新入口 · 67%", 4, "正在更新托盘、快捷方式和启动入口…", None),
-    ("整理 · 83%", 5, "正在整理版本与安装记录…", None),
-    ("升级完成 · 100%", 6, "新版已就绪。", True),
+    ("校验", 0, "正在校验升级包…", None),
+    ("准备", 1, "升级包校验通过，正在准备新版前后端…", None),
+    ("安装", 2, "正在启动新版服务并检查运行状态…", None),
+    ("切换", 3, "新版服务已就绪，正在准备切换…", None),
+    ("刷新入口", 4, "正在更新托盘、快捷方式和启动入口…", None),
+    ("整理", 5, "正在整理版本与安装记录…", None),
+    ("升级完成", 6, "新版已就绪。", True),
     ("升级失败", 4, "新版中转健康检查超时，原服务保持运行。", False),
     ("打开失败", 6, "新版已就绪。", True),
 )
@@ -86,8 +86,8 @@ class UpgradePreview:
         self.window.protocol("WM_DELETE_WINDOW", self.close)
         self.window.bind("<Escape>", lambda _event: self.close())
         self.controls.bind("<Escape>", lambda _event: self.close())
-        self.window.update_idletasks()
-        self.window.geometry(f"{self.view.u(536)}x{max(self.view.u(404), self.window.winfo_reqheight())}")
+        width, height = self.view.dimensions()
+        self.window.geometry(f"{width}x{height}")
 
     def show(self):
         self.view.show()

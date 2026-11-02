@@ -19,7 +19,8 @@ COLORS = {"paper": "#ffffff", "ink": "#1e293b", "muted": "#748093",
           "line": "#e3e7ed", "accent": "#315fd7", "soft": "#edf2fc",
           "success": "#247558", "error": "#bc3d37"}
 ENGLISH = {
-    "安装与升级": "Install & update", "Codex 请求优化器": "Codex Request Optimizer",
+    "安装与升级": "Install & update",
+    "Codex请求优化器": "Codex Request Optimizer",
     "正在安装更新": "Installing update", "升级已完成": "Update complete", "升级未完成": "Update interrupted",
     "校验与准备": "Prepare", "安装新版": "Install", "切换服务": "Switch", "完成": "Finish",
     "新版已就绪。": "The new version is ready.",
@@ -125,7 +126,7 @@ class UpgradeWindow:
         self.completed, self.state = 0, "running"
         self.scale = window.winfo_fpixels("1i") / 96
         self.font = "Segoe UI" if language == "en" else "Microsoft YaHei UI"
-        window.title(self.t("Codex 请求优化器") + " · " + self.t("安装与升级"))
+        window.title(self.t("安装与升级"))
         window.configure(background=COLORS["paper"])
         window.resizable(False, False)
         try:
@@ -139,12 +140,15 @@ class UpgradeWindow:
         style.configure("Upgrade.Vertical.TScrollbar", width=self.u(6), borderwidth=0, arrowsize=0,
                         background=COLORS["line"], troughcolor=COLORS["paper"], bordercolor=COLORS["paper"])
         body = tk.Frame(window, bg=COLORS["paper"])
-        body.pack(fill="both", expand=True, padx=self.u(28), pady=(self.u(24), self.u(14)))
-        self.label(body, "Codex 请求优化器", size=10, color="muted").pack(anchor="w")
-        self.heading = self.label(body, "正在安装更新", size=18, weight="bold")
-        self.heading.pack(anchor="w", pady=(self.u(12), self.u(6)))
-        versions = tk.Frame(body, bg=COLORS["paper"])
-        versions.pack(anchor="w", fill="x")
+        body.pack(fill="both", expand=True, padx=self.u(28), pady=(self.u(20), self.u(20)))
+        self.product_label = self.label(body, "Codex请求优化器", size=18, weight="bold")
+        self.product_label.pack(anchor="w", pady=(0, self.u(8)))
+        summary = tk.Frame(body, bg=COLORS["paper"])
+        summary.pack(fill="x")
+        self.heading = self.label(summary, "正在安装更新", size=10, color="muted")
+        self.heading.pack(side="left", padx=(0, self.u(12)))
+        versions = tk.Frame(summary, bg=COLORS["paper"])
+        versions.pack(side="right")
         if current:
             self.label(versions, current, size=10, color="muted").pack(side="left")
             self.label(versions, "  →  ", size=11, color="muted").pack(side="left")
@@ -152,11 +156,9 @@ class UpgradeWindow:
         self.version_label.configure(bg=COLORS["soft"], padx=self.u(8), pady=self.u(3))
         self.version_label.pack(side="left")
         progress = tk.Frame(body, bg=COLORS["paper"])
-        progress.pack(fill="x", pady=(self.u(16), self.u(12)))
-        self.percentage = self.label(progress, "0%", size=10, weight="bold")
-        self.percentage.pack(anchor="e")
-        self.timeline = tk.Canvas(progress, bg=COLORS["paper"], height=self.u(54), highlightthickness=0)
-        self.timeline.pack(fill="x", pady=(self.u(6), 0))
+        progress.pack(fill="x", pady=(self.u(12), self.u(8)))
+        self.timeline = tk.Canvas(progress, bg=COLORS["paper"], height=self.u(50), highlightthickness=0)
+        self.timeline.pack(fill="x", pady=(self.u(2), 0))
         details = tk.Frame(body, bg=COLORS["paper"])
         details.pack(fill="both", expand=True)
         details.columnconfigure(0, weight=1)
@@ -182,10 +184,13 @@ class UpgradeWindow:
     def label(self, parent, text, size=10, weight="normal", color="ink"):
         return tk.Label(parent, text=self.t(text), font=(self.font, size, weight), bg=COLORS["paper"], fg=COLORS[color], padx=0, pady=0)
 
-    def show(self):
+    def dimensions(self):
         self.window.update_idletasks()
+        return self.u(536), max(self.u(240), self.window.winfo_reqheight())
+
+    def show(self):
+        width, height = self.dimensions()
         left, top, right, bottom = _work_area(self.window)
-        width, height = self.u(536), max(self.u(404), self.window.winfo_reqheight())
         x, y = left + max(0, (right - left - width) // 2), top + max(0, (bottom - top - height) // 2)
         self.window.geometry(f"{width}x{height}+{max(0, x)}+{max(0, y)}")
         self.window.attributes("-alpha", 0)
@@ -228,7 +233,6 @@ class UpgradeWindow:
 
     def update_progress(self, completed, text):
         self.completed = max(self.completed, min(completed, self.total_steps))
-        self.percentage.configure(text=f"{round(self.completed / self.total_steps * 100)}%")
         self.set_detail(text)
         self.draw_progress()
 
@@ -239,16 +243,20 @@ class UpgradeWindow:
         if width <= self.u(76):
             return
         fraction = self.completed / self.total_steps
-        # Stage boundaries share the same scale as the completed checkpoints.
-        # The final milestone is reached only when installation actually finishes.
+        # Equally spaced milestones use real checkpoint boundaries.
+        # Each connecting segment fills as work within that stage completes.
         stops = (0, 1 / 3, 1 / 2, 1)
-        positions = [self.u(38) + (width - self.u(76)) * stop for stop in stops]
+        positions = [self.u(38) + (width - self.u(76)) * index / 3 for index in range(4)]
         self.timeline.create_line(positions[0], y, positions[-1], y,
                                   fill=COLORS["line"], width=self.u(4), capstyle="round", tags="track")
-        if self.completed:
-            self.timeline.create_line(positions[0], y, positions[0] + (positions[-1] - positions[0]) * fraction, y,
-                                      fill=color, width=self.u(4), capstyle="round", tags="progress")
         phase = max(index for index, stop in enumerate(stops) if fraction >= stop)
+        reached = positions[phase]
+        if phase < len(stops) - 1:
+            within_stage = (fraction - stops[phase]) / (stops[phase + 1] - stops[phase])
+            reached += (positions[phase + 1] - positions[phase]) * within_stage
+        if self.completed:
+            self.timeline.create_line(positions[0], y, reached, y,
+                                      fill=color, width=self.u(4), capstyle="round", tags="progress")
         for index, x in enumerate(positions):
             done = self.state == "complete" or index < phase
             active = index == phase
@@ -261,12 +269,13 @@ class UpgradeWindow:
             else:
                 self.timeline.create_text(x, y, text="×" if active and self.state == "failed" else str(index + 1),
                                           fill="white" if active else COLORS["muted"], font=(self.font, 9))
-            self.timeline.create_text(x, self.u(42), text=self.t(("校验与准备", "安装新版", "切换服务", "完成")[index]),
+            self.timeline.create_text(x, self.u(40), text=self.t(("校验与准备", "安装新版", "切换服务", "完成")[index]),
                                       fill=COLORS["ink"] if active or done else COLORS["muted"], font=(self.font, 9), tags="stage-label")
 
     def finish(self, success, detail=""):
         self.state = "complete" if success else "failed"
-        self.heading.configure(text=self.t("升级已完成" if success else "升级未完成"))
+        self.heading.configure(text=self.t("升级已完成" if success else "升级未完成"),
+                               fg=COLORS["success" if success else "error"])
         if success:
             self.update_progress(self.total_steps, detail or "新版已就绪。")
         else:
