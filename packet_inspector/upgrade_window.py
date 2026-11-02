@@ -19,7 +19,7 @@ COLORS = {"paper": "#ffffff", "ink": "#1e293b", "muted": "#748093",
           "line": "#e3e7ed", "accent": "#315fd7", "soft": "#edf2fc",
           "success": "#247558", "error": "#bc3d37"}
 ENGLISH = {
-    "安装与升级": "Install & update", "Codex 请求优化器": "Codex Request Optimizer",
+    "安装与升级": "Install & update",
     "正在安装更新": "Installing update", "升级已完成": "Update complete", "升级未完成": "Update interrupted",
     "校验与准备": "Prepare", "安装新版": "Install", "切换服务": "Switch", "完成": "Finish",
     "新版已就绪。": "The new version is ready.",
@@ -125,7 +125,7 @@ class UpgradeWindow:
         self.completed, self.state = 0, "running"
         self.scale = window.winfo_fpixels("1i") / 96
         self.font = "Segoe UI" if language == "en" else "Microsoft YaHei UI"
-        window.title(self.t("Codex 请求优化器") + " · " + self.t("安装与升级"))
+        window.title(self.t("安装与升级"))
         window.configure(background=COLORS["paper"])
         window.resizable(False, False)
         try:
@@ -140,9 +140,8 @@ class UpgradeWindow:
                         background=COLORS["line"], troughcolor=COLORS["paper"], bordercolor=COLORS["paper"])
         body = tk.Frame(window, bg=COLORS["paper"])
         body.pack(fill="both", expand=True, padx=self.u(28), pady=(self.u(24), self.u(14)))
-        self.label(body, "Codex 请求优化器", size=10, color="muted").pack(anchor="w")
         self.heading = self.label(body, "正在安装更新", size=18, weight="bold")
-        self.heading.pack(anchor="w", pady=(self.u(12), self.u(6)))
+        self.heading.pack(anchor="w", pady=(0, self.u(6)))
         versions = tk.Frame(body, bg=COLORS["paper"])
         versions.pack(anchor="w", fill="x")
         if current:
@@ -239,16 +238,20 @@ class UpgradeWindow:
         if width <= self.u(76):
             return
         fraction = self.completed / self.total_steps
-        # Stage boundaries share the same scale as the completed checkpoints.
-        # The final milestone is reached only when installation actually finishes.
+        # Equally spaced milestones use real checkpoint boundaries.
+        # Each connecting segment fills as work within that stage completes.
         stops = (0, 1 / 3, 1 / 2, 1)
-        positions = [self.u(38) + (width - self.u(76)) * stop for stop in stops]
+        positions = [self.u(38) + (width - self.u(76)) * index / 3 for index in range(4)]
         self.timeline.create_line(positions[0], y, positions[-1], y,
                                   fill=COLORS["line"], width=self.u(4), capstyle="round", tags="track")
-        if self.completed:
-            self.timeline.create_line(positions[0], y, positions[0] + (positions[-1] - positions[0]) * fraction, y,
-                                      fill=color, width=self.u(4), capstyle="round", tags="progress")
         phase = max(index for index, stop in enumerate(stops) if fraction >= stop)
+        reached = positions[phase]
+        if phase < len(stops) - 1:
+            within_stage = (fraction - stops[phase]) / (stops[phase + 1] - stops[phase])
+            reached += (positions[phase + 1] - positions[phase]) * within_stage
+        if self.completed:
+            self.timeline.create_line(positions[0], y, reached, y,
+                                      fill=color, width=self.u(4), capstyle="round", tags="progress")
         for index, x in enumerate(positions):
             done = self.state == "complete" or index < phase
             active = index == phase
