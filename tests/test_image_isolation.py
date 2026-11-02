@@ -14,6 +14,7 @@ import unittest
 from unittest.mock import patch
 
 from tests import test_packet_inspector as fixtures
+import tomlkit
 import zstandard
 
 from packet_inspector.analyzer import decode_body, encode
@@ -26,11 +27,14 @@ from packet_inspector.request_context import IMAGE_ANALYST_PREFIXES
 
 def native_config(original):
     data = deepcopy(original)
-    data.setdefault("tools", {})["view_image"] = True
     if data.get("features", {}).get("view_image") is False:
         data["features"].pop("view_image")
         if not data["features"]:
             data.pop("features")
+    if "view_image" in data.get("tools", {}):
+        data["tools"].pop("view_image")
+        if not data["tools"]:
+            data.pop("tools")
     return data
 
 
@@ -94,6 +98,12 @@ class ImageCliDiscoveryTests(unittest.TestCase):
 
 class ImageConfigurationTests(unittest.TestCase):
     def setUp(self):
+        probe = patch("packet_inspector.image_config.verify_view_image_feature")
+        probe.start()
+        self.addCleanup(probe.stop)
+        stamp = patch.object(ImageToolConfig, "native_configuration_stamp", return_value={"build": "fixture"})
+        stamp.start()
+        self.addCleanup(stamp.stop)
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
@@ -115,7 +125,7 @@ class ImageConfigurationTests(unittest.TestCase):
         original = tomllib.loads(self.config.read_text(encoding="utf8"))
         self.enable()
         configured = tomllib.loads(self.config.read_text(encoding="utf8"))
-        self.assertIs(configured["tools"]["view_image"], False)
+        self.assertIs(configured["features"]["view_image"], False)
         self.assertEqual(configured["mcp_servers"], original["mcp_servers"])
         self.assertNotIn("model_provider", tomllib.loads(self.manager.profile_path.read_text(encoding="utf8")))
         self.assertNotIn("isolated-vision", configured.get("profiles", {}))
@@ -126,13 +136,13 @@ class ImageConfigurationTests(unittest.TestCase):
             pass
         self.assertEqual(tomllib.loads(self.config.read_text(encoding="utf8")), native_config(original))
 
-    def test_disabled_mode_needs_no_cli_and_restores_both_tools(self):
+    def test_disabled_mode_needs_no_image_tool_installation_and_restores_both_tools(self):
         original = tomllib.loads(self.config.read_text(encoding="utf8"))
-        with patch("packet_inspector.image_config.find_codex_cli", side_effect=AssertionError("no CLI needed")):
+        with patch.object(self.manager.installation, "install", side_effect=AssertionError("no tool install needed")):
             with self.manager.change("disabled"):
                 pass
         configured = tomllib.loads(self.config.read_text(encoding="utf8"))
-        self.assertIs(configured["tools"]["view_image"], False)
+        self.assertIs(configured["features"]["view_image"], False)
         self.assertIs(configured["mcp_servers"]["isolated_vision"]["enabled"], False)
         self.assertEqual(configured["mcp_servers"]["other"], original["mcp_servers"]["other"])
         self.assertFalse(self.manager.profile_path.exists())
@@ -164,10 +174,10 @@ class ImageConfigurationTests(unittest.TestCase):
             pass
         data = tomllib.loads(self.config.read_text(encoding="utf8"))
         self.assertNotIn("mcp_servers", data)
-        self.assertIs(data["tools"]["view_image"], False)
+        self.assertIs(data["features"]["view_image"], False)
         with self.manager.change("native"):
             pass
-        self.assertEqual(tomllib.loads(self.config.read_text(encoding="utf8")), {"model": "test", "tools": {"view_image": True}})
+        self.assertEqual(tomllib.loads(self.config.read_text(encoding="utf8")), {"model": "test"})
 
     def test_failed_mode_transition_restores_disabled_configuration_and_state(self):
         with self.manager.change("disabled"):
@@ -211,7 +221,7 @@ class ImageConfigurationTests(unittest.TestCase):
         self.assertTrue(self.manager.status()["managed_tool_installed"])
         with self.manager.change(False):
             pass
-        self.assertEqual(tomllib.loads(self.config.read_text(encoding="utf8")), {"model": "test", "tools": {"view_image": True}})
+        self.assertEqual(tomllib.loads(self.config.read_text(encoding="utf8")), {"model": "test"})
         self.assertFalse(self.manager.status()["managed_tool_installed"])
 
     def test_failed_enable_rolls_back_both_files(self):
@@ -434,6 +444,72 @@ class ImageDirectoryStartupTests(unittest.TestCase):
                     self.assertEqual(server.status()["image_analysis_mode"], expected)
                     self.assertEqual(server.settings["image_isolation_enabled"], expected == "optimized")
 
+    @staticmethod
+    def legacy_disabled_installation(root):
+        config = root / "config.toml"
+        config.write_text('model="test"\n[features]\njs_repl=false\n', encoding="utf8")
+        directory = root / "data"
+        directory.mkdir()
+        manager = ImageToolConfig(ConfigLink(config, directory / "link.json"), directory,
+                                  lambda: "http://127.0.0.1:9/relay/test")
+        with patch("packet_inspector.image_config.verify_view_image_feature"), patch.object(
+                manager, "native_configuration_stamp", return_value={"build": "old-release"}), manager.change("disabled"):
+            pass
+        document = tomlkit.parse(config.read_text(encoding="utf8"))
+        document["tools"] = {"view_image": False, "web_search": False}
+        config.write_text(tomlkit.dumps(document), encoding="utf8")
+        (directory / "settings.json").write_text(json.dumps({"image_analysis_mode": "disabled"}), encoding="utf8")
+        return config, directory
+
+    def test_startup_cleans_legacy_disabled_configuration_without_enabling_images(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            config, directory = self.legacy_disabled_installation(Path(temporary))
+            with patch("packet_inspector.image_config.verify_view_image_feature"), patch.object(
+                    ImageToolConfig, "native_configuration_stamp", return_value={"build": "new-release"}), fixtures.InspectorServer(
+                    ("127.0.0.1", 0), directory, config, "http://127.0.0.1:9/v1") as server:
+                data = tomllib.loads(config.read_text(encoding="utf8"))
+                self.assertEqual(data["tools"], {"web_search": False})
+                self.assertIs(data["features"]["view_image"], False)
+                self.assertIs(data["features"]["js_repl"], False)
+                self.assertNotIn("mcp_servers", data)
+                self.assertEqual(server.status()["image_analysis_mode"], "disabled")
+                self.assertFalse(server.image_config.installation.directory.exists())
+
+    def test_failed_startup_probe_preserves_configuration_and_keeps_the_relay_running(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            config, directory = self.legacy_disabled_installation(Path(temporary))
+            original = config.read_bytes()
+            state = (directory / "image-tool.json").read_bytes()
+            with patch("packet_inspector.image_config.verify_view_image_feature",
+                    side_effect=ValueError("native capability unavailable")), patch.object(
+                    ImageToolConfig, "native_configuration_stamp", return_value={"build": "new-release"}), fixtures.InspectorServer(
+                    ("127.0.0.1", 0), directory, config, "http://127.0.0.1:9/v1") as server:
+                self.assertEqual(config.read_bytes(), original)
+                self.assertEqual((directory / "image-tool.json").read_bytes(), state)
+                self.assertEqual(server.status()["image_analysis_mode"], "disabled")
+                self.assertEqual(server.image_config.installation_error, "native capability unavailable")
+
+    def test_disabled_mode_checks_once_per_software_or_core_upgrade(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            config, directory = self.legacy_disabled_installation(Path(temporary))
+            stamps = [{"build": "new-release", "runtime": "core-1"}] * 2
+            stamps += [{"build": "next-release", "runtime": "core-1"}] * 2
+            stamps += [{"build": "next-release", "runtime": "core-2"}] * 2
+            with patch("packet_inspector.image_config.verify_view_image_feature") as probe, patch.object(
+                    ImageToolConfig, "native_configuration_stamp") as stamp:
+                state_before = None
+                for index, identity in enumerate(stamps):
+                    stamp.return_value = identity
+                    with fixtures.InspectorServer(("127.0.0.1", 0), directory, config,
+                                                  "http://127.0.0.1:9/v1") as server:
+                        self.assertEqual(server.settings["image_analysis_mode"], "disabled")
+                        self.assertIs(tomllib.loads(config.read_text(encoding="utf8"))["features"]["view_image"], False)
+                    self.assertEqual(probe.call_count, index // 2 + 1)
+                    state = (directory / "image-tool.json").read_bytes()
+                    if index % 2:
+                        self.assertEqual(state, state_before)
+                    state_before = state
+
     def test_saved_image_directory_survives_server_restart(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -564,6 +640,12 @@ class ImageRewriteTests(unittest.TestCase):
 class ImageRelayTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        probe = patch("packet_inspector.image_config.verify_view_image_feature")
+        probe.start()
+        cls.addClassCleanup(probe.stop)
+        stamp = patch.object(ImageToolConfig, "native_configuration_stamp", return_value={"build": "fixture"})
+        stamp.start()
+        cls.addClassCleanup(stamp.stop)
         fixtures.RelayTests.setUpClass.__func__(cls)
         cls.server.save_settings(dict(cls.server.settings))
 
@@ -627,7 +709,7 @@ class ImageRelayTests(unittest.TestCase):
         self.assertEqual(self.up.requests[-1]["body"], raw)
         result = self.enable()
         self.assertTrue(result["image_isolation_enabled"])
-        self.assertIs(tomllib.loads(self.config.read_text(encoding="utf8"))["tools"]["view_image"], False)
+        self.assertIs(tomllib.loads(self.config.read_text(encoding="utf8"))["features"]["view_image"], False)
         self.assertEqual(self.relay(raw)[0], 200)
         outgoing = json.loads(self.up.requests[-1]["body"])
         self.assertEqual(outgoing["input"][-1]["content"][1]["type"], "input_text")

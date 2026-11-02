@@ -14,6 +14,8 @@ from .config_link import ConfigLink
 from .locking import file_lock
 from .image_tool_install import ImageToolInstallation
 from .codex_runtime import find_codex_cli
+from .image_capabilities import image_runtime_identity, verify_view_image_feature
+from .build_info import build_info
 
 TOOL_SERVER = "isolated_vision"
 VISION_PROVIDER = "codex_isolated_vision"
@@ -27,6 +29,16 @@ def image_mode(settings):
     if isinstance(mode, str) and mode in IMAGE_MODES:
         return mode
     return "optimized" if settings.get("image_isolation_enabled") is True else "native"
+
+
+def remove_legacy_image_setting(document):
+    """Remove the ignored tools alias without touching other tool settings."""
+    tools = document.get("tools")
+    if tools is None or "view_image" not in tools:
+        return
+    tools.pop("view_image")
+    if not tools:
+        document.pop("tools")
 
 
 def read_configuration(path):
@@ -72,6 +84,16 @@ class ImageToolConfig:
     def mode(self):
         return self.state.get("mode", "optimized" if self.state.get("enabled") else "native")
 
+    def native_configuration_stamp(self):
+        return {"build": build_info().get("source_sha256", "source-image-config-1"),
+                "runtime": image_runtime_identity()}
+
+    def needs_native_refresh(self):
+        if self.state.get("native_capability") != self.native_configuration_stamp():
+            return True
+        _, data, _ = read_configuration(self.link.config)
+        return "view_image" in data.get("tools", {})
+
     def _disable_tools(self, document, data, previous):
         tools = data.get("tools", {})
         features = data.get("features", {})
@@ -82,9 +104,7 @@ class ImageToolConfig:
                     "tools_created": "tools" not in data, "mcp_present": mcp is not None,
                     "mcp_enabled_present": mcp is not None and "enabled" in mcp,
                     "mcp_enabled": mcp.get("enabled") if mcp is not None else None}
-        if "tools" not in document:
-            document["tools"] = tomlkit.table()
-        document["tools"]["view_image"] = False
+        remove_legacy_image_setting(document)
         if "features" not in document:
             document["features"] = tomlkit.table()
         document["features"]["view_image"] = False
@@ -95,8 +115,6 @@ class ImageToolConfig:
 
     def _restore_disabled(self, document, data, previous):
         original = previous["disabled_original"]
-        if data.get("tools", {}).get("view_image") is not False:
-            raise ValueError("原生图片工具配置已被修改，未覆盖用户配置。")
         if "native_feature_present" in original:
             if data.get("features", {}).get("view_image") is not False:
                 raise ValueError("原生图片工具开关已被修改，未覆盖用户配置。")
@@ -113,11 +131,7 @@ class ImageToolConfig:
             target.pop("enabled", None)
             if original["mcp_enabled_present"]:
                 target["enabled"] = original["mcp_enabled"]
-        document["tools"].pop("view_image", None)
-        if original["native_present"]:
-            document["tools"]["view_image"] = original["native"]
-        if original["tools_created"] and not document["tools"]:
-            document.pop("tools")
+        remove_legacy_image_setting(document)
 
     def _save(self, state):
         staging = self.path.with_suffix(".new")
@@ -144,8 +158,9 @@ class ImageToolConfig:
         cli = find_codex_cli((old_tool or {}).get("env", {}).get("CODEX_CLI_PATH"))
         if not cli:
             raise ValueError("未找到 Codex CLI，无法安装独立图片工具。请先安装或打开 Codex 桌面版，或安装 Codex CLI 后重试。")
+        verify_view_image_feature(cli)
         registration = self.installation.install(cli) if old_tool is None else None
-        fields = [("tools", "view_image"), ("features", "view_image")]
+        fields = [("features", "view_image")]
         if TOOL_SERVER not in data.get("mcp_servers", {}):
             fields.append(("mcp_servers", TOOL_SERVER))
         originals = []
@@ -154,7 +169,7 @@ class ImageToolConfig:
             originals.append({"table": table, "name": name, "present": name in values, "value": values.get(name)})
             if table not in document:
                 document[table] = tomlkit.table()
-        document["tools"]["view_image"] = False
+        remove_legacy_image_setting(document)
         document["features"]["view_image"] = False
         if old_tool is None:
             document["mcp_servers"][TOOL_SERVER] = registration
@@ -177,13 +192,14 @@ class ImageToolConfig:
         before, data, config_raw = read_configuration(self.link.config)
         current = data.get("mcp_servers", {}).get(TOOL_SERVER)
         managed = self.state.get("managed_mcp")
+        legacy_setting = "view_image" in data.get("tools", {})
         adopted = not managed and self.installation.matches(current)
         feature_owned = any(v["table"] == "features" and v["name"] == "view_image"
                             for v in self.state.get("originals", []))
         if feature_owned and data.get("features", {}).get("view_image") is not False:
             raise ValueError("原生图片工具开关已被修改，未覆盖用户配置。")
         manage_registration = bool(managed or adopted)
-        if not manage_registration and feature_owned:
+        if not manage_registration and feature_owned and not legacy_setting:
             return False
         if managed and current != managed:
             raise ValueError("独立图片工具注册已被修改，未覆盖用户配置。")
@@ -196,9 +212,10 @@ class ImageToolConfig:
                 raise ValueError("未找到 Codex CLI，无法更新独立图片工具。请先安装或打开 Codex 桌面版后重试。")
             registration = self.installation.install(cli)
         if (managed == registration and self.state.get("schema_version") == 5
-                and self.state.get("cli") == str(cli) and feature_owned):
+                and self.state.get("cli") == str(cli) and feature_owned and not legacy_setting):
             return False
         document = tomlkit.parse(before)
+        remove_legacy_image_setting(document)
         if manage_registration:
             document["mcp_servers"][TOOL_SERVER] = registration
         previous = deepcopy(self.state)
@@ -241,15 +258,13 @@ class ImageToolConfig:
     def _disable(self, document, data, profile_document, profile_data, previous):
         if previous.get("managed_mcp") and data.get("mcp_servers", {}).get(TOOL_SERVER) != previous["managed_mcp"]:
             raise ValueError("独立图片工具注册已被修改，未覆盖用户配置。")
-        if data.get("tools", {}).get("view_image") is not False:
-            raise ValueError("原生图片工具配置已被修改，未覆盖用户配置。")
         if (any(v["table"] == "features" and v["name"] == "view_image" for v in previous["originals"])
                 and data.get("features", {}).get("view_image") is not False):
             raise ValueError("原生图片工具开关已被修改，未覆盖用户配置。")
         for original in previous["originals"]:
             table = original["table"]
-            if table not in {"tools", "features", "mcp_servers"}:
-                continue  # Legacy provider records now belong to connection management.
+            if table not in {"features", "mcp_servers"}:
+                continue  # Retired aliases and connection-owned provider records are not restored.
             if table not in document:
                 document[table] = tomlkit.table()
             target = document[table]
@@ -259,6 +274,7 @@ class ImageToolConfig:
         for table in previous.get("created_tables", []):
             if table in {"tools", "features", "mcp_servers"} and not document.get(table):
                 document.pop(table, None)
+        remove_legacy_image_setting(document)
         profile_updated = tomlkit.dumps(profile_document) if self.profile_path.exists() else None
         if (previous.get("schema_version", 0) >= 5 and previous.get("profile_created")
                 and profile_data == previous.get("managed_profile")):
@@ -272,33 +288,35 @@ class ImageToolConfig:
             mode = "optimized" if mode else "native"
         if not isinstance(mode, str) or mode not in IMAGE_MODES:
             raise ValueError("invalid image analysis mode")
+        capability = self.native_configuration_stamp() if mode != "native" else None
+        if capability is not None and self.state.get("native_capability") != capability:
+            verify_view_image_feature()
         with file_lock(self.directory / "image-tool.lock"), self.installation.transaction():
             previous = deepcopy(self.state)
             previous_mode = self.mode()
+            before, data, config_before = read_configuration(self.link.config)
             if previous_mode == mode == "native":
-                _, data, _ = read_configuration(self.link.config)
-                if (data.get("tools", {}).get("view_image") is not False
+                if ("view_image" not in data.get("tools", {})
                         and data.get("features", {}).get("view_image") is not False
                         and not self.installation.manifest.exists()):
                     yield False
                     return
             if (previous_mode == mode and mode != "native"
-                    and (mode != "disabled" or "native_feature_present" in previous.get("disabled_original", {}))):
-                if mode == "optimized":
-                    _, data, _ = read_configuration(self.link.config)
-                    _, profile_data, _ = read_configuration(self.profile_path)
-                    if data.get("tools", {}).get("view_image") is not False:
-                        raise ValueError("图片工具配置已被修改，请先检查 Codex 配置。")
-                elif mode == "disabled":
-                    before, data, _ = read_configuration(self.link.config)
+                    and (mode != "disabled" or ("native_feature_present" in previous.get("disabled_original", {})
+                                                and "view_image" not in data.get("tools", {})))):
+                if mode == "disabled":
                     self._restore_disabled(tomlkit.parse(before), data, previous)
                 config_raw = self.link.config.read_bytes() if self.link.config.exists() else None
                 state_raw = self.path.read_bytes() if self.path.exists() else None
-                changed = False
+                changed = state_saved = False
                 applied = None
                 try:
                     changed = self._refresh_managed_tool() if mode == "optimized" else False
                     applied = self.link.config.read_bytes() if self.link.config.exists() else None
+                    if self.state.get("native_capability") != capability:
+                        candidate = {**self.state, "native_capability": capability}
+                        self._save(candidate)
+                        state_saved = True
                     self.installation_error = ""
                     yield changed
                 except BaseException:
@@ -306,11 +324,11 @@ class ImageToolConfig:
                         if self.link.config.read_bytes() != applied:
                             raise ValueError("图片工具迁移期间配置被修改，未覆盖用户更改。") from None
                         restore_file(self.link.config, config_raw)
+                    if changed or state_saved:
                         restore_file(self.path, state_raw)
                         self.state = previous
                     raise
                 return
-            before, data, config_before = read_configuration(self.link.config)
             profile_before, profile_data, profile_raw = read_configuration(self.profile_path)
             document, profile_document = tomlkit.parse(before), tomlkit.parse(profile_before)
             profile_updated = profile_before if profile_raw is not None else None
@@ -330,9 +348,7 @@ class ImageToolConfig:
             else:
                 candidate = {**previous, "schema_version": 5, "profile_created": False, "config": str(self.link.config.resolve()),
                              "enabled": False, "mode": "native"}
-                if "tools" not in document:
-                    document["tools"] = tomlkit.table()
-                document["tools"]["view_image"] = True
+                remove_legacy_image_setting(document)
                 if document.get("features", {}).get("view_image") is False:
                     document["features"].pop("view_image")
                     if not document["features"]:
@@ -352,6 +368,8 @@ class ImageToolConfig:
                     profile_written = True
                 if mode == "optimized":
                     self._validate(candidate)
+                if capability is not None:
+                    candidate["native_capability"] = capability
                 self._save(candidate)
                 self.installation_error = ""
                 if mode != "optimized":
