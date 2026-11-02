@@ -76,8 +76,21 @@ class Upgrade:
             # UI messages stay in memory until the commit/error record. Avoid
             # rewriting the shared result file for every line of progress.
             if self.completed_steps == self.total_steps:
-                atomic_json(self.data_dir / "upgrade-result.json", self.journal)
+                self._save_journal()
         self.progress(message)
+
+    def _save_journal(self):
+        # Existing services can read this file without FILE_SHARE_DELETE.
+        # Windows then briefly denies atomic replacement. Bound the wait to
+        # half a second; other errors retain their original failure semantics.
+        for attempt in range(5):
+            try:
+                atomic_json(self.data_dir / "upgrade-result.json", self.journal)
+                return
+            except PermissionError as exc:
+                if os.name != "nt" or getattr(exc, "winerror", None) not in {5, 32, 33} or attempt == 4:
+                    raise
+                time.sleep(.05 * (attempt + 1))
 
     def _wait_worker(self, identity, seconds=STARTUP_SECONDS):
         def ready():
@@ -523,7 +536,7 @@ class Upgrade:
         self.data_dir.mkdir(parents=True, exist_ok=True)
         with file_lock(self.data_dir / "upgrade.lock", blocking=False):
             self.journal = {"state": "running", "started": time.time(), "phases": []}
-            atomic_json(self.data_dir / "upgrade-result.json", self.journal)
+            self._save_journal()
             result = None
             try:
                 result = self._run()
@@ -543,7 +556,7 @@ class Upgrade:
                     except (OSError, ValueError, TypeError):
                         result["runtime_refresh_warning"] = True
                 self.journal.update(result)
-                atomic_json(self.data_dir / "upgrade-result.json", self.journal)
+                self._save_journal()
                 self._stage("cleanup", "正在清理旧版本文件，服务已正常运行…")
                 from .upgrade_cleanup import cleanup_versions
                 try:
@@ -563,7 +576,7 @@ class Upgrade:
                     if self.journal["phases"]:
                         self.journal["phases"][-1].update(state="failed", finished=time.time())
                     try:
-                        atomic_json(self.data_dir / "upgrade-result.json", self.journal)
+                        self._save_journal()
                     except OSError:
                         pass
                     raise
@@ -571,7 +584,7 @@ class Upgrade:
                 self.journal.update(result, finished=time.time(), completed_steps=self.total_steps)
                 self.completed_steps = self.total_steps
                 try:
-                    atomic_json(self.data_dir / "upgrade-result.json", self.journal)
+                    self._save_journal()
                 except OSError:
                     pass
                 self.progress("升级完成，部分收尾操作未完成。")
