@@ -24,6 +24,7 @@ from .http_io import discard_small_body
 from .exit_flow import ExitError, ExitRequests, perform_exit
 from .service_restart import RestartRequests, perform_restart
 from .storage_paths import resolve_directory
+from .request_context import local_image_path
 
 UI_DIR = Path(__file__).with_name("ui")
 UI_FILES = {"/": ("index.html", "text/html; charset=utf-8"),
@@ -50,6 +51,22 @@ def open_directory(value):
         raise ValueError("当前系统不支持打开目录。")
     opener(str(directory), "explore")
     return str(directory)
+
+
+def open_image(value):
+    value = local_image_path(value)
+    if value is None or not Path(value).is_absolute():
+        raise ValueError("请选择有效的本地图片路径。")
+    image = Path(value).resolve()
+    if local_image_path(str(image)) is None:
+        raise ValueError("请选择有效的本地图片路径。")
+    if not image.is_file():
+        raise ValueError("图片不存在。")
+    opener = getattr(os, "startfile", None)
+    if not callable(opener):
+        raise ValueError("当前系统不支持查看图片。")
+    opener(str(image), "open")
+    return str(image)
 
 
 def window_geometry(ui_dir=None):
@@ -299,7 +316,7 @@ class UIHandler(BaseHTTPRequestHandler):
         except (OSError, http.client.HTTPException):
             self._json(503, {"error": "入口端口配置暂不可用。"})
 
-    def _open_directory(self):
+    def _open_path(self, opener, failure_message):
         try:
             length = int(self.headers.get("Content-Length", "0"))
             if self.headers.get("Transfer-Encoding") or not 0 < length <= 8192:
@@ -310,12 +327,12 @@ class UIHandler(BaseHTTPRequestHandler):
             data = json.loads(raw)
             if not isinstance(data, dict):
                 raise ValueError("invalid_ui_request_body")
-            directory = open_directory(data.get("path"))
-            self._json(200, {"opened": True, "path": directory})
+            path = opener(data.get("path"))
+            self._json(200, {"opened": True, "path": path})
         except (ValueError, TypeError) as exc:
             self._json(400, {"error": str(exc)})
         except OSError:
-            self._json(503, {"error": "无法打开目录，请检查路径和权限。"})
+            self._json(503, {"error": failure_message})
 
     def _updates(self):
         try:
@@ -374,7 +391,10 @@ class UIHandler(BaseHTTPRequestHandler):
             self._service_restart()
             return
         if path == "/api/open-directory" and self.command == "POST":
-            self._open_directory()
+            self._open_path(open_directory, "无法打开目录，请检查路径和权限。")
+            return
+        if path == "/api/open-image" and self.command == "POST":
+            self._open_path(open_image, "无法打开图片，请检查路径和默认图片查看器。")
             return
         if path == "/api/updates" and self.command in {"GET", "POST"}:
             self._updates()
@@ -476,6 +496,7 @@ class UIHandler(BaseHTTPRequestHandler):
                 status["ui_build"] = build_info()
                 status["ui_live_reload"] = self.server.live_reload
                 status["open_directory_supported"] = callable(getattr(os, "startfile", None))
+                status["open_image_supported"] = callable(getattr(os, "startfile", None))
                 status["ui_desktop"] = self.server.exit_requests is not None
                 status["ui_window_opened"] = self.server.window_opened
                 if self.server.exit_requests is not None:

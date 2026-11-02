@@ -240,23 +240,58 @@ class DesktopUITests(unittest.TestCase):
         self.assertFalse(missing.exists())
         self.assertEqual(self.backend.requests, [])
 
-    def test_directory_open_validates_origin_method_and_body_before_opening(self):
-        body = json.dumps({"path": str(self.folder)}).encode()
+    def test_image_open_uses_the_default_viewer_without_reading_or_forwarding(self):
+        image = self.folder / "参考图 & logo.PNG"
+        image.touch()
         with patch("packet_inspector.desktop_ui.os.startfile", create=True) as opener:
-            self.assertEqual(self.request("/api/open-directory", "POST", body,
-                                          {"Origin": "http://outside.invalid"})[0], 403)
-            self.assertEqual(self.request("/api/open-directory")[0], 404)
-            for invalid in [b"[]", b"{", b"", b"x" * 8193]:
-                self.assertEqual(self.request("/api/open-directory", "POST", invalid)[0], 400)
+            status, body, _ = self.request("/api/open-image", "POST",
+                                           json.dumps({"path": str(image)}).encode())
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body), {"opened": True, "path": str(image.resolve())})
+        opener.assert_called_once_with(str(image.resolve()), "open")
+        self.assertEqual(image.stat().st_size, 0)
+        self.assertEqual(self.backend.requests, [])
+
+    def test_image_open_rejects_non_images_missing_paths_and_invalid_input(self):
+        executable = self.folder / "command.exe"
+        executable.touch()
+        directory = self.folder / "folder.png"
+        directory.mkdir()
+        values = [str(executable), str(directory), str(self.folder / "missing.png"),
+                  "relative/image.png", "https://example.test/image.png", "", None, 42]
+        with patch("packet_inspector.desktop_ui.os.startfile", create=True) as opener:
+            for value in values:
+                with self.subTest(value=value):
+                    status, body, _ = self.request("/api/open-image", "POST",
+                                                   json.dumps({"path": value}).encode())
+                    self.assertEqual(status, 400)
+                    self.assertIn("error", json.loads(body))
             opener.assert_not_called()
         self.assertEqual(self.backend.requests, [])
 
-    def test_directory_open_failure_is_reported_without_forwarding(self):
+    def test_path_open_validates_origin_method_and_body_before_opening(self):
+        image = self.folder / "image.png"
+        image.touch()
+        with patch("packet_inspector.desktop_ui.os.startfile", create=True) as opener:
+            for route, path in [("/api/open-directory", self.folder), ("/api/open-image", image)]:
+                body = json.dumps({"path": str(path)}).encode()
+                self.assertEqual(self.request(route, "POST", body,
+                                              {"Origin": "http://outside.invalid"})[0], 403)
+                self.assertEqual(self.request(route)[0], 404)
+                for invalid in [b"[]", b"{", b"", b"x" * 8193]:
+                    self.assertEqual(self.request(route, "POST", invalid)[0], 400)
+            opener.assert_not_called()
+        self.assertEqual(self.backend.requests, [])
+
+    def test_path_open_failure_is_reported_without_forwarding(self):
+        image = self.folder / "image.png"
+        image.touch()
         with patch("packet_inspector.desktop_ui.os.startfile", side_effect=OSError("unavailable"), create=True):
-            status, body, _ = self.request("/api/open-directory", "POST",
-                                           json.dumps({"path": str(self.folder)}).encode())
-        self.assertEqual(status, 503)
-        self.assertEqual(json.loads(body), {"error": "无法打开目录，请检查路径和权限。"})
+            for route, path, error in [("/api/open-directory", self.folder, "无法打开目录，请检查路径和权限。"),
+                                       ("/api/open-image", image, "无法打开图片，请检查路径和默认图片查看器。")]:
+                status, body, _ = self.request(route, "POST", json.dumps({"path": str(path)}).encode())
+                self.assertEqual(status, 503)
+                self.assertEqual(json.loads(body), {"error": error})
         self.assertEqual(self.backend.requests, [])
 
     def test_directory_open_capability_comes_from_the_desktop_and_supports_legacy_relays(self):
@@ -264,9 +299,11 @@ class DesktopUITests(unittest.TestCase):
             status, body, _ = self.request("/api/status")
         self.assertEqual(status, 200)
         self.assertTrue(json.loads(body)["open_directory_supported"])
+        self.assertTrue(json.loads(body)["open_image_supported"])
         self.assertEqual(json.loads(body)["version"], "0.2.0")
         with patch("packet_inspector.desktop_ui.os.startfile", None, create=True):
             self.assertFalse(json.loads(self.request("/api/status")[1])["open_directory_supported"])
+            self.assertFalse(json.loads(self.request("/api/status")[1])["open_image_supported"])
             status, _, _ = self.request("/api/open-directory", "POST",
                                         json.dumps({"path": str(self.folder)}).encode())
         self.assertEqual(status, 400)

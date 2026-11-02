@@ -102,6 +102,14 @@ class ImageClassificationTests(unittest.TestCase):
                                 text=True, encoding="utf-8", timeout=15)
         self.assertEqual(result.returncode, 0, result.stdout+result.stderr)
 
+    @unittest.skipUnless(shutil.which("node"), "Node.js is required for UI behavior checks")
+    def test_image_info_opens_the_displayed_folder_and_image_without_duplicate_actions(self):
+        result = subprocess.run(["node", str(Path(__file__).with_name("image_info.cjs"))],
+                                cwd=Path(__file__).resolve().parents[1], capture_output=True,
+                                text=True, encoding="utf-8", timeout=15)
+        self.assertEqual(result.returncode, 0, result.stdout+result.stderr)
+        self.assertIn("image info actions passed", result.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()
