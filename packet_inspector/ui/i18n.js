@@ -126,6 +126,7 @@ const uiI18n = (() => {
     "累计上传":"Total uploaded",
     "累计下载":"Total downloaded",
     "连接次数":"Connections",
+    "最近连接":"Last connected",
     "凭据":"Credential",
     "凭据类型":"Credential type",
     "凭据名称":"Credential name",
