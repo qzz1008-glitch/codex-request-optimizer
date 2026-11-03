@@ -22,7 +22,7 @@ function fixture(connected) {
     state:{status:{profile:{active:connected,can_restore:connected}}},
     compressionSaving:false,settingsSaving:false,settingsOpening:false,settingsEditing:false,
     exitSaving:false,connectSaving:false,connectChecking:false,linkSaving:'',compressionTarget:null,
-    compressionRevision:0,connectSource:'header',connectionResumeSeen:'',connectionResumeRetrying:false,connectionResumeError:'',
+    compressionRevision:0,connectSource:'header',connectionResumeSeen:'',connectionProblemKey:'',
     restartNotices:{connection:(which,result)=>calls.push(['result',which,result]),render(){}},
     $:element,t:value=>value,setText:(el,value)=>{el.textContent=value;},
     uiI18n:{text:(node,value)=>{node.textContent=typeof value==='function'?value():value;}},
@@ -33,10 +33,11 @@ function fixture(connected) {
     applyLinkAction:async action=>{calls.push(['link',action]);context.state.status.profile={active:false,can_restore:false};return {reload_required:true};},
     linkAction:async action=>{calls.push(['link',action]);context.state.status.profile={active:true,can_restore:true};return {reload_required:true};},
     renderStatus(){},renderConnectionActions(){context.renderCompressionMode();},renderConnectPrompt(){},
-    message:value=>calls.push(['message',value]),
+    message:(value,error,diagnostics)=>calls.push(['message',typeof value==='function'?value():value,error,diagnostics]),
     api:async()=>{throw Error('Compression settings must not be used as a connection mode');}
   };
   vm.createContext(context);
+  vm.runInContext(source.slice(source.indexOf('globalThis.InspectorRestartNotice = {'), source.indexOf('\nconst $ =')), context);
   vm.runInContext(source.slice(source.indexOf('function renderCompressionMode()'), source.indexOf('function renderConnectPrompt()')), context);
   vm.runInContext(source.slice(source.indexOf('async function confirmConnection()'), source.indexOf('function renderExitRequest()')), context);
   return {context,element,buttons,calls};
@@ -132,28 +133,39 @@ function fixture(connected) {
   ({context,element,buttons,calls}=fixture(true));
   context.state.status.connection_resume={id:'upgrade-1',state:'complete',result:{reload_required:true,changed:true}};
   context.renderConnectionResume();
-  assert.equal(element('connection-resume-status').textContent,'接入配置已自动同步');
   assert.equal(calls.filter(call=>call[0]==='result').length,1);
-  assert(!html.includes('id="connection-resume-dialog"'),'Automatic results belong in settings');
+  assert.equal(calls.some(call=>call[0]==='message'),false,'Successful automatic synchronization stays quiet');
+  for(const id of ['connection-resume-dialog','connection-resume-status','connection-resume-retry','connection-details'])
+    assert(!html.includes(`id="${id}"`),'Removed manual synchronization controls must not return');
   context.rememberConnectionResume();context.renderConnectionResume();
   assert.equal(calls.filter(call=>call[0]==='result').length,1,'The same event is delivered once');
   context.state.status.connection_resume={id:'upgrade-2',state:'complete',result:{reload_required:true,changed:false}};
   context.renderConnectionResume();
   assert.equal(calls.filter(call=>call[0]==='result').length,1,'Sticky legacy flags must not create new notices');
   context.state.status.connection_resume={id:'upgrade-3',state:'attention',result:{wsl:{warnings:[{distribution:'HCE',reason:'relay_unreachable',detail:'connection refused'}]}}};
+  context.state.status.connection_diagnostics_supported=true;
+  context.state.status.log_dir='C:/fixture/logs';
   context.renderConnectionResume();
-  assert.equal(element('connection-resume-retry').hidden,false);
   assert(calls.filter(call=>call[0]==='result')[1][2].wsl.warnings[0].detail.includes('connection refused'));
-  context.api=async(path)=>{assert.equal(path,'/api/connection/resume');return {id:'retry-1',state:'pending'};};
-  await context.retryConnectionResume();
+  const feedback=calls.find(call=>call[0]==='message');
+  assert(feedback[1].includes('HCE')&&feedback[1].includes('connection refused')&&feedback[1].includes('C:/fixture/logs'));
+  assert.equal(feedback[2],true,'Persistent failures use the existing error feedback');
+  assert.equal(feedback[3],true,'Supported diagnostic export remains available');
+  assert.equal(element('notice').dataset.feedbackTarget,'app-inline-feedback');
+  context.renderConnectionResume();
+  assert.equal(calls.filter(call=>call[0]==='message').length,1,'The same failure must not repeat feedback');
+  context.state.status.connection_resume={id:'retry-1',state:'pending'};
+  context.renderConnectionResume();
   context.renderCompressionMode();
   assert(buttons.every(button=>button.disabled),'Wait for the automatic synchronization before changing connection mode');
+  assert.equal(element('notice').hidden,true,'Automatic recovery clears stale failure feedback');
+  context.state.status.connection_resume={id:'retry-1',state:'recovering',attempt:2,error:'Temporary sync failure'};
+  context.renderConnectionResume();
+  assert.equal(calls.filter(call=>call[0]==='message').length,1,'Temporary automatic retries stay quiet');
   context.state.status.connection_resume={id:'retry-1',state:'complete',result:{reload_required:false}};
   context.renderConnectionResume();
-  assert.equal(element('connection-resume-status').textContent,'接入配置已自动同步');
-  assert.equal(element('connection-resume-retry').hidden,true,'A successful retry leaves no stale error or loading state');
-  context.api=async()=>{throw Error('Synthetic retry failure');};
-  await context.retryConnectionResume();
-  assert.equal(element('connection-resume-status').textContent,'Synthetic retry failure');
+  assert.equal(element('notice').hidden,true,'A successful retry leaves no stale failure feedback');
+  assert.equal(element('notice').dataset.connectionIssue,undefined);
+  assert.equal(calls.filter(call=>call[0]==='message').length,1,'A successful retry creates no success banner');
   console.log('Connection controls: manual confirmations and automatic upgrade synchronization covered.');
 })().catch(error=>{console.error(error);process.exitCode=1;});
