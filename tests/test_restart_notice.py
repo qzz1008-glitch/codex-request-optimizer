@@ -106,8 +106,11 @@ class RestartNoticeApiTests(unittest.TestCase):
     stop_server = entry_tests.EntryPortTests.stop_server
 
     def setUp(self):
+        # Network probes have their own suite. Do not let a detached diagnostic
+        # writer outlive this reminder-only API fixture and its SQLite files.
         for name, value in (("packet_inspector.wsl_connection.LocalWsl.running", []),
-                            ("packet_inspector.server.repair_loopback_proxy", {"changed": False})):
+                            ("packet_inspector.server.repair_loopback_proxy", {"changed": False}),
+                            ("packet_inspector.network_diagnostics.NetworkDiagnostics.connection", None)):
             mock = patch(name, return_value=value)
             mock.start()
             self.addCleanup(mock.stop)
