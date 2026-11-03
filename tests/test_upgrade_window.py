@@ -8,6 +8,7 @@ import threading
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
+from packet_inspector.sharing_upgrade import CANCELLED_EXIT, UpgradeCancelled
 
 try:
     import tkinter as tk
@@ -33,6 +34,79 @@ def exists(window):
 
 
 class UpgradeWindowTests(unittest.TestCase):
+    def test_confirmation_requires_an_explicit_choice_and_close_means_not_now(self):
+        view = UpgradeWindow(self.window, 9)
+        decision = Mock()
+        with patch.object(view, "show"):
+            view.request_confirmation(decision)
+            self.assertEqual(view.state, "confirming")
+            decision.assert_not_called()
+            self.assertEqual(view.cancel_button.cget("text"), "暂不升级")
+            self.assertEqual(view.confirm_button.cget("text"), "暂停服务并升级")
+            view.close()
+            self.assertEqual(view.state, "running")
+            self.assertTrue(exists(self.window))
+            decision.assert_called_once_with(False)
+            view.decide_confirmation(True)
+            self.assertEqual(decision.call_count, 1)
+
+    def test_worker_waits_for_main_thread_confirmation_and_does_not_open_app_on_cancel(self):
+        self.window.destroy()  # This runner owns its own Tk root and main loop.
+        for approved in (False, True):
+            with self.subTest(approved=approved), tempfile.TemporaryDirectory() as name:
+                root = Path(name)
+                engine = SimpleNamespace(data_dir=root, payload=root, total_steps=9, completed_steps=0, _open_window=Mock())
+                mutations = []
+                def work():
+                    if not engine.confirm_interruption({"roles": ["quota_out"]}):
+                        raise UpgradeCancelled("已暂不升级，现有服务保持运行。")
+                    mutations.append("pause-and-update")
+                    engine.completed_steps = 9
+                engine.run = work
+                request, finish, cancelled = UpgradeWindow.request_confirmation, UpgradeWindow.finish, UpgradeWindow.cancelled
+                def show_question(view, callback):
+                    self.assertIs(threading.current_thread(), threading.main_thread())
+                    self.assertEqual(mutations, [])
+                    request(view, callback)
+                    view.window.after(1, lambda: view.decide_confirmation(approved))
+                def done(view, success, detail):
+                    finish(view, success, detail)
+                    view.window.after(1, view.close)
+                def postpone(view, detail):
+                    self.assertIs(threading.current_thread(), threading.main_thread())
+                    cancelled(view, detail)
+                    self.assertEqual(view.heading.cget("text"), "已暂不升级")
+                    view.window.after(1, view.close)
+                with patch.object(UpgradeWindow, "show", lambda _view: None), \
+                     patch.object(UpgradeWindow, "request_confirmation", show_question), \
+                     patch.object(UpgradeWindow, "finish", done), \
+                     patch.object(UpgradeWindow, "cancelled", postpone):
+                    self.assertEqual(run_upgrade_window(engine, open_after=True), 0 if approved else CANCELLED_EXIT)
+                gc.collect()
+                self.assertEqual(mutations, ["pause-and-update"] if approved else [])
+                self.assertEqual(engine._open_window.call_count, int(approved))
+
+    def test_destroying_pending_confirmation_releases_the_waiting_worker_without_approval(self):
+        self.window.destroy()
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            completed, approvals = threading.Event(), []
+            engine = SimpleNamespace(data_dir=root, payload=root, total_steps=9, completed_steps=0)
+            def work():
+                approvals.append(engine.confirm_interruption({"roles": ["network_out"]}))
+                completed.set()
+                raise UpgradeCancelled("已暂不升级，现有服务保持运行。")
+            engine.run = work
+            request = UpgradeWindow.request_confirmation
+            def question(view, callback):
+                request(view, callback)
+                view.window.after(1, view.window.destroy)
+            with patch.object(UpgradeWindow, "show", lambda _view: None), patch.object(UpgradeWindow, "request_confirmation", question):
+                run_upgrade_window(engine)
+            self.assertTrue(completed.wait(2))
+            self.assertEqual(approvals, [False])
+            gc.collect()
+
     def setUp(self):
         self.window = hidden_window()
         self.addCleanup(self.destroy)
@@ -148,6 +222,14 @@ class UpgradeWindowTests(unittest.TestCase):
                     title = "Codex Request Optimizer" if language == "en" else "Codex请求优化器"
                     self.assertEqual(view.chrome.title_label.cget("text"), title)
                     self.assertLessEqual(view.chrome.title_label.winfo_reqwidth() + view.u(92), view.u(536))
+                    with patch.object(view, "show"):
+                        view.request_confirmation(Mock())
+                        self.window.update_idletasks()
+                        self.assertLessEqual(view.heading.winfo_reqwidth() + view.u(12) + view.version_label.master.winfo_reqwidth(), view.u(480))
+                        self.assertLessEqual(view.cancel_button.winfo_reqwidth() + view.confirm_button.winfo_reqwidth(), view.u(480))
+                        self.assertLessEqual(view.confirm_text.winfo_reqwidth(), view.u(480))
+                        self.assertLessEqual(self.window.winfo_reqheight(), view.u(440))
+                        view.decide_confirmation(False)
                     for success in (False, True):
                         view.finish(success, "fixture")
                         self.window.update_idletasks()

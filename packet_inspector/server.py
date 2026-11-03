@@ -199,6 +199,7 @@ class InspectorServer(ThreadingHTTPServer):
         self.worker_id, self.worker_token = worker_id, worker_token
         self.presentation = None
         self.worker_state = "standby" if worker_id else "active"
+        self.upgrade_paused = False
         self.maintenance_guard = threading.RLock()
         self.maintenance_enabled = not bool(worker_id)
         self._startup_step("server.bind")
@@ -386,6 +387,19 @@ class InspectorServer(ThreadingHTTPServer):
                 self.connection_resume.schedule()
             elif action == "maintenance":
                 self.maintenance_enabled = self.worker_state == "active" and bool(data.get("enabled"))
+            elif action == "upgrade_pause":
+                with self.provider_guard, self.guard:
+                    self.upgrade_paused = True
+                    if data.get("release_provider"):
+                        if any(sharing_runtime(self).values()):
+                            raise ValueError("请先暂停共享再归还配置管理权。")
+                        self.sharing.owns_provider_state = False
+            elif action == "upgrade_resume":
+                with self.guard:
+                    if self.worker_state != "active":
+                        raise ValueError("只有当前服务可以恢复转发。")
+                    self.sharing.owns_provider_state = True
+                    self.upgrade_paused = False
             elif action == "sharing_export":
                 return self.sharing_handover.export(data.get("target"))
             elif action == "sharing_stage":
@@ -621,7 +635,7 @@ class InspectorServer(ThreadingHTTPServer):
         except (OSError, sqlite3.Error):
             statistics = {}
         return {"connection_state": connection,
-                "relay_state": "running" if self.worker_state == "active" and not self.upgrade_draining else "switching",
+                "relay_state": "running" if self.worker_state == "active" and not (self.upgrade_draining or self.upgrade_paused) else "switching",
                 "language": self.settings["ui_language"], **statistics}
 
     def status(self):
@@ -934,10 +948,10 @@ class Handler(BaseHTTPRequestHandler):
                         else:
                             raise ValueError("invalid credential kind")
                     elif action == "host_resume":
-                        self.server.sharing.ensure_service()
+                        self.server.sharing.ensure_service(**{key: data[key] for key in ("address", "port") if key in data})
                         result = self.server.sharing.status()
                     elif action == "egress_resume":
-                        self.server.egress.ensure_service()
+                        self.server.egress.ensure_service(**{key: data[key] for key in ("address", "port") if key in data})
                         result = self.server.sharing.status()
                     elif action == "host_start":
                         if "token_limit" in data:
@@ -1263,7 +1277,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def _relay(self, prefix):
         with self.server.guard:
-            if self.server.upgrade_draining:
+            if self.server.upgrade_draining or self.server.upgrade_paused:
                 self.close_connection = True
                 self._json(503, {"error": "service_upgrading"})
                 return

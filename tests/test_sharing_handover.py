@@ -1,5 +1,6 @@
 """Live TLS streams cross worker switches using isolated fake accounts and exits."""
 import hashlib
+from contextlib import nullcontext
 import http.client
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
@@ -25,6 +26,7 @@ from packet_inspector.server import InspectorServer
 from packet_inspector.sharing import parse_link, pinned_tls_context
 from packet_inspector.sharing_credentials import CLIENT_HEADER, CredentialVault
 from packet_inspector.sharing_handover import prepare_upgrade, finish_upgrade
+from packet_inspector.sharing_upgrade import SharingUpgrade
 from packet_inspector.sharing_role import MachineSharingRole
 from packet_inspector.upgrade import Upgrade
 from tests.test_sharing import DummyAuthorization, free_port
@@ -205,7 +207,7 @@ class SharingHandoverTests(unittest.TestCase):
         self.assertIn(b'"response.completed"', response.read())
         self.assertEqual(self.bodies.count(b'"held"'), 2)
 
-    def full_upgrade(self):
+    def full_upgrade(self, *, interrupt=False):
         payload = self.root / "payload"
         payload.mkdir()
         raw = b"synthetic upgrade executable - never launched"
@@ -216,8 +218,77 @@ class SharingHandoverTests(unittest.TestCase):
         engine._start_candidate = Mock(side_effect=lambda *_: setattr(engine, "candidate", self.new.worker_id))
         engine._application_windows = Mock(return_value=[])
         engine._refresh_integration = Mock()
-        result = engine.run()
+        engine.confirm_interruption = Mock(return_value=True)
+        original_status = self.old.status
+        def old_status():
+            return {key: value for key, value in original_status().items() if key != "sharing_handover_protocol"}
+        def source_exit(_plan):
+            self.assertEqual(self.router.state["active"], self.new.worker_id)
+            self.assertTrue(self.new.upgrade_paused)
+            client = http.client.HTTPConnection("127.0.0.1", self.router.port, timeout=5)
+            self.clients.append(client)
+            client.request("POST", "/relay/" + self.old.settings["relay_token"] + "/responses", b'"during interruption"')
+            response = client.getresponse()
+            self.assertEqual(response.status, 503)
+            self.assertEqual(json.loads(response.read())["error"], "service_upgrading")
+            # A real old worker exits here. Keep these in-process fixture
+            # controllers closed without letting later test cleanup reclaim
+            # provider state that now belongs to the replacement worker.
+            self.old.sharing.close()
+            self.old.egress.close()
+            self.old.sharing.owns_provider_state = False
+        with (patch.object(self.old, "status", side_effect=old_status) if interrupt else nullcontext()), \
+             (patch.object(SharingUpgrade, "stop_source", autospec=True, side_effect=source_exit) if interrupt else nullcontext()):
+            result = engine.run()
         self.assertEqual(result["state"], "complete")
+        self.assertEqual(engine.confirm_interruption.call_count, int(interrupt))
+        self.assertFalse(self.new.upgrade_paused)
+
+    def test_confirmed_interruption_preserves_quota_and_network_links_on_custom_ports(self):
+        quota_link = self.share_quota()
+        quota_id = self.old.sharing.host["last_credential_id"]
+        network_link = self.old.egress.start("127.0.0.1", free_port())["link"]
+        network_id = self.old.egress.host["last_credential_id"]
+        self.full_upgrade(interrupt=True)
+        self.assertEqual(self.new.sharing.credential_link(quota_id), quota_link)
+        self.assertEqual(self.new.egress.credential_link(network_id), network_link)
+        self.assertIn(b'"response.completed"', self.quota_request(b'"after interrupted upgrade"').read())
+
+    def test_confirmed_interruption_preserves_borrowed_provider_and_both_selected_credentials(self):
+        peer = self.quota_peer()
+        quota_link = peer.sharing.start_host("127.0.0.1", free_port())["link"]
+        exit_link = peer.egress.start("127.0.0.1", free_port())["link"]
+        self.old.sharing.connect(quota_link, label="quota fixture")
+        self.old.egress.opener_factory = self.new.egress.opener_factory = ExitOpener
+        self.old.egress.select("peer", exit_link, label="network fixture")
+        selected = self.old.sharing.remote["credential_id"], self.old.egress.peer_id
+        before = self.config.read_bytes()
+        self.full_upgrade(interrupt=True)
+        self.assertEqual(self.config.read_bytes(), before)
+        self.assertEqual(self.new.sharing.client_route()["credential_id"], selected[0])
+        self.assertEqual(self.new.egress.peer_id, selected[1])
+        self.assertTrue(self.new.sharing.provider.path.exists())
+
+    def test_interrupted_rollback_candidate_close_does_not_undo_restored_borrowing(self):
+        peer = self.quota_peer()
+        link = peer.sharing.start_host("127.0.0.1", free_port())["link"]
+        self.old.sharing.connect(link, label="quota fixture")
+        before = self.config.read_bytes()
+        plan = SharingUpgrade(self.data, self.old.worker_id, self.old.sharing.status(), Mock())
+        self.new.worker_control({"action": "upgrade_pause"})
+        plan.pause(self.old.worker_id, check=True)
+        self.router.switch(self.new.worker_id, self.old.worker_id)
+        plan.restore(self.new.worker_id)
+        with self.assertRaisesRegex(ValueError, "先暂停共享"):
+            self.new.worker_control({"action": "upgrade_pause", "release_provider": True})
+        plan.pause(self.new.worker_id)
+        self.new.worker_control({"action": "upgrade_pause", "release_provider": True})
+        self.router.switch(self.old.worker_id, self.new.worker_id)
+        plan.restore(self.old.worker_id)
+        self.new.sharing.close()
+        self.new.egress.close()
+        self.assertEqual(self.config.read_bytes(), before)
+        self.assertTrue(self.old.sharing.provider.path.exists())
 
     def test_full_upgrade_preserves_open_shared_and_local_streams_and_settings(self):
         link = self.share_quota()

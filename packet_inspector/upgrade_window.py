@@ -16,6 +16,7 @@ from PIL import Image, ImageDraw, ImageTk
 
 from .app_icon import APP_ICON
 from .upgrade_chrome import UpgradeChrome
+from .sharing_upgrade import CANCELLED_EXIT, UpgradeCancelled
 
 
 COLORS = {"paper": "#ffffff", "ink": "#1e293b", "muted": "#748093",
@@ -25,6 +26,25 @@ ENGLISH = {
     "安装与升级": "Install & update",
     "Codex请求优化器": "Codex Request Optimizer",
     "正在安装更新": "Installing update", "升级已完成": "Update complete", "升级未完成": "Update interrupted",
+    "升级需要短暂停止服务": "A brief service pause is required",
+    "当前运行版本不支持共享无缝交接。升级将短暂停止中转与共享，正在进行或暂停期间发送的请求可能失败。完成后自动恢复共享，保留原设置和凭据。是否继续？": "The running version cannot hand over sharing without interruption. The update will briefly pause the relay and sharing. In-progress requests and requests sent during the pause may fail. Sharing will resume automatically with your settings and credentials preserved. Continue?",
+    "暂停服务并升级": "Pause services & update", "暂不升级": "Not now",
+    "已暂不升级": "Update postponed",
+    "已暂不升级，现有服务保持运行。": "Update postponed. Existing services remain running.",
+    "正在暂停旧版共享，准备切换服务…": "Pausing sharing on the old version before switching services…",
+    "正在切换服务，请稍候…": "Switching services. Please wait…",
+    "正在等待旧请求结束并退出旧版共享服务…": "Waiting for existing requests to finish and the old sharing service to exit…",
+    "正在恢复额度与网络共享…": "Restoring quota and network sharing…",
+    "共享状态已变化，请重新执行升级并确认。": "Sharing settings changed. Start the update again to confirm the new state.",
+    "共享服务已变化，请重新执行升级。": "The sharing service changed. Start the update again.",
+    "无法确认共享监听地址，已保留当前服务。": "The sharing address could not be verified. Existing services were preserved.",
+    "无法确认借入凭据，已保留当前服务。": "The selected borrowing credential could not be verified. Existing services were preserved.",
+    "无法确认待停止的旧版共享进程。": "The old sharing process could not be verified for shutdown.",
+    "旧版共享进程尚未退出，正在恢复服务。": "The old sharing process has not exited. Restoring services.",
+    "共享状态未能完整恢复，请查看升级结果。": "Sharing could not be fully restored. Check the update result.",
+    "无法确认当前共享进程。": "The current sharing process could not be verified.",
+    "共享恢复未完成，请查看升级结果并重新开启共享。": "Sharing could not be fully restored. Check the update result and enable sharing again.",
+    "旧请求尚未结束，已取消切换并恢复原服务，请稍后升级。": "Existing requests are still running. The switch was cancelled and the previous service restored. Try updating later.",
     "校验与准备": "Prepare", "安装新版": "Install", "切换服务": "Switch", "完成": "Finish",
     "新版已就绪。": "The new version is ready.",
     "正在打开新版应用…": "Opening the updated application…",
@@ -145,6 +165,7 @@ class UpgradeWindow:
         self.completed, self.state = 0, "running"
         self.animation_timer, self.pulse = None, 0
         self.bar_fraction, self.bar_key, self.bar_photo = 0.0, None, None
+        self.confirm_callback = None
         self.scale = window.winfo_fpixels("1i") / 96
         self.font = "Segoe UI" if language == "en" else "Microsoft YaHei UI"
         window.title(self.t("Codex请求优化器") + " · " + self.t("安装与升级"))
@@ -178,6 +199,20 @@ class UpgradeWindow:
         self.detail.pack(fill="x")
         self.detail.bind("<Shift-MouseWheel>", self.scroll_log)
         self.detail.bind("<Control-a>", self.select_log)
+        self.confirmation = tk.Frame(body, bg=COLORS["paper"])
+        explanation = "当前运行版本不支持共享无缝交接。升级将短暂停止中转与共享，正在进行或暂停期间发送的请求可能失败。完成后自动恢复共享，保留原设置和凭据。是否继续？"
+        self.confirm_text = self.label(self.confirmation, explanation, size=10)
+        self.confirm_text.configure(wraplength=self.u(480), justify="left")
+        self.confirm_text.pack(fill="x", pady=(self.u(8), self.u(16)))
+        buttons = tk.Frame(self.confirmation, bg=COLORS["paper"])
+        buttons.pack(fill="x", pady=(0, self.u(4)))
+        options = dict(font=(self.font, 10), relief="flat", borderwidth=0, cursor="hand2", padx=self.u(14), pady=self.u(7))
+        self.cancel_button = tk.Button(buttons, text=self.t("暂不升级"), bg=COLORS["soft"], fg=COLORS["ink"],
+                                       command=lambda: self.decide_confirmation(False), **options)
+        self.cancel_button.pack(side="left")
+        self.confirm_button = tk.Button(buttons, text=self.t("暂停服务并升级"), bg=COLORS["accent"], fg="white",
+                                        command=lambda: self.decide_confirmation(True), **options)
+        self.confirm_button.pack(side="right")
         self.bar.bind("<Configure>", lambda _event: self.draw_progress())
         self.bar.bind("<Destroy>", lambda _event: self.stop_animation())
         window.protocol("WM_DELETE_WINDOW", self.close)
@@ -312,8 +347,39 @@ class UpgradeWindow:
             self.set_detail(detail, error=True)
             self.draw_progress()
 
+    def request_confirmation(self, callback):
+        self.state, self.confirm_callback = "confirming", callback
+        self.stop_animation()
+        self.chrome.close_button.set_enabled(True)
+        self.heading.configure(text=self.t("升级需要短暂停止服务"), fg=COLORS["ink"])
+        self.set_detail("")
+        self.confirmation.pack(fill="x")
+        self.show()
+        self.cancel_button.focus_set()
+
+    def decide_confirmation(self, approved):
+        if self.state != "confirming":
+            return
+        callback, self.confirm_callback = self.confirm_callback, None
+        self.state = "running"
+        self.confirmation.pack_forget()
+        self.chrome.close_button.set_enabled(False)
+        self.heading.configure(text=self.t("正在安装更新"), fg=COLORS["muted"])
+        self.animate()
+        self.show()
+        callback(approved)
+
+    def cancelled(self, detail):
+        self.state = "cancelled"
+        self.stop_animation()
+        self.chrome.close_button.set_enabled(True)
+        self.heading.configure(text=self.t("已暂不升级"), fg=COLORS["muted"])
+        self.set_detail(detail)
+
     def close(self):
-        if self.state != "running":
+        if self.state == "confirming":
+            self.decide_confirmation(False)
+        elif self.state != "running":
             self.window.destroy()
 
 
@@ -329,9 +395,44 @@ def run_upgrade_window(engine, *, open_after=False):
     view = UpgradeWindow(window, engine.total_steps, *window_metadata(engine))
     events = queue.Queue()
     engine.progress = lambda message: events.put(("progress", engine.completed_steps, message))
+    pending, pending_guard, closed = set(), threading.Lock(), threading.Event()
+    refresh_timer = None
+    def release_pending(event=None):
+        if event is not None and event.widget is not window:
+            return
+        if refresh_timer is not None:
+            try:
+                window.after_cancel(refresh_timer)
+            except tk.TclError:
+                pass
+        with pending_guard:
+            closed.set()
+            unresolved = tuple(pending)
+        for resolve in unresolved:
+            resolve(False)
+    window.bind("<Destroy>", release_pending, add="+")
+    def confirm(_summary):
+        answer, decision = threading.Event(), []
+        def resolve(approved):
+            if not answer.is_set():
+                decision.append(approved)
+                answer.set()
+        with pending_guard:
+            if closed.is_set():
+                return False
+            pending.add(resolve)
+        events.put(("confirmation", resolve, ""))
+        answer.wait()
+        with pending_guard:
+            pending.discard(resolve)
+        return decision[0]
+    engine.confirm_interruption = confirm
     def work():
         try:
             engine.run()
+        except UpgradeCancelled as exc:
+            events.put(("cancelled", 0, str(exc)))
+            return
         except Exception as exc:
             events.put(("failed", 0, str(exc)))
             return
@@ -348,6 +449,8 @@ def run_upgrade_window(engine, *, open_after=False):
                      else "升级完成，部分收尾操作未完成。") if warning
                     else "正在打开新版应用…" if open_after else ""))
     def refresh():
+        nonlocal refresh_timer
+        refresh_timer = None
         while True:
             try:
                 state, completed, message = events.get_nowait()
@@ -355,6 +458,11 @@ def run_upgrade_window(engine, *, open_after=False):
                 break
             if state == "progress":
                 view.update_progress(completed, message)
+            elif state == "confirmation":
+                view.request_confirmation(completed)
+            elif state == "cancelled":
+                view.cancelled(message)
+                return
             else:
                 view.finish(state != "failed", "" if state == "open_failed" else message)
                 if state == "open_failed":
@@ -362,9 +470,12 @@ def run_upgrade_window(engine, *, open_after=False):
                 if state == "complete" and open_after:
                     window.after(800, window.destroy)
                 return
-        window.after(100, refresh)
+        refresh_timer = window.after(100, refresh)
     view.show()
     threading.Thread(target=work, name="application-upgrade", daemon=True).start()
     refresh()
-    window.mainloop()
-    return 0 if view.state == "complete" else 1
+    try:
+        window.mainloop()
+    finally:
+        release_pending()
+    return CANCELLED_EXIT if view.state == "cancelled" else 0 if view.state == "complete" else 1
