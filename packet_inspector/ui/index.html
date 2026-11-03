@@ -36,7 +36,6 @@
       <div class="sidebar-title sessions-title"><h1>会话</h1><input id="session-search" class="session-search" type="search" placeholder="搜索会话" aria-label="搜索会话名称或 session_id" autocomplete="off" spellcheck="false"></div>
       <nav id="session-list" class="session-list" aria-label="选择 session_id"></nav>
       <p id="session-metadata-note" class="session-metadata-note muted" hidden>会话信息暂时不可用，正在重试。</p>
-      <div class="sidebar-footer storage-summary" id="storage-info"><span>—/—</span><span>— 请求</span></div>
     </aside>
     <aside class="sidebar requests-sidebar" aria-label="请求记录">
       <div class="sidebar-title"><h1>请求记录</h1><span id="record-count">0</span></div>
@@ -131,7 +130,10 @@
       <div class="sharing-inline-footer"><div class="sharing-inline-actions"><button id="sharing-inline-cancel" type="button">取消</button><button id="sharing-inline-save" class="primary" type="submit">保存</button></div></div>
     </form>
   </main>
-  <footer id="app-inline-feedback" class="inline-feedback app-inline-feedback" data-feedback-inline role="status" aria-live="polite"></footer>
+  <footer class="app-footer">
+    <div id="app-inline-feedback" class="inline-feedback app-inline-feedback" data-feedback-inline role="status" aria-live="polite"></div>
+    <div id="storage-info" class="storage-summary"><span>—/—</span><span>— 请求</span></div>
+  </footer>
   <dialog id="quota-reference-dialog" aria-labelledby="quota-reference-title">
     <form method="dialog">
       <header class="quota-reference-heading"><h2 id="quota-reference-title">额度换算参考</h2><button type="submit" aria-label="关闭" autofocus>×</button></header>

@@ -202,7 +202,7 @@ code.session-id{font-family:Consolas,"Cascadia Mono",monospace;font-size:11px;wo
 .requests-sidebar{position:relative;height:auto;max-height:none;min-height:0;border-bottom:0;gap:var(--records-heading-gap);padding:var(--view-inset)}
 .requests-sidebar .packet-list{margin-inline:0}
 .sessions-sidebar .sidebar-footer,.requests-sidebar .sidebar-footer{padding-top:6px;flex-shrink:0}
-.storage-summary{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:4px 10px;font-variant-numeric:tabular-nums}
+.storage-summary{display:flex;align-items:center;flex:none;gap:12px;margin-left:auto;color:var(--muted);font-size:10px;line-height:18px;font-variant-numeric:tabular-nums}
 .storage-summary>span{white-space:nowrap}
 .packet-table{min-width:345px}
 .detail{display:flex;flex-direction:column;min-height:0;padding:var(--view-inset) var(--view-inset) 0;overflow:hidden}
@@ -555,7 +555,8 @@ dialog{width:min(760px,calc(var(--desktop-width) - 80px));max-height:calc(var(--
 .inline-feedback:empty{visibility:hidden}
 .inline-feedback.error{color:var(--danger)}
 .input-invalid,#settings-dialog .context-value:has(.input-invalid){border-color:var(--danger)!important;outline:1px solid var(--danger);outline-offset:0}
-.app-inline-feedback{flex:none;height:18px;padding:0 var(--view-inset,12px);overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.app-footer{display:flex;align-items:center;flex:none;gap:12px;height:18px;padding:0 var(--view-inset,12px)}
+.app-inline-feedback{flex:1;height:18px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 .inline-feedback>p,.inline-feedback .sharing-message{margin:0;padding:0;border:0;background:none}
 /* Keep list feedback at the bottom without reserving an empty footer row. */
 .requests-inline-feedback{position:absolute;z-index:2;inset:auto calc(var(--view-inset) + 11px) calc(var(--view-inset) + 1px) calc(var(--view-inset) + 1px);height:22px;padding:2px 8px;background:var(--panel);border-radius:0 0 6px 6px;box-shadow:0 -1px var(--line);overflow:hidden;white-space:nowrap;text-overflow:ellipsis;pointer-events:none}
