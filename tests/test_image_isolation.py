@@ -9,6 +9,7 @@ import shutil
 import subprocess
 from pathlib import Path
 import tempfile
+import time
 import tomllib
 import unittest
 from unittest.mock import patch
@@ -931,6 +932,30 @@ class ImageRelayTests(unittest.TestCase):
         code, result = self.api("/mcp/image/retired", {"jsonrpc": "2.0", "id": 1, "method": "initialize"})
         self.assertEqual(code, 404)
         self.assertEqual(result["error"], "image_tool_uses_stdio")
+
+    def test_retired_http_image_tool_replies_to_fragmented_request_bodies(self):
+        body = encode({"jsonrpc": "2.0", "id": 1, "method": "initialize"})
+        for chunked in (False, True):
+            with self.subTest(chunked=chunked):
+                connection = http.client.HTTPConnection("127.0.0.1", self.server.port, timeout=5)
+                try:
+                    connection.putrequest("POST", "/mcp/image/retired")
+                    if chunked:
+                        connection.putheader("Transfer-Encoding", "chunked")
+                        payload = f"{len(body):x}\r\n".encode() + body + b"\r\n0\r\n\r\n"
+                    else:
+                        connection.putheader("Content-Length", str(len(body)))
+                        payload = body
+                    connection.endheaders()
+                    # Headers and body need not arrive in the same TCP packet.
+                    for offset in range(0, len(payload), 16):
+                        connection.send(payload[offset:offset + 16])
+                        time.sleep(.01)
+                    response = connection.getresponse()
+                    self.assertEqual(response.status, 404)
+                    self.assertEqual(json.loads(response.read())["error"], "image_tool_uses_stdio")
+                finally:
+                    connection.close()
 
 
 if __name__ == "__main__":

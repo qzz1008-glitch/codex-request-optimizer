@@ -836,6 +836,13 @@ class Handler(BaseHTTPRequestHandler):
             return
         relay_prefix = "/relay/" + self.server.settings["relay_token"]
         if path.startswith("/mcp/image/"):
+            # Closing over an unread POST can reset the TCP connection on
+            # Windows and hide the retirement response from older clients.
+            try:
+                self.connection.settimeout(2)
+                self._body(64 * 1024)
+            except (OSError, ValueError):
+                pass
             self._json(404, {"error": "image_tool_uses_stdio"})
             return
         if path.startswith(relay_prefix + "/"):
