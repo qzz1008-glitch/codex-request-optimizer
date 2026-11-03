@@ -15,14 +15,14 @@ from .analyzer import JsonBytes, decode_body, encode
 from .clipboard_images import ClipboardImageCache, rewrite_clipboard_text
 from .overflow import encode_changed_info
 from .locking import file_lock
-from .request_context import request_image_paths, request_session_context, temporary_request_kind
+from .request_context import request_image_paths, temporary_request_kind
 
 
 def is_analysis_request(raw, headers):
-    """Recognize explicit image-analysis metadata and older tool prompts."""
+    """Recognize our independent tool's explicit prompt, without provider identity."""
     try:
         encoding = headers.get("Content-Encoding", headers.get("content-encoding", "identity"))
-        return request_session_context(json.loads(decode_body(raw, encoding)), headers).get("session_kind") == "image_analysis"
+        return temporary_request_kind(json.loads(decode_body(raw, encoding))) == "image_analysis"
     except Exception:
         return False  # Forwarding/preparation owns malformed-body handling.
 

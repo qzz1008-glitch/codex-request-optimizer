@@ -1,5 +1,6 @@
 """Independent image tool installation, migration and stdio contract checks."""
 from copy import deepcopy
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -172,29 +173,60 @@ class ToolMigrationTests(unittest.TestCase):
         self.assertEqual(note.read_text(encoding="utf8"), "keep")
         self.assertFalse((note.parent / "server.ps1").exists())
 
-    def test_upgrade_adds_native_session_helper_to_an_owned_legacy_installation(self):
+    def install_retired_session_helper(self):
         self.enable()
         installation = self.manager.installation
+        helper = installation.directory / "image_session.ps1"
+        helper.write_text("former native session helper", encoding="utf8")
         state = json.loads(installation.manifest.read_text(encoding="utf8"))
-        state["files"].pop("image_session.ps1")
-        (installation.directory / "image_session.ps1").unlink()
+        state["files"][helper.name] = hashlib.sha256(helper.read_bytes()).hexdigest()
         installation.manifest.write_text(json.dumps(state), encoding="utf8")
+        return helper
+
+    def test_refresh_restores_one_shot_tool_and_removes_the_owned_reuse_helper(self):
+        helper = self.install_retired_session_helper()
         with self.manager.change("optimized"):
             pass
-        self.assertTrue((installation.directory / "image_session.ps1").is_file())
-        self.assertIn("image_session.ps1", json.loads(installation.manifest.read_text(encoding="utf8"))["files"])
+        self.assertFalse(helper.exists())
+        self.assertNotIn(helper.name, json.loads(self.manager.installation.manifest.read_text(encoding="utf8"))["files"])
+        script = (helper.parent / "server.ps1").read_text(encoding="utf8")
+        self.assertIn("'--ephemeral'", script)
+        self.assertNotIn("image_session.ps1", script)
 
-    def test_upgrade_does_not_overwrite_an_unowned_session_helper(self):
-        installation = self.manager.installation
-        installation.install("fake-codex")
-        state = json.loads(installation.manifest.read_text(encoding="utf8"))
-        state["files"].pop("image_session.ps1")
-        installation.manifest.write_text(json.dumps(state), encoding="utf8")
-        helper = installation.directory / "image_session.ps1"
-        helper.write_text("user-owned helper", encoding="utf8")
+    def test_failed_refresh_restores_the_retired_helper_and_manifest(self):
+        helper = self.install_retired_session_helper()
+        manifest = self.manager.installation.manifest.read_bytes()
+        config = self.config.read_bytes()
+        with self.assertRaisesRegex(RuntimeError, "settings failed"):
+            with self.manager.change("optimized"):
+                self.assertFalse(helper.exists())
+                raise RuntimeError("settings failed")
+        self.assertEqual(helper.read_text(encoding="utf8"), "former native session helper")
+        self.assertEqual(self.manager.installation.manifest.read_bytes(), manifest)
+        self.assertEqual(self.config.read_bytes(), config)
+
+    def test_uninstall_removes_only_owned_retired_assets(self):
+        helper = self.install_retired_session_helper()
+        note = helper.parent / "user-note.txt"
+        note.write_text("keep", encoding="utf8")
+        with self.manager.change("native"):
+            pass
+        self.assertFalse(helper.exists())
+        self.assertEqual(note.read_text(encoding="utf8"), "keep")
+
+    def test_unowned_or_edited_session_helper_is_preserved(self):
+        self.enable()
+        helper = self.manager.installation.directory / "image_session.ps1"
+        helper.write_text("user file", encoding="utf8")
+        with self.manager.change("optimized"):
+            pass
+        self.assertEqual(helper.read_text(encoding="utf8"), "user file")
+        helper = self.install_retired_session_helper()
+        helper.write_text("user edit", encoding="utf8")
         with self.assertRaises(ValueError):
-            installation.install("fake-codex")
-        self.assertEqual(helper.read_text(encoding="utf8"), "user-owned helper")
+            with self.manager.change("optimized"):
+                pass
+        self.assertEqual(helper.read_text(encoding="utf8"), "user edit")
 
     def legacy_native_feature(self):
         self.enable()
@@ -460,62 +492,44 @@ $results = @(foreach ($value in @('""" + parent.upper() + """','""" + other + ""
         self.assertEqual(result.returncode, 0, result.stderr[:1000])
         return json.loads(result.stdout)
 
-    @staticmethod
-    def native_stubs():
-        return """
-function Find-CodexCli { return 'fake-codex' }
-$script:ThreadCount = 0
-function Get-ImageHost($Cli) {
-    if (-not $script:FakeHost) {
-        $work=Join-Path ([IO.Path]::GetTempPath()) ('codex-isolated-vision-'+[guid]::NewGuid().ToString('N'))
-        $null=New-Item -ItemType Directory -Path $work
-        $script:FakeHost=@{Work=$work}
-    }
-    return $script:FakeHost
-}
-function Invoke-ImageRpc($HostState,$Method,$Params,$Deadline) {
-    if ($Method -eq 'thread/start') {
-        $script:ThreadCount++
-        $script:ThreadParams=$Params
-        return @{thread=@{id=('thread'+$script:ThreadCount)}}
-    }
-}
-function Invoke-ImageTurn($HostState,$Session,$Instruction) {
-    $script:ObservedUpload=$Session.Upload
-    $script:ObservedInput=$Instruction
-    $Session.Turns++
-    return 'Visible error text'
-}
-"""
-
-    def test_analysis_uses_an_ephemeral_native_thread_and_disables_other_mcp_servers(self):
+    def test_analysis_uses_a_fresh_codex_run_and_cleans_temp_files(self):
         image = self.root / "synthetic.png"
         image.write_bytes(b"synthetic-image-fixture")
         path = str(image).replace("'", "''")
-        report = self.powershell(self.native_stubs() + """
+        report = self.powershell("""
+function Find-CodexCli { return 'fake-codex' }
 function Invoke-ToolProcess($Executable, $Arguments, $TimeoutSeconds, $WorkingDirectory, $InputText) {
-    return @{ExitCode=0;Output='[{"name":"isolated_vision","transport":{"type":"stdio","command":"powershell.exe"}},{"name":"codex_app","transport":{"type":"streamable_http","url":"http://127.0.0.1:9/mcp"}}]'}
+    $script:ObservedWork = $WorkingDirectory
+    if ($Arguments[0] -eq '--profile') {
+        return @{ExitCode=0;Output='[{"name":"isolated_vision","transport":{"type":"stdio","command":"powershell.exe"}},{"name":"codex_app","transport":{"type":"streamable_http","url":"http://127.0.0.1:9/mcp"}}]'}
+    }
+    $script:ObservedArguments = $Arguments
+    $script:ObservedInputText = $InputText
+    $result = $Arguments[[array]::IndexOf($Arguments,'--output-last-message')+1]
+    [IO.File]::WriteAllText($result,'Visible error text',[Text.Encoding]::UTF8)
+    return @{ExitCode=0;Output=''}
 }
 $value = Invoke-ImageAnalysis ([pscustomobject]@{path='""" + path + """';instruction='Read the error'}) '01a15d9a-f5e3-73c1-b4e7-87b3c5db9a3c'
-$override=Get-ImageMcpOverride 'fake-codex' $script:FakeHost.Work
-Remove-ImageWork $script:FakeHost.Work
-@{answer=$value;ephemeral=$script:ThreadParams.ephemeral;image=$script:ObservedUpload;
-  override=$override;prompt=$script:ObservedInput;
-  metadata=$script:ThreadParams.config.responses_api_metadata;
-  cleaned=(-not(Test-Path -LiteralPath $script:FakeHost.Work))} | ConvertTo-Json -Depth 8 -Compress
+$arguments = $script:ObservedArguments
+@{answer=$value;ephemeral=('--ephemeral' -in $arguments);image=$arguments[[array]::IndexOf($arguments,'--image')+1];
+  override=$arguments[[array]::IndexOf($arguments,'-c')+1];
+  prompt=$script:ObservedInputText;stdinPrompt=('-' -in $arguments);
+  metadata=@($arguments | Where-Object {$_ -like 'responses_api_metadata.*'});
+  cleaned=(-not(Test-Path -LiteralPath $script:ObservedWork))} | ConvertTo-Json -Compress
 """)
         self.assertEqual(report["answer"], "Visible error text")
         self.assertTrue(report["ephemeral"])
-        self.assertEqual(report["prompt"], "Read the error")
-        self.assertNotEqual(Path(report["image"]).resolve(), image.resolve())
+        self.assertTrue(report["stdinPrompt"])
+        self.assertIn("\n\nRequest: Read the error", report["prompt"])
+        self.assertEqual(Path(report["image"]).resolve(), image.resolve())
         self.assertTrue(report["cleaned"])
         servers = tomllib.loads(report["override"])["mcp_servers"]
         self.assertEqual(servers, {"isolated_vision": {"enabled": False, "command": "powershell.exe"},
                                    "codex_app": {"enabled": False, "url": "http://127.0.0.1:9/mcp"}})
-        self.assertEqual(report["metadata"], {
-            "codex_inspector_request_kind": "image_analysis", "codex_inspector_image_session": "native",
-            "codex_inspector_image_source_path": str(image.resolve()),
-            "codex_inspector_parent_thread_id": "01a15d9a-f5e3-73c1-b4e7-87b3c5db9a3c"})
+        self.assertEqual(report["metadata"], [
+            'responses_api_metadata.codex_inspector_request_kind="image_analysis"',
+            'responses_api_metadata.codex_inspector_image_source_path=' + json.dumps(str(image.resolve())),
+            'responses_api_metadata.codex_inspector_parent_thread_id="01a15d9a-f5e3-73c1-b4e7-87b3c5db9a3c"'])
         cli = desktop_cli()
         if cli:
             # The listed servers intentionally have no definitions in this home.
@@ -523,7 +537,8 @@ Remove-ImageWork $script:FakeHost.Work
             home = self.root / "native-cli-home"
             home.mkdir()
             (home / "config.toml").write_text("", encoding="utf-8")
-            result = subprocess.run([str(cli), "-c", report["override"], "mcp", "list", "--json"],
+            metadata_arguments = [argument for value in report["metadata"] for argument in ("-c", value)]
+            result = subprocess.run([str(cli), "-c", report["override"], *metadata_arguments, "mcp", "list", "--json"],
                 env={**os.environ, "CODEX_HOME": str(home)}, cwd=home, capture_output=True,
                 text=True, encoding="utf-8", timeout=10, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
             self.assertEqual(result.returncode, 0, result.stderr[:700])
@@ -536,113 +551,34 @@ Remove-ImageWork $script:FakeHost.Work
         with image.open("wb") as fixture:
             fixture.truncate(409601)
         path = str(image).replace("'", "''")
-        report = self.powershell(self.native_stubs() + """
+        report = self.powershell("""
+function Find-CodexCli { return 'fake-codex' }
 function Invoke-ToolProcess($Executable, $Arguments, $TimeoutSeconds, $WorkingDirectory, $InputText) {
+    if ($Arguments[0] -eq '--profile') { return @{ExitCode=0;Output='[]'} }
     if ('-OutputPath' -in $Arguments) {
         $target = $Arguments[[array]::IndexOf($Arguments,'-OutputPath')+1]
         [IO.File]::WriteAllText($target,'synthetic compressed fixture')
         return @{ExitCode=0;Output=''}
     }
+    $script:ObservedArguments = $Arguments
+    $result = $Arguments[[array]::IndexOf($Arguments,'--output-last-message')+1]
+    [IO.File]::WriteAllText($result,'Analysis completed')
+    return @{ExitCode=0;Output=''}
 }
 $answer = Invoke-ImageAnalysis ([pscustomobject]@{path='""" + path + """'}) $null
-$upload = $script:ObservedUpload
-Remove-ImageWork $script:FakeHost.Work
+$arguments = $script:ObservedArguments
+$upload = $arguments[[array]::IndexOf($arguments,'--image')+1]
 @{answer=$answer;upload=$upload;uploadExists=(Test-Path -LiteralPath $upload);
   sourceExists=(Test-Path -LiteralPath '""" + path + """');
-  metadata=$script:ThreadParams.config.responses_api_metadata} | ConvertTo-Json -Depth 8 -Compress
+  metadata=@($arguments | Where-Object {$_ -like 'responses_api_metadata.*'})} | ConvertTo-Json -Compress
 """)
-        self.assertEqual(report["answer"], "Visible error text")
-        self.assertTrue(Path(report["upload"]).name.endswith("-upload.jpg"))
+        self.assertEqual(report["answer"], "Analysis completed")
+        self.assertEqual(Path(report["upload"]).name, "upload.jpg")
         self.assertFalse(report["uploadExists"])
         self.assertTrue(report["sourceExists"])
-        self.assertEqual(report["metadata"]["codex_inspector_image_source_path"],
+        override = next(value for value in report["metadata"] if "image_source_path=" in value)
+        self.assertEqual(tomllib.loads(override)["responses_api_metadata"]["codex_inspector_image_source_path"],
                          str(image.resolve()))
-
-    def test_reuse_is_scoped_to_parent_and_unchanged_image_and_unknown_parents_stay_separate(self):
-        image = self.root / "synthetic.png"
-        image.write_text("first image fixture", encoding="utf8")
-        path = str(image).replace("'", "''")
-        report = self.powershell(self.native_stubs() + """
-$request=[pscustomobject]@{path='""" + path + """';instruction='first question'}
-$null=Invoke-ImageAnalysis $request '01a15d9a-f5e3-73c1-b4e7-87b3c5db9a3c'
-$request.instruction='second question'
-$null=Invoke-ImageAnalysis $request '01a15d9a-f5e3-73c1-b4e7-87b3c5db9a3c'
-$reused=$script:ThreadCount
-$null=Invoke-ImageAnalysis $request '01a13966-2d51-78f1-9dce-fc84bdee542c'
-[IO.File]::WriteAllText($request.path,'changed image fixture')
-$null=Invoke-ImageAnalysis $request '01a15d9a-f5e3-73c1-b4e7-87b3c5db9a3c'
-$null=Invoke-ImageAnalysis $request $null
-$null=Invoke-ImageAnalysis $request $null
-Remove-ImageWork $script:FakeHost.Work
-@{reused=$reused;created=$script:ThreadCount;retained=$script:ImageSessions.Count} | ConvertTo-Json -Compress
-""")
-        self.assertEqual(report, {"reused": 1, "created": 5, "retained": 3})
-
-    def test_rollover_requires_the_designated_error_after_a_successful_turn(self):
-        image = self.root / "synthetic.png"
-        image.write_text("image fixture", encoding="utf8")
-        path = str(image).replace("'", "''")
-        report = self.powershell(self.native_stubs() + """
-function Invoke-ImageTurn($HostState,$Session,$Instruction) {
-    if ($Instruction -eq 'capacity') { throw 'ordinary capacity failure' }
-    if ($Instruction -eq 'large' -and $Session.Turns -gt 0 -or $Instruction -eq 'too large even when fresh') {
-        $failure=New-Object InvalidOperationException 'image_session_size_limit'
-        $failure.Data['ImageSessionLimit']=$true
-        throw $failure
-    }
-    $Session.Turns++
-    return 'answer'
-}
-$parent='01a15d9a-f5e3-73c1-b4e7-87b3c5db9a3c'
-$request=[pscustomobject]@{path='""" + path + """';instruction='first question'}
-$null=Invoke-ImageAnalysis $request $parent
-$request.instruction='capacity'
-try { $null=Invoke-ImageAnalysis $request $parent } catch {}
-$afterCapacity=$script:ThreadCount
-$request.instruction='large'
-$null=Invoke-ImageAnalysis $request $parent
-$afterRollover=$script:ThreadCount
-$request.instruction='too large even when fresh'
-try { $null=Invoke-ImageAnalysis $request $parent } catch { $failed=$true }
-Remove-ImageWork $script:FakeHost.Work
-@{capacity=$afterCapacity;rollover=$afterRollover;final=$script:ThreadCount;failed=$failed} | ConvertTo-Json -Compress
-""")
-        self.assertEqual(report, {"capacity": 1, "rollover": 2, "final": 3, "failed": True})
-
-    def test_native_turn_sends_only_new_input_and_returns_the_last_message_for_its_thread(self):
-        report = self.powershell("""
-$hostState=@{Events=(New-Object 'System.Collections.Generic.Queue[object]')}
-function Invoke-ImageRpc($HostState,$Method,$Params,$Deadline) {
-    $script:Inputs=$Params.input
-    foreach ($entry in @(@{thread='other';text='other thread'},@{thread='vision';text='commentary'},@{thread='vision';text='final answer'})) {
-        $HostState.Events.Enqueue([pscustomobject]@{method='item/completed';params=@{
-            threadId=$entry.thread;turnId='turn';item=@{id=$entry.text;type='agentMessage';text=$entry.text}}})
-    }
-    $HostState.Events.Enqueue([pscustomobject]@{method='turn/completed';params=@{threadId='vision';turn=@{id='turn';status='completed'}}})
-    return @{turn=@{id='turn'}}
-}
-$session=@{ThreadId='vision';Upload='C:\\fixture.png';Turns=0}
-$first=Invoke-ImageTurn $hostState $session 'first'
-$firstInputs=$script:Inputs
-$second=Invoke-ImageTurn $hostState $session 'follow up'
-@{first=$first;second=$second;firstInputs=$firstInputs;secondInputs=$script:Inputs;turns=$session.Turns} | ConvertTo-Json -Depth 8 -Compress
-""")
-        self.assertEqual(report["first"], "final answer")
-        self.assertEqual(report["second"], "final answer")
-        self.assertEqual([p["type"] for p in report["firstInputs"]], ["text", "localImage"])
-        self.assertEqual(report["secondInputs"], [{"type": "text", "text": "follow up"}])
-        self.assertEqual(report["turns"], 2)
-
-    def test_call_deadline_does_not_reset_for_a_second_native_turn(self):
-        report = self.powershell("""
-$pending=New-Object 'System.Threading.Tasks.TaskCompletionSource[string]'
-$hostState=@{ReadTask=$pending.Task}
-$script:ImageCallDeadline=[datetime]::UtcNow.AddSeconds(-1)
-try { $null=Read-ImageEvent $hostState ([datetime]::UtcNow.AddSeconds(240)) }
-catch { @{unusable=[bool]$_.Exception.Data['ImageHostUnusable'];message=$_.Exception.Message} | ConvertTo-Json -Compress }
-""")
-        self.assertTrue(report["unusable"])
-        self.assertIn("timed out", report["message"])
 
     def test_native_process_quoting_preserves_spaces_quotes_and_unicode(self):
         echo = self.root / "echo.ps1"
@@ -657,34 +593,15 @@ catch { @{unusable=[bool]$_.Exception.Data['ImageHostUnusable'];message=$_.Excep
         self.assertEqual(report["code"], 0)
         self.assertEqual(report["values"], expected)
 
-    def test_batch_cli_receives_multiline_native_rpc_input_without_shell_interpolation(self):
+    def test_batch_cli_receives_multiline_prompt_on_stdin_and_keeps_image_argument(self):
         echo = self.root / "echo.py"
-        echo.write_text('''import json,sys
-sys.stdin.reconfigure(encoding="utf-8")
-sys.stdout.reconfigure(encoding="utf-8")
-if sys.argv[1] == "mcp":
-    print("[]")
-    sys.exit(0)
-def send(value):
-    print(json.dumps(value,ensure_ascii=False),flush=True)
-config={}
-for line in sys.stdin:
-    message=json.loads(line)
-    method=message["method"]
-    if "id" not in message: continue
-    result={}
-    if method=="thread/start":
-        config=message["params"]["config"]
-        result={"thread":{"id":"native-thread"}}
-    if method=="turn/start": result={"turn":{"id":"native-turn"}}
-    send({"id":message["id"],"result":result})
-    if method=="turn/start":
-        report={"input":message["params"]["input"],"config":config}
-        send({"method":"item/completed","params":{"threadId":"native-thread","turnId":"native-turn",
-            "item":{"type":"agentMessage","id":"answer","text":json.dumps(report,ensure_ascii=False)}}})
-        send({"method":"turn/completed","params":{"threadId":"native-thread",
-            "turn":{"id":"native-turn","status":"completed"}}})
-''', encoding="utf-8")
+        echo.write_text("import json,sys\nfrom pathlib import Path\n"
+                        "args=sys.argv[1:]\n"
+                        "if args[0]=='--profile':\n print('[]')\n sys.exit(0)\n"
+                        "if '--image' not in args:\n sys.stderr.write('Image argument was lost')\n sys.exit(1)\n"
+                        "report={'args':args, 'stdin':sys.stdin.buffer.read().decode('utf-8')}\n"
+                        "Path(args[args.index('--output-last-message')+1]).write_text(json.dumps(report), encoding='utf-8')\n",
+                        encoding="utf-8")
         wrapper = self.root / "codex.cmd"
         wrapper.write_text('@echo off\r\n"%CODEX_TEST_PYTHON%" "%CODEX_TEST_ECHO%" %*\r\n', encoding="ascii")
         image = self.root / "synthetic image.png"
@@ -695,12 +612,16 @@ for line in sys.stdin:
                                  "$env:CODEX_TEST_ECHO='" + str(echo).replace("'", "''") + "'\n"
                                  "$env:CODEX_CLI_PATH='" + str(wrapper).replace("'", "''") + "'\n"
                                  "$request=ConvertFrom-Json -InputObject '" + request.replace("'", "''") + "'\n"
-                                 "try { Invoke-ImageAnalysis $request $null } finally { Close-ImageSessions }\n")
-        self.assertEqual(report["input"][0], {"type": "text", "text": instruction})
-        self.assertEqual(report["input"][1]["type"], "localImage")
-        metadata = report["config"]["responses_api_metadata"]
-        self.assertEqual(metadata["codex_inspector_request_kind"], "image_analysis")
-        self.assertEqual(metadata["codex_inspector_image_source_path"], str(image.resolve()))
+                                 "Invoke-ImageAnalysis $request $null\n")
+        arguments = report["args"]
+        self.assertEqual(arguments[arguments.index("--image") + 1], str(image.resolve()))
+        self.assertIn("-", arguments)
+        self.assertIn('responses_api_metadata.codex_inspector_request_kind="image_analysis"', arguments)
+        source = next(value for value in arguments if value.startswith('responses_api_metadata.codex_inspector_image_source_path='))
+        self.assertEqual(tomllib.loads(source)["responses_api_metadata"]["codex_inspector_image_source_path"],
+                         str(image.resolve()))
+        self.assertTrue(report["stdin"].endswith("\n\nRequest: " + instruction))
+        self.assertFalse(any(instruction in argument for argument in arguments))
 
     def test_analysis_failure_returns_bounded_redacted_stderr(self):
         image = self.root / "synthetic.png"
@@ -709,6 +630,7 @@ for line in sys.stdin:
         report = self.powershell("""
 function Find-CodexCli { return 'fake-codex' }
 function Invoke-ToolProcess($Executable, $Arguments, $TimeoutSeconds, $WorkingDirectory, $InputText) {
+    if ($Arguments[0] -eq '--profile') { return @{ExitCode=0;Output='[]'} }
     return @{ExitCode=1;Output='';Error=(('prefix ' * 250) +
         'Windows sandbox failed: CreateProcessWithLogonW failed: 1385; Bearer fake-secret sk-test-secret ' +
         'http://127.0.0.1/relay/private-token/p/test?access_token=secret&other=ok ' +
