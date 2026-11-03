@@ -206,7 +206,7 @@ code.session-id{font-family:Consolas,"Cascadia Mono",monospace;font-size:11px;wo
 .storage-summary{display:flex;align-items:center;flex:none;gap:12px;margin-left:auto;color:var(--muted);font-size:10px;line-height:18px;font-variant-numeric:tabular-nums}
 .storage-summary>span{white-space:nowrap}
 .packet-table{min-width:345px}
-.detail{display:flex;flex-direction:column;min-height:0;padding:var(--view-inset) var(--view-inset) 0;background:#fafbfd;overflow:hidden}
+.detail{display:flex;flex-direction:column;min-height:0;padding:var(--view-inset);background:#fafbfd;overflow:hidden}
 .sessions-sidebar,.requests-sidebar,.detail{padding-top:8px}
 .detail .tabs{margin-inline:0}
 #packet-detail:not([hidden]){display:flex;flex:1;flex-direction:column;min-height:0;min-width:0}
