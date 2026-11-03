@@ -4,7 +4,8 @@ const source=fs.readFileSync('packet_inspector/ui/app.js','utf8'),context={t:val
 vm.createContext(context);
 const declarations=['OTHER_SESSION_GROUP','auxiliaryLabels'].map(name=>source.match(new RegExp('^const '+name+'=.*$','m'))[0]);
 const kind=source.match(/^function auxiliarySessionKind\(row\).*$/m)[0];
-vm.runInContext(declarations.join('\n')+'\n'+kind+'\n'+source.slice(source.indexOf('function sessionConnections('),source.indexOf('function renderSessionConnections(')),context);
+const titles=source.slice(source.indexOf('function sessionTitle('),source.indexOf('function sessionGroups('));
+vm.runInContext(declarations.join('\n')+'\n'+kind+'\n'+titles+'\n'+source.slice(source.indexOf('function sessionConnections('),source.indexOf('function renderSessionConnections(')),context);
 vm.runInContext(source.slice(source.indexOf('function sessionGroups('),source.indexOf('function purposeFromMetadata(')),context);
 const group=(id,extra={})=>({thread_id:id,members:[{thread_id:id}],...extra});
 const links=(rows,selected)=>JSON.parse(JSON.stringify(context.sessionConnections(rows,selected)));
@@ -71,7 +72,7 @@ test('image requests join their named parent while keeping their own request ide
 test('a confirmed image parent remains a group before its name or native record loads',()=>{
  for(const parents of [[],[session('main',{title:null,packet_count:0})]]){
   const groups=grouped([...parents,session('image',{parent_thread_id:'main',session_kind:'image_analysis'})]);
-  assert.equal(groups.length,1);assert.equal(groups[0].thread_id,'main');assert.equal(groups[0].title,'main');
+  assert.equal(groups.length,1);assert.equal(groups[0].thread_id,'main');assert.equal(groups[0].title,'会话');
   assert.deepEqual(groups[0].members.map(row=>row.thread_id),['image']);assert.equal(groups[0].packet_count,1);
   assert.equal(context.otherTaskSessions().length,0);
  }
@@ -109,8 +110,51 @@ test('parent metadata refresh moves an image out of other and resolves child sel
  assert.equal(context.otherTaskSessions().length,0);
  rows[0].title='Renamed frontend';assert.equal(grouped(rows)[0].title,'Renamed frontend');
 });
+test('unnamed subagents join their known named parent or other instead of appearing as identical subtask rows',()=>{
+ const rows=[session('main',{title:'Main'}),session('child',{parent_thread_id:'main',session_kind:'subagent',title:null}),
+  session('unparented',{session_kind:'subagent',title:'  '}),session('named-child',{parent_thread_id:'main',session_kind:'subagent',title:'Builder'})];
+ const groups=grouped(rows);
+ assert.deepEqual(groups.map(group=>[group.title,group.members.map(row=>row.thread_id)]),[
+  ['Main',['main','child']],['其他',['unparented']],['Builder',['named-child']]]);
+ assert.deepEqual(links(groups,'thread:main'),[{parent:'main',child:'named-child'}]);
+});
+test('a cold start without names never presents generic subagent rows as loaded conversations',()=>{
+ const groups=grouped([session('main',{title:null}),session('child',{title:null,session_kind:'subagent',parent_thread_id:'main'}),
+  session('orphan',{session_kind:'subagent',parent_thread_id:'absent'})]);
+ assert.deepEqual(groups.map(group=>[group.thread_id,group.title]),[['group:other','其他']]);
+ assert.deepEqual(groups[0].members.map(row=>row.thread_id),['main','child','orphan']);
+});
+test('temporarily missing native names retain the last loaded title without retaining old request metrics',()=>{
+ context.sessionSummaries=[session('main',{title:'Frontend',updated_at:100,latest_packet:{id:'old',created:100}})];
+ const rows=[session('main',{title:null,updated_at:200,latest_packet:{id:'new',created:200},token_window:{input_tokens:500}})];
+ const before=JSON.stringify(rows),result=JSON.parse(JSON.stringify(context.preserveSessionTitles(rows)));
+ assert.equal(result[0].title,'Frontend');assert.equal(result[0].title_cached,true);
+ assert.equal(result[0].updated_at,200);assert.equal(result[0].latest_packet.id,'new');assert.equal(result[0].token_window.input_tokens,500);
+ assert.equal(JSON.stringify(rows),before);
+ assert.equal(grouped(result)[0].thread_id,'main');
+});
+test('a generated subtask fallback cannot replace a previously loaded native name and fresh names still win',()=>{
+ context.sessionSummaries=[session('child',{title:'Review routing',session_kind:'subagent',parent_thread_id:'main'})];
+ const fallback=session('child',{title:'子任务 · audit',title_source:'subagent',session_kind:'subagent',parent_thread_id:'main'});
+ const cached=JSON.parse(JSON.stringify(context.preserveSessionTitles([fallback])))[0];
+ assert.equal(cached.title,'Review routing');assert.equal(cached.title_source,undefined);
+ assert.equal(cached.title_cached,true);assert.equal(cached.session_kind,'subagent');assert.equal(cached.parent_thread_id,'main');
+ const legacy=JSON.parse(JSON.stringify(context.preserveSessionTitles([{...fallback,session_kind:undefined}])))[0];
+ assert.equal(legacy.title,'Review routing');assert.equal(legacy.session_kind,'subagent');
+ context.sessionSummaries=[cached];
+ const renamed=session('child',{title:'Review the new route',session_kind:'subagent'});
+ assert.equal(context.preserveSessionTitles([renamed])[0],renamed);
+ assert.equal(context.preserveSessionTitles([renamed])[0].title_cached,undefined);
+});
+test('title retention does not invent names for new or unidentified sessions or resurrect removed sessions',()=>{
+ context.sessionSummaries=[session('',{title:'Unidentified request'}),session('removed',{title:'Removed'})];
+ const rows=[session('',{title:null}),session('new',{title:null})];
+ const result=context.preserveSessionTitles(rows);
+ assert.equal(result[0],rows[0]);assert.equal(result[1],rows[1]);
+ assert.equal(context.preserveSessionTitles([]).length,0);
+});
 (async()=>{
-  const saved=Object.fromEntries(['AbortSignal','api','state','sessionSummaries','sessionMetadataAt','sessionMetadataProbeAt','sessionMetadataLoading','sessionMetadataSupported','enrichSessionPurposes','renderSessions','renderStorageInfo','setFilterOptions','renderList','selectSession'].map(key=>[key,context[key]]));
+  const saved=Object.fromEntries(['AbortSignal','URLSearchParams','uploadBytes','api','state','sessionSummaries','sessionMetadataAt','sessionMetadataProbeAt','sessionMetadataLoading','sessionMetadataSupported','sessionLegacyCursor','enrichSessionPurposes','renderSessions','renderStorageInfo','setFilterOptions','renderList','selectSession'].map(key=>[key,context[key]]));
   const requests=[],renders=[],selections=[];
   let resolveSummaries,resolveEnrichment;
   const summaries=new Promise(resolve=>{resolveSummaries=resolve;}),enrichment=new Promise(resolve=>{resolveEnrichment=resolve;});
@@ -140,6 +184,24 @@ test('parent metadata refresh moves an image out of other and resolves child sel
     assert.ok(renders.every(rows=>rows.every(group=>group.thread_id!=='group:other')));
     assert.deepEqual(requests,['/api/packet-filters','/api/session-summaries']);
     assert.equal(context.sessionMetadataLoading,false);passed++;
+    const stale=session('main',{title:null,updated_at:200});
+    context.api=async path=>{assert.equal(path,'/api/session-summaries');return {state:'available',sessions:[stale,session('image',{parent_thread_id:'main',session_kind:'image_analysis'})]};};
+    context.enrichSessionPurposes=async rows=>{assert.equal(rows[0].title,null,'Purpose detection still sees missing native names');return rows;};
+    context.sessionMetadataAt=0;
+    await context.refreshSessionSummaries();
+    assert.equal(context.sessionSummaries[0].title,'Frontend');assert.equal(context.sessionSummaries[0].title_cached,true);
+    assert.equal(context.sessionSummaries[0].updated_at,200);assert.equal(context.state.filters.thread,'thread:main');
+    assert.deepEqual(renders.at(-1).map(group=>[group.thread_id,group.title]),[['main','Frontend']]);passed++;
+    Object.assign(context,{URLSearchParams,sessionLegacyCursor:0,uploadBytes:packet=>packet.outbound_wire_bytes,
+      enrichSessionPurposes:async rows=>rows,
+      api:async path=>{if(path==='/api/session-summaries')throw Error('Fixture metadata unavailable');
+        assert.ok(path.startsWith('/api/packets?'));return [{id:'latest',created:300,outbound_wire_bytes:400}];},
+      sessionMetadataAt:0,
+    });
+    await context.refreshSessionSummaries();
+    assert.equal(context.sessionMetadataSupported,false);assert.equal(context.sessionSummaries[0].title,'Frontend');
+    assert.equal(context.sessionSummaries[0].title_cached,true);assert.equal(context.sessionSummaries[0].updated_at,300);
+    assert.equal(context.state.filters.thread,'thread:main');assert.equal(context.sessionSummaries[0].latest_packet.wire_bytes,400);passed++;
   } finally {Object.assign(context,saved);}
   console.log(JSON.stringify({passed}));
 })().catch(error=>{console.error(error);process.exitCode=1;});
