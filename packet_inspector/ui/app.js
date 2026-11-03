@@ -272,6 +272,22 @@ const OTHER_SESSION_GROUP="group:other";
 const auxiliaryLabels={image_analysis:"图片解析",next_message_suggestion:"消息建议",title_generation:"自动标题",session_index:"会话索引",ambient_suggestions:"任务推荐",subagent:"子任务"};
 const requestPurposeCache=new Map();
 function auxiliarySessionKind(row) {return Object.hasOwn(auxiliaryLabels,row?.session_kind)?row.session_kind:row?.title_source==="index_task"?"session_index":row?.title_source==="subagent"?"subagent":null;}
+function sessionTitle(row) {return typeof row?.title==="string"&&row.title.trim()?row.title:null;}
+function preserveSessionTitles(rows) {
+  // Capture records can load while native names are temporarily unreadable.
+  // Retain known names only for the same explicit session ID.
+  const previous=new Map(sessionSummaries.map(row=>[row.thread_id,row]));
+  return rows.map(row=>{
+    if(typeof row.thread_id!=="string"||!row.thread_id)return row;
+    const known=previous.get(row.thread_id),title=sessionTitle(row);
+    if(!sessionTitle(known))return row;
+    if(title&&!(row.title_source==="subagent"&&!["subagent","index_task"].includes(known.title_source)))return row;
+    const merged={...row,title:known.title,title_cached:true};
+    const kind=auxiliarySessionKind(row);if(kind)merged.session_kind=kind;
+    if(known.title_source)merged.title_source=known.title_source;else delete merged.title_source;
+    return merged;
+  });
+}
 function sessionGroups() {
   if(!sessionMetadataAt)return [];
   const rows=new Map(sessionSummaries.map(row=>[row.thread_id,row]));
@@ -287,13 +303,12 @@ function sessionGroups() {
       if(visited.has(current.thread_id))break;
       visited.add(current.thread_id);
       const kind=auxiliarySessionKind(current);
-      if(kind==="subagent"||!kind&&(imageParents.has(current.thread_id)||typeof current.title==="string"&&current.title.trim())) {owner=current;break;}
+      if((kind==="subagent"&&sessionTitle(current))||(!kind&&(imageParents.has(current.thread_id)||sessionTitle(current)))) {owner=current;break;}
       current=rows.get(current.parent_thread_id);
     }
     const id=owner?.thread_id||OTHER_SESSION_GROUP;
     if(!groups.has(id)) {
-      const title=typeof owner?.title==="string"&&owner.title.trim()?owner.title:owner?
-        auxiliarySessionKind(owner)==="subagent"?t("子任务"):owner.thread_id:t("其他");
+      const title=sessionTitle(owner)||t(owner?"会话":"其他");
       groups.set(id,{...(owner||{}),thread_id:id,title,members:[],packet_count:0,updated_at:owner?.updated_at||0});
     }
     const group=groups.get(id);group.members.push(member);
@@ -547,7 +562,7 @@ async function refreshSessionSummaries() {
       try {
         const result=await api("/api/session-summaries",undefined,AbortSignal.timeout(5000));
         if(result.state==="available" && Array.isArray(result.sessions)) {
-          sessionSummaries=await enrichSessionPurposes(result.sessions);sessionMetadataSupported=true;return;
+          sessionSummaries=preserveSessionTitles(await enrichSessionPurposes(result.sessions));sessionMetadataSupported=true;return;
         }
       } catch(_) {}
       sessionMetadataSupported=false;
@@ -570,7 +585,7 @@ async function refreshSessionSummaries() {
       }
     }
     await Promise.all(Array.from({length:Math.min(3,ids.length)},()=>worker()));
-    sessionSummaries=await enrichSessionPurposes(results);
+    sessionSummaries=(await enrichSessionPurposes(results)).map(row=>sessionTitle(row)?{...row,title_cached:true}:row);
   } finally {
     sessionMetadataAt=Date.now();sessionMetadataLoading=false;
     const groups=sessionGroups();
@@ -665,6 +680,7 @@ function renderSessions() {
     const item=el("button","session-item"+(otherGroup?" other-session-group":"")+(value===selected?" selected":""));
     item.type="button";item.dataset.session=value;
     item.title=otherGroup?title:title+"\n"+(id||t("未识别会话"));
+    if(data.title_cached)item.title+="\n"+t("会话名称暂不可用，显示上次加载的名称");
     for(const link of connections) {
       if(link.child===id)item.title+="\n"+t("父会话名称")+"："+summaries.get(link.parent).title;
       if(link.parent===id)item.title+="\n"+t("子任务")+"："+summaries.get(link.child).title;
