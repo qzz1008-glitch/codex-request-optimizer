@@ -53,6 +53,27 @@ Object.assign(context, {
 vm.runInContext(source.slice(source.indexOf('function localImagePath('),source.indexOf('function renderHeaders(')),context);
 vm.runInContext(source.slice(source.indexOf('function renderProtectionPanelState('),source.indexOf('function bars(')),context);
 vm.runInContext(source.slice(source.indexOf('function packetDetailVersion('),source.indexOf('async function selectPacket(')),context);
+const pictureA='C:\\saved-images\\a.png',pictureB='C:\\saved-images\\b.png';
+const imagePacket=(id,created,image_paths,extra={})=>({id,created,thread_id:'session-a',image_isolation_applied:true,image_paths,...extra});
+const uniqueImageRows=packets=>Array.from(context.imageOptimizationRows(packets));
+const repeatedImages=[imagePacket('first',1,[pictureA]),imagePacket('repeat',2,[pictureA]),
+  imagePacket('new-image',3,[pictureA,pictureB]),imagePacket('repeat-both',4,[pictureA,pictureB])];
+for(const order of [repeatedImages,[...repeatedImages].reverse(),[repeatedImages[2],repeatedImages[0],repeatedImages[3],repeatedImages[1]]])
+  assert.deepEqual(uniqueImageRows(order),['first','new-image'],'List sorting must not change the first image occurrence');
+assert.deepEqual(repeatedImages.map(row=>row.id),['first','repeat','new-image','repeat-both'],'Deduplication must not reorder source records');
+assert.equal(context.packetProtection(repeatedImages[1]).optimization,true,'Request details must retain the actual processing flag');
+assert.deepEqual(uniqueImageRows([imagePacket('first',1,[pictureA,pictureA]),imagePacket('alias',2,['c:/SAVED-images/a.png','file:///C:/saved-images/a.png'])]),['first']);
+assert.deepEqual(uniqueImageRows([imagePacket('source',1,['C:\\clipboard.png'],{image_path_rewrites:{'C:\\clipboard.png':pictureA}}),imagePacket('retained',2,[pictureA])]),['source']);
+assert.deepEqual(uniqueImageRows([imagePacket('first',1,[pictureA]),imagePacket('other-session',2,[pictureA],{thread_id:'session-b'})]),['first','other-session']);
+assert.deepEqual(uniqueImageRows([imagePacket('upper',1,['/home/user/A.png']),imagePacket('lower',2,['/home/user/a.png'])]),['upper','lower'],'Linux paths are case sensitive');
+assert.deepEqual(uniqueImageRows([imagePacket('tie-b',1,[pictureA]),imagePacket('tie-a',1,[pictureA])]),['tie-a']);
+assert.deepEqual(uniqueImageRows([imagePacket('native',1,[pictureA],{image_isolation_applied:false}),imagePacket('optimized',2,[pictureA])]),['optimized']);
+assert.deepEqual(uniqueImageRows([imagePacket('tools-only',1,[]),imagePacket('missing',2,undefined),imagePacket('invalid',3,['https://example.invalid/a.png'])]),[],
+  'A changed tool catalog or missing image identity must not create a per-image marker');
+const manyPictures=Array.from({length:33},(_,index)=>`C:\\saved-images\\picture-${index}.png`);
+assert.deepEqual(uniqueImageRows([imagePacket('old-images',1,manyPictures.slice(0,32)),imagePacket('image-33',2,manyPictures)]),['old-images','image-33']);
+assert.deepEqual(uniqueImageRows(repeatedImages.slice(1)),['repeat','new-image']);
+assert.deepEqual(uniqueImageRows(repeatedImages),['first','new-image'],'Loading older history must remove the duplicate marker from the later row');
 const waitingPacket={id:'pending',state:'captured',status:null};
 for(const fields of [{image_isolation_applied:true},{image_paths:['C:\\image.png']},
   {upstream_usage:{input_tokens:123},reported_usage:{input_tokens:500000}},
@@ -212,5 +233,5 @@ assert.deepEqual(fields(details('retry')),{'Retry count':'3'});
   const actions=descendants(details('optimization')).filter(child=>child.tag==='button');
   for(const action of actions)await action.onclick({currentTarget:action});
   assert.deepEqual(opened,[['/api/open-directory',folder],['/api/open-image',image]]);
-  console.log('Four mechanism symbols, all 16 marker combinations, image size fields, file actions, refresh and English labels passed.');
+  console.log('Unique image markers, ordering/pagination, four mechanism symbols, image size fields, file actions, refresh and English labels passed.');
 })().catch(error=>{console.error(error);process.exitCode=1;});

@@ -836,6 +836,23 @@ function renderProtectionMarkers(flags) {
   if(!labels.length)return null;
   markers.setAttribute("role","img");markers.setAttribute("aria-label",labels.join(" · ")+" · "+t("已触发"));return markers;
 }
+function imageOptimizationRows(packets) {
+  const seen=new Map(),marked=new Set();
+  const chronological=[...packets].sort((a,b)=>a.created-b.created||String(a.id).localeCompare(String(b.id)));
+  for(const packet of chronological) {
+    if(!packetProtection(packet).optimization)continue;
+    const session=packet.thread_id||"";
+    if(!seen.has(session))seen.set(session,new Set());
+    const images=seen.get(session);
+    for(const value of Array.isArray(packet.image_paths)?packet.image_paths:[]) {
+      const source=localImagePath(value);if(!source)continue;
+      const path=localImagePath(packet.image_path_rewrites?.[source])||source;
+      const key=/^(?:[A-Za-z]:[/\\]|\\\\|\/\/)/.test(path)?path.replace(/\\/g,"/").replace(/\/+/g,"/").toLowerCase():path;
+      if(!images.has(key)){images.add(key);marked.add(packet.id);}
+    }
+  }
+  return marked;
+}
 function overflowApplied(p) {return p.overflow_compaction_calls>0||p.overflow_cache_hit===true;}
 function requestTokenUsage(p,data=null) {
   if(overflowApplied(p)) {
@@ -1031,13 +1048,14 @@ function renderList() {
   const sessionCount=selectedSessionGroup()?.packet_count;
   const total=!filtered?state.status.storage.count:!state.filters.kind && !state.filters.status && state.filters.thread && Number.isFinite(sessionCount)?sessionCount:null;
   setText($("record-count"),total===null?nf.format(state.packets.length)+(state.canLoadMore?"+":"")+t(" 条"):nf.format(total)+t(" 条"));
-  const signature=JSON.stringify([state.selected,state.status.budget_bytes,state.older,state.canLoadMore,state.sort,state.direction,state.filters,state.packets.map(p=>[p.id,p.created,p.method,p.is_compaction,requestKind(p),p.state,p.status,p.duration_ms,p.decoded_bytes,p.outbound_wire_bytes,p.outbound_content_encoding,p.thread_id,p.overflow_compaction_calls,p.overflow_cache_hit,p.overflow_original_wire_bytes,p.usage_override_applied,p.capacity_retry_count,p.native_retry_advised,p.native_retry_delay_ms,p.relay_error,p.upstream_usage?.input_tokens,p.image_isolation_applied,p.image_isolation_removed])]);
+  const signature=JSON.stringify([state.selected,state.status.budget_bytes,state.older,state.canLoadMore,state.sort,state.direction,state.filters,state.packets.map(p=>[p.id,p.created,p.method,p.is_compaction,requestKind(p),p.state,p.status,p.duration_ms,p.decoded_bytes,p.outbound_wire_bytes,p.outbound_content_encoding,p.thread_id,p.overflow_compaction_calls,p.overflow_cache_hit,p.overflow_original_wire_bytes,p.usage_override_applied,p.capacity_retry_count,p.native_retry_advised,p.native_retry_delay_ms,p.relay_error,p.upstream_usage?.input_tokens,p.image_isolation_applied,p.image_isolation_removed,p.image_paths,p.image_path_rewrites])]);
   if(signature===state.listVersion)return;
   state.listVersion=signature;
   const root=$("packet-rows"), fragment=document.createDocumentFragment(); renderSort();
   listTokenObserver.disconnect();visibleTokenRows.clear();listTokenCells.clear();
+  const optimizedImages=imageOptimizationRows(state.packets);
   for (const p of state.packets) {
-    const flags=packetProtection(p),protection=Object.entries(protectionLabels).filter(([key])=>flags[key]).map(([,label])=>t(label));
+    const flags={...packetProtection(p),optimization:optimizedImages.has(p.id)},protection=Object.entries(protectionLabels).filter(([key])=>flags[key]).map(([,label])=>t(label));
     const row=el("tr",["request-"+packetStatus(p),state.selected===p.id?"selected":""].filter(Boolean).join(" ")), date=new Date(p.created*1000);
     const time=el("button","packet-open");
     time.append(el("span","packet-date",dateFormat.format(date)),el("span","packet-clock",clockFormat.format(date)));
