@@ -2,6 +2,8 @@
 
 适用于 Windows x64（64 位）。
 
+**0.8.4 同版本重发**：补充修复旧共享后台未在健康接口返回进程号时的升级识别，并让请求列表中同一图片的解图优化标记只显示一次。软件版本号仍为 0.8.4；已安装原版 0.8.4 的用户请重新下载并运行 EXE，检查更新不会提示同版本替换。
+
 本次更新集中改善三栏界面、请求机制展示、会话列表和接入恢复体验。
 
 - **界面布局**：统一三栏标题与内容边界，优化底部留白、JSON 浏览区和会话卡片间距。记录占用与请求数移至底部右侧，调整品牌文字与底栏配色，最小窗口为 1280 × 720。
@@ -15,6 +17,8 @@
 ## English
 
 For Windows x64 (64-bit).
+
+**0.8.4 rebuilt release**: fix upgrade identification for older sharing workers whose health responses omit the process ID, and show an image-optimization marker only once per image in the request list. The application version remains 0.8.4. Users of the original 0.8.4 should download and run the replacement EXE; the update checker does not offer a same-version replacement.
 
 This release improves the three-pane interface, request-mechanism details, session lists, and connection recovery.
 

@@ -323,6 +323,76 @@ class BuildSourceTests(unittest.TestCase):
                 check_push(self.root, updates)
         api.assert_not_called()
 
+    def republish_fixture(self):
+        old, updates = self.unpublished_retry_fixture()
+        directory = self.root / ".local/republish"
+        assets = []
+        for index, name in enumerate(PUBLIC_FILES, 1):
+            path = self.write(".local/republish/old/" + name, "published fixture " + name)
+            assets.append({"id": index, "name": name, "file": "old/" + name,
+                           "size": path.stat().st_size, "sha256": hashlib.sha256(path.read_bytes()).hexdigest()})
+        receipt = {"explicit_user_request": True, "tag": "v0.6.14", "tag_object": old,
+                   "commit": old, "release_id": 123, "assets": assets}
+        path = self.write(".local/republish/receipt.json", json.dumps(receipt))
+        git(self.root, "config", "codex.republishRelease", "v0.6.14:" + old + ":123")
+        git(self.root, "config", "codex.republishReceipt", str(path))
+        release = {"id": 123, "tag_name": "v0.6.14", "draft": False, "immutable": False,
+                   "assets": [{"id": a["id"], "name": a["name"], "size": a["size"],
+                               "state": "uploaded", "digest": "sha256:" + a["sha256"]} for a in assets]}
+        runs = {"workflow_runs": [{"head_branch": "v0.6.14", "status": "completed", "conclusion": "success"}]}
+        return old, updates, path, receipt, release, runs
+
+    def test_explicit_published_rebuild_requires_backups_and_archives_the_old_object(self):
+        old, updates, _path, _receipt, release, runs = self.republish_fixture()
+        with patch("scripts.check_build_source.github_json", side_effect=[(200, release), (200, runs)]):
+            check_push(self.root, updates)
+        self.assertEqual(git(self.root, "rev-parse", "refs/archive/republished-release-tags/v0.6.14/" + old), old)
+
+    def test_published_rebuild_rejects_a_wrong_lease_or_changed_backup_before_network_access(self):
+        old, updates, path, receipt, _release, _runs = self.republish_fixture()
+        for opt_in in ("v0.6.14:" + "0" * 40 + ":123", "v0.6.14:" + old + ":124"):
+            git(self.root, "config", "codex.republishRelease", opt_in)
+            with patch("scripts.check_build_source.github_json") as api:
+                with self.assertRaises(SourceError):
+                    check_push(self.root, updates)
+                api.assert_not_called()
+        git(self.root, "config", "codex.republishRelease", "v0.6.14:" + old + ":123")
+        (path.parent / receipt["assets"][0]["file"]).write_text("tampered", encoding="utf8")
+        with patch("scripts.check_build_source.github_json") as api:
+            with self.assertRaisesRegex(SourceError, "verified backup"):
+                check_push(self.root, updates)
+            api.assert_not_called()
+
+    def test_published_rebuild_rejects_receipts_outside_the_local_directory(self):
+        _old, updates, _path, receipt, _release, _runs = self.republish_fixture()
+        outside = self.write("build/outside-receipt.json", json.dumps(receipt))
+        git(self.root, "config", "codex.republishReceipt", str(outside))
+        with patch("scripts.check_build_source.github_json") as api:
+            with self.assertRaisesRegex(SourceError, "shared .local"):
+                check_push(self.root, updates)
+            api.assert_not_called()
+
+    def test_published_rebuild_rejects_immutable_releases_and_remote_asset_changes(self):
+        _old, updates, _path, _receipt, release, _runs = self.republish_fixture()
+        cases = []
+        for key, value in (("id", 124), ("immutable", True), ("draft", True)):
+            altered = json.loads(json.dumps(release)); altered[key] = value; cases.append(altered)
+        altered = json.loads(json.dumps(release)); altered["assets"][0]["digest"] = "sha256:" + "0" * 64; cases.append(altered)
+        altered = json.loads(json.dumps(release)); altered["assets"].pop(); cases.append(altered)
+        for value in cases:
+            with self.subTest(value=value), patch("scripts.check_build_source.github_json", return_value=(200, value)):
+                with self.assertRaises(SourceError):
+                    check_push(self.root, updates)
+
+    def test_published_rebuild_requires_successful_and_finished_previous_tag_ci(self):
+        _old, updates, _path, _receipt, release, _runs = self.republish_fixture()
+        for status, conclusion in (("in_progress", None), ("completed", "failure")):
+            runs = {"workflow_runs": [{"head_branch": "v0.6.14", "status": status, "conclusion": conclusion}]}
+            with self.subTest(status=status, conclusion=conclusion), patch(
+                    "scripts.check_build_source.github_json", side_effect=[(200, release), (200, runs)]):
+                with self.assertRaisesRegex(SourceError, "previous release"):
+                    check_push(self.root, updates)
+
     def test_github_state_lookup_requires_an_http_status_and_preserves_not_found(self):
         missing = subprocess.CompletedProcess([], 1, 'HTTP/1.1 404 Not Found\nX-Test: value\n\n{"message":"Not Found"}')
         with patch("scripts.check_build_source.shutil.which", return_value="gh"), patch("scripts.check_build_source.subprocess.run", return_value=missing):

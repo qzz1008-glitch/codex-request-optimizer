@@ -129,5 +129,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.ref_name }}
+          FORCED_TAG_UPDATE: ${{ github.event.forced }}
         run: |
-          gh release create "$RELEASE_TAG" release/publish/CodexPacketInspector.exe release/publish/README.md release/publish/LICENSE release/publish/THIRD_PARTY_NOTICES.txt --verify-tag --title "Codex Request Optimizer $RELEASE_TAG" --notes-file .github/RELEASE_NOTES.md
+          if gh release view "$RELEASE_TAG" --json tagName >/dev/null 2>&1; then
+            test "$FORCED_TAG_UPDATE" = true
+            echo "Verified rebuild ready. Existing downloads are retained until the authorized publisher replaces them."
+          else
+            gh release create "$RELEASE_TAG" release/publish/CodexPacketInspector.exe release/publish/README.md release/publish/LICENSE release/publish/THIRD_PARTY_NOTICES.txt --verify-tag --title "Codex Request Optimizer $RELEASE_TAG" --notes-file .github/RELEASE_NOTES.md
+          fi
