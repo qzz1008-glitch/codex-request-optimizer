@@ -1515,11 +1515,6 @@ class Handler(BaseHTTPRequestHandler):
                 update(**upload_meta)
                 if upload_meta.get("image_upload_optimized"):
                     headers = {key:value for key,value in headers.items() if key.lower() not in {"content-md5", "digest"}}
-            if image_worker:
-                from .image_session_policy import prepare_image_session
-                outbound_body, outbound_encoding, applied_zstd_level = prepare_image_session(
-                    body, dict(self.headers.items()), self.command, suffix,
-                    PreparedRequest(outbound_body, outbound_encoding, applied_zstd_level), compression)
             # The displayed compressed packet is measured before summary
             # substitution. Preserve its encoding/level before overflow can
             # rebuild a small identity body and replace the final relay fields.

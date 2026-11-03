@@ -7,8 +7,8 @@ from pathlib import Path
 import shutil
 
 OWNER = "codex-packet-inspector/isolated-image-tool"
-ASSETS = {"server.ps1": "isolated_image_tool.ps1", "compress_image.ps1": "compress_image.ps1",
-          "image_session.ps1": "image_session.ps1"}
+ASSETS = {"server.ps1": "isolated_image_tool.ps1", "compress_image.ps1": "compress_image.ps1"}
+RETIRED_ASSETS = {"image_session.ps1"}
 
 
 def find_powershell():
@@ -45,11 +45,9 @@ class ImageToolInstallation:
                 raise ValueError("图片工具文件已存在且不属于本程序，未覆盖。")
             return {}
         state = json.loads(self.manifest.read_text(encoding="utf8"))
-        files = set(state.get("files", {}))
-        if state.get("owner") != OWNER or files not in (set(ASSETS), {"server.ps1", "compress_image.ps1"}):
+        if state.get("owner") != OWNER or set(state.get("files", {})) not in (
+                set(ASSETS), set(ASSETS) | RETIRED_ASSETS):
             raise ValueError("图片工具安装记录不匹配，未修改。")
-        if any((self.directory / name).exists() for name in set(ASSETS) - files):
-            raise ValueError("图片工具文件已存在且不属于本程序，未覆盖。")
         for name, digest in state["files"].items():
             path = self.directory / name
             if path.is_symlink() or (path.exists() and hashlib.sha256(path.read_bytes()).hexdigest() != digest):
@@ -64,7 +62,7 @@ class ImageToolInstallation:
                 "tool_timeout_sec": 420}
 
     def install(self, cli):
-        self._owned()
+        previous = self._owned()
         registration = self.registration(cli)
         digests = {}
         for name, source in ASSETS.items():
@@ -73,6 +71,8 @@ class ImageToolInstallation:
             target = self.directory / name
             if not target.exists() or target.read_bytes() != raw:
                 self._write(target, raw)
+        for name in RETIRED_ASSETS.intersection(previous.get("files", {})):
+            (self.directory / name).unlink(missing_ok=True)
         self._write(self.manifest, json.dumps({"owner": OWNER, "schema": 1, "files": digests}, indent=2).encode())
         return registration
 
@@ -82,15 +82,17 @@ class ImageToolInstallation:
                     and self._owned())
 
     def uninstall(self):
-        if not self._owned():
+        state = self._owned()
+        if not state:
             return
-        for name in (*ASSETS, self.manifest.name):
+        for name in (*state["files"], self.manifest.name):
             (self.directory / name).unlink(missing_ok=True)
 
     @contextmanager
     def transaction(self):
-        self._owned()
-        paths = [self.directory / name for name in (*ASSETS, self.manifest.name)]
+        state = self._owned()
+        retired = RETIRED_ASSETS.intersection(state.get("files", {}))
+        paths = [self.directory / name for name in (*ASSETS, *retired, self.manifest.name)]
         previous = {path: path.read_bytes() if path.exists() else None for path in paths}
         try:
             yield
