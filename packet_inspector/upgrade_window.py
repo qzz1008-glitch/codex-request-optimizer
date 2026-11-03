@@ -40,6 +40,7 @@ ENGLISH = {
     "无法确认共享监听地址，已保留当前服务。": "The sharing address could not be verified. Existing services were preserved.",
     "无法确认借入凭据，已保留当前服务。": "The selected borrowing credential could not be verified. Existing services were preserved.",
     "无法确认待停止的旧版共享进程。": "The old sharing process could not be verified for shutdown.",
+    "无法确认旧版服务进程记录，已保留当前服务。": "The old worker's process record could not be verified. Existing services were preserved.",
     "旧版共享进程尚未退出，正在恢复服务。": "The old sharing process has not exited. Restoring services.",
     "共享状态未能完整恢复，请查看升级结果。": "Sharing could not be fully restored. Check the update result.",
     "无法确认当前共享进程。": "The current sharing process could not be verified.",

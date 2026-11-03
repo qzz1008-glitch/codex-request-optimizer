@@ -22,7 +22,7 @@ from urllib.request import ProxyHandler, build_opener
 from packet_inspector import VERSION
 from packet_inspector.egress_transport import EGRESS_HEADER, ExitOpener
 from packet_inspector.router import RouterServer, atomic_json, control_worker
-from packet_inspector.server import InspectorServer
+from packet_inspector.server import Handler, InspectorServer
 from packet_inspector.sharing import parse_link, pinned_tls_context
 from packet_inspector.sharing_credentials import CLIENT_HEADER, CredentialVault
 from packet_inspector.sharing_handover import prepare_upgrade, finish_upgrade
@@ -220,8 +220,13 @@ class SharingHandoverTests(unittest.TestCase):
         engine._refresh_integration = Mock()
         engine.confirm_interruption = Mock(return_value=True)
         original_status = self.old.status
+        original_json = Handler._json
         def old_status():
             return {key: value for key, value in original_status().items() if key != "sharing_handover_protocol"}
+        def old_json(handler, status, payload, headers=None):
+            if handler.server is self.old and handler.path == "/health":
+                payload = {key: value for key, value in payload.items() if key != "pid"}
+            return original_json(handler, status, payload, headers)
         def source_exit(_plan):
             self.assertEqual(self.router.state["active"], self.new.worker_id)
             self.assertTrue(self.new.upgrade_paused)
@@ -237,7 +242,12 @@ class SharingHandoverTests(unittest.TestCase):
             self.old.sharing.close()
             self.old.egress.close()
             self.old.sharing.owns_provider_state = False
+        if interrupt:
+            # The actual 0.8.1 worker reports its PID here, never in /health.
+            atomic_json(self.data / "router-workers" / (self.old.worker_id + ".runtime.json"),
+                        {"pid": os.getpid(), "port": self.old.port, "version": "0.8.1"})
         with (patch.object(self.old, "status", side_effect=old_status) if interrupt else nullcontext()), \
+             (patch.object(Handler, "_json", new=old_json) if interrupt else nullcontext()), \
              (patch.object(SharingUpgrade, "stop_source", autospec=True, side_effect=source_exit) if interrupt else nullcontext()):
             result = engine.run()
         self.assertEqual(result["state"], "complete")
