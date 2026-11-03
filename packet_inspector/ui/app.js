@@ -413,6 +413,25 @@ function compressedBytes(p) { return [p.overflow_original_wire_bytes,p.usage_ove
 let compressedSortSupported=true,compressedSortCache=null;
 const previousPacketReads=new Map();
 async function sessionPacketPage(query,signal) {
+  const selectedKind=query.get("kind");
+  if(["generation","image_analysis","other"].includes(selectedKind)) {
+    // Older relays group auxiliary POSTs with generation; refine by the displayed type.
+    const scan=new URLSearchParams(query),matches=[],limit=Number(query.get("limit")||100);
+    scan.set("limit","300");
+    if(selectedKind==="other"){scan.delete("kind");scan.set("include_get","1");}
+    else scan.set("kind","generation");
+    for(;;) {
+      signal?.throwIfAborted();
+      const page=await rawSessionPacketPage(scan,signal);
+      signal?.throwIfAborted();
+      matches.push(...page.filter(packet=>requestFilterKind(packet)===selectedKind));
+      if(matches.length>=limit||page.length<300)return matches.slice(0,limit);
+      scan.set("after",page.at(-1).id);
+    }
+  }
+  return rawSessionPacketPage(query,signal);
+}
+async function rawSessionPacketPage(query,signal) {
   if(!query.has("thread_group"))return api("/api/packets?"+query,undefined,signal);
   const ids=query.getAll("thread"), records=[];
   const base=new URLSearchParams(query);base.delete("thread_group");base.delete("thread");
@@ -490,7 +509,11 @@ function requestKind(p) {
   const purpose=purposeFromMetadata(p)||requestPurposeCache.get(p.id)||auxiliarySessionKind(sessionSummaries.find(row=>row.thread_id===p.thread_id));
   return purpose&&purpose!=="subagent"?t(auxiliaryLabels[purpose]):p.method==="POST"?t("对话生成"):String(p.method||t("未知")).slice(0,10);
 }
-const requestKinds = uiI18n.labels({generation:"对话生成",compaction:"上下文压缩",image_generation:"图片生成",image_edit:"图片编辑",other:"其他请求"});
+const requestKinds = uiI18n.labels({generation:"对话生成",compaction:"上下文压缩",image_analysis:"图片解析",image_generation:"图片生成",image_edit:"图片编辑",other:"其他请求"});
+function requestFilterKind(packet) {
+  const label=requestKind(packet);
+  return Object.keys(requestKinds).find(value=>value!=="other"&&requestKinds[value]===label)||"other";
+}
 const filterLabels = uiI18n.labels({kind:"类型",status:"状态"});
 function statusLabel(value) { return value.startsWith("http:") ? "HTTP "+value.slice(5) : states[value.slice(6)] || t("未知状态"); }
 function setFilterOptions(key, options) {
@@ -510,7 +533,7 @@ function setFilterOptions(key, options) {
 async function refreshFilters() {
   const revision=state.status?.storage.revision;
   const options=await api("/api/packet-filters");
-  setFilterOptions("kind",["generation","compaction",...["image_generation","image_edit","other"].filter(value=>options.kinds.includes(value))].map(value=>({value,label:requestKinds[value]})));
+  setFilterOptions("kind",["generation","compaction","image_analysis",...["image_generation","image_edit"].filter(value=>options.kinds.includes(value)),"other"].map(value=>({value,label:requestKinds[value]})));
   setFilterOptions("status",options.statuses.map(value=>({value,label:statusLabel(value)})));
   state.sessions=options.threads;
   state.filterRevision=revision;
