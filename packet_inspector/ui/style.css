@@ -76,15 +76,17 @@
 .sidebar>*:not(.packet-list){flex-shrink:0}
 
 /* Sessions, requests, and details scroll independently. */
-:root{--desktop-width:1200px;--desktop-height:760px;--desktop-min-width:1200px;--desktop-min-height:640px;--view-inset:12px}
+:root{--desktop-width:1200px;--desktop-height:760px;--desktop-min-width:1200px;--desktop-min-height:640px;--view-inset:12px;--records-heading-height:30px;--records-heading-gap:9px}
 body{height:100dvh;min-width:0;display:flex;flex-direction:column;overflow-x:hidden;overflow-y:hidden}
 .app-window{display:flex;flex-direction:column;flex:1;min-height:0;min-width:0;width:100%;height:100dvh;background:var(--bg);overflow:hidden;container:inspector-window / size}
 .app-header{flex-shrink:0}
 .workspace{display:grid;flex:1;min-height:0;min-width:0;height:auto;grid-template-columns:300px minmax(420px,1fr) 480px}
 /* Keep all three panes visible in narrower windows. */
 @container inspector-window (max-width:1199px){.workspace{grid-template-columns:300px minmax(0,1fr) 480px}}
-.sessions-sidebar{display:flex;flex-direction:column;min-width:0;min-height:0;gap:8px;padding:var(--view-inset);background:var(--panel);border-right:1px solid var(--line);overflow:hidden}
-.sessions-sidebar .sidebar-title,.requests-sidebar .sidebar-title{margin-inline:0}
+.sessions-sidebar{display:flex;flex-direction:column;min-width:0;min-height:0;gap:var(--records-heading-gap);padding:var(--view-inset);background:var(--panel);border-right:1px solid var(--line);overflow:hidden}
+/* Match the request pane's title center and content start, including the search field and tabs. */
+.sessions-sidebar .sidebar-title,.requests-sidebar .sidebar-title{flex:none;height:var(--records-heading-height);margin:0}
+.sessions-sidebar .sidebar-title h1,.requests-sidebar .sidebar-title h1{line-height:22px}
 .sessions-title{gap:12px}
 .sessions-title h1{flex-shrink:0}
 .session-search{flex:1;width:0;min-width:0;max-width:230px;height:30px;padding:5px 8px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:inherit;font-size:12px}
@@ -197,17 +199,20 @@ code.session-id{font-family:Consolas,"Cascadia Mono",monospace;font-size:11px;wo
 .session-updated{justify-self:end;text-align:right;white-space:nowrap}
 .other-session-group .session-updated{grid-column:1/-1}
 .session-metadata-note{flex-shrink:0;font-size:11px;line-height:1.5;margin:0 5px 4px}
-.requests-sidebar{height:auto;max-height:none;min-height:0;border-bottom:0;padding:var(--view-inset)}
+.requests-sidebar{position:relative;height:auto;max-height:none;min-height:0;border-bottom:0;gap:var(--records-heading-gap);padding:var(--view-inset)}
 .requests-sidebar .packet-list{margin-inline:0}
 .sessions-sidebar .sidebar-footer,.requests-sidebar .sidebar-footer{padding-top:6px;flex-shrink:0}
 .storage-summary{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:4px 10px;font-variant-numeric:tabular-nums}
 .storage-summary>span{white-space:nowrap}
 .packet-table{min-width:345px}
 .detail{display:flex;flex-direction:column;min-height:0;padding:var(--view-inset);overflow:hidden}
+.sessions-sidebar,.requests-sidebar,.detail{padding-top:8px}
 .detail .tabs{margin-inline:0}
 #packet-detail:not([hidden]){display:flex;flex:1;flex-direction:column;min-height:0;min-width:0}
-#packet-detail>.tabs{flex:none;margin-bottom:0}
-.detail-content{flex:1;min-height:0;min-width:0;overflow-x:auto;overflow-y:scroll;scrollbar-gutter:stable;overscroll-behavior:contain;padding-top:var(--view-inset)}
+#packet-detail>.tabs{flex:none;height:var(--records-heading-height);margin-bottom:0;border-bottom:0;box-shadow:inset 0 -1px var(--line)}
+#packet-detail>.tabs button{display:flex;align-items:center;height:100%;padding:0;border-bottom:0;line-height:22px}
+#packet-detail>.tabs button.active{box-shadow:inset 0 -2px var(--accent)}
+.detail-content{flex:1;min-height:0;min-width:0;overflow-x:auto;overflow-y:scroll;scrollbar-gutter:stable;overscroll-behavior:contain;margin-top:var(--records-heading-gap)}
 .json-viewer{position:relative;min-width:0;border:1px solid var(--line);border-radius:8px;background:var(--panel);overflow:hidden}
 .json-content{margin:0;padding:16px 54px 16px 16px;max-height:68cqh;overflow-x:auto;overflow-y:scroll;scrollbar-gutter:stable;white-space:pre;word-break:normal;overflow-wrap:normal;font-family:Consolas,"Cascadia Mono",monospace;font-size:12px;line-height:1.65;tab-size:2}
 .json-download{position:absolute;top:10px;right:10px;z-index:1;display:grid;place-items:center;width:32px;height:32px;border:1px solid var(--line);border-radius:7px;background:var(--panel);color:var(--muted);box-shadow:0 2px 8px #14243b12;text-decoration:none}
@@ -537,7 +542,8 @@ dialog{width:min(760px,calc(var(--desktop-width) - 80px));max-height:calc(var(--
 .input-invalid,#settings-dialog .context-value:has(.input-invalid){border-color:var(--danger)!important;outline:1px solid var(--danger);outline-offset:0}
 .app-inline-feedback{flex:none;height:18px;padding:0 var(--view-inset,12px);overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 .inline-feedback>p,.inline-feedback .sharing-message{margin:0;padding:0;border:0;background:none}
-.requests-inline-feedback{flex:none;height:18px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+/* Keep list feedback at the bottom without reserving an empty footer row. */
+.requests-inline-feedback{position:absolute;z-index:2;inset:auto calc(var(--view-inset) + 11px) calc(var(--view-inset) + 1px) calc(var(--view-inset) + 1px);height:22px;padding:2px 8px;background:var(--panel);border-radius:0 0 6px 6px;box-shadow:0 -1px var(--line);overflow:hidden;white-space:nowrap;text-overflow:ellipsis;pointer-events:none}
 .requests-inline-feedback .list-loading{margin:0;line-height:18px;text-align:left}
 #settings-dialog .settings-inline-feedback{display:grid;align-items:center;height:var(--settings-control-height);overflow:auto;overscroll-behavior:contain;scrollbar-width:none;font-size:14px;line-height:18px}
 #settings-dialog .settings-inline-feedback .help{max-height:var(--settings-control-height);margin:0;font-size:inherit;line-height:18px;overflow:auto}
