@@ -1069,7 +1069,7 @@ const uiI18n = (() => {
     "总耗时":"Total time",
     "已结束":"Ended",
     "错误原因":"Error reason",
-    "会话信息":"Session information",
+    "子会话信息":"Child session information",
     "父会话名称":"Parent session name",
     "任务类型":"Task type",
     "图片信息":"Image information",
