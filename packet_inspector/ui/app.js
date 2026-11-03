@@ -822,8 +822,20 @@ function packetProtection(p) {
     predictive:p.usage_override_applied===true,
     overflow:p.overflow_compaction_calls>0 || p.overflow_cache_hit===true ||
       typeof p.relay_error==="string" && p.relay_error.startsWith("overflow_"),
-    retry:p.native_retry_advised===true||capacityRetryCount(p)>0
+    retry:p.native_retry_advised===true||capacityRetryCount(p)>0,
+    optimization:p.image_isolation_applied===true||Number.isSafeInteger(p.image_isolation_removed)&&p.image_isolation_removed>0,
+    resize:p.image_upload_optimized===true
   };
+}
+const protectionLabels={predictive:"预测保护",overflow:"超限保护",retry:"重试保护",optimization:"图片优化",resize:"缩图保护"};
+function renderProtectionMarkers(flags) {
+  const markers=el("span","packet-protection-markers"),labels=[];
+  for(const [key,label] of Object.entries(protectionLabels))if(flags[key]) {
+    const marker=el("span","packet-protection-marker");marker.dataset.mechanism=key;marker.dataset.renderKey="protection-marker:"+key;
+    marker.title=t(label)+" · "+t("已触发");marker.setAttribute("aria-hidden","true");markers.append(marker);labels.push(t(label));
+  }
+  if(!labels.length)return null;
+  markers.setAttribute("role","img");markers.setAttribute("aria-label",labels.join(" · ")+" · "+t("已触发"));return markers;
 }
 function overflowApplied(p) {return p.overflow_compaction_calls>0||p.overflow_cache_hit===true;}
 function requestTokenUsage(p,data=null) {
@@ -1020,18 +1032,13 @@ function renderList() {
   const sessionCount=selectedSessionGroup()?.packet_count;
   const total=!filtered?state.status.storage.count:!state.filters.kind && !state.filters.status && state.filters.thread && Number.isFinite(sessionCount)?sessionCount:null;
   setText($("record-count"),total===null?nf.format(state.packets.length)+(state.canLoadMore?"+":"")+t(" 条"):nf.format(total)+t(" 条"));
-  const signature=JSON.stringify([state.selected,state.status.budget_bytes,state.older,state.canLoadMore,state.sort,state.direction,state.filters,state.packets.map(p=>[p.id,p.created,p.method,p.is_compaction,requestKind(p),p.state,p.status,p.duration_ms,p.decoded_bytes,p.outbound_wire_bytes,p.outbound_content_encoding,p.thread_id,p.overflow_compaction_calls,p.overflow_cache_hit,p.overflow_original_wire_bytes,p.usage_override_applied,p.capacity_retry_count,p.native_retry_advised,p.native_retry_delay_ms,p.relay_error,p.upstream_usage?.input_tokens])]);
+  const signature=JSON.stringify([state.selected,state.status.budget_bytes,state.older,state.canLoadMore,state.sort,state.direction,state.filters,state.packets.map(p=>[p.id,p.created,p.method,p.is_compaction,requestKind(p),p.state,p.status,p.duration_ms,p.decoded_bytes,p.outbound_wire_bytes,p.outbound_content_encoding,p.thread_id,p.overflow_compaction_calls,p.overflow_cache_hit,p.overflow_original_wire_bytes,p.usage_override_applied,p.capacity_retry_count,p.native_retry_advised,p.native_retry_delay_ms,p.relay_error,p.upstream_usage?.input_tokens,p.image_isolation_applied,p.image_isolation_removed,p.image_upload_optimized])]);
   if(signature===state.listVersion)return;
   state.listVersion=signature;
   const root=$("packet-rows"), fragment=document.createDocumentFragment(); renderSort();
   listTokenObserver.disconnect();visibleTokenRows.clear();listTokenCells.clear();
   for (const p of state.packets) {
-    const flags=packetProtection(p),protection=[];
-    if(flags.predictive)protection.push(t("预测保护"));
-    if(flags.overflow)protection.push(t("超限保护"));
-    if(flags.retry)protection.push(t("重试保护"));
-    if(p.overflow_compaction_calls>0)protection.push(t("生成摘要 ")+nf.format(p.overflow_compaction_calls)+t(" 次"));
-    if(p.overflow_cache_hit===true)protection.push(t("复用摘要"));
+    const flags=packetProtection(p),protection=Object.entries(protectionLabels).filter(([key])=>flags[key]).map(([,label])=>t(label));
     const row=el("tr",["request-"+packetStatus(p),state.selected===p.id?"selected":""].filter(Boolean).join(" ")), date=new Date(p.created*1000);
     const time=el("button","packet-open");
     time.append(el("span","packet-date",dateFormat.format(date)),el("span","packet-clock",clockFormat.format(date)));
@@ -1051,8 +1058,8 @@ function renderList() {
       if(value instanceof Node)td.append(value);else td.textContent=value;
       row.append(td);
     }
-    const compressed=el("td",["packet-compressed",flags.predictive?"predictive-protected":"",flags.overflow?"overflow-protected":"",flags.retry?"retry-protected":""].filter(Boolean).join(" "));
-    compressed.title=after.title;compressed.append(after);row.append(compressed);
+    const compressed=el("td","packet-compressed"),markers=renderProtectionMarkers(flags);
+    compressed.title=after.title;compressed.append(after);if(markers)compressed.append(markers);row.append(compressed);
     const tokens=el("td","packet-tokens");listTokenCells.set(p.id,tokens);renderListTokens(p);row.append(tokens);
     bindSelectableRow(row,current=>selectPacket(current.dataset.packetId));fragment.append(row);
   }
@@ -1918,36 +1925,39 @@ function renderCompression(m) {
   }
   root.append(sizes);
   const steps=panel(t("请求保护"));steps.id="packet-protection-panel";steps.classList.add("packet-protection-panel");
-  const item=(key,label,triggered,category)=>{
+  const flags=packetProtection(m);
+  const item=(key,category)=>{
+    const triggered=flags[key];
     const section=el("section","protection-item");section.dataset.renderKey="protection:"+key;
-    section.dataset.protection=category;section.dataset.triggered=String(triggered);
-    fact(section,t(label),t(triggered?"已触发":"未触发")).classList.add("protection-heading");steps.append(section);
+    section.dataset.protection=category;section.dataset.mechanism=key;section.dataset.triggered=String(triggered);
+    const heading=fact(section,t(protectionLabels[key]),triggered?"✓":"—"),status=heading.lastChild;
+    heading.classList.add("protection-heading");status.classList.add("protection-status");
+    status.title=t(triggered?"已触发":"未触发");status.setAttribute("role","img");status.setAttribute("aria-label",status.title);steps.append(section);
     if(!triggered)return null;
     const details=el("div","protection-details");details.dataset.renderKey="protection-details";section.append(details);return details;
   };
   const number=value=>Number.isSafeInteger(value)&&value>=0?nf.format(value):"—";
   const size=value=>Number.isSafeInteger(value)&&value>=0?bytes(value):"—";
-  const predictive=item("predictive","预测保护",m.usage_override_applied===true,"size");
+  const predictive=item("predictive","size");
   if(predictive) {
     fact(predictive,t("原始 Token"),number(m.upstream_usage?.input_tokens));
     fact(predictive,t("改写 Token"),number(m.reported_usage?.input_tokens));
   }
-  const summaryFailed=typeof m.relay_error==="string"&&m.relay_error.startsWith("overflow_");
-  const overflow=item("overflow","超限保护",summaryTriggered||summaryFailed,"size");
+  const overflow=item("overflow","size");
   if(overflow) {
     fact(overflow,t("处理前大小"),size(m.overflow_original_wire_bytes));
     const after=[m.relay_wire_bytes,m.outbound_wire_bytes].find(value=>Number.isSafeInteger(value)&&value>=0);
     fact(overflow,t("处理后大小"),size(after));
   }
-  const retryCount=capacityRetryCount(m),retry=item("retry","重试保护",m.native_retry_advised===true||retryCount>0,"retry");
+  const retryCount=capacityRetryCount(m),retry=item("retry","retry");
   if(retry)fact(retry,t("重试次数"),retryCount>0?nf.format(retryCount):"—");
-  const optimization=item("optimization","图片优化",m.image_isolation_applied===true||Number.isSafeInteger(m.image_isolation_removed)&&m.image_isolation_removed>0,"optimization");
+  const optimization=item("optimization","optimization");
   if(optimization) {
     const body=requestBodyView&&requestBodyView.id===m.id?requestBodyView.body:null,paths=requestImagePaths(m,body);
     if(paths.length)optimization.append(renderImagePaths(paths));
     else fact(optimization,t("图片路径"),"—");
   }
-  const resize=item("resize","缩图保护",m.image_upload_optimized===true,"image");
+  const resize=item("resize","image");
   if(resize) {
     const recorded=Array.isArray(m.image_upload_images)?m.image_upload_images.filter(image=>image&&typeof image==="object"&&!Array.isArray(image)):[];
     const images=recorded.length?recorded:[{}];
