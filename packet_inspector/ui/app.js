@@ -1901,7 +1901,7 @@ function renderProtectionPanelState() {
 }
 function renderCompression(m) {
   const root=document.createDocumentFragment();
-  const sizes=panel(t("请求大小")), original=originalBytes(m), compressed=compressedBytes(m);
+  const sizes=panel(t("请求处理")), original=originalBytes(m), compressed=compressedBytes(m);
   fact(sizes,t("原始请求"),bytes(original)).title=t("原始请求大小（图片处理、传输压缩前）");
   fact(sizes,t("转发请求"),bytes(compressed)).title=t("转发请求大小（图片处理、传输压缩后，超限摘要处理前）");
   const summaryTriggered=m.overflow_compaction_calls>0||m.overflow_cache_hit===true;
@@ -2344,7 +2344,7 @@ function renderImagePaths(paths) {
   return images;
 }
 function renderHeaders(m) {
-  const root=document.createDocumentFragment(),p=panel(t("请求与响应"));
+  const root=document.createDocumentFragment(),p=panel(t("请求概况"));
   if(m.source!=="live")fact(p,t("数据来源"),t("历史重建（大小为估算）"));
   fact(p,t("模型"),m.model||t("未标记"));
   const endings={completed:"完成",failed:"失败",incomplete:"未完成",cancelled:"已取消",interrupted:"已中断"};
