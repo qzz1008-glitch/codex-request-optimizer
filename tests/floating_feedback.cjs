@@ -29,9 +29,12 @@ async function run(){
  await page.addScriptTag({content:[
   "window.$=id=>document.getElementById(id);window.state={status:{version:'1.0.0',entry_port:{pending:false}}};",
   "window.updateStatus=null;window.updateBusy=false;window.settingsSaving=false;window.updateAction='';window.updateFeedbackVisible=true;",
+  "window.updateRevision=0;window.updateStatusLoading=false;window.settingsOpening=false;window.compressionSaving=false;window.exitSaving=false;window.connectSaving=false;window.connectChecking=false;",
+  "window.refreshStatus=async()=>{};window.loadContextSettings=async()=>{};window.readSettingsDraft=()=>({});",
+  "window.resetSettingsSaveProgress=()=>{};window.renderLanguageSelection=()=>{};window.renderConnectionActions=()=>{};window.updateSettingsSaveState=()=>{};",
   "window.closeZstdLevelPicker=()=>{};window.discardSettingsDraft=()=>{};",
   "function el(tag,cls,value){const node=document.createElement(tag);node.className=cls;node.textContent=value;return node;}",
-  extract('function renderUpdates()','async function loadUpdates()'),
+  extract('function renderUpdates()','async function selectPacket('),
   extract('globalThis.InspectorRestartNotice = {','\nconst $ ='),
   "window.restartNotices=InspectorRestartNotice.create({status:()=>state.status,request:async()=>{},openSettings:async()=>{}});",
   extract('function setSettingsMessage(','function renderSettingsSaveProgress('),
@@ -53,6 +56,39 @@ async function run(){
    assert.deepEqual(await geometry(page,['updates-settings','settings-dialog','settings-save','settings-restore']),before);
   }cases++;
  }}
+ await page.evaluate(()=>closeSettings());
+ for(const language of ['zh','en']){
+  await page.evaluate(async language=>{
+   uiI18n.setLanguage(language,{persist:false});updateStatus=null;updateFeedbackVisible=false;
+   window.updateRequests=[];window.cachedUpdate={state:'idle',current_version:'1.0.0'};
+   window.api=async(path,data)=>{
+    if(path!=='/api/updates')throw Error('Unexpected request: '+path);
+    updateRequests.push(data?.action||'status');
+    if(data?.action==='check')cachedUpdate={state:'available',current_version:'1.0.0',latest_version:'1.1.0'};
+    return {...cachedUpdate};
+   };
+   await openSettings();
+  },language);
+  assert.equal(await page.locator('#updates-message').isVisible(),false,'unchecked settings show only the current version');
+  assert.equal(await page.locator('#updates-install').isDisabled(),true);cases++;
+  await page.evaluate(()=>performUpdate('check'));
+  for(let reopen=0;reopen<2;reopen++){
+   await page.evaluate(async()=>{closeSettings();await openSettings();});
+   assert(await page.locator('#updates-message').isVisible(),'an available update remains visible after reopening settings');
+   assert((await page.locator('#updates-message').textContent()).includes('1.1.0'));
+   assert.equal(await page.locator('#updates-install').isDisabled(),false);
+   assert.equal(await page.evaluate(()=>updateRequests.filter(action=>action==='check').length),1,'reopening reads cached status without another release check');cases++;
+  }
+  await page.evaluate(async()=>{closeSettings();updateStatus=null;updateFeedbackVisible=false;await openSettings();});
+  assert(await page.locator('#updates-message').isVisible(),'available status loaded from the backend is also shown');
+  assert((await page.locator('#updates-message').textContent()).includes('1.1.0'));
+  assert.equal(await page.locator('#updates-install').isDisabled(),false);cases++;
+  await page.evaluate(async()=>{closeSettings();cachedUpdate={state:'current',current_version:'1.1.0',latest_version:'1.1.0'};updateStatus=null;updateFeedbackVisible=false;await openSettings();});
+  assert.equal(await page.locator('#updates-message').isVisible(),false,'a current cached version keeps the default display');
+  assert.equal(await page.locator('#updates-install').isDisabled(),true);cases++;
+  await page.evaluate(()=>closeSettings());
+ }
+ await page.evaluate(()=>document.getElementById('settings-dialog').showModal());
  await page.setViewportSize({width:1280,height:900});
  await page.evaluate(()=>uiI18n.setLanguage('zh',{persist:false}));
  const settingsIds=['settings-dialog','settings-save','settings-restore','context-settings'],beforeSave=await geometry(page,settingsIds);
@@ -74,7 +110,9 @@ async function run(){
  }
  await page.evaluate(()=>restartNotices.change('compact_tokens',null,250000));await noPopup(page);
  assert((await page.locator('#restart-notice').textContent()).includes('自动压缩阈值'));
- assert.equal(await page.locator('#settings-restart-dialog').count(),0);assert.deepEqual(await geometry(page,settingsIds),beforeSave);
+ assert.equal(await page.locator('#settings-restart-dialog').count(),0);
+ assert(await page.locator('#restart-notice').isVisible());
+ assert.deepEqual(await geometry(page,settingsIds.slice(0,3)),beforeSave.slice(0,3),'showing pending items keeps the dialog and footer stable');
  await page.evaluate(()=>closeSettings());await noPopup(page);
  assert.equal(await page.locator('#restart-notice-open').getAttribute('data-visible'),'true');
  assert.equal(await page.locator('#connection-inline-feedback').count(),0);cases++;

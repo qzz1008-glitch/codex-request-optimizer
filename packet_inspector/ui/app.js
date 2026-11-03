@@ -1792,7 +1792,7 @@ function renderUpdates() {
   const labels={idle:"可检查 GitHub 上的最新版本。",checking:"正在检查更新…",current:"已是最新版本。",available:"发现新版本，可以升级。",downloading:"正在下载并校验升级包…",upgrading:"正在升级，旧请求继续完成…",complete:"升级已完成。"};
   const displayedState=updateBusy?(updateAction==="check"?"checking":"downloading"):u?.state;
   const checking=displayedState==="checking",installing=["downloading","upgrading"].includes(displayedState);
-  if(checking||installing)updateFeedbackVisible=true;
+  if(checking||installing||displayedState==="available")updateFeedbackVisible=true;
   $("updates-check").setAttribute("aria-busy",String(checking));
   $("updates-install").setAttribute("aria-busy",String(installing));
   $("updates-check-label").textContent=t(checking?"检查中":"检查更新");
@@ -1824,7 +1824,7 @@ async function performUpdate(which) {
 async function openSettings() {
   if(settingsOpening||compressionSaving||exitSaving||connectSaving||connectChecking||$("connect-confirm-dialog").open||$("exit-confirm-dialog").open||$("compression-confirm-dialog").open||$("settings-dialog").open)return;
   settingsOpening=true;
-  updateFeedbackVisible=updateBusy||["checking","downloading","upgrading"].includes(updateStatus?.state);
+  updateFeedbackVisible=updateBusy||["available","checking","downloading","upgrading"].includes(updateStatus?.state);
   try {
     await Promise.all([refreshStatus(true),loadContextSettings(),loadUpdates()]);
     settingsLanguage=uiI18n.language;
