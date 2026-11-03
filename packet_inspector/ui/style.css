@@ -80,6 +80,9 @@
 body{height:100dvh;min-width:0;display:flex;flex-direction:column;overflow-x:hidden;overflow-y:hidden}
 .app-window{display:flex;flex-direction:column;flex:1;min-height:0;min-width:0;width:100%;height:100dvh;background:var(--bg);overflow:hidden;container:inspector-window / size}
 .app-header{flex-shrink:0}
+.brand .brand-wordmark{display:inline-flex;align-items:baseline;gap:10px;font-size:18px;line-height:1.2;white-space:nowrap;font-synthesis:none;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+.brand-wordmark .brand-latin{font-family:Bahnschrift,"Segoe UI",sans-serif;font-size:1.12em;font-weight:600;letter-spacing:-.45px}
+.brand-wordmark .brand-name{font-family:"Microsoft YaHei UI","Microsoft YaHei",sans-serif;font-weight:600;letter-spacing:.3px}
 .workspace{display:grid;flex:1;min-height:0;min-width:0;height:auto;grid-template-columns:300px minmax(420px,1fr) 480px}
 /* Keep all three panes visible in narrower windows. */
 @container inspector-window (max-width:1199px){.workspace{grid-template-columns:300px minmax(0,1fr) 480px}}
