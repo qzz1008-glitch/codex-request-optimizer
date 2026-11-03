@@ -143,8 +143,7 @@ class ImageToolConfig:
         environment = dict(os.environ)
         environment["CODEX_HOME"] = str(self.link.config.parent)
         try:
-            result = subprocess.run([candidate["cli"], "--profile", VISION_PROFILE,
-                "mcp", "get", TOOL_SERVER, "--json"], env=environment, stdout=subprocess.DEVNULL,
+            result = subprocess.run([candidate["cli"], "mcp", "get", TOOL_SERVER, "--json"], env=environment, stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL, timeout=15, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         except (OSError, subprocess.TimeoutExpired):
             raise ValueError("无法验证 Codex CLI 的独立识图配置，原设置已恢复。") from None
@@ -173,9 +172,9 @@ class ImageToolConfig:
         document["features"]["view_image"] = False
         if old_tool is None:
             document["mcp_servers"][TOOL_SERVER] = registration
-        # Tool isolation uses a profile that inherits the current connection.
-        # Existing selectors/providers, including inline profiles, belong to
-        # connection management and are never rewritten by image installation.
+        # Retain the legacy profile for reversible upgrades and draining older
+        # tools. Native app-server uses the App's main configuration. Existing
+        # profile selectors/providers remain owned by connection management.
         inline_profile = VISION_PROFILE in data.get("profiles", {})
         created = not profile_existed and not inline_profile
         profile_updated = tomlkit.dumps(profile_document) if profile_existed or created else None
