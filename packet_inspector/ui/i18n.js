@@ -986,6 +986,7 @@ const uiI18n = (() => {
     "全部":"All",
     "未识别会话":"Unidentified session",
     "会话名称暂不可用":"Session name unavailable",
+    "会话名称暂不可用，显示上次加载的名称":"Session name unavailable; showing the last loaded name",
     "临时图片分析":"Temporary image analysis",
     "{count} 个任务":"{count} tasks",
     "临时图片分析任务，未保存原生会话名称。":"Temporary image analysis task; no native session name was saved.",
