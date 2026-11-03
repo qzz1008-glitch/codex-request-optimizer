@@ -712,6 +712,7 @@ class InspectorServer(ThreadingHTTPServer):
                 "provider_warnings": self.provider_sync_result.get("warnings", []),
                 "wsl_connection": {**self.wsl.result, "metadata_error": self.wsl.metadata_error},
                 "connection_resume": self.connection_resume.status(),
+                "connection_diagnostics_supported": True,
                 "desktop_tray": bool(getattr(self, "desktop_tray", False)),
                 "desktop_refresh_supported": self.presentation is not None,
                 "desktop_integration_error": self.presentation.error if self.presentation else "",
@@ -994,6 +995,10 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(400, {"error": str(exc)})
         elif path == "/api/tray-status" and self.command == "GET":
             self._json(200, self.server.tray_status())
+        elif path == "/api/connection-diagnostics" and self.command == "GET":
+            headers = ({"Content-Disposition": 'attachment; filename="codex-connection-diagnostics.json"'}
+                       if one("download") == "1" else None)
+            self._json(200, self.server.connection_resume.diagnostics(), headers)
         elif path == "/api/network-diagnostics" and self.command == "GET":
             headers = ({"Content-Disposition": 'attachment; filename="codex-network-diagnostics.json"'}
                        if one("download") == "1" else None)

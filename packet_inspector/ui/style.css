@@ -561,18 +561,9 @@ dialog{width:min(760px,calc(var(--desktop-width) - 80px));max-height:calc(var(--
 .restart-pending-field::after{content:attr(data-restart-label);position:absolute;right:2px;top:-13px;padding:0 4px;background:var(--panel);color:#96600b;font-size:10px;font-weight:500;line-height:15px;pointer-events:none}
 #connection-settings.restart-pending-connection>h3{color:#96600b}
 .connection-pending-label{display:inline-block;vertical-align:middle;margin-left:5px;padding:0 6px;border:1px solid #eac883;border-radius:5px;background:#fff8eb;color:#875309;font-size:10px;font-weight:500;line-height:18px}
-.connection-details{margin-top:12px;font-size:12px;color:var(--muted)}
-.connection-details summary{width:max-content;cursor:pointer;line-height:22px}
-.connection-resume-controls{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:32px;margin-top:6px}
-#connection-resume-status{min-width:0;max-height:32px;overflow:auto;line-height:16px}
-#connection-resume-retry{flex:none;min-height:28px;padding:3px 10px;font-size:12px}
-#connection-resume-retry[hidden]{display:block!important;visibility:hidden}
-#connection-details-list{margin:8px 0 0;padding:0;border:1px solid var(--line);border-radius:8px;list-style:none;overflow:hidden}
-.connection-detail{display:grid;grid-template-columns:112px minmax(0,1fr);gap:12px;padding:8px 10px;background:var(--soft)}
-.connection-detail+.connection-detail{border-top:1px solid var(--line)}
-.connection-detail-label{font-weight:600;overflow-wrap:anywhere}
-.connection-detail-value{white-space:pre-wrap;overflow-wrap:anywhere}
-.connection-detail.warning{background:#fff8eb;color:#875309}
+.inline-feedback .notice{display:flex;align-items:center;gap:8px;min-width:0;margin:0;padding:0;border:0;background:none;color:inherit}
+.inline-feedback .notice>span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.inline-feedback .notice>a{flex:none;color:var(--accent);font-size:inherit;white-space:nowrap}
 @container settings-dialog (max-width:650px){#settings-dialog>.restart-notice{margin-inline:20px}.restart-notice-heading strong{font-size:12px}.restart-notice-actions{gap:4px}}
 #zstd-level-message{height:34px;max-height:34px;margin:0;overflow:auto;line-height:17px}
 .confirmation-feedback,.sharing-edit-message{height:34px;max-height:34px;margin:0;overflow:auto;line-height:17px}

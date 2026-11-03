@@ -3,7 +3,22 @@
 // Saved configuration can outlive both the desktop page and a relay worker.
 // Older workers use a local ledger until the next normal application upgrade.
 globalThis.InspectorRestartNotice = {
-  create({status, request, openSettings, busy=()=>false}) {
+  connectionProblems(s={},details=null) {
+    const event=s?.connection_resume;
+    if(["pending","checking","recovering"].includes(event?.state))return [];
+    const rows=[],add=(scope,reason,detail="")=>rows.push({scope,reason,detail:String(detail).slice(0,1000)});
+    const error=event?.error||s?.provider_sync_error;
+    if(error)add("","接入配置同步失败",error);
+    for(const row of s?.provider_warnings??event?.result?.warnings??details?.warnings??[])
+      add(row.provider||"Provider","上游配置不支持接入",row.detail||row.reason);
+    const wsl=s?.wsl_connection??event?.result?.wsl??{warnings:details?.wslWarnings};
+    const reasons={relay_unreachable:"WSL 无法访问本机中转，未修改配置。",relay_instance_mismatch:"WSL 连接到其他服务，未修改配置。",
+      config_not_found:"未找到该 WSL 用户的 Codex 配置。",restore_pending:"WSL 配置尚未恢复。"};
+    for(const row of wsl.warnings||[])add("WSL · "+row.distribution,reasons[row.reason]||"WSL 接入失败",row.detail||row.reason);
+    if(!rows.length&&event?.state==="attention")add("","接入配置同步失败");
+    return rows.slice(0,32);
+  },
+  create({status, request, openSettings, busy=()=>false, showConnectionProblem=()=>{}}) {
     const $=id=>document.getElementById(id), labels={connection:"Codex 接入",context_tokens:"有效上下文",
       compact_tokens:"自动压缩阈值",capacity_retry:"容量不足重试",image_analysis_mode:"图片解析",
       entry_port:"入口端口",sharing:"共享额度来源",wsl:"WSL 配置",log_dir:"日志目录",cache_dir:"缓存目录"};
@@ -83,42 +98,23 @@ globalThis.InspectorRestartNotice = {
     }
     function node(tag,cls,text) {const value=document.createElement(tag);value.className=cls;if(text)value.textContent=text;return value;}
     function pendingLabel(row) {return t(labels[row.key])+(row.scope?" · "+row.scope:"");}
-    function renderDetails() {
-      const list=$("connection-details-list");if(!list)return;
-      const s=status(),rows=[];
-      const row=(label,value,warning=false)=>{const li=node("li",warning?"connection-detail warning":"connection-detail");li.append(node("span","connection-detail-label",label),node("span","connection-detail-value",value));rows.push(li);};
-      row(t("接入状态"),t(s?.profile?.active?"已接入":"已断开"));
-      if(Number.isInteger(details?.providers))row("Provider",String(details.providers));
-      if(details?.proxy)row(t("本机代理例外"),t("已修复"));
-      for(const warning of s?.provider_warnings||details?.warnings||[])
-        row(warning.provider||"Provider",(warning.file?warning.file+"\n":"")+t(warning.detail||warning.reason||""),true);
-      const wsl=s?.wsl_connection||{targets:details?.targets,warnings:details?.wslWarnings};
-      for(const target of wsl.targets||[])row("WSL · "+target.distribution,t(target.active?"已接入":"已恢复原配置。"));
-      const reasons={relay_unreachable:"WSL 无法访问本机中转，未修改配置。",relay_instance_mismatch:"WSL 连接到其他服务，未修改配置。",
-        config_not_found:"未找到该 WSL 用户的 Codex 配置。",restore_pending:"WSL 配置待恢复，请启动该发行版后再次接入并断开。"};
-      for(const warning of wsl.warnings||[])row("WSL · "+warning.distribution,t(reasons[warning.reason]||"WSL 操作失败，请查看接入诊断。")+(warning.detail?"\n"+warning.detail:""),true);
-      const resume=s?.connection_resume;
-      if(resume?.error)row(t("接入同步"),resume.error,true);
-      for(const deferred of resume?.result?.wsl?.deferred||[])row("WSL · "+deferred.distribution,t("WSL 启动后会自动同步。"));
-      list.replaceChildren(...rows);
-    }
     function render() {
       const card=$("restart-notice"),badge=$("restart-notice-open");if(!card||!badge)return;
       const items=[...ledger.items],s=status();
       if(s?.storage_paths_pending)for(const key of ["log_dir","cache_dir"])
         if(s[key]!==s["active_"+key])items.push({key,target:"optimizer",scope:""});
       const chatgpt=items.some(row=>row.target==="chatgpt"),wsl=items.some(row=>row.target==="wsl"),optimizer=items.some(row=>row.target==="optimizer");
-      const portPending=!!s?.entry_port?.pending,warning=!!(s?.provider_warnings||details?.warnings)?.length||!!(s?.wsl_connection?.warnings||details?.wslWarnings)?.length||s?.connection_resume?.state==="attention";
+      const portPending=!!s?.entry_port?.pending,warning=InspectorRestartNotice.connectionProblems(s,details).length>0;
       const failure=error||backendError||storageError,active=items.length>0||!!failure;
-      const nextKey=JSON.stringify([ledger.revision,items,details,s?.provider_warnings,s?.profile?.active,s?.wsl_connection,s?.connection_resume,portPending,failure,working,!!busy(),uiI18n.language]);
+      const nextKey=JSON.stringify([ledger.revision,items,details,s?.provider_warnings,s?.profile?.active,s?.wsl_connection,s?.connection_resume,portPending,warning,failure,working,!!busy(),uiI18n.language]);
       if(nextKey===renderKey)return;renderKey=nextKey;
       card.hidden=!active;
       card.dataset.state=active?"pending":"ready";
       badge.dataset.visible=String(active||warning);badge.tabIndex=active||warning?0:-1;
-      badge.textContent=t(items.length?(chatgpt||optimizer?"待重启":"待重新连接"):"接入提醒");
-      badge.setAttribute("aria-label",t("查看待生效配置与接入详情"));
+      badge.textContent=t(items.length?(chatgpt||optimizer?"待重启":"待重新连接"):failure?"状态异常":"接入异常");
+      badge.setAttribute("aria-label",t("查看待生效配置或接入错误"));
       $("restart-notice-title").textContent=t(portPending?"先重启优化器，再重启 ChatGPT App":optimizer&&chatgpt?"重启优化器与 ChatGPT App 后生效":optimizer?"重启优化器后生效":chatgpt?"重启 ChatGPT App 后生效":wsl?"重新连接 WSL 会话后生效":failure?"待生效状态暂不可用":"配置生效状态");
-      badge.title=active?$("restart-notice-title").textContent:warning?t("接入详情"):"";
+      badge.title=active?$("restart-notice-title").textContent:warning?t("接入配置同步失败"):"";
       const tags=$("restart-notice-items");tags.replaceChildren(...items.map(row=>node("li","restart-notice-tag",pendingLabel(row))));
       const message=$("restart-notice-message");
       message.textContent=failure?t(failure):t(chatgpt||wsl?"完成上述操作后再确认；确认只清除提醒。":optimizer?"重启优化器后，状态会自动更新。":"暂无待生效项目；新请求使用已保存的配置。");
@@ -137,7 +133,6 @@ globalThis.InspectorRestartNotice = {
       $("connection-settings").classList.toggle("restart-pending-connection",!!connectionItems.length);
       $("connection-pending-label").hidden=!connectionItems.length;
       $("connection-pending-label").textContent=t(connectionItems.some(row=>row.target==="chatgpt")?"待重启":"待重新连接");
-      renderDetails();
     }
     async function acknowledge(target) {
       if(working||busy()||target==="chatgpt"&&status()?.entry_port?.pending)return;
@@ -149,9 +144,9 @@ globalThis.InspectorRestartNotice = {
       finally {working=false;render();}
     }
     $("restart-notice-open").addEventListener("click",async()=>{
+      if($("restart-notice").hidden){showConnectionProblem();return;}
       await openSettings();render();
-      if(!ledger.items.length&&!status()?.storage_paths_pending&&!status()?.entry_port?.pending)$("connection-details").open=true;
-      const card=$("restart-notice");(card.hidden?$("connection-details").querySelector("summary"):card).focus();
+      $("restart-notice").focus();
     });
     for(const target of ["chatgpt","wsl"])$("restart-notice-"+target).addEventListener("click",()=>acknowledge(target));
     return {ingest,adopt,change,connection,sharing,render,acknowledge};
@@ -252,9 +247,10 @@ const imageZstdLevelEstimates = [
 ];
 let compressionTarget = null, compressionSaving = false, compressionRevision = 0;
 const restartNotices = InspectorRestartNotice.create({status:()=>state.status,request:api,openSettings:()=>openSettings(),
-  busy:()=>settingsSaving||linkSaving||compressionSaving||exitSaving||connectSaving||connectionResumeBusy()});
+  busy:()=>settingsSaving||linkSaving||compressionSaving||exitSaving||connectSaving||connectionResumeBusy(),
+  showConnectionProblem:()=>renderConnectionResume(true)});
 globalThis.inspectorRestartNotices=restartNotices;
-let connectionResumeSeen = "", connectionResumeRetrying = false, connectionResumeError = "";
+let connectionResumeSeen = "", connectionProblemKey = "";
 let exitRequest = null, exitSaving = false, exitFinished = false, exitRevision = 0;
 let serviceRestartRequest = null, serviceRestartSaving = false, serviceRestartRevision = 0, serviceRestartAction = "";
 let connectSource = null, connectSaving = false, connectChecking = false, startupConnectChecked = false;
@@ -726,7 +722,11 @@ async function selectSession(value) {
   renderSessions();renderList();
   await loadPackets();
 }
-function message(text, error=false) { uiI18n.text($("notice-text"),text); $("notice").className = "notice"+(error?" error":"");$("notice").dataset.feedbackTarget=$("settings-dialog").open?"settings-inline-feedback":"app-inline-feedback"; $("notice").hidden = false; }
+function message(text, error=false,diagnostics=false) {
+  const notice=$("notice");uiI18n.text($("notice-text"),text);notice.className="notice"+(error?" error":"");
+  notice.dataset.feedbackTarget=$("settings-dialog").open?"settings-inline-feedback":"app-inline-feedback";
+  delete notice.dataset.connectionIssue;$("notice-diagnostics").hidden=!diagnostics;notice.hidden=false;
+}
 function fail(err) { message(err.message || String(err), true); }
 async function api(path, data, signal) { const r = await fetch(path, {method:data === undefined ? "GET" : "POST",headers:data === undefined ? {} : {"Content-Type":"application/json"},body:data === undefined ? undefined : JSON.stringify(data),signal}); const value = await r.json(); if (!r.ok) throw Object.assign(Error(value.error || ("HTTP "+r.status)),{status:r.status}); return value; }
 function action(id, fn) { $(id).addEventListener("click", () => Promise.resolve().then(fn).catch(fail)); }
@@ -1346,36 +1346,29 @@ function rememberConnectionResume() {
     try {localStorage.setItem("connection-resume-seen",event.id);}catch {}
   }
 }
-function renderConnectionResume() {
-  const event=state.status?.connection_resume,checking=connectionResumeBusy(),attention=event?.state==="attention";
+function renderConnectionResume(force=false) {
+  const s=state.status,event=s?.connection_resume,problems=InspectorRestartNotice.connectionProblems(s);
+  const key=problems.length?JSON.stringify([event?.id,problems,s?.active_log_dir||s?.log_dir,uiI18n.language]):"";
+  if(key&&(force||key!==connectionProblemKey)) {
+    const log=s?.active_log_dir||s?.log_dir||s?.data_dir||"",first=problems[0];
+    message(()=>[first.scope,t(first.reason),first.detail].filter(Boolean).join(" · ")+" "+
+      t(event?.error||event?.attempt>1?"请重启本软件后重试；若仍失败，请导出诊断报告反馈。":"可导出诊断报告反馈。")+
+      (log?" "+t("日志目录：{path}").replace("{path}",log):""),true,!!s?.connection_diagnostics_supported);
+    $("notice").dataset.feedbackTarget="app-inline-feedback";$("notice").dataset.connectionIssue=key;
+  } else if(!key&&$("notice").dataset.connectionIssue) {
+    $("notice").hidden=true;delete $("notice").dataset.connectionIssue;$("notice-diagnostics").hidden=true;
+  }
+  connectionProblemKey=key;
   if(!connectionResumeSeen)try {connectionResumeSeen=localStorage.getItem("connection-resume-seen")||"";}catch {}
-  if(event?.id&&["complete","attention"].includes(event.state)&&event.id!==connectionResumeSeen)connectionResumeError="";
-  $("connection-resume-controls").hidden=!event||event.state==="idle";
-  const retry=$("connection-resume-retry"),result=event?.result||{};
-  retry.hidden=!attention&&!checking&&!connectionResumeError;
-  retry.disabled=connectionResumeRetrying||checking||settingsSaving||!!linkSaving;
-  const label=checking?"正在检查接入配置…":attention?"接入配置需要处理":state.status?.profile?.active?"接入配置已自动同步":"已断开";
-  if($("connection-resume-status").textContent!==t(connectionResumeError||label))
-    uiI18n.text($("connection-resume-status"),connectionResumeError||label);
-  $("connection-resume-status").classList.toggle("error",!!connectionResumeError||attention);
   if(!event?.id||!["complete","attention"].includes(event.state))return;
   if(event.id===connectionResumeSeen)return;
-  if(result.changed||attention||result.restart_notice?.items?.length) {
+  const result=event.result||{};
+  if(result.changed||event.state==="attention"||result.restart_notice?.items?.length) {
     const wslChanged=result.wsl?.targets?.some(row=>row.changed);
     restartNotices.connection("activate",{...result,
       local_reload_required:result.local_reload_required??(!!result.changed&&!wslChanged)});
   }
   rememberConnectionResume();
-}
-async function retryConnectionResume() {
-  if(connectionResumeRetrying||connectionResumeBusy())return;
-  connectionResumeRetrying=true;connectionResumeError="";renderConnectionResume();
-  try {
-    const event=await api("/api/connection/resume",{});
-    state.status.connection_resume=event;
-    renderConnectionActions();
-  } catch(error) {connectionResumeError=error.message;}
-  finally {connectionResumeRetrying=false;renderConnectionResume();restartNotices.render();}
 }
 function renderConnectPrompt() {
   const s=state.status;if(!s)return;
@@ -2425,7 +2418,6 @@ $("exit-confirm-dialog").addEventListener("cancel",event=>{event.preventDefault(
 action("service-restart-cancel",()=>confirmServiceRestart("cancel"));action("service-restart-apply",()=>confirmServiceRestart("restart"));
 $("service-restart-dialog").addEventListener("cancel",event=>{event.preventDefault();confirmServiceRestart("cancel");});
 action("connect-confirm-cancel",cancelConnectPrompt);action("connect-confirm-apply",confirmConnection);
-action("connection-resume-retry",retryConnectionResume);
 $("connect-confirm-dialog").addEventListener("cancel",event=>{event.preventDefault();cancelConnectPrompt();});
 function fillPacketProtection() {
   const s=state.status,supported="packet_size_protection_enabled" in s,automatic=$("auto-zstd-level"),autoSupported=typeof s.auto_zstd_level_enabled==="boolean";
