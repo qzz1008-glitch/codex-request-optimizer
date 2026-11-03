@@ -1,5 +1,6 @@
 """Controlled sharing interruption uses runtime APIs, never credential rewrites."""
 from copy import deepcopy
+import json
 from pathlib import Path
 import tempfile
 import unittest
@@ -21,6 +22,8 @@ class SharingUpgradeTests(unittest.TestCase):
         # Exercise every independent role, including a lazily opened callback
         # exit listener alongside borrowed quota. Secrets are never required.
         self.states = {61001: deepcopy(self.shared), 61002: {}}
+        self.health = {61001: {"worker_id": self.source, "pid": 123},
+                       61002: {"worker_id": self.target, "pid": 456}}
         self.calls, self.events = [], []
         self.plan = SharingUpgrade(self.root, self.source, self.shared, lambda *args: self.events.append(args))
         self.workers = patch("packet_inspector.sharing_upgrade.worker_info", side_effect=lambda _root, identity:
@@ -33,7 +36,7 @@ class SharingUpgradeTests(unittest.TestCase):
 
     def api(self, port, path, data=None, **_kwargs):
         if path == "/health":
-            return {"worker_id": self.source if port == 61001 else self.target, "pid": 123 if port == 61001 else 456}
+            return deepcopy(self.health[port])
         self.assertEqual(path, "/api/sharing")
         state = self.states[port]
         if data:
@@ -59,6 +62,86 @@ class SharingUpgradeTests(unittest.TestCase):
             else:
                 self.fail("Unexpected sharing mutation: " + action)
         return deepcopy(state)
+
+    def legacy_runtime(self, **values):
+        # Captured 0.8.1 contract: /health has worker_id but no PID; the runtime
+        # file is named for that worker and contains only PID, port and version.
+        self.health[61001] = {"ok": True, "app": "codex-packet-inspector", "version": "0.8.1", "worker_id": self.source}
+        path = self.root / "router-workers" / (self.source + ".runtime.json")
+        path.parent.mkdir(exist_ok=True)
+        path.write_text(json.dumps({"pid": 123, "port": 61001, "version": "0.8.1", **values}), encoding="utf-8")
+        return path
+
+    def test_081_process_record_supports_pause_stop_and_restore(self):
+        self.legacy_runtime()
+        self.plan.pause(self.source, check=True)
+        self.assertEqual(self.plan.source_pid, 123)
+        with patch("packet_inspector.sharing_upgrade.process_alive", side_effect=[True, False]), \
+             patch("packet_inspector.sharing_upgrade.control_worker", return_value={}) as control:
+            self.plan.stop_source()
+        control.assert_called_once_with(self.root, self.source, "stop")
+        self.plan.restore(self.target)
+        self.assertEqual(sharing_state(self.states[61002]), sharing_state(self.shared))
+
+    def test_current_health_needs_no_runtime_file(self):
+        self.plan.pause(self.source, check=True)
+        self.assertEqual(self.plan.source_pid, 123)
+        self.assertFalse((self.root / "router-workers").exists())
+
+    def test_legacy_runtime_errors_do_not_pause_or_disclose_file_contents(self):
+        for contents, reason in ((None, "runtime_unreadable"), ("private malformed content", "runtime_unreadable"),
+                                 ("[]", "runtime_port_mismatch"),
+                                 (json.dumps({"pid": 123, "port": 61002}), "runtime_port_mismatch"),
+                                 (json.dumps({"pid": 123, "port": "61001"}), "runtime_port_mismatch"),
+                                 (json.dumps({"pid": 0, "port": 61001}), "invalid_pid"),
+                                 (json.dumps({"pid": True, "port": 61001}), "invalid_pid")):
+            with self.subTest(contents=contents):
+                path = self.legacy_runtime()
+                if contents is None:
+                    path.unlink()
+                else:
+                    path.write_text(contents, encoding="utf-8")
+                with self.assertRaises(ValueError):
+                    self.plan.pause(self.source, check=True)
+                self.assertFalse(self.plan.paused)
+                self.assertEqual(self.calls, [])
+                self.assertEqual(self.events[-1][1]["reason"], reason)
+                self.assertNotIn("private malformed content", str(self.events))
+
+    def test_invalid_health_pid_cannot_be_hidden_by_valid_runtime(self):
+        self.legacy_runtime()
+        for pid in (False, "123", 0, -1):
+            with self.subTest(pid=pid):
+                self.health[61001]["pid"] = pid
+                with self.assertRaisesRegex(ValueError, "无法确认待停止"):
+                    self.plan.pause(self.source, check=True)
+                self.assertFalse(self.plan.paused)
+                self.assertEqual(self.calls, [])
+
+    def test_process_identity_changes_are_rejected_before_mutation(self):
+        for legacy in (False, True):
+            with self.subTest(legacy=legacy):
+                self.plan.source_pid = None
+                if legacy:
+                    self.legacy_runtime()
+                self.plan.api(self.source)
+                if legacy:
+                    self.legacy_runtime(pid=789)
+                else:
+                    self.health[61001]["pid"] = 789
+                with self.assertRaisesRegex(ValueError, "服务已变化"):
+                    self.plan.api(self.source, {"action": "host_stop"})
+                self.assertEqual(self.calls, [])
+                self.assertEqual(self.events[-1][1]["reason"], "pid_changed")
+                self.health[61001]["pid"] = 123
+
+    def test_rollback_can_restore_a_restarted_legacy_worker(self):
+        self.legacy_runtime()
+        self.plan.pause(self.source, check=True)
+        self.legacy_runtime(pid=789)
+        self.plan.restore(self.source)
+        self.assertEqual(self.plan.source_pid, 789)
+        self.assertEqual(sharing_state(self.states[61001]), sharing_state(self.shared))
 
     def test_pause_and_restore_preserve_all_roles_addresses_and_credential_ids(self):
         vault = self.root / "credentials.db"
@@ -116,6 +199,7 @@ class SharingUpgradeTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "服务已变化"):
                 self.plan.pause(self.source, check=True)
         self.assertEqual(self.calls, [])
+        self.assertEqual(self.events[-1][1]["reason"], "worker_id_mismatch")
 
     def test_unidentified_borrowing_cannot_be_silently_recreated(self):
         with self.assertRaisesRegex(ValueError, "无法确认借入凭据"):

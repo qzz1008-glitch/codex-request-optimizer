@@ -5,6 +5,7 @@ The old worker must exit before borrowing is restored: older workers restore the
 shared provider configuration on exit, even after they have disconnected.
 """
 import http.client
+import json
 
 from .router import control_worker, local_json, process_alive, worker_info
 from .startup_diagnostics import wait_for_startup
@@ -50,15 +51,39 @@ class SharingUpgrade:
         self.paused = False
         self.source_pid = None
 
+    def _verification_failed(self, identity, reason, message, **details):
+        self.record("source_verification_failed", {"reason": reason, "worker_id": identity, **details})
+        raise ValueError(message)
+
+    def _verify_source_process(self, identity, worker, health):
+        pid = health.get("pid")
+        if pid is None:
+            # Pre-handover workers identify themselves in /health but publish
+            # their PID only in this per-worker runtime record. The filename
+            # binds it to the verified identity; the port must also match.
+            runtime_path = self.data_dir / "router-workers" / (identity + ".runtime.json")
+            message = "无法确认旧版服务进程记录，已保留当前服务。"
+            try:
+                runtime = json.loads(runtime_path.read_text(encoding="utf-8"))
+            except (OSError, ValueError) as exc:
+                self._verification_failed(identity, "runtime_unreadable", message, error_type=type(exc).__name__)
+            if not isinstance(runtime, dict) or type(runtime.get("port")) is not int or runtime["port"] != worker["port"]:
+                self._verification_failed(identity, "runtime_port_mismatch", message, port=worker["port"])
+            pid = runtime.get("pid")
+        if type(pid) is not int or pid <= 0:
+            self._verification_failed(identity, "invalid_pid", "无法确认待停止的旧版共享进程。")
+        if self.source_pid is not None and pid != self.source_pid:
+            self._verification_failed(identity, "pid_changed", "共享服务已变化，请重新执行升级。",
+                                      previous_pid=self.source_pid, pid=pid)
+        self.source_pid = pid
+
     def api(self, identity, data=None):
         worker = worker_info(self.data_dir, identity)
         health = local_json(worker["port"], "/health", timeout=3)
         if health.get("worker_id") != identity:
-            raise ValueError("共享服务已变化，请重新执行升级。")
+            self._verification_failed(identity, "worker_id_mismatch", "共享服务已变化，请重新执行升级。")
         if identity == self.source:
-            if type(health.get("pid")) is not int or (self.source_pid is not None and health["pid"] != self.source_pid):
-                raise ValueError("共享服务已变化，请重新执行升级。")
-            self.source_pid = health["pid"]
+            self._verify_source_process(identity, worker, health)
         return local_json(worker["port"], "/api/sharing", data, timeout=30)
 
     def pause(self, identity, *, check=False):
