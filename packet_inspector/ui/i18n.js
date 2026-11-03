@@ -773,6 +773,7 @@ const uiI18n = (() => {
     "已自动接管 {count} 个 provider":"Automatically routing {count} providers",
     "启动时自动接管全部 provider，并检测配置变化。重启 ChatGPT App 生效。":"Providers are detected and routed automatically at startup and when configuration changes. Restart the ChatGPT App to apply.",
     "Codex 请求优化器":"Codex Request Optimizer",
+    "请求优化器":"Request Optimizer",
     "本机请求观察器":"Local request inspector",
     "连接中":"Connecting",
     "接入与设置":"Settings",
