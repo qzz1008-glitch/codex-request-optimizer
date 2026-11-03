@@ -7,7 +7,8 @@ from pathlib import Path
 import shutil
 
 OWNER = "codex-packet-inspector/isolated-image-tool"
-ASSETS = {"server.ps1": "isolated_image_tool.ps1", "compress_image.ps1": "compress_image.ps1"}
+ASSETS = {"server.ps1": "isolated_image_tool.ps1", "compress_image.ps1": "compress_image.ps1",
+          "image_session.ps1": "image_session.ps1"}
 
 
 def find_powershell():
@@ -44,8 +45,11 @@ class ImageToolInstallation:
                 raise ValueError("图片工具文件已存在且不属于本程序，未覆盖。")
             return {}
         state = json.loads(self.manifest.read_text(encoding="utf8"))
-        if state.get("owner") != OWNER or set(state.get("files", {})) != set(ASSETS):
+        files = set(state.get("files", {}))
+        if state.get("owner") != OWNER or files not in (set(ASSETS), {"server.ps1", "compress_image.ps1"}):
             raise ValueError("图片工具安装记录不匹配，未修改。")
+        if any((self.directory / name).exists() for name in set(ASSETS) - files):
+            raise ValueError("图片工具文件已存在且不属于本程序，未覆盖。")
         for name, digest in state["files"].items():
             path = self.directory / name
             if path.is_symlink() or (path.exists() and hashlib.sha256(path.read_bytes()).hexdigest() != digest):
