@@ -201,6 +201,16 @@ class NetworkRelayTests(unittest.TestCase):
                 self.assertEqual(json.load(response)["records"][0]["status"], 504)
             probe.assert_not_called()
 
+    def test_connection_report_download_includes_recovery_and_log_paths_without_probing(self):
+        with patch.object(NetworkDiagnostics, "_probe") as probe:
+            with self.client.open(self.server.ui_url.rstrip("/") + "/api/connection-diagnostics?download=1") as response:
+                self.assertIn("codex-connection-diagnostics.json", response.headers["Content-Disposition"])
+                report = json.load(response)
+            self.assertEqual(report["log_directory"], str(self.server.log_dir))
+            self.assertIn("connection", report)
+            self.assertIn("network", report)
+            probe.assert_not_called()
+
     def test_saved_directories_apply_on_next_launch_without_switching_active_requests(self):
         cache, logs = self.root / "new cache", self.root / "new logs"
         request = Request(self.server.ui_url.rstrip("/") + "/api/settings",

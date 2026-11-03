@@ -8,6 +8,7 @@ if(!fs.existsSync(executablePath)){console.log(JSON.stringify({skipped:'No brows
 const root=path.join(__dirname,'../packet_inspector/ui'),read=name=>fs.readFileSync(path.join(root,name),'utf8');
 const app=read('app.js'),moduleSource=app.slice(app.indexOf('globalThis.InspectorRestartNotice = {'),app.indexOf('\nconst $ ='));
 const resumeSource=app.slice(app.indexOf('function connectionResumeBusy()'),app.indexOf('function renderConnectPrompt()'));
+const messageSource=app.slice(app.indexOf('function message('),app.indexOf('function fail('));
 const html=read('index.html').replace(/<script\b[^>]*>[\s\S]*?<\/script>/g,'').replace(/<link\b[^>]*>/g,'');
 let browser,cases=0;
 const rects=(page,ids)=>page.evaluate(ids=>ids.map(id=>{const r=document.getElementById(id).getBoundingClientRect();return [r.x,r.y,r.width,r.height];}),ids);
@@ -18,18 +19,20 @@ async function load(page,initial={}) {
   await page.addScriptTag({content:moduleSource});
   await page.evaluate(initial=>{
     window.t=value=>uiI18n.t(value);window.calls=[];window.noticeBusy=false;window.requestFailure='';
-    window.statusData={data_dir:'test',profile:{active:true,config_path:'config.toml'},entry_port:{pending:false,current_port:47844,configured_port:47844},...initial};
+    window.statusData={data_dir:'test',log_dir:'C:/fixture/logs',connection_diagnostics_supported:true,profile:{active:true,config_path:'config.toml'},entry_port:{pending:false,current_port:47844,configured_port:47844},...initial};
     window.state={status:statusData};window.$=id=>document.getElementById(id);
-    window.connectionResumeSeen='';window.connectionResumeRetrying=false;window.connectionResumeError='';
+    window.connectionResumeSeen='';window.connectionProblemKey='';
     window.settingsSaving=false;window.linkSaving='';window.renderConnectionActions=()=>{};
     window.notice=InspectorRestartNotice.create({status:()=>statusData,busy:()=>noticeBusy,
+      showConnectionProblem:()=>renderConnectionResume(true),
       openSettings:async()=>document.getElementById('settings-dialog').showModal(),
       request:async(path,body)=>{calls.push([path,body]);if(requestFailure)throw Error(requestFailure);
         return {revision:statusData.restart_notice.revision+1,items:statusData.restart_notice.items.filter(row=>row.target!==body.target)};}});
     notice.ingest();
     window.restartNotices=notice;
   },initial);
-  await page.addScriptTag({content:resumeSource});
+  await page.addScriptTag({content:messageSource+'\n'+resumeSource});
+  await page.evaluate(()=>{window.feedback=uiI18n.floatingFeedback();renderConnectionResume();});
 }
 async function run() {
   browser=await chromium.launch({executablePath,headless:true});
@@ -38,6 +41,8 @@ async function run() {
   await load(page);
   const headerIds=['request-compression','settings-open'],header=await rects(page,headerIds);
   assert.equal(await page.locator('#restart-notice-open').getAttribute('data-visible'),'false');
+  assert.equal(await page.locator('#connection-details').count(),0,'settings contain no connection details section');
+  assert.equal(await page.locator('#notice').evaluate(node=>node.hidden),true,'a healthy connection stays quiet');
   await page.evaluate(()=>document.getElementById('settings-dialog').showModal());
   assert.equal(await page.locator('#restart-notice').isVisible(),false,'applied settings have no status card');
   assert.equal(await page.locator('#restart-notice').evaluate(node=>node.getBoundingClientRect().height),0,'ready status reserves no blank space');
@@ -76,13 +81,17 @@ async function run() {
   assert.equal(await page.locator('#restart-notice-open').textContent(),'待重新连接','old workers can report simultaneous Windows and WSL changes');cases++;
 
   await load(page,{data_dir:'wsl'});
-  await page.evaluate(()=>notice.connection('activate',{reload_required:true,local_reload_required:false,wsl:{targets:[{distribution:'Ubuntu',active:true,changed:true}],
-    warnings:[{distribution:'HCE',reason:'relay_unreachable',detail:'bash: connection refused'}]},warnings:[{provider:'<img onerror=alert(1)>',file:'custom/config.toml',reason:'unsupported_upstream',detail:'HTTPS required'}]}));
+  await page.evaluate(()=>{
+    const result={reload_required:true,local_reload_required:false,wsl:{targets:[{distribution:'Ubuntu',active:true,changed:true}],
+      warnings:[{distribution:'HCE',reason:'relay_unreachable',detail:'bash: connection refused'}]},warnings:[{provider:'<img onerror=alert(1)>',file:'custom/config.toml',reason:'unsupported_upstream',detail:'HTTPS required'}]};
+    statusData.wsl_connection=result.wsl;statusData.provider_warnings=result.warnings;notice.connection('activate',result);renderConnectionResume();
+  });
   assert((await page.locator('#restart-notice-title').textContent()).includes('WSL'));
   assert.equal(await page.locator('#restart-notice-chatgpt').evaluate(node=>node.hidden),true);
-  assert.equal(await page.locator('#connection-details-list img').count(),0);
-  const details=await page.locator('#connection-details-list').textContent();
-  assert(details.includes('Ubuntu')&&details.includes('HTTPS required')&&details.includes('bash: connection refused'));
+  assert.equal(await page.locator('#app-inline-feedback img').count(),0);
+  assert((await page.locator('#app-inline-feedback').textContent()).includes('HTTPS required'));
+  const problems=await page.evaluate(()=>InspectorRestartNotice.connectionProblems(statusData));
+  assert.equal(problems.length,2);assert(problems.some(row=>row.detail.includes('connection refused')));
   await page.evaluate(()=>{notice.change('compact_tokens',null,200000);});
   await page.evaluate(()=>notice.acknowledge('wsl'));
   assert((await page.locator('#restart-notice-items').textContent()).includes('自动压缩阈值'));
@@ -98,21 +107,17 @@ async function run() {
   await load(page,{data_dir:'resume'});
   await page.evaluate(()=>{
     const wsl={targets:[{distribution:'Ubuntu',changed:true,active:true}],warnings:[{distribution:'HCE',reason:'relay_unreachable',detail:'connection refused'}]};
-    statusData.wsl_connection=wsl;statusData.connection_resume={id:'sync-1',state:'attention',result:{changed:true,local_reload_required:false,reload_required:true,wsl}};
+    statusData.wsl_connection=wsl;statusData.connection_resume={id:'sync-1',state:'recovering',attempt:1,max_attempts:3,result:{changed:true,local_reload_required:false,reload_required:true,wsl}};
     renderConnectionResume();notice.ingest();
   });
+  assert.equal(await page.locator('#notice').evaluate(node=>node.hidden),true,'automatic recovery uses no extra notification');
+  await page.evaluate(()=>{statusData.connection_resume.state='attention';statusData.connection_resume.attempt=3;renderConnectionResume();notice.ingest();});
   assert.equal(await page.locator('dialog[open]').count(),0,'automatic synchronization must not open a result window');
   assert.equal(await page.locator('#connection-resume-dialog').count(),0);
   assert((await page.locator('#restart-notice-title').textContent()).includes('WSL'));
-  await page.locator('#restart-notice-open').click();
-  await page.locator('#connection-details').evaluate(node=>node.open=true);
-  const syncIds=['settings-dialog','connection-resume-controls','connection-resume-retry'],syncBefore=await rects(page,syncIds);
-  await page.evaluate(async()=>{
-    window.api=async path=>{if(path!=='/api/connection/resume')throw Error(path);return {id:'sync-2',state:'pending'};};
-    await retryConnectionResume();
-  });
-  assert.equal(await page.locator('#connection-resume-retry').isDisabled(),true);
-  assert.deepEqual(await rects(page,syncIds),syncBefore);
+  assert((await page.locator('#app-inline-feedback').textContent()).includes('WSL'));
+  assert((await page.locator('#app-inline-feedback').textContent()).includes('C:/fixture/logs'));
+  assert.equal(await page.locator('#app-inline-feedback a[download]').isVisible(),true);
   await page.evaluate(()=>{
     statusData.wsl_connection={targets:[],warnings:[]};statusData.connection_resume={id:'sync-2',state:'complete',result:{changed:false,reload_required:true}};
     renderConnectionResume();notice.ingest();
@@ -120,12 +125,13 @@ async function run() {
   await page.evaluate(()=>notice.acknowledge('wsl'));
   assert.equal(await page.locator('#restart-notice-open').getAttribute('data-visible'),'false','old native flags must not resurrect a WSL notice');
   assert.equal(await page.locator('#restart-notice').isVisible(),false);
-  const syncReady=await rects(page,syncIds);
-  await page.evaluate(async()=>{
-    statusData.connection_resume={id:'sync-3',state:'attention',result:{}};renderConnectionResume();
-    window.api=async()=>{throw Error('Synthetic sync failure');};await retryConnectionResume();
+  assert.equal(await page.locator('#notice').evaluate(node=>node.hidden),true,'successful recovery clears its own notification');
+  const syncIds=['records-view','app-inline-feedback'],syncReady=await rects(page,syncIds);
+  await page.evaluate(()=>{
+    statusData.connection_resume={id:'sync-3',state:'attention',attempt:3,error:'Synthetic sync failure',result:{}};renderConnectionResume();notice.ingest();
   });
-  assert.equal(await page.locator('#connection-resume-status').textContent(),'Synthetic sync failure');
+  assert((await page.locator('#app-inline-feedback').textContent()).includes('Synthetic sync failure'));
+  assert.equal(await page.locator('dialog[open]').count(),0,'errors reuse the existing footer without a window');
   assert.deepEqual(await rects(page,syncIds),syncReady);cases++;
 
   await load(page,{data_dir:'backend',connection_reload_required:true,restart_notice:{revision:40,items:[{key:'entry_port',target:'chatgpt',scope:''},{key:'wsl',target:'wsl',scope:'Ubuntu'}]},
@@ -155,7 +161,7 @@ async function run() {
     const overflow=await page.locator('#restart-notice').evaluate(node=>node.scrollHeight>node.clientHeight);
     assert.equal(overflow,false,'card content stays within its fixed height');
     await page.locator('.settings-content').evaluate(node=>node.scrollTop=0);
-    const connection=await page.locator('#connection-details').boundingBox();
+    const connection=await page.locator('#connection-settings').boundingBox();
     assert(connection.width>0);
     cases++;
   }
@@ -181,8 +187,21 @@ async function run() {
   await load(page,{data_dir:'warning-only',restart_notice:{revision:1,items:[]},provider_warnings:[{provider:'fixture',detail:'Synthetic connection warning'}]});
   await page.locator('#restart-notice-open').click();
   assert.equal(await page.locator('#restart-notice').isVisible(),false);
-  assert.equal(await page.locator('#connection-details').evaluate(node=>node.open),true,'connection details remain accessible without a pending card');
-  assert.equal(await page.evaluate(()=>document.activeElement===document.querySelector('#connection-details>summary')),true);cases++;
+  assert.equal(await page.locator('dialog[open]').count(),0,'the warning badge does not open settings');
+  assert((await page.locator('#app-inline-feedback').textContent()).includes('Synthetic connection warning'));
+  for(const language of ['zh','en']) {
+    await page.evaluate(language=>{uiI18n.setLanguage(language,{persist:false});renderConnectionResume(true);},language);
+    const [text,link]=await page.locator('#app-inline-feedback').evaluate(node=>[node.querySelector('span').getBoundingClientRect().right,node.querySelector('a').getBoundingClientRect().left]);
+    assert(text<=link,'the diagnostic link stays beside the existing message');
+    assert.equal(await page.locator('#app-inline-feedback').evaluate(node=>node.scrollHeight>node.clientHeight),false);
+    cases++;
+  }
+  await page.route('http://restart.test/api/connection-diagnostics?download=1',route=>route.fulfill({contentType:'application/json',headers:{'Content-Disposition':'attachment; filename="codex-connection-diagnostics.json"'},body:'{"connection":{"state":"attention"},"log_directory":"C:/fixture/logs"}'}));
+  const download=page.waitForEvent('download');await page.locator('#app-inline-feedback a[download]').click();
+  assert.equal((await download).suggestedFilename(),'codex-connection-diagnostics.json');cases++;
+  await page.evaluate(()=>{statusData.provider_warnings=[];renderConnectionResume();notice.ingest();});
+  assert.equal(await page.locator('#notice').evaluate(node=>node.hidden),true);
+  assert.equal(await page.locator('#restart-notice-open').getAttribute('data-visible'),'false');cases++;
   console.log(JSON.stringify({restart_notice:'passed',browser_cases:cases}));
 }
 run().catch(error=>{console.error(error);process.exitCode=1;}).finally(async()=>{if(browser)await browser.close();});

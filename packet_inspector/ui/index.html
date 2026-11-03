@@ -20,7 +20,7 @@
       <button id="view-sharing" type="button" title="共享" aria-label="共享" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6" cy="12" r="3"/><circle cx="18" cy="5" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8.6 10.5 6.8-4M8.6 13.5l6.8 4"/></svg></button>
     </div>
     <div class="header-actions">
-      <button id="restart-notice-open" class="restart-notice-badge" type="button" data-visible="false" tabindex="-1" aria-label="查看待生效配置与接入详情">待重启</button>
+      <button id="restart-notice-open" class="restart-notice-badge" type="button" data-visible="false" tabindex="-1" aria-label="查看待生效配置或接入错误">待重启</button>
       <div class="header-compression"><div id="request-compression" class="language-toggle compression-toggle" role="group" aria-label="Codex 接入" aria-describedby="compression-hint"><button id="compression-disconnect" type="button" data-compression="disconnected" aria-pressed="false" disabled>断开</button><button id="compression-connect" type="button" data-compression="connected" aria-pressed="false" disabled>接入</button></div><span id="compression-hint" hidden></span></div>
       <button id="settings-open" class="settings-button" type="button" title="设置" aria-label="设置"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9.5 3-.6 2.3-1.7 1-2.3-.6-2.5 4.3 1.7 1.7v2l-1.7 1.7 2.5 4.3 2.3-.6 1.7 1 .6 2.3h5l.6-2.3 1.7-1 2.3.6 2.5-4.3-1.7-1.7v-2l1.7-1.7-2.5-4.3-2.3.6-1.7-1L14.5 3z"/><circle cx="12" cy="12.7" r="3"/></svg></button>
     </div>
@@ -30,7 +30,7 @@
       <button id="window-close" type="button" title="关闭" aria-label="关闭"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="m1.5 1.5 9 9m0-9-9 9"/></svg></button>
     </div>
   </header>
-  <div id="notice" data-feedback-source data-feedback-target="app-inline-feedback" class="notice" role="alert" hidden><span id="notice-text"></span><button id="notice-dismiss" type="button" aria-label="关闭提示" title="关闭提示">×</button></div>
+  <div id="notice" data-feedback-source data-feedback-target="app-inline-feedback" class="notice" role="alert" hidden><span id="notice-text"></span><a id="notice-diagnostics" href="/api/connection-diagnostics?download=1" download="codex-connection-diagnostics.json" hidden>导出诊断</a><button id="notice-dismiss" data-notice-dismiss type="button" aria-label="关闭提示" title="关闭提示">×</button></div>
   <main id="records-view" class="workspace">
     <aside class="sessions-sidebar" aria-label="会话">
       <div class="sidebar-title sessions-title"><h1>会话</h1><input id="session-search" class="session-search" type="search" placeholder="搜索会话" aria-label="搜索会话名称或 session_id" autocomplete="off" spellcheck="false"></div>
@@ -189,7 +189,6 @@
     <section id="connection-settings"><h3>Codex 接入 <span id="connection-pending-label" class="connection-pending-label" hidden>待重启</span></h3>
       <div class="entry-port-row" data-settings-field="entry_port"><label for="entry-port">入口端口</label><input id="entry-port" type="number" min="1024" max="65535" step="1" value="47844" required aria-describedby="link-status"><span id="link-status" class="entry-port-status" role="status" aria-live="polite" hidden></span></div>
       <p id="entry-port-message" data-feedback-source data-feedback-target="settings-inline-feedback" class="help" role="status" hidden></p>
-      <details id="connection-details" class="connection-details"><summary>接入详情</summary><div id="connection-resume-controls" class="connection-resume-controls" data-feedback-inline hidden><span id="connection-resume-status" role="status" aria-live="polite"></span><button id="connection-resume-retry" type="button" hidden>重新检查</button></div><ul id="connection-details-list"></ul></details>
     </section>
     <section id="sharing-settings"><h3>局域网共享</h3>
       <div class="entry-port-row" data-settings-field="sharing_port"><label for="sharing-port">额度端口</label><input id="sharing-port" type="number" min="1" max="65535" step="1" value="47846" required></div>

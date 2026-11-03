@@ -63,12 +63,14 @@ def safe_proxy(value):
 
 def safe_text(value, secrets=(), limit=MAX_ERROR_TEXT):
     text = str(value)
+    # Strip URL credentials and queries before secret replacement can insert
+    # whitespace and split a URL into fragments that no longer match.
+    text = re.sub(r"\b(?:https?|socks\w*)://[^\s<>\"']+", lambda m: safe_url(m[0]), text)
     for secret in sorted(set(secrets), key=len, reverse=True):
         if secret:
             text = text.replace(secret, "[credential redacted]")
     text = clean_text(text)
     text = re.sub(r"\b(Bearer|Basic)\s+[A-Za-z0-9._~+/-]+=*", r"\1 [credential redacted]", text, flags=re.I)
-    text = re.sub(r"\b(?:https?|socks\w*)://[^\s<>\"']+", lambda m: safe_url(m[0]), text)
     text = re.sub(r"(?i)\b(authorization|proxy-authorization|cookie|set-cookie)\s*[:=][^\r\n]+",
                   r"\1: [credential redacted]", text)
     text = re.sub(r"(?i)([\"']?(?:password|access_token|refresh_token|api_key|client_secret)[\"']?\s*[:=]\s*)[\"']?[^\s,;<>]+",

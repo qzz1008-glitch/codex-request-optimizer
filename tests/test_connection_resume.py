@@ -102,7 +102,7 @@ class ConnectionResumeTests(unittest.TestCase):
         self.backend.probe_error = "relay_unreachable"
         self.resume.step()
         failed = self.resume.status()
-        self.assertEqual(failed["state"], "attention")
+        self.assertEqual(failed["state"], "recovering")
         self.assertEqual(failed["result"]["wsl"]["warnings"][0]["reason"], "relay_unreachable")
         self.assertTrue(self.server.connection_profile()["active"])
         self.backend.probe_error = None
@@ -110,6 +110,78 @@ class ConnectionResumeTests(unittest.TestCase):
         self.resume.step()
         self.assertEqual(self.resume.status()["state"], "complete")
         self.assertNotEqual(self.resume.status()["id"], failed["id"])
+
+    def test_transient_failure_recovers_automatically_after_the_retry_delay(self):
+        self.connected()
+        self.backend.probe_error = "relay_unreachable"
+        with patch("packet_inspector.connection_resume.time.monotonic", return_value=100) as clock:
+            self.resume.step()
+            event = self.resume.status()
+            self.assertEqual((event["state"], event["attempt"]), ("recovering", 1))
+            self.backend.probe_error = None
+            clock.return_value = 102
+            self.resume.step()
+            self.assertEqual(self.resume.status()["attempt"], 1)
+            clock.return_value = 103
+            self.resume.step()
+        recovered = self.resume.status()
+        self.assertEqual((recovered["state"], recovered["attempt"]), ("complete", 2))
+        self.assertEqual(recovered["id"], event["id"])
+        self.assertEqual(self.resume.retry_at, 0)
+        self.cloud_mock.assert_not_called()
+
+    def test_persistent_failure_stops_after_three_attempts_and_keeps_the_connection(self):
+        self.connected()
+        self.backend.probe_error = "relay_unreachable"
+        with patch("packet_inspector.connection_resume.time.monotonic", return_value=100) as clock:
+            self.resume.step()
+            clock.return_value = 103
+            self.resume.step()
+            clock.return_value = 113
+            self.resume.step()
+            failed = self.resume.status()
+            clock.return_value = 1000
+            self.resume.step()
+        self.assertEqual((failed["state"], failed["attempt"], failed["max_attempts"]), ("attention", 3, 3))
+        self.assertEqual(self.resume.status(), failed)
+        self.assertEqual(self.resume.retry_at, 0)
+        self.assertTrue(self.server.connection_profile()["active"])
+
+    def test_manual_disconnect_cancels_scheduled_recovery(self):
+        self.connected()
+        self.backend.probe_error = "relay_unreachable"
+        self.resume.step()
+        self.assertGreater(self.resume.retry_at, 0)
+        self.server.set_connection(False)
+        self.assertEqual(self.resume.retry_at, 0)
+        with patch.object(self.server.wsl, "apply") as apply:
+            self.resume.step()
+        apply.assert_not_called()
+
+    def test_unsupported_upstream_is_reported_without_repeating_the_same_change(self):
+        self.connected()
+        warning = {"provider": "custom", "reason": "unsupported_upstream", "detail": "HTTPS required"}
+        with patch.object(self.server, "sync_providers", return_value={"warnings": [warning]}) as sync:
+            self.resume.step()
+            self.resume.step()
+        self.assertEqual(self.resume.status()["state"], "attention")
+        self.assertEqual(self.resume.status()["attempt"], 1)
+        self.assertEqual(self.resume.retry_at, 0)
+        sync.assert_called_once()
+
+    def test_diagnostic_report_contains_error_and_active_log_path_without_credentials(self):
+        secret = self.server.settings["relay_token"]
+        self.resume.current = {"state": "attention", "error":
+            f"Bearer fixture-token\nhttp://user:fixture-password@localhost/relay/{secret}?key=fixture-query\napi_key=fixture-key"}
+        with patch.object(self.server.network_diagnostics, "_probe") as probe:
+            report = self.resume.diagnostics()
+        text = json.dumps(report)
+        for private in (secret, "fixture-token", "fixture-password", "fixture-query", "fixture-key"):
+            self.assertNotIn(private, text)
+        self.assertEqual(report["log_directory"], str(self.server.log_dir))
+        self.assertEqual(report["connection"]["state"], "attention")
+        self.assertTrue(report["connection_snapshot"].endswith("connection-resume.json"))
+        probe.assert_not_called()
 
     def test_standby_worker_waits_for_router_commit_and_does_not_wait_for_draining(self):
         self.connected()

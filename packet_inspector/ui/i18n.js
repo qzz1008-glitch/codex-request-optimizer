@@ -41,8 +41,17 @@ const uiI18n = (() => {
     "WSL Codex 配置：重新连接 WSL 会话后生效":"WSL Codex configuration: reconnect the WSL session to apply",
     "当前未接入，无需同步。":"Disconnected; there is no active connection to synchronize.",
     "WSL 启动后会自动同步。":"WSL will synchronize automatically after it starts.",
-    "接入配置已自动同步":"Connection configuration synchronized",
-    "接入配置需要处理":"Connection configuration needs attention",
+    "接入异常":"Connection issue",
+    "状态异常":"Status issue",
+    "查看待生效配置或接入错误":"View pending settings or connection errors",
+    "接入配置同步失败":"Connection configuration could not be synchronized",
+    "上游配置不支持接入":"This upstream configuration cannot be connected",
+    "WSL 接入失败":"WSL could not be connected",
+    "WSL 配置尚未恢复。":"The WSL configuration has not been restored.",
+    "请重启本软件后重试；若仍失败，请导出诊断报告反馈。":"Restart this app and try again. If the problem persists, export the diagnostic report for feedback.",
+    "可导出诊断报告反馈。":"Export the diagnostic report to include with your feedback.",
+    "日志目录：{path}":"Log folder: {path}",
+    "导出诊断":"Export report",
     "正在检查接入配置…":"Checking connection configuration…",
     "部分配置未能自动同步。请查看详情并重新检查，无需手动断开再接入。":"Some settings could not be synchronized. Review the details and check again; disconnecting and reconnecting is unnecessary.",
     "已保留原来的接入状态。请完全退出并重新打开 ChatGPT App。":"Your connection choice was preserved. Fully quit and reopen ChatGPT App.",
@@ -1156,7 +1165,7 @@ const uiI18n = (() => {
   // the floating fallback remains for older callers without an explicit target.
   function floatingFeedback() {
     const sources=[...document.querySelectorAll("[data-feedback-source]")].map(node=>({
-      node,content:node.id==="notice"?node.querySelector("#notice-text"):node,
+      node,content:node,
       signature:"",timer:null,delay:Number(node.dataset.feedbackDelay)||0
     }));
     const popup=document.createElement("div"),content=document.createElement("div");
@@ -1179,7 +1188,7 @@ const uiI18n = (() => {
         if(owner.id==="sharing-inline-editor")priority+=10;
       }
       const clone=entry.content.cloneNode(true);
-      for(const hidden of clone.querySelectorAll("[hidden]"))hidden.remove();
+      for(const hidden of clone.querySelectorAll("[hidden],[data-notice-dismiss]"))hidden.remove();
       const value=clone.textContent.trim();
       if(!value)return null;
       const error=node.classList.contains("error")||(node.id!=="notice"&&node.getAttribute("role")==="alert")||!!clone.querySelector('.error,[data-state="error"]');
@@ -1323,7 +1332,7 @@ const uiI18n = (() => {
     },true);
     function resetExpiredNotice(event) {
       const node=event.submitter||event.target?.closest?.('button,input,select,a,[role="button"]');
-      if(node) {
+      if(node&&!node.closest(".inline-feedback .notice")) {
         // A new action may fail with the same text after its previous toast expired.
         if(!active) {const notice=document.getElementById("notice");if(notice)notice.hidden=true;}
       }
