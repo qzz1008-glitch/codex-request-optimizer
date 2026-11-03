@@ -1086,7 +1086,7 @@ async function loadPackets(append=false,background=false) {
     renderList();
     loaded=true;
     if (!state.selected && state.packets.length) await selectPacket(state.packets[0].id,false,requestId);
-    else if (state.selected) { const p=state.packets.find(p=>p.id===state.selected); if(p) {const ver=[p.state,p.status,p.duration_ms,p.outbound_wire_bytes,p.outbound_content_encoding,p.relay_content_encoding,p.relay_zstd_level,p.transport_content_encoding,p.transport_zstd_level,p.usage_override_request_bytes,p.usage_override_applied,p.capacity_retry_count,p.native_retry_advised,p.native_retry_delay_ms,p.capacity_retry_diagnostic?.updated,p.details_evicted].join(":");if(ver!==state.detailVersion) await selectPacket(state.selected,true);} else await selectPacket(state.selected,true); }
+    else if (state.selected) { const p=state.packets.find(p=>p.id===state.selected); if(p) {const ver=packetDetailVersion(p);if(ver!==state.detailVersion) await selectPacket(state.selected,true);} else await selectPacket(state.selected,true); }
   } catch(e) {if(e.name!=="AbortError")throw e;}
   finally {
     if(state.listController===controller) {
@@ -1828,6 +1828,15 @@ async function openSettings() {
     $("settings-dialog").showModal();restartNotices.render();
   } finally {settingsOpening=false;}
 }
+function packetDetailVersion(p) {
+  return JSON.stringify([p.state,p.status,p.duration_ms,p.outbound_wire_bytes,p.outbound_content_encoding,
+    p.relay_content_encoding,p.relay_zstd_level,p.transport_content_encoding,p.transport_zstd_level,
+    p.usage_override_request_bytes,p.usage_override_applied,p.capacity_retry_count,p.native_retry_advised,
+    p.native_retry_delay_ms,p.capacity_retry_diagnostic?.updated,p.details_evicted,
+    p.upstream_usage,p.reported_usage,p.overflow_compaction_calls,p.overflow_cache_hit,p.overflow_original_wire_bytes,
+    p.relay_wire_bytes,p.image_isolation_applied,p.image_isolation_removed,p.image_paths,p.image_path_rewrites,
+    p.image_upload_optimized,p.image_upload_images]);
+}
 async function selectPacket(id,refresh=false,expectedListRequest=null) {
   const requestId=++state.detailRequest;
   let m;
@@ -1841,7 +1850,7 @@ async function selectPacket(id,refresh=false,expectedListRequest=null) {
     $("packet-detail").hidden=true;$("empty-state").hidden=false;renderList();return;
   }
   if(requestId!==state.detailRequest || (refresh && state.selected!==id) || (expectedListRequest!==null && expectedListRequest!==state.listRequest)) return;
-  const changed=state.selected!==id, previousDetail=state.detail, detailsChanged=!!m.details_evicted!==!!previousDetail?.details_evicted; state.selected=id; state.detail=m; state.detailVersion=[m.state,m.status,m.duration_ms,m.outbound_wire_bytes,m.outbound_content_encoding,m.relay_content_encoding,m.relay_zstd_level,m.transport_content_encoding,m.transport_zstd_level,m.usage_override_request_bytes,m.usage_override_applied,m.capacity_retry_count,m.native_retry_advised,m.native_retry_delay_ms,m.capacity_retry_diagnostic?.updated,m.details_evicted].join(":");
+  const changed=state.selected!==id, previousDetail=state.detail, detailsChanged=!!m.details_evicted!==!!previousDetail?.details_evicted; state.selected=id; state.detail=m; state.detailVersion=packetDetailVersion(m);
   showTab(state.tab);
   $("empty-state").hidden=true; $("packet-detail").hidden=false; renderList();
   if(changed || tokenVersion(m)!==tokenVersion(previousDetail||{})) {cancelTokenRead();tokenWindow=cachedTokenWindow(m);}
@@ -1855,7 +1864,8 @@ async function selectPacket(id,refresh=false,expectedListRequest=null) {
 function renderProtectionPanelState() {
   const panel=$("packet-protection-panel");if(!panel)return;
   const enabled={size:state.status?.packet_size_protection_enabled===true,retry:state.status?.capacity_retry_enabled===true,
-    image:state.status?.packet_size_protection_enabled===true};
+    image:state.status?.packet_size_protection_enabled===true,
+    optimization:state.status?.image_analysis_mode?state.status.image_analysis_mode==="optimized":state.status?.image_isolation_enabled===true};
   const rows=[...panel.querySelectorAll("[data-protection]")];
   const disabled=!rows.some(row=>enabled[row.dataset.protection]);
   panel.classList.toggle("protection-disabled",disabled);
@@ -1864,7 +1874,8 @@ function renderProtectionPanelState() {
   for(const row of rows) {
     const inactive=!enabled[row.dataset.protection];
     row.classList.toggle("protection-inactive",inactive);
-    row.title=inactive?t(row.dataset.protection==="retry"?"可在设置中开启重试保护":"可在设置中开启请求大小保护"):"";
+    const hint={retry:"可在设置中开启重试保护",optimization:"可在设置中开启图片优化"};
+    row.title=inactive?t(hint[row.dataset.protection]||"可在设置中开启请求大小保护"):"";
   }
 }
 function renderCompression(m) {
@@ -1890,29 +1901,47 @@ function renderCompression(m) {
     fact(sizes,t("上游实际输入 Token"),Number.isSafeInteger(actual)&&actual>=0?nf.format(actual):"—");
   }
   root.append(sizes);
-  if(m.image_upload_optimized&&Array.isArray(m.image_upload_images)&&m.image_upload_images.length) {
-    const resolutions=panel(t("图片分辨率"));
-    const resolution=(width,height)=>Number.isSafeInteger(width)&&width>0&&Number.isSafeInteger(height)&&height>0?`${width} × ${height}`:"—";
-    for(const [index,image] of m.image_upload_images.entries()) {
-      const name=image.mask?t("编辑蒙版"):t("参考图 {index}").replace("{index}",index+1);
-      fact(resolutions,name+" · "+t("压缩前"),resolution(image.original_width,image.original_height));
-      fact(resolutions,name+" · "+t("压缩后"),resolution(image.width,image.height));
-    }
-    root.append(resolutions);
-  }
   const steps=panel(t("请求保护"));steps.id="packet-protection-panel";steps.classList.add("packet-protection-panel");
-  const triggerStatus=triggered=>triggered?t("已触发"):m.source==="live"?t("未触发"):t("暂无记录");
-  const predictiveArmed=Number.isSafeInteger(m.usage_override_request_bytes)&&m.usage_override_request_bytes>0;
-  const predictiveSatisfied=m.usage_override_applied===false&&m.reported_usage!=null;
-  const waiting=["captured","streaming"].includes(m.state);
-  const predictiveStatus=m.usage_override_applied===true?t("已触发"):predictiveSatisfied?t("已满足"):predictiveArmed?t(waiting?"等待响应":"未完成"):triggerStatus(false);
-  const predictive=fact(steps,t("预测保护"),predictiveStatus);predictive.dataset.protection="size";
-  if(predictiveArmed&&m.usage_override_applied!==true&&!predictiveSatisfied)predictive.title=t("已达到保护条件；需要完整响应中的有效 Token 用量才能完成改写。");
+  const item=(key,label,triggered,category)=>{
+    const section=el("section","protection-item");section.dataset.renderKey="protection:"+key;
+    section.dataset.protection=category;section.dataset.triggered=String(triggered);
+    fact(section,t(label),t(triggered?"已触发":"未触发")).classList.add("protection-heading");steps.append(section);
+    if(!triggered)return null;
+    const details=el("div","protection-details");details.dataset.renderKey="protection-details";section.append(details);return details;
+  };
+  const number=value=>Number.isSafeInteger(value)&&value>=0?nf.format(value):"—";
+  const size=value=>Number.isSafeInteger(value)&&value>=0?bytes(value):"—";
+  const predictive=item("predictive","预测保护",m.usage_override_applied===true,"size");
+  if(predictive) {
+    fact(predictive,t("原始 Token"),number(m.upstream_usage?.input_tokens));
+    fact(predictive,t("改写 Token"),number(m.reported_usage?.input_tokens));
+  }
   const summaryFailed=typeof m.relay_error==="string"&&m.relay_error.startsWith("overflow_");
-  fact(steps,t("超限保护"),summaryFailed?t("处理失败"):triggerStatus(summaryTriggered)).dataset.protection="size";
-  fact(steps,t("重试保护"),triggerStatus(m.native_retry_advised===true||capacityRetryCount(m)>0)).dataset.protection="retry";
-  if(m.request_kind==="image_edit"||m.request_kind==="image_generation"||/\/images\/(?:edits|generations)\/*(?:\?.*)?$/.test(m.path||"")) {
-    fact(steps,t("参考图缩小"),triggerStatus(m.image_upload_optimized===true)).dataset.protection="image";
+  const overflow=item("overflow","超限保护",summaryTriggered||summaryFailed,"size");
+  if(overflow) {
+    fact(overflow,t("处理前大小"),size(m.overflow_original_wire_bytes));
+    const after=[m.relay_wire_bytes,m.outbound_wire_bytes].find(value=>Number.isSafeInteger(value)&&value>=0);
+    fact(overflow,t("处理后大小"),size(after));
+  }
+  const retryCount=capacityRetryCount(m),retry=item("retry","重试保护",m.native_retry_advised===true||retryCount>0,"retry");
+  if(retry)fact(retry,t("重试次数"),retryCount>0?nf.format(retryCount):"—");
+  const optimization=item("optimization","图片优化",m.image_isolation_applied===true||Number.isSafeInteger(m.image_isolation_removed)&&m.image_isolation_removed>0,"optimization");
+  if(optimization) {
+    const body=requestBodyView&&requestBodyView.id===m.id?requestBodyView.body:null,paths=requestImagePaths(m,body);
+    if(paths.length)optimization.append(renderImagePaths(paths));
+    else fact(optimization,t("图片路径"),"—");
+  }
+  const resize=item("resize","缩图保护",m.image_upload_optimized===true,"image");
+  if(resize) {
+    const recorded=Array.isArray(m.image_upload_images)?m.image_upload_images.filter(image=>image&&typeof image==="object"&&!Array.isArray(image)):[];
+    const images=recorded.length?recorded:[{}];
+    const resolution=(width,height)=>Number.isSafeInteger(width)&&width>0&&Number.isSafeInteger(height)&&height>0?`${width} × ${height}`:"—";
+    for(const [index,image] of images.entries()) {
+      const details=el("div","protection-image");details.dataset.renderKey="resize-image:"+index;
+      if(images.length>1||image.mask)details.append(el("div","protection-image-name",image.mask?t("编辑蒙版"):t("参考图 {index}").replace("{index}",index+1)));
+      fact(details,t("原始分辨率"),resolution(image.original_width,image.original_height));
+      fact(details,t("处理后分辨率"),resolution(image.width,image.height));resize.append(details);
+    }
   }
   root.append(steps);reconcileContent($("compression-content"),root);renderProtectionPanelState();
 }
@@ -2010,7 +2039,7 @@ async function ensureJsonView(id,sequence) {
   const nodes=new Map(),node=jsonValueNode(body,null,false,true,"",nodes);
   root.replaceChildren(node);root.scrollTop=0;root.scrollLeft=0;
   requestBodyView={id,body,nodes,root:node,language:uiI18n.language};
-  if(state.detail?.id===id)renderHeaders(state.detail);
+  if(state.detail?.id===id) {renderHeaders(state.detail);renderCompression(state.detail);}
   const text=JSON.stringify(body,null,2);
   requestBodyDownloadUrl=URL.createObjectURL(new Blob([text+"\n"],{type:"application/json;charset=utf-8"}));
   const download=$("json-download");download.href=requestBodyDownloadUrl;download.download="codex-request-"+id+".json";download.hidden=false;
@@ -2271,6 +2300,10 @@ function imagePathAction(kind,path) {
 function renderImageInfo(paths) {
   const images=panel(t("图片信息"));images.id="request-image-info";
   if(!paths.length) {images.append(el("p","muted",t("未记录图片路径")));return images;}
+  images.append(renderImagePaths(paths));return images;
+}
+function renderImagePaths(paths) {
+  const images=el("div","image-paths");
   for(const group of imagePathGroups(paths)) {
     const section=el("section","image-path-group");section.dataset.renderKey="image-folder:"+group.directory;section.setAttribute("aria-label",t("图片目录")+"："+group.directory);
     const directory=el("code","image-path-directory",group.directory);directory.title=group.directory;
@@ -2312,7 +2345,7 @@ function renderHeaders(m) {
     root.append(context);
   }
   if(specialKind==="image_analysis") {
-    const body=requestBodyView?.id===m.id?requestBodyView.body:null,paths=requestImagePaths(m,body);
+    const body=requestBodyView&&requestBodyView.id===m.id?requestBodyView.body:null,paths=requestImagePaths(m,body);
     root.append(renderImageInfo(paths));
   }
   reconcileContent($("headers-content"),root);

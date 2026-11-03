@@ -34,7 +34,7 @@ function fixture() {
   vm.runInContext(extract('async function ensureJsonView(id,sequence)','function focusJsonPath('),context);
   vm.runInContext(source.split(/\r?\n/).filter(line=>/^function compressedBytes\(/.test(line)).join('\n'),context);
   vm.runInContext(extract('function packetDiffRows(','function requestImagePaths('),context);
-  vm.runInContext(extract('async function selectPacket(id','function renderProtectionPanelState('),context);
+  vm.runInContext(extract('function packetDetailVersion(','function renderProtectionPanelState('),context);
   vm.runInContext(extract('function renderOverview(m)','function jsonValueNode('),context);
   return context;
 }
