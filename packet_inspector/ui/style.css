@@ -205,7 +205,7 @@ code.session-id{font-family:Consolas,"Cascadia Mono",monospace;font-size:11px;wo
 .storage-summary{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:4px 10px;font-variant-numeric:tabular-nums}
 .storage-summary>span{white-space:nowrap}
 .packet-table{min-width:345px}
-.detail{display:flex;flex-direction:column;min-height:0;padding:var(--view-inset);overflow:hidden}
+.detail{display:flex;flex-direction:column;min-height:0;padding:var(--view-inset) var(--view-inset) 0;overflow:hidden}
 .sessions-sidebar,.requests-sidebar,.detail{padding-top:8px}
 .detail .tabs{margin-inline:0}
 #packet-detail:not([hidden]){display:flex;flex:1;flex-direction:column;min-height:0;min-width:0}
