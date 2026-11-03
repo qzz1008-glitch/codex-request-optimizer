@@ -823,11 +823,10 @@ function packetProtection(p) {
     overflow:p.overflow_compaction_calls>0 || p.overflow_cache_hit===true ||
       typeof p.relay_error==="string" && p.relay_error.startsWith("overflow_"),
     retry:p.native_retry_advised===true||capacityRetryCount(p)>0,
-    optimization:p.image_isolation_applied===true||Number.isSafeInteger(p.image_isolation_removed)&&p.image_isolation_removed>0,
-    resize:p.image_upload_optimized===true
+    optimization:p.image_isolation_applied===true||Number.isSafeInteger(p.image_isolation_removed)&&p.image_isolation_removed>0
   };
 }
-const protectionLabels={predictive:"预测保护",overflow:"超限保护",retry:"重试保护",optimization:"图片优化",resize:"缩图保护"};
+const protectionLabels={predictive:"大小预测",overflow:"超限压缩",retry:"容量重试",optimization:"解图优化"};
 function renderProtectionMarkers(flags) {
   const markers=el("span","packet-protection-markers"),labels=[];
   for(const [key,label] of Object.entries(protectionLabels))if(flags[key]) {
@@ -1032,7 +1031,7 @@ function renderList() {
   const sessionCount=selectedSessionGroup()?.packet_count;
   const total=!filtered?state.status.storage.count:!state.filters.kind && !state.filters.status && state.filters.thread && Number.isFinite(sessionCount)?sessionCount:null;
   setText($("record-count"),total===null?nf.format(state.packets.length)+(state.canLoadMore?"+":"")+t(" 条"):nf.format(total)+t(" 条"));
-  const signature=JSON.stringify([state.selected,state.status.budget_bytes,state.older,state.canLoadMore,state.sort,state.direction,state.filters,state.packets.map(p=>[p.id,p.created,p.method,p.is_compaction,requestKind(p),p.state,p.status,p.duration_ms,p.decoded_bytes,p.outbound_wire_bytes,p.outbound_content_encoding,p.thread_id,p.overflow_compaction_calls,p.overflow_cache_hit,p.overflow_original_wire_bytes,p.usage_override_applied,p.capacity_retry_count,p.native_retry_advised,p.native_retry_delay_ms,p.relay_error,p.upstream_usage?.input_tokens,p.image_isolation_applied,p.image_isolation_removed,p.image_upload_optimized])]);
+  const signature=JSON.stringify([state.selected,state.status.budget_bytes,state.older,state.canLoadMore,state.sort,state.direction,state.filters,state.packets.map(p=>[p.id,p.created,p.method,p.is_compaction,requestKind(p),p.state,p.status,p.duration_ms,p.decoded_bytes,p.outbound_wire_bytes,p.outbound_content_encoding,p.thread_id,p.overflow_compaction_calls,p.overflow_cache_hit,p.overflow_original_wire_bytes,p.usage_override_applied,p.capacity_retry_count,p.native_retry_advised,p.native_retry_delay_ms,p.relay_error,p.upstream_usage?.input_tokens,p.image_isolation_applied,p.image_isolation_removed])]);
   if(signature===state.listVersion)return;
   state.listVersion=signature;
   const root=$("packet-rows"), fragment=document.createDocumentFragment(); renderSort();
@@ -1858,7 +1857,7 @@ function packetDetailVersion(p) {
     p.native_retry_delay_ms,p.capacity_retry_diagnostic?.updated,p.details_evicted,
     p.upstream_usage,p.reported_usage,p.overflow_compaction_calls,p.overflow_cache_hit,p.overflow_original_wire_bytes,
     p.relay_wire_bytes,p.image_isolation_applied,p.image_isolation_removed,p.image_paths,p.image_path_rewrites,
-    p.image_upload_optimized,p.image_upload_images]);
+    p.image_upload_optimized,p.image_upload_before_bytes,p.image_upload_images]);
 }
 async function selectPacket(id,refresh=false,expectedListRequest=null) {
   const requestId=++state.detailRequest;
@@ -1887,7 +1886,6 @@ async function selectPacket(id,refresh=false,expectedListRequest=null) {
 function renderProtectionPanelState() {
   const panel=$("packet-protection-panel");if(!panel)return;
   const enabled={size:state.status?.packet_size_protection_enabled===true,retry:state.status?.capacity_retry_enabled===true,
-    image:state.status?.packet_size_protection_enabled===true,
     optimization:state.status?.image_analysis_mode?state.status.image_analysis_mode==="optimized":state.status?.image_isolation_enabled===true};
   const rows=[...panel.querySelectorAll("[data-protection]")];
   const disabled=!rows.some(row=>enabled[row.dataset.protection]);
@@ -1897,7 +1895,7 @@ function renderProtectionPanelState() {
   for(const row of rows) {
     const inactive=!enabled[row.dataset.protection];
     row.classList.toggle("protection-inactive",inactive);
-    const hint={retry:"可在设置中开启重试保护",optimization:"可在设置中开启图片优化"};
+    const hint={retry:"可在设置中开启容量重试",optimization:"可在设置中开启解图优化"};
     row.title=inactive?t(hint[row.dataset.protection]||"可在设置中开启请求大小保护"):"";
   }
 }
@@ -1914,10 +1912,22 @@ function renderCompression(m) {
   fact(sizes,t("压缩方式"),encoding==="identity"?t("不压缩"):encoding||"—");
   const level=hasTransport?m.transport_zstd_level:summaryTriggered?null:m.relay_zstd_level;
   fact(sizes,t("压缩等级"),Number.isInteger(level)&&level>=1&&level<=22?level:"—");
-  if(m.image_upload_optimized) {
-    fact(sizes,t("缩图前转发请求"),bytes(m.image_upload_before_bytes));
-  }
   if(original>0 && compressed!==null)fact(sizes,t("减小比例"),(100*(1-compressed/original)).toFixed(1)+"%").title=t("包含图片处理和传输压缩带来的大小变化，按超限摘要处理前的正文计算。");
+  if(m.image_upload_optimized===true) {
+    const processing=el("section","request-image-processing");processing.dataset.renderKey="image-processing";
+    processing.append(el("h4","",t("图片处理")));
+    fact(processing,t("缩图前转发请求"),bytes(m.image_upload_before_bytes));
+    const recorded=Array.isArray(m.image_upload_images)?m.image_upload_images.filter(image=>image&&typeof image==="object"&&!Array.isArray(image)):[];
+    const images=recorded.length?recorded:[{}];
+    const resolution=(width,height)=>Number.isSafeInteger(width)&&width>0&&Number.isSafeInteger(height)&&height>0?`${width} × ${height}`:"—";
+    for(const [index,image] of images.entries()) {
+      const details=el("div","image-processing-item");details.dataset.renderKey="image-processing:"+index;
+      if(images.length>1||image.mask)details.append(el("div","image-processing-name",image.mask?t("编辑蒙版"):t("参考图 {index}").replace("{index}",index+1)));
+      fact(details,t("原始分辨率"),resolution(image.original_width,image.original_height));
+      fact(details,t("处理后分辨率"),resolution(image.width,image.height));processing.append(details);
+    }
+    sizes.append(processing);
+  }
   if(summaryTriggered) {
     const estimate=requestTokenUsage(m), actual=m.upstream_usage?.input_tokens;
     fact(sizes,t("输入 Token（估算）"),sortInputTokens(estimate)!==null?"≈ "+nf.format(estimate.input_tokens):"—").title=t("超限摘要前输入 Token（估算）");
@@ -1956,18 +1966,6 @@ function renderCompression(m) {
     const body=requestBodyView&&requestBodyView.id===m.id?requestBodyView.body:null,paths=requestImagePaths(m,body);
     if(paths.length)optimization.append(renderImagePaths(paths));
     else fact(optimization,t("图片路径"),"—");
-  }
-  const resize=item("resize","image");
-  if(resize) {
-    const recorded=Array.isArray(m.image_upload_images)?m.image_upload_images.filter(image=>image&&typeof image==="object"&&!Array.isArray(image)):[];
-    const images=recorded.length?recorded:[{}];
-    const resolution=(width,height)=>Number.isSafeInteger(width)&&width>0&&Number.isSafeInteger(height)&&height>0?`${width} × ${height}`:"—";
-    for(const [index,image] of images.entries()) {
-      const details=el("div","protection-image");details.dataset.renderKey="resize-image:"+index;
-      if(images.length>1||image.mask)details.append(el("div","protection-image-name",image.mask?t("编辑蒙版"):t("参考图 {index}").replace("{index}",index+1)));
-      fact(details,t("原始分辨率"),resolution(image.original_width,image.original_height));
-      fact(details,t("处理后分辨率"),resolution(image.width,image.height));resize.append(details);
-    }
   }
   root.append(steps);reconcileContent($("compression-content"),root);renderProtectionPanelState();
 }
