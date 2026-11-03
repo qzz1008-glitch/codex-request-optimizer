@@ -14,9 +14,119 @@ from packet_inspector.frontend_dev import DESKTOP_PROFILE
 from packet_inspector.locking import file_lock
 from packet_inspector.router import atomic_json
 from packet_inspector.upgrade import Upgrade
+from packet_inspector.sharing_upgrade import UpgradeCancelled
 
 
 class UpgradeTests(unittest.TestCase):
+    def old_sharing(self):
+        atomic_json(self.data / "router-state.json", {"active": "1" * 32, "token": "fixture-control"})
+        calls = []
+        plan = Mock(source="1" * 32, snapshot={"quota_out": {"address": "192.0.2.10", "port": 47846}}, paused=False)
+        def pause(identity, **_kwargs):
+            calls.append("pause:" + identity[0])
+            plan.paused = True
+        plan.pause.side_effect = pause
+        plan.restore.side_effect = lambda identity: calls.append("restore:" + identity[0])
+        plan.stop_source.side_effect = lambda: calls.append("source_exit")
+        def api(port, path, data=None, *args, **kwargs):
+            result = self.health(port, path, data, *args, **kwargs)
+            if path == "/api/status":
+                result.update(sharing_settings_supported=True)
+            elif path == "/api/sharing":
+                return {"host": {"running": True, "address": "192.0.2.10", "port": 47846}}
+            elif path == "/__router__/switch":
+                calls.append("switch:" + data["worker_id"][0])
+            return result
+        self.engine._wait_entry = Mock(return_value={"worker_id": "2" * 32})
+        self.engine._refresh_integration = Mock(side_effect=lambda _status: calls.append("verify"))
+        start = self.engine._start_candidate.side_effect
+        self.engine._start_candidate.side_effect = lambda *args: (calls.append("ready"), start(*args))
+        self.control.side_effect = lambda _root, identity, action, **_kwargs: calls.append(action + ":" + identity[0])
+        for name, mock in (("local_json", api), ("SharingUpgrade", lambda *_args: plan)):
+            context = patch("packet_inspector.upgrade." + name, side_effect=mock)
+            context.start()
+            self.addCleanup(context.stop)
+        return plan, calls
+
+    def test_confirmed_old_sharing_upgrade_prepares_before_pausing_and_restores_before_resuming(self):
+        plan, calls = self.old_sharing()
+        self.engine.confirm_interruption = Mock(return_value=True)
+        result = self.engine.run()
+        self.assertEqual(result["state"], "complete")
+        self.engine.confirm_interruption.assert_called_once_with({"roles": ["quota_out"]})
+        for earlier, later in (("ready", "pause:1"), ("upgrade_pause:2", "switch:2"),
+                               ("switch:2", "source_exit"), ("source_exit", "restore:2"),
+                               ("restore:2", "verify"), ("verify", "upgrade_resume:2")):
+            self.assertLess(calls.index(earlier), calls.index(later), calls)
+        self.assertEqual(self.engine.journal["sharing_restart"]["phase"], "complete")
+        self.engine._stop_candidate.assert_not_called()
+
+    def test_cancelled_upgrade_never_starts_or_changes_services_and_records_cancelled(self):
+        plan, calls = self.old_sharing()
+        before = self.config.read_bytes()
+        self.engine.confirm_interruption = Mock(return_value=False)
+        with self.assertRaises(UpgradeCancelled):
+            self.engine.run()
+        self.engine._start_candidate.assert_not_called()
+        self.control.assert_not_called()
+        plan.pause.assert_not_called()
+        self.assertEqual(calls, [])
+        self.assertEqual(self.config.read_bytes(), before)
+        self.assertEqual(self.engine.journal["state"], "cancelled")
+        self.assertFalse((self.data / "upgrade-backups").exists())
+        # Cancellation releases the upgrade lock, allowing a later retry.
+        with file_lock(self.data / "upgrade.lock", blocking=False):
+            pass
+
+    def test_service_owner_change_after_confirmation_invalidates_consent(self):
+        plan, calls = self.old_sharing()
+        def confirm(_summary):
+            atomic_json(self.data / "router-state.json", {"active": "3" * 32, "token": "new-owner"})
+            return True
+        self.engine.confirm_interruption = confirm
+        with self.assertRaisesRegex(ValueError, "服务已变化"):
+            self.engine.run()
+        plan.pause.assert_not_called()
+        self.assertFalse(any(call.startswith("switch:") for call in calls))
+
+    def test_failed_old_sharing_upgrade_relinquishes_candidate_provider_before_restoring_old(self):
+        plan, calls = self.old_sharing()
+        self.engine.confirm_interruption = Mock(return_value=True)
+        self.engine._presentation_committed = Mock(return_value=False)
+        self.engine._refresh_integration.side_effect = ValueError("fixture presentation failure")
+        self.engine._stop_candidate.side_effect = lambda: calls.append("stop_candidate")
+        with self.assertRaisesRegex(ValueError, "fixture presentation failure"):
+            self.engine.run()
+        self.assertLess(calls.index("pause:2"), calls.index("switch:1"))
+        self.assertLess(calls.index("switch:1"), calls.index("restore:1"))
+        self.assertLess(calls.index("restore:1"), calls.index("stop_candidate"))
+        self.control.assert_any_call(self.data.resolve(), "2" * 32, "upgrade_pause", release_provider=True)
+        self.assertFalse(self.engine._candidate_active())
+        self.assertEqual(self.engine.journal["sharing_restart"]["phase"], "recovered")
+
+    def test_busy_old_requests_timeout_rolls_back_sharing_without_force_termination(self):
+        plan, calls = self.old_sharing()
+        self.engine.confirm_interruption = Mock(return_value=True)
+        self.engine._presentation_committed = Mock(return_value=False)
+        plan.stop_source.side_effect = TimeoutError("fixture old requests remain busy")
+        with self.assertRaisesRegex(TimeoutError, "remain busy"):
+            self.engine.run()
+        self.assertIn("switch:1", calls)
+        self.assertIn("restore:1", calls)
+        self.assertNotIn("upgrade_resume:2", calls)
+
+    def test_failed_rollback_recovers_the_service_that_still_owns_the_entry(self):
+        plan, calls = self.old_sharing()
+        self.engine.confirm_interruption = Mock(return_value=True)
+        self.engine._presentation_committed = Mock(return_value=False)
+        self.engine._refresh_integration.side_effect = ValueError("fixture validation failure")
+        self.engine._rollback_switch = Mock(side_effect=RuntimeError("fixture rollback failure"))
+        with self.assertRaisesRegex(RuntimeError, "fixture rollback failure"):
+            self.engine.run()
+        self.assertTrue(self.engine._candidate_active())
+        self.assertEqual(calls[-2:], ["restore:2", "upgrade_resume:2"])
+        self.assertNotIn("restore:1", calls)
+
     def test_old_shared_service_is_preserved_before_candidate_or_config_changes(self):
         scenarios = ({"host": {"running": True}}, {"client": {"active": True}},
                      {"egress": {"host": {"active": True}}}, {"egress": {"selection": {"mode": "peer"}}})

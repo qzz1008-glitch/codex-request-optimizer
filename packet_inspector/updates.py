@@ -108,8 +108,9 @@ class Updates:
         if cached.get("state") == "upgrading" and result_path.exists():
             result = json.loads(result_path.read_text(encoding="utf8"))
             if result.get("finished", 0) >= cached.get("upgrade_started", 0):
-                cached = {**cached, "state": "complete" if result.get("state") == "complete" else "error",
-                          "error": result.get("error", ""), "finished": result.get("finished")}
+                cancelled = result.get("state") == "cancelled"
+                cached = {**cached, "state": "available" if cancelled else "complete" if result.get("state") == "complete" else "error",
+                          "error": "" if cancelled else result.get("error", ""), "finished": result.get("finished")}
                 atomic_json(self.state_path, cached)
         if self.task and self.task.is_alive() and cached.get("state") not in {"checking", "downloading", "upgrading"}:
             # A queued thread may not have written its first state yet. Report

@@ -26,6 +26,7 @@ from packet_inspector.sharing_handover import (PROTOCOL as SHARING_HANDOVER_PROT
                                               active_status as sharing_active, prepare_upgrade, finish_upgrade)
 from packet_inspector.startup_diagnostics import STARTUP_SECONDS, startup_environment, wait_for_startup
 from packet_inspector.upgrade_compatibility import configuration_upgrade
+from packet_inspector.sharing_upgrade import CANCELLED_EXIT, SharingUpgrade, UpgradeCancelled
 
 
 PHASES = ("validate", "backup", "candidate", "compatibility", "handover", "switch", "verify", "record", "cleanup")
@@ -46,7 +47,8 @@ def free_port():
 class Upgrade:
     total_steps = len(PHASES)
 
-    def __init__(self, payload, data_dir, config, port=None, progress=None, default_profile=None):
+    def __init__(self, payload, data_dir, config, port=None, progress=None, default_profile=None,
+                 confirm_interruption=None):
         self.payload, self.data_dir, self.config = Path(payload), Path(data_dir).resolve(), Path(config).resolve()
         self.port = port
         self.progress = progress or (lambda message: None)
@@ -57,6 +59,34 @@ class Upgrade:
         self.entry_running = False
         self.default_profile = default_profile or BuildProfile()
         self.journal = None
+        self.confirm_interruption = confirm_interruption
+
+    def _sharing_record(self, phase, error=None):
+        if self.journal is not None:
+            record = self.journal.setdefault("sharing_restart", {})
+            record["phase"] = phase
+            events = record.setdefault("events", [])
+            events.append({"phase": phase, "time": time.time(), **({"error": error} if error else {})})
+            record["events"] = events[-16:]
+            try:
+                self._save_journal()
+            except OSError:
+                self.journal["sharing_journal_warning"] = True
+
+    def _confirm_sharing_restart(self, shared):
+        if self.confirm_interruption is None:
+            raise ValueError(SHARING_UPGRADE_UNSUPPORTED)
+        state = json.loads((self.data_dir / "router-state.json").read_text(encoding="utf8"))
+        plan = SharingUpgrade(self.data_dir, state["active"], shared, self._sharing_record)
+        roles = list(plan.snapshot)
+        if self.journal is not None:
+            self.journal["sharing_restart"] = {"roles": roles}
+        self._sharing_record("confirmation_requested")
+        if self.confirm_interruption({"roles": roles}) is not True:
+            self._sharing_record("cancelled")
+            raise UpgradeCancelled("已暂不升级，现有服务保持运行。")
+        self._sharing_record("confirmed")
+        return plan
 
     def _stage(self, phase, message):
         if self.journal is not None:
@@ -382,6 +412,7 @@ class Upgrade:
             raise
 
     def _run(self):
+        sharing_restart = None
         self._stage("validate", "正在校验升级包…")
         manifest = json.loads((self.payload / "manifest.json").read_text(encoding="utf8"))
         if manifest.get("router_protocol") != PROTOCOL:
@@ -425,7 +456,9 @@ class Upgrade:
             if status.get("sharing_settings_supported"):
                 shared = status if "sharing_runtime" in status else local_json(self.port, "/api/sharing", timeout=3)
                 if sharing_active(shared) and (legacy or status.get("sharing_handover_protocol") != SHARING_HANDOVER_PROTOCOL):
-                    raise ValueError(SHARING_UPGRADE_UNSUPPORTED)
+                    if legacy:
+                        raise ValueError(SHARING_UPGRADE_UNSUPPORTED)
+                    sharing_restart = self._confirm_sharing_restart(local_json(self.port, "/api/sharing", timeout=3))
             if legacy:
                 # Even an idle direct relay owns its listening port. Replacing
                 # it would create an outage for the next request.
@@ -446,7 +479,7 @@ class Upgrade:
             raise ValueError("已暂存的新版程序校验失败。")
         self._stage("candidate", "正在启动新版服务并检查运行状态…")
         success, reopen = False, False
-        sharing_ticket, old = None, None
+        sharing_ticket, old, candidate_released = None, None, False
         compatibility = ExitStack()
         try:
             self._start_candidate(version_exe, manifest["version"])
@@ -461,25 +494,44 @@ class Upgrade:
                     self._report("正在交接额度与网络共享，已有连接继续完成…")
                     sharing_ticket = prepare_upgrade(self.data_dir, old, self.candidate)
                 elif status.get("sharing_settings_supported"):
-                    if sharing_active(local_json(self.port, "/api/sharing", timeout=3)):
-                        raise ValueError(SHARING_UPGRADE_UNSUPPORTED)
+                    shared = local_json(self.port, "/api/sharing", timeout=3)
+                    if sharing_active(shared) and sharing_restart is None:
+                        sharing_restart = self._confirm_sharing_restart(shared)
+                    if sharing_restart is not None and sharing_restart.source != old:
+                        raise ValueError("共享服务已变化，请重新执行升级。")
                 baseline = local_json(self.port, "/api/status", timeout=3)
+                if sharing_restart is not None:
+                    control_worker(self.data_dir, self.candidate, "upgrade_pause")
+                    self._report("正在暂停旧版共享，准备切换服务…")
+                    sharing_restart.pause(old, check=True)
                 if windows:
                     self._report("正在更新桌面窗口，固定入口继续转发…")
                     reopen = True
                     self._close_windows(windows)
-                self._stage("switch", "正在交接新请求，已有连接继续完成…")
+                self._stage("switch", "正在切换服务，请稍候…" if sharing_restart else "正在交接新请求，已有连接继续完成…")
                 try:
                     local_json(self.port, "/__router__/switch", {"worker_id": self.candidate, "expected_active": old}, state["token"], timeout=40)
                     status = self._wait_entry(PROTOCOL, seconds=8)
                     if status.get("worker_id") != self.candidate or status.get("provider_sync_error"):
                         raise ValueError("切换后验证失败。")
+                    if sharing_restart is not None:
+                        self._report("正在等待旧请求结束并退出旧版共享服务…")
+                        sharing_restart.stop_source()
+                        self._report("正在恢复额度与网络共享…")
+                        sharing_restart.restore(self.candidate)
+                        status = self._wait_entry(PROTOCOL, seconds=8)
                     self._stage("verify", "正在确认服务、接入与借用状态…")
                     self._verify_continuity(baseline, status)
                     self._refresh_integration(status)
+                    if sharing_restart is not None:
+                        control_worker(self.data_dir, self.candidate, "upgrade_resume")
                 except Exception:
                     if not self._presentation_committed():
                         if self._candidate_active() is not False:
+                            if sharing_restart is not None:
+                                sharing_restart.pause(self.candidate)
+                                control_worker(self.data_dir, self.candidate, "upgrade_pause", release_provider=True)
+                                candidate_released = True
                             self._rollback_switch(old, state["token"])
                     raise
             else:
@@ -489,6 +541,8 @@ class Upgrade:
                 ticket, sharing_ticket = sharing_ticket, None
                 finish_upgrade(self.data_dir, old, self.candidate, ticket)
             compatibility.close()
+            if sharing_restart is not None:
+                self._sharing_record("complete")
             success = True
             return {"state": "complete", "version": manifest["version"], "port": self.port,
                     "worker_id": self.candidate, "backup": str(backup), "migrations": migrations,
@@ -501,6 +555,23 @@ class Upgrade:
                 compatibility.close()
             else:
                 compatibility.__exit__(*sys.exc_info())
+            if sharing_restart is not None and sharing_restart.paused:
+                try:
+                    active = self._candidate_active()
+                    if active is None:
+                        raise RuntimeError("无法确认当前共享进程。")
+                    if not active and not candidate_released:
+                        # A failed standby must not undo the provider restored
+                        # below when it closes after rollback.
+                        sharing_restart.pause(self.candidate)
+                        control_worker(self.data_dir, self.candidate, "upgrade_pause", release_provider=True)
+                    sharing_restart.restore(self.candidate if active else old)
+                    if active:
+                        control_worker(self.data_dir, self.candidate, "upgrade_resume")
+                    self._sharing_record("recovered")
+                except Exception as exc:
+                    self._sharing_record("recovery_failed", {"type": type(exc).__name__, "message": str(exc)[:250]})
+                    raise RuntimeError("共享恢复未完成，请查看升级结果并重新开启共享。") from exc
             raise
         finally:
             try:
@@ -572,9 +643,10 @@ class Upgrade:
                              else "升级完成。旧服务会在请求结束后退出。", self.total_steps)
             except Exception as exc:
                 if result is None:
-                    self.journal.update(state="failed", error=str(exc)[:500], finished=time.time())
+                    self.journal.update(state="cancelled" if isinstance(exc, UpgradeCancelled) else "failed",
+                                        error=str(exc)[:500], finished=time.time())
                     if self.journal["phases"]:
-                        self.journal["phases"][-1].update(state="failed", finished=time.time())
+                        self.journal["phases"][-1].update(state=self.journal["state"], finished=time.time())
                     try:
                         self._save_journal()
                     except OSError:
@@ -651,7 +723,7 @@ def run_integrated(arguments, quiet=False, force=False):
         if quiet:
             args.append("--quiet")
         result = main(args, default_profile=load_profile(), open_after=not quiet)
-        record("complete" if result == 0 else "failed", exit_code=result)
+        record("cancelled" if result == CANCELLED_EXIT else "complete" if result == 0 else "failed", exit_code=result)
         return result
 
 

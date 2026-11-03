@@ -21,6 +21,18 @@ class Reply(io.BytesIO):
 
 
 class UpdateTests(unittest.TestCase):
+    def test_cancelled_upgrade_remains_available_for_a_later_attempt(self):
+        self.opener.open.return_value = self.release_reply()
+        self.updates.check()
+        cached = self.updates.cached()
+        atomic_json(self.updates.state_path, {**cached, "state": "upgrading", "upgrade_started": 10})
+        atomic_json(self.updates.directory / "upgrade-result.json", {"state": "cancelled", "finished": 11,
+                   "error": "已暂不升级，现有服务保持运行。"})
+        result = self.updates.status()
+        self.assertEqual(result["state"], "available")
+        self.assertEqual(result["error"], "")
+        self.assertEqual(self.updates.cached()["asset"], cached["asset"])
+
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
