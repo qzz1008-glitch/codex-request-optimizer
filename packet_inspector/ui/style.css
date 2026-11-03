@@ -86,16 +86,16 @@ body{height:100dvh;min-width:0;display:flex;flex-direction:column;overflow-x:hid
 .workspace{display:grid;flex:1;min-height:0;min-width:0;height:auto;grid-template-columns:300px minmax(420px,1fr) 480px}
 /* Keep all three panes visible in narrower windows. */
 @container inspector-window (max-width:1199px){.workspace{grid-template-columns:300px minmax(0,1fr) 480px}}
-.sessions-sidebar{display:flex;flex-direction:column;min-width:0;min-height:0;gap:var(--records-heading-gap);padding:var(--view-inset);background:var(--panel);border-right:1px solid var(--line);overflow:hidden}
+.sessions-sidebar{--session-edge-gap:7px;display:flex;flex-direction:column;min-width:0;min-height:0;gap:var(--records-heading-gap);padding:var(--view-inset);background:var(--panel);border-right:1px solid var(--line);overflow:hidden}
 /* Match the request pane's title center and content start, including the search field and tabs. */
 .sessions-sidebar .sidebar-title,.requests-sidebar .sidebar-title{flex:none;height:var(--records-heading-height);margin:0}
 .sessions-sidebar .sidebar-title h1,.requests-sidebar .sidebar-title h1{line-height:22px}
-.sessions-title{gap:12px}
+.sessions-title{gap:12px;padding-right:var(--session-edge-gap)}
 .sessions-title h1{flex-shrink:0}
 .session-search{flex:1;width:0;min-width:0;max-width:230px;height:30px;padding:5px 8px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:inherit;font-size:12px}
 .session-search:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 2px #1d4ed81a}
 .session-empty{margin:0;padding:18px 8px;color:var(--muted);font-size:12px;line-height:1.6}
-.session-list{--session-connection-gutter:16px;display:flex;flex-direction:column;gap:3px;flex:1;min-height:0;overflow-x:hidden;overflow-y:scroll;margin-right:calc(-1 * var(--view-inset));padding:2px 2px 8px var(--session-connection-gutter);scrollbar-gutter:stable;overflow-anchor:none}
+.session-list{--session-connection-gutter:9px;display:flex;flex-direction:column;gap:3px;flex:1;min-height:0;overflow-x:hidden;overflow-y:scroll;margin-right:calc(var(--session-edge-gap) - var(--view-inset));padding:2px 2px 8px var(--session-connection-gutter);scrollbar-gutter:stable;overflow-anchor:none}
 .session-items{position:relative;display:flex;flex-direction:column;gap:3px;flex:none;min-width:0}
 .session-connections{position:absolute;top:0;left:calc(-1 * var(--session-connection-gutter));z-index:1;overflow:visible;pointer-events:none}
 .session-connection-path{fill:none;stroke:#8c9fc8;stroke-width:1.5;stroke-linejoin:round;stroke-linecap:round}
