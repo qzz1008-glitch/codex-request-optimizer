@@ -501,10 +501,11 @@ function hasModelTokenUsage(p) {
   return p.method==="POST" && !p.is_compaction && p.request_kind!=="tool_search" &&
     (!p.path || /\/responses\/*(?:\?.*)?$/.test(p.path));
 }
+function isToolSearch(p) { return p?.request_kind==="tool_search" || /\/alpha\/search\/*(?:\?.*)?$/.test(p?.path||""); }
 function requestKind(p) {
   if(p.request_kind==="image_generation" || /\/images\/generations\/*(?:\?.*)?$/.test(p.path||""))return t("图片生成");
   if(p.request_kind==="image_edit" || /\/images\/edits\/*(?:\?.*)?$/.test(p.path||""))return t("图片编辑");
-  if(p.request_kind==="tool_search" || /\/alpha\/search\/*(?:\?.*)?$/.test(p.path||""))return t("工具搜索");
+  if(isToolSearch(p))return t("工具搜索");
   if(p.is_compaction)return t("上下文压缩");
   const purpose=purposeFromMetadata(p)||requestPurposeCache.get(p.id)||auxiliarySessionKind(sessionSummaries.find(row=>row.thread_id===p.thread_id));
   return purpose&&purpose!=="subagent"?t(auxiliaryLabels[purpose]):p.method==="POST"?t("对话生成"):String(p.method||t("未知")).slice(0,10);
@@ -781,11 +782,11 @@ function table(headings, rows) { const wrap = el("div","table-scroll"), t = el("
 function link(text, fn) { const n=el("button","link-button",text); n.onclick=()=>Promise.resolve().then(fn).catch(fail); return n; }
 function fact(n,label,value) { const r=el("div","fact-row"); r.dataset.renderKey="fact:"+label;r.append(el("span","",label),el("span","",value)); n.append(r); return r; }
 function showTab(tab) {
-  const basic=!!state.detail?.details_evicted;
-  if(basic&&tab==="tree")tab="headers";
+  const basic=!!state.detail?.details_evicted,search=isToolSearch(state.detail);
+  if((basic&&tab==="tree")||(search&&tab==="diff"))tab="headers";
   state.tab=tab;
   for(const b of document.querySelectorAll("[data-tab]")) {
-    b.hidden=basic&&b.dataset.tab==="tree";
+    b.hidden=(basic&&b.dataset.tab==="tree")||(search&&b.dataset.tab==="diff");
     b.classList.toggle("active",b.dataset.tab===tab);
   }
   for(const t of ["headers","overview","tree","diff"])$("tab-"+t).hidden=t!==tab;
