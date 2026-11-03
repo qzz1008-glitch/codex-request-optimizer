@@ -4,7 +4,7 @@
 
 本次更新改善独立图片解析、请求分类与详情、更新提醒，以及旧版共享服务的升级流程。
 
-- **独立图片解析**：每次调用使用新的临时会话，只返回文字并在结束后清理临时数据。图片信息保留原图路径，支持直接打开图片或所在目录。
+- **图片信息**：保留原图路径，避免识图结束、临时缩图被清理后无法打开；支持直接打开图片或所在目录。独立识图继续使用每次新建临时会话的方式。
 - **请求分类与详情**：等待初始会话信息后再归组，修复图片解析与补全请求的筛选；精简子会话信息，并隐藏工具搜索请求中不适用的变化明细页签。
 - **更新提醒**：重新打开设置时保留已检测到的可用更新，便于继续下载和安装。
 - **旧版共享升级**：遇到不支持共享无缝交接的旧后台，可明确选择“暂停服务并升级”或“暂不升级”。确认后自动暂停、切换并恢复原共享端口、凭据与借入选择；取消则保留现有服务。升级失败时尝试恢复旧服务。
@@ -17,7 +17,7 @@ For Windows x64 (64-bit).
 
 This release improves independent image analysis, request classification and details, update notices, and upgrades from older sharing services.
 
-- **Independent image analysis**: each call uses a fresh ephemeral conversation, returns text only, and cleans up temporary data afterward. Image details retain the original path and provide actions to open the image or its folder.
+- **Image details**: retain the original image path so images remain accessible after temporary resized uploads are cleaned up. Open images or their folders directly from the details panel. Independent analysis continues to use a fresh ephemeral conversation for each call.
 - **Request classification and details**: wait for initial session metadata before grouping requests, fix image-analysis and complementary-request filters, simplify child-session information, and hide inapplicable change details for tool-search requests.
 - **Update notices**: keep a detected available update visible when Settings is reopened, so downloading and installation can be continued.
 - **Legacy sharing upgrades**: when an older worker cannot hand over sharing seamlessly, choose whether to pause services and upgrade or postpone. Confirmation automatically pauses, switches, and restores the existing sharing ports, credentials, and borrowed connections. Cancelling preserves the running services. Failed upgrades attempt to restore the previous services.
