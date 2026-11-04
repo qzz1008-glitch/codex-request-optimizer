@@ -49,6 +49,7 @@ async function run() {
   await page.evaluate(()=>document.getElementById('settings-dialog').close());
   await page.evaluate(()=>{statusData.connection_reload_required=true;notice.ingest();});
   assert.equal(await page.locator('#restart-notice-open').getAttribute('data-visible'),'true');
+  assert.equal(await page.locator('#restart-notice-open').textContent(),'ChatGPT 待重启');
   assert.deepEqual(await rects(page,headerIds),header,'pending badges reserve space');
   assert.equal(await page.locator('#connection-inline-feedback').count(),0,'raw text must not return below the connection controls');
   await page.locator('#restart-notice-open').click();
@@ -59,7 +60,7 @@ async function run() {
   const settings=await rects(page,settingsIds);
   await page.evaluate(()=>{notice.change('context_tokens',null,250000);notice.change('compact_tokens',null,200000);});
   assert.deepEqual(await rects(page,settingsIds),settings,'adding pending settings must not move the form');
-  assert.equal(await page.locator('[data-settings-field="context_tokens"]').getAttribute('data-restart-label'),'待重启');
+  assert.equal(await page.locator('[data-settings-field="context_tokens"]').getAttribute('data-restart-label'),'ChatGPT 待重启');
   const top=(await rects(page,['restart-notice']))[0];
   await page.locator('.settings-content').evaluate(node=>node.scrollTop=node.scrollHeight);
   assert.deepEqual((await rects(page,['restart-notice']))[0],top,'the restart card stays above the form scroll area');cases++;
@@ -78,7 +79,7 @@ async function run() {
     wsl:{targets:[{distribution:'Ubuntu',changed:true,active:true}]}}));
   assert((await page.locator('#restart-notice-title').textContent()).includes('ChatGPT'));
   await page.evaluate(()=>notice.acknowledge('chatgpt'));
-  assert.equal(await page.locator('#restart-notice-open').textContent(),'待重新连接','old workers can report simultaneous Windows and WSL changes');cases++;
+  assert.equal(await page.locator('#restart-notice-open').textContent(),'WSL 待重新连接','old workers can report simultaneous Windows and WSL changes');cases++;
 
   await load(page,{data_dir:'wsl'});
   await page.evaluate(()=>{
@@ -98,9 +99,15 @@ async function run() {
   assert(!(await page.locator('#restart-notice-items').textContent()).includes('Ubuntu'));cases++;
 
   await load(page,{data_dir:'paths',storage_paths_pending:true,log_dir:'new-log',active_log_dir:'old-log',cache_dir:'cache',active_cache_dir:'cache'});
-  assert.equal(await page.locator('#restart-notice-title').textContent(),'重启优化器后生效');
+  assert.equal(await page.locator('#restart-notice-open').textContent(),'本软件待重启');
+  assert.equal(await page.locator('#restart-notice-title').textContent(),'重启本软件后生效');
   assert.equal(await page.locator('#restart-notice-chatgpt').evaluate(node=>node.hidden),true);
-  assert.equal(await page.locator('[data-settings-field="log_dir"]').getAttribute('data-restart-label'),'待重启');
+  assert.equal(await page.locator('[data-settings-field="log_dir"]').getAttribute('data-restart-label'),'本软件待重启');
+  await page.evaluate(()=>notice.change('compact_tokens',null,250000));
+  assert.equal(await page.locator('#restart-notice-open').textContent(),'ChatGPT 与本软件待重启');
+  assert.equal(await page.locator('#restart-notice-title').textContent(),'重启本软件与 ChatGPT App 后生效');
+  await page.evaluate(()=>notice.change('compact_tokens',250000,null));
+  assert.equal(await page.locator('#restart-notice-open').textContent(),'本软件待重启');
   await page.evaluate(()=>{statusData.storage_paths_pending=false;notice.ingest();});
   assert.equal(await page.locator('#restart-notice-open').getAttribute('data-visible'),'false');cases++;
 
@@ -137,11 +144,13 @@ async function run() {
   await load(page,{data_dir:'backend',connection_reload_required:true,restart_notice:{revision:40,items:[{key:'entry_port',target:'chatgpt',scope:''},{key:'wsl',target:'wsl',scope:'Ubuntu'}]},
     entry_port:{pending:true,current_port:47844,configured_port:47848}});
   await page.evaluate(()=>document.getElementById('settings-dialog').showModal());
-  assert((await page.locator('#restart-notice-title').textContent()).includes('先重启优化器'));
+  assert.equal(await page.locator('#restart-notice-open').textContent(),'ChatGPT 与本软件待重启');
+  assert((await page.locator('#restart-notice-title').textContent()).includes('先重启本软件'));
   assert.equal(await page.locator('#restart-notice-chatgpt').isDisabled(),true);
   await page.evaluate(()=>notice.acknowledge('chatgpt'));
   assert.equal(await page.evaluate(()=>calls.length),0,'port changes cannot be acknowledged before applying the port');
   await page.evaluate(()=>{statusData.entry_port.pending=false;notice.ingest();});
+  assert.equal(await page.locator('#restart-notice-open').textContent(),'ChatGPT 待重启');
   assert.equal(await page.locator('#restart-notice-chatgpt').isDisabled(),false);
   await page.evaluate(()=>{requestFailure='配置又有变更，请确认最新待生效项目后重试。';});
   await page.locator('#restart-notice-chatgpt').click();
@@ -184,6 +193,42 @@ async function run() {
     assert(views[0]+views[2]<=badge[0]&&badge[0]+badge[2]<=connect[0]&&connect[0]+connect[2]<=settings[0]&&settings[0]+settings[2]<=controls[0],
       'header controls must fit beside the centered view switch: '+JSON.stringify({language,views,badge,connect,settings,controls}));
   }cases++;
+  const pendingCases=[
+    {name:'chatgpt-target',status:{restart_notice:{revision:1,items:[{key:'connection',target:'chatgpt',scope:''}]}},
+      zh:'ChatGPT 待重启',en:'ChatGPT needs a restart'},
+    {name:'optimizer-target',status:{storage_paths_pending:true,cache_dir:'new-cache',active_cache_dir:'old-cache'},
+      zh:'本软件待重启',en:'This app needs a restart'},
+    {name:'both-targets',status:{restart_notice:{revision:1,items:[{key:'context_tokens',target:'chatgpt',scope:''}]},
+      storage_paths_pending:true,cache_dir:'new-cache',active_cache_dir:'old-cache'},
+      zh:'ChatGPT 与本软件待重启',en:'ChatGPT + this app: restart'},
+    {name:'port-targets',status:{restart_notice:{revision:1,items:[{key:'entry_port',target:'chatgpt',scope:''}]},
+      entry_port:{pending:true,current_port:47844,configured_port:47848}},
+      zh:'ChatGPT 与本软件待重启',en:'ChatGPT + this app: restart'},
+    {name:'legacy-wsl-target',status:{restart_notice:{revision:1,items:[{key:'wsl',target:'wsl',scope:'Ubuntu'}]}},
+      zh:'WSL 待重新连接',en:'WSL reconnect pending'},
+  ];
+  for(const example of pendingCases) {
+    await load(page,{data_dir:example.name,...example.status});
+    await page.evaluate(()=>{document.documentElement.classList.add('desktop-titlebar');document.getElementById('window-controls').hidden=false;});
+    for(const language of ['zh','en']) {
+      await page.evaluate(language=>{uiI18n.setLanguage(language,{persist:false});notice.render();},language);
+      assert.equal(await page.locator('#restart-notice-open').textContent(),example[language]);
+      assert((await page.locator('#restart-notice-open').getAttribute('aria-label')).startsWith(example[language]));
+      assert.equal(await page.locator('#restart-notice-open').evaluate(node=>node.scrollWidth>node.clientWidth),false,
+        'Restart targets must fit in the badge: '+example.name+' / '+language);
+      const [views,badge,connect]=await rects(page,['view-toggle','restart-notice-open','request-compression']);
+      assert(views[0]+views[2]<=badge[0]&&badge[0]+badge[2]<=connect[0],'Named targets must fit the header');
+      const [header]=await page.locator('.app-header').evaluate(node=>{const box=node.getBoundingClientRect();return [[box.y,box.height]];});
+      assert(badge[1]>=header[0]&&badge[1]+badge[3]<=header[0]+header[1],'Wrapped restart targets must stay inside the title bar');
+      await page.locator('#restart-notice-open').click();
+      assert.equal(await page.locator('#settings-dialog').evaluate(node=>node.open),true);
+      assert.equal(await page.evaluate(()=>calls.length),0,'Opening the reminder must not restart or acknowledge either app');
+      assert.equal(await page.locator('#restart-notice-chatgpt').textContent(),language==='zh'?'ChatGPT 已重启':'ChatGPT restarted');
+      assert.equal(await page.locator('#restart-notice-wsl').textContent(),language==='zh'?'WSL 已重新连接':'WSL reconnected');
+      await page.evaluate(()=>document.getElementById('settings-dialog').close());
+      cases++;
+    }
+  }
   await load(page,{data_dir:'warning-only',restart_notice:{revision:1,items:[]},provider_warnings:[{provider:'fixture',detail:'Synthetic connection warning'}]});
   await page.locator('#restart-notice-open').click();
   assert.equal(await page.locator('#restart-notice').isVisible(),false);

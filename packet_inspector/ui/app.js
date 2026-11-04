@@ -98,6 +98,10 @@ globalThis.InspectorRestartNotice = {
     }
     function node(tag,cls,text) {const value=document.createElement(tag);value.className=cls;if(text)value.textContent=text;return value;}
     function pendingLabel(row) {return t(labels[row.key])+(row.scope?" · "+row.scope:"");}
+    function restartLabel(items,portPending=false) {
+      const chatgpt=portPending||items.some(row=>row.target==="chatgpt"),optimizer=portPending||items.some(row=>row.target==="optimizer");
+      return t(chatgpt&&optimizer?"ChatGPT 与本软件待重启":chatgpt?"ChatGPT 待重启":optimizer?"本软件待重启":"WSL 待重新连接");
+    }
     function render() {
       const card=$("restart-notice"),badge=$("restart-notice-open");if(!card||!badge)return;
       const items=[...ledger.items],s=status();
@@ -111,13 +115,13 @@ globalThis.InspectorRestartNotice = {
       card.hidden=!active;
       card.dataset.state=active?"pending":"ready";
       badge.dataset.visible=String(active||warning);badge.tabIndex=active||warning?0:-1;
-      badge.textContent=t(items.length?(chatgpt||optimizer?"待重启":"待重新连接"):failure?"状态异常":"接入异常");
-      badge.setAttribute("aria-label",t("查看待生效配置或接入错误"));
-      $("restart-notice-title").textContent=t(portPending?"先重启优化器，再重启 ChatGPT App":optimizer&&chatgpt?"重启优化器与 ChatGPT App 后生效":optimizer?"重启优化器后生效":chatgpt?"重启 ChatGPT App 后生效":wsl?"重新连接 WSL 会话后生效":failure?"待生效状态暂不可用":"配置生效状态");
+      badge.textContent=items.length?restartLabel(items,portPending):t(failure?"状态异常":"接入异常");
+      badge.setAttribute("aria-label",badge.textContent+" · "+t("查看待生效配置或接入错误"));
+      $("restart-notice-title").textContent=t(portPending?"先重启本软件，再重启 ChatGPT App":optimizer&&chatgpt?"重启本软件与 ChatGPT App 后生效":optimizer?"重启本软件后生效":chatgpt?"重启 ChatGPT App 后生效":wsl?"重新连接 WSL 会话后生效":failure?"待生效状态暂不可用":"配置生效状态");
       badge.title=active?$("restart-notice-title").textContent:warning?t("接入配置同步失败"):"";
       const tags=$("restart-notice-items");tags.replaceChildren(...items.map(row=>node("li","restart-notice-tag",pendingLabel(row))));
       const message=$("restart-notice-message");
-      message.textContent=failure?t(failure):t(chatgpt||wsl?"完成上述操作后再确认；确认只清除提醒。":optimizer?"重启优化器后，状态会自动更新。":"暂无待生效项目；新请求使用已保存的配置。");
+      message.textContent=failure?t(failure):t(chatgpt||wsl?"完成上述操作后再确认；确认只清除提醒。":optimizer?"重启本软件后，状态会自动更新。":"暂无待生效项目；新请求使用已保存的配置。");
       message.classList.toggle("error",!!failure);
       for(const target of ["chatgpt","wsl"]) {
         const button=$("restart-notice-"+target),needed=target==="chatgpt"?chatgpt:wsl;
@@ -125,14 +129,14 @@ globalThis.InspectorRestartNotice = {
       }
       for(const wrapper of document.querySelectorAll("[data-settings-field]")) {
         const field=wrapper.dataset.settingsField,key=["capacity_retry_enabled","capacity_retry_max_retries"].includes(field)?"capacity_retry":field;
-        const pending=items.some(row=>row.key===key);
-        wrapper.classList.toggle("restart-pending-field",pending);
-        if(pending)wrapper.dataset.restartLabel=t("待重启");else delete wrapper.dataset.restartLabel;
+        const pending=items.filter(row=>row.key===key);
+        wrapper.classList.toggle("restart-pending-field",pending.length>0);
+        if(pending.length)wrapper.dataset.restartLabel=restartLabel(pending);else delete wrapper.dataset.restartLabel;
       }
       const connectionItems=items.filter(row=>["connection","sharing","wsl"].includes(row.key));
       $("connection-settings").classList.toggle("restart-pending-connection",!!connectionItems.length);
       $("connection-pending-label").hidden=!connectionItems.length;
-      $("connection-pending-label").textContent=t(connectionItems.some(row=>row.target==="chatgpt")?"待重启":"待重新连接");
+      $("connection-pending-label").textContent=connectionItems.length?restartLabel(connectionItems):"";
     }
     async function acknowledge(target) {
       if(working||busy()||target==="chatgpt"&&status()?.entry_port?.pending)return;
