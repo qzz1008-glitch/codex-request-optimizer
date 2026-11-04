@@ -102,6 +102,16 @@ globalThis.InspectorRestartNotice = {
       const chatgpt=portPending||items.some(row=>row.target==="chatgpt"),optimizer=portPending||items.some(row=>row.target==="optimizer");
       return t(chatgpt&&optimizer?"ChatGPT 与本软件待重启":chatgpt?"ChatGPT 待重启":optimizer?"本软件待重启":"WSL 待重新连接");
     }
+    function pendingTooltip(items,portPending) {
+      const groups=new Map(),targets={chatgpt:"ChatGPT App：{items}",optimizer:"本软件：{items}",wsl:"WSL：{items}",port:"本软件 → ChatGPT App：{items}"};
+      for(const row of items) {
+        const target=row.key==="entry_port"&&portPending?"port":row.target;
+        if(!groups.has(target))groups.set(target,new Set());
+        groups.get(target).add(pendingLabel(row));
+      }
+      const separator=uiI18n.language==="en"?", ":"、";
+      return [t("待生效项目"),...Array.from(groups,([target,names])=>t(targets[target]).replace("{items}",()=>[...names].join(separator)))].join("\n");
+    }
     function render() {
       const card=$("restart-notice"),badge=$("restart-notice-open");if(!card||!badge)return;
       const items=[...ledger.items],s=status();
@@ -116,9 +126,9 @@ globalThis.InspectorRestartNotice = {
       card.dataset.state=active?"pending":"ready";
       badge.dataset.visible=String(active||warning);badge.tabIndex=active||warning?0:-1;
       badge.textContent=items.length?restartLabel(items,portPending):t(failure?"状态异常":"接入异常");
-      badge.setAttribute("aria-label",badge.textContent+" · "+t("查看待生效配置或接入错误"));
       $("restart-notice-title").textContent=t(portPending?"先重启本软件，再重启 ChatGPT App":optimizer&&chatgpt?"重启本软件与 ChatGPT App 后生效":optimizer?"重启本软件后生效":chatgpt?"重启 ChatGPT App 后生效":wsl?"重新连接 WSL 会话后生效":failure?"待生效状态暂不可用":"配置生效状态");
-      badge.title=active?$("restart-notice-title").textContent:warning?t("接入配置同步失败"):"";
+      badge.title=[items.length?pendingTooltip(items,portPending):"",failure?t(failure):!items.length&&warning?t("接入配置同步失败"):""].filter(Boolean).join("\n");
+      badge.setAttribute("aria-label",[badge.textContent,badge.title,t("查看待生效配置或接入错误")].filter(Boolean).join(" · "));
       const tags=$("restart-notice-items");tags.replaceChildren(...items.map(row=>node("li","restart-notice-tag",pendingLabel(row))));
       const message=$("restart-notice-message");
       message.textContent=failure?t(failure):t(chatgpt||wsl?"完成上述操作后再确认；确认只清除提醒。":optimizer?"重启本软件后，状态会自动更新。":"暂无待生效项目；新请求使用已保存的配置。");
