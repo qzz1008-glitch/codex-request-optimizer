@@ -722,8 +722,15 @@ function renderSessions() {
     });fragment.append(item);
   }
   if(!fragment.childElementCount) {
-    const empty=el("p","session-empty",!sessionMetadataAt?t("加载中…"):query?t("未找到匹配的会话"):t("暂无会话"));
-    empty.setAttribute("role","status");fragment.append(empty);
+    if(!sessionMetadataAt) {
+      fragment.classList.add("session-loading");
+      const spinner=el("span","session-spinner");spinner.setAttribute("aria-hidden","true");
+      const status=el("span","sr-only",t("加载中…"));status.setAttribute("role","status");
+      fragment.append(spinner,status);
+    } else {
+      const empty=el("p","session-empty",query?t("未找到匹配的会话"):t("暂无会话"));
+      empty.setAttribute("role","status");fragment.append(empty);
+    }
   }
   sessionConnectionObserver.disconnect();
   list.setAttribute("aria-busy",String(!sessionMetadataAt));
