@@ -2,6 +2,7 @@
 import base64
 from copy import deepcopy
 import gzip
+import hashlib
 import http.client
 import json
 import os
@@ -570,11 +571,28 @@ class ImageRewriteTests(unittest.TestCase):
         self.assertEqual([p["type"] for p in parts], ["input_text"] * 3)
         attachments = list(self.isolation.directory.glob("*.png"))
         self.assertEqual(len(attachments), 1)
+        self.assertEqual(len(attachments[0].stem), 32)
         self.assertEqual(parts[1], {"type": "input_text", "text": str(attachments[0].resolve())})
         self.assertEqual(parts[2], parts[1])
         self.assertNotIn("data:image", wire.decode())
         self.assertEqual(metrics["image_isolation_removed"], 2)
         self.assertEqual(metrics["image_paths"], [str(attachments[0].resolve())])
+
+    def test_short_name_collision_preserves_contents_and_reuses_the_right_file(self):
+        part = image_part()
+        payload = base64.b64decode(part["image_url"].split(",", 1)[1])
+        digest = hashlib.sha256(payload).hexdigest()
+        self.isolation.directory.mkdir()
+        occupied = self.isolation.directory / ("i-" + digest[:30] + ".png")
+        other = b"x" * len(payload)
+        occupied.write_bytes(other)
+        target = self.isolation._store(part["image_url"], set())
+        self.assertNotEqual(target, occupied)
+        self.assertLessEqual(len(target.stem), 32)
+        self.assertEqual(target.read_bytes(), payload)
+        self.assertEqual(occupied.read_bytes(), other)
+        self.assertEqual(self.isolation._store(part["image_url"], set()), target)
+        self.assertEqual(len(list(self.isolation.directory.glob("*.png"))), 2)
 
     def test_rewrites_all_encodings_and_preserves_unrelated_original_bytes(self):
         raw = b' { "extra" : "\\u0061", "encrypted_content" : "EXACT\\nbytes", "input":' + encode(tool_image_body(custom=True)["input"]) + b' } '
@@ -658,12 +676,16 @@ class ImageRewriteTests(unittest.TestCase):
     def test_expiration_only_removes_owned_cache_files(self):
         self.isolation.directory.mkdir()
         owned = self.isolation.directory / ("a" * 64 + ".png")
+        short = self.isolation.directory / ("i-" + "b" * 30 + ".png")
+        collision = self.isolation.directory / ("i-" + "c" * 28 + "-1.png")
         unrelated = self.isolation.directory / "keep.png"
-        for path in (owned, unrelated):
+        for path in (owned, short, collision, unrelated):
             path.write_bytes(b"synthetic")
             os.utime(path, (1, 1))
         self.isolation.prepare(encode(request_body()), {}, "/responses", "off")
         self.assertFalse(owned.exists())
+        self.assertFalse(short.exists())
+        self.assertFalse(collision.exists())
         self.assertTrue(unrelated.exists())
 
 
