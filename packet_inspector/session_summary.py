@@ -219,8 +219,11 @@ class SessionSummaries:
                                 "WHERE method!='GET' GROUP BY coalesce(thread,'') "
                                 "ORDER BY max(created) DESC,coalesce(thread,'') LIMIT ?", (MAX_SESSIONS,)).fetchall()
             for thread, count, created in groups:
+                # Keep known IDs searchable by the existing thread/time index.
+                # Older stores may use either NULL or '' for an unknown ID.
+                condition = "thread=?" if thread else "coalesce(thread,'')=?"
                 row = db.execute("SELECT id,created,meta FROM packet_summaries "
-                                 "WHERE coalesce(thread,'')=? AND method!='GET' "
+                                 "WHERE " + condition + " AND method!='GET' "
                                  "ORDER BY created DESC,id DESC LIMIT 1", (thread,)).fetchone()
                 if not row:
                     continue
