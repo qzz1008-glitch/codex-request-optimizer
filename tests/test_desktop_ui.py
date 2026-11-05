@@ -252,28 +252,44 @@ class DesktopUITests(unittest.TestCase):
         self.assertEqual(image.stat().st_size, 0)
         self.assertEqual(self.backend.requests, [])
 
-    def test_image_open_rejects_non_images_missing_paths_and_invalid_input(self):
+    def test_image_reveal_selects_the_file_in_explorer_without_forwarding(self):
+        image = self.folder / "参考图 & logo, 01.PNG"
+        image.touch()
+        with patch("packet_inspector.desktop_ui._reveal_in_explorer") as selector:
+            status, body, _ = self.request("/api/reveal-image", "POST",
+                                           json.dumps({"path": str(image)}).encode())
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body), {"opened": True, "path": str(image.resolve())})
+        selector.assert_called_once_with(image.resolve())
+        self.assertEqual(image.stat().st_size, 0)
+        self.assertEqual(self.backend.requests, [])
+
+    def test_image_actions_reject_non_images_missing_paths_and_invalid_input(self):
         executable = self.folder / "command.exe"
         executable.touch()
         directory = self.folder / "folder.png"
         directory.mkdir()
         values = [str(executable), str(directory), str(self.folder / "missing.png"),
                   "relative/image.png", "https://example.test/image.png", "", None, 42]
-        with patch("packet_inspector.desktop_ui.os.startfile", create=True) as opener:
-            for value in values:
-                with self.subTest(value=value):
-                    status, body, _ = self.request("/api/open-image", "POST",
-                                                   json.dumps({"path": value}).encode())
-                    self.assertEqual(status, 400)
-                    self.assertIn("error", json.loads(body))
+        with patch("packet_inspector.desktop_ui.os.startfile", create=True) as opener, \
+                patch("packet_inspector.desktop_ui._reveal_in_explorer") as selector:
+            for route in ("/api/open-image", "/api/reveal-image"):
+                for value in values:
+                    with self.subTest(route=route, value=value):
+                        status, body, _ = self.request(route, "POST", json.dumps({"path": value}).encode())
+                        self.assertEqual(status, 400)
+                        self.assertIn("error", json.loads(body))
             opener.assert_not_called()
+            selector.assert_not_called()
         self.assertEqual(self.backend.requests, [])
 
     def test_path_open_validates_origin_method_and_body_before_opening(self):
         image = self.folder / "image.png"
         image.touch()
-        with patch("packet_inspector.desktop_ui.os.startfile", create=True) as opener:
-            for route, path in [("/api/open-directory", self.folder), ("/api/open-image", image)]:
+        with patch("packet_inspector.desktop_ui.os.startfile", create=True) as opener, \
+                patch("packet_inspector.desktop_ui._reveal_in_explorer") as selector:
+            for route, path in [("/api/open-directory", self.folder), ("/api/open-image", image),
+                                ("/api/reveal-image", image)]:
                 body = json.dumps({"path": str(path)}).encode()
                 self.assertEqual(self.request(route, "POST", body,
                                               {"Origin": "http://outside.invalid"})[0], 403)
@@ -281,14 +297,17 @@ class DesktopUITests(unittest.TestCase):
                 for invalid in [b"[]", b"{", b"", b"x" * 8193]:
                     self.assertEqual(self.request(route, "POST", invalid)[0], 400)
             opener.assert_not_called()
+            selector.assert_not_called()
         self.assertEqual(self.backend.requests, [])
 
     def test_path_open_failure_is_reported_without_forwarding(self):
         image = self.folder / "image.png"
         image.touch()
-        with patch("packet_inspector.desktop_ui.os.startfile", side_effect=OSError("unavailable"), create=True):
+        with patch("packet_inspector.desktop_ui.os.startfile", side_effect=OSError("unavailable"), create=True), \
+                patch("packet_inspector.desktop_ui._reveal_in_explorer", side_effect=OSError("unavailable")):
             for route, path, error in [("/api/open-directory", self.folder, "无法打开目录，请检查路径和权限。"),
-                                       ("/api/open-image", image, "无法打开图片，请检查路径和默认图片查看器。")]:
+                                       ("/api/open-image", image, "无法打开图片，请检查路径和默认图片查看器。"),
+                                       ("/api/reveal-image", image, "无法在文件夹中显示图片，请检查路径和权限。")]:
                 status, body, _ = self.request(route, "POST", json.dumps({"path": str(path)}).encode())
                 self.assertEqual(status, 503)
                 self.assertEqual(json.loads(body), {"error": error})
@@ -300,10 +319,12 @@ class DesktopUITests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertTrue(json.loads(body)["open_directory_supported"])
         self.assertTrue(json.loads(body)["open_image_supported"])
+        self.assertEqual(json.loads(body)["reveal_image_supported"], os.name == "nt")
         self.assertEqual(json.loads(body)["version"], "0.2.0")
         with patch("packet_inspector.desktop_ui.os.startfile", None, create=True):
             self.assertFalse(json.loads(self.request("/api/status")[1])["open_directory_supported"])
             self.assertFalse(json.loads(self.request("/api/status")[1])["open_image_supported"])
+            self.assertEqual(json.loads(self.request("/api/status")[1])["reveal_image_supported"], os.name == "nt")
             status, _, _ = self.request("/api/open-directory", "POST",
                                         json.dumps({"path": str(self.folder)}).encode())
         self.assertEqual(status, 400)

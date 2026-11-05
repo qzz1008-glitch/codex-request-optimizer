@@ -4,3 +4,4 @@ tomlkit>=0.13,<1
 cryptography>=43,<47
 urllib3>=2.8,<3
 pywebview>=6.2,<7; sys_platform == 'win32'
+pywin32>=312,<400; sys_platform == 'win32'

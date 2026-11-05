@@ -53,7 +53,7 @@ def open_directory(value):
     return str(directory)
 
 
-def open_image(value):
+def _image_file(value):
     value = local_image_path(value)
     if value is None or not Path(value).is_absolute():
         raise ValueError("请选择有效的本地图片路径。")
@@ -62,10 +62,62 @@ def open_image(value):
         raise ValueError("请选择有效的本地图片路径。")
     if not image.is_file():
         raise ValueError("图片不存在。")
+    return image
+
+
+def open_image(value):
+    image = _image_file(value)
     opener = getattr(os, "startfile", None)
     if not callable(opener):
         raise ValueError("当前系统不支持查看图片。")
     opener(str(image), "open")
+    return str(image)
+
+
+def _reveal_in_explorer(image):
+    if os.name != "nt":
+        raise ValueError("当前系统不支持在文件夹中显示图片。")
+    import time
+    import pythoncom
+    import pywintypes
+    from win32com.client import Dispatch
+    from win32com.shell import shell
+
+    pythoncom.CoInitialize()
+    try:
+        item = shell.SHParseDisplayName(str(image), 0, None)[0]
+        shell.SHOpenFolderAndSelectItems(item, [], 0)
+        explorer = Dispatch("Shell.Application")
+        deadline = time.monotonic() + 8
+        while time.monotonic() < deadline:
+            for window in explorer.Windows():
+                try:
+                    view = window.Document
+                    if Path(view.Folder.Self.Path) != image.parent:
+                        continue
+                    file = view.Folder.ParseName(image.name)
+                    if file is None:
+                        continue
+                    # Reapply after the new folder view loads; initial navigation can clear selection.
+                    view.SelectItem(file, 1 | 4 | 8 | 16)  # select, deselect others, ensure visible, focus
+                    selected = view.SelectedItems()
+                    if any(Path(selected.Item(i).Path).resolve() == image for i in range(selected.Count)):
+                        return
+                except pywintypes.com_error:
+                    continue
+            pythoncom.PumpWaitingMessages()
+            time.sleep(.05)
+        raise OSError("Windows Explorer did not confirm the image selection.")
+    except (pywintypes.com_error, pywintypes.error) as exc:
+        raise OSError("Windows Explorer could not select the image.") from exc
+    finally:
+        explorer = window = view = file = selected = None  # Release proxies before their COM apartment.
+        pythoncom.CoUninitialize()
+
+
+def reveal_image(value):
+    image = _image_file(value)
+    _reveal_in_explorer(image)
     return str(image)
 
 
@@ -396,6 +448,9 @@ class UIHandler(BaseHTTPRequestHandler):
         if path == "/api/open-image" and self.command == "POST":
             self._open_path(open_image, "无法打开图片，请检查路径和默认图片查看器。")
             return
+        if path == "/api/reveal-image" and self.command == "POST":
+            self._open_path(reveal_image, "无法在文件夹中显示图片，请检查路径和权限。")
+            return
         if path == "/api/updates" and self.command in {"GET", "POST"}:
             self._updates()
             return
@@ -497,6 +552,7 @@ class UIHandler(BaseHTTPRequestHandler):
                 status["ui_live_reload"] = self.server.live_reload
                 status["open_directory_supported"] = callable(getattr(os, "startfile", None))
                 status["open_image_supported"] = callable(getattr(os, "startfile", None))
+                status["reveal_image_supported"] = os.name == "nt"
                 status["ui_desktop"] = self.server.exit_requests is not None
                 status["ui_window_opened"] = self.server.window_opened
                 if self.server.exit_requests is not None:

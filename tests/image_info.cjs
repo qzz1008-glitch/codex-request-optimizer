@@ -8,7 +8,7 @@ class Element{
 }
 const el=(tag,cls,text)=>Object.assign(new Element(tag),{className:cls||"",textContent:text??""});
 const requests=[],errors=[],context={URL,t:value=>value,el,
-  state:{status:{open_directory_supported:true,open_image_supported:true}},
+  state:{status:{open_directory_supported:true,open_image_supported:true,reveal_image_supported:true}},
   document:{createElementNS:(namespaceURI,tag)=>Object.assign(new Element(tag),{namespaceURI})},
   panel:title=>{const node=el("section","panel");node.append(el("h3","",title));return node;},
   api:async(route,data)=>{requests.push({route,data});return {opened:true};},fail:error=>errors.push(error.message)};
@@ -43,7 +43,7 @@ const paths=[directory+"ip-env-scaling-browser-logo.png",directory+"参考图 & 
     {...body,client_metadata:marker})),[paths[1]],"An explicit retained clipboard copy still takes precedence");
   const info=context.renderImageInfo(paths),actions=buttons(info);
   assert.equal(actions.length,8,"One folder action per directory and viewer/folder actions beside every image");
-  assert.deepEqual(actions.map(button=>button.title),["打开路径","查看图片","打开所在文件夹","查看图片","打开所在文件夹","打开路径","查看图片","打开所在文件夹"]);
+  assert.deepEqual(actions.map(button=>button.title),["打开路径","查看图片","在文件夹中显示","查看图片","在文件夹中显示","打开路径","查看图片","在文件夹中显示"]);
   assert.deepEqual(descendants(info,"code").map(node=>node.textContent),[directory,"ip-env-scaling-browser-logo.png","参考图 & icon.PNG","C:\\Other\\","second.webp"]);
   for(const button of actions){
     assert.equal(button.type,"button");assert.equal(button.attributes["aria-label"],button.title);
@@ -55,7 +55,10 @@ const paths=[directory+"ip-env-scaling-browser-logo.png",directory+"参考图 & 
     ["/api/open-directory",directory],["/api/open-image",paths[0]],["/api/open-image",paths[1]]]);
   await click(actions[2]);await click(actions[4]);await click(actions[7]);
   assert.deepEqual(requests.splice(0).map(({route,data})=>[route,data.path]),[
-    ["/api/open-directory",directory],["/api/open-directory",directory],["/api/open-directory","C:\\Other\\"]]);
+    ["/api/reveal-image",paths[0]],["/api/reveal-image",paths[1]],["/api/reveal-image",paths[2]]]);
+  const clipboard=directory+"codex-clipboard-03e0b476-9b71-4aab-8be6-dd96754b0f1d.png";
+  await click(buttons(context.renderImageInfo([clipboard]))[2]);
+  assert.deepEqual(requests.splice(0).map(({route,data})=>[route,data.path]),[["/api/reveal-image",clipboard]],"The full file path must be used even when its displayed name is shortened");
 
   let finish;
   context.api=(route,data)=>{requests.push({route,data});return new Promise(resolve=>{finish=resolve;});};
@@ -75,6 +78,10 @@ const paths=[directory+"ip-env-scaling-browser-logo.png",directory+"参考图 & 
   const unsupported=buttons(context.renderImageInfo(paths));
   assert.equal(unsupported[0].disabled,false);assert.equal(unsupported[1].disabled,true);assert.equal(unsupported[2].disabled,false);
   await click(unsupported[1]);assert.equal(errors.length,1);
+  delete context.state.status.reveal_image_supported;
+  const legacy=buttons(context.renderImageInfo(paths));
+  assert.equal(legacy[2].disabled,true);assert.equal(legacy[2].title,"更新桌面程序后可在文件夹中选中图片。");
+  await click(legacy[2]);assert.equal(errors.length,1,"An old desktop must not silently open only the folder");
   assert.equal(buttons(context.renderImageInfo([])).length,0);
   console.log("image info actions passed");
 })().catch(error=>{console.error(error);process.exitCode=1;});
