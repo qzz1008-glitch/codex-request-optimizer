@@ -1948,25 +1948,26 @@ function renderCompression(m) {
   // Older summary records only retain the final body's encoding and grade.
   // Those values cannot describe the pre-summary packet shown beside them.
   const encoding=hasTransport?m.transport_content_encoding:summaryTriggered?null:m.relay_content_encoding||m.outbound_content_encoding;
-  fact(sizes,t("压缩方式"),encoding==="identity"?t("不压缩"):encoding||"—");
   const level=hasTransport?m.transport_zstd_level:summaryTriggered?null:m.relay_zstd_level;
-  fact(sizes,t("压缩等级"),Number.isInteger(level)&&level>=1&&level<=22?level:"—");
-  if(original>0 && compressed!==null)fact(sizes,t("减小比例"),(100*(1-compressed/original)).toFixed(1)+"%").title=t("包含图片处理和传输压缩带来的大小变化，按超限摘要处理前的正文计算。");
-  if(m.image_upload_optimized===true) {
-    const processing=el("section","request-image-processing");processing.dataset.renderKey="image-processing";
-    processing.append(el("h4","",t("图片处理")));
-    fact(processing,t("缩图前转发请求"),bytes(m.image_upload_before_bytes));
-    const recorded=Array.isArray(m.image_upload_images)?m.image_upload_images.filter(image=>image&&typeof image==="object"&&!Array.isArray(image)):[];
-    const images=recorded.length?recorded:[{}];
-    const resolution=(width,height)=>Number.isSafeInteger(width)&&width>0&&Number.isSafeInteger(height)&&height>0?`${width} × ${height}`:"—";
-    for(const [index,image] of images.entries()) {
-      const details=el("div","image-processing-item");details.dataset.renderKey="image-processing:"+index;
-      if(images.length>1||image.mask)details.append(el("div","image-processing-name",image.mask?t("编辑蒙版"):t("参考图 {index}").replace("{index}",index+1)));
-      fact(details,t("原始分辨率"),resolution(image.original_width,image.original_height));
-      fact(details,t("处理后分辨率"),resolution(image.width,image.height));processing.append(details);
-    }
-    sizes.append(processing);
+  const method=typeof encoding==="string"?encoding.trim().toLowerCase():"";
+  if(method&&method!=="identity") {
+    const grade=method==="zstd"&&Number.isInteger(level)&&level>=1&&level<=22?t("{level}级").replace("{level}",level):"";
+    fact(sizes,t("文本压缩"),grade?`${method} · ${grade}`:method);
   }
+  if(m.image_upload_optimized===true) {
+    const images=Array.isArray(m.image_upload_images)?m.image_upload_images.filter(image=>image&&typeof image==="object"&&!Array.isArray(image)):[];
+    const changes=[];
+    for(const [index,image] of images.entries()) {
+      if(![image.original_width,image.original_height,image.width,image.height].every(value=>Number.isSafeInteger(value)&&value>0))continue;
+      const name=images.length>1||image.mask?(image.mask?t("编辑蒙版"):t("参考图 {index}").replace("{index}",index+1))+" · ":"";
+      changes.push(`${name}${image.original_width} × ${image.original_height} → ${image.width} × ${image.height}`);
+    }
+    if(changes.length) {
+      const row=fact(sizes,t("图片压缩"),changes.join("\n"));row.classList.add("image-compression-row");
+      row.lastChild.classList.add("image-compression-details");
+    }
+  }
+  if(original>0 && compressed!==null)fact(sizes,t("减小比例"),(100*(1-compressed/original)).toFixed(1)+"%").title=t("包含图片处理和传输压缩带来的大小变化，按超限摘要处理前的正文计算。");
   if(summaryTriggered) {
     const estimate=requestTokenUsage(m), actual=m.upstream_usage?.input_tokens;
     fact(sizes,t("输入 Token（估算）"),sortInputTokens(estimate)!==null?"≈ "+nf.format(estimate.input_tokens):"—").title=t("超限摘要前输入 Token（估算）");

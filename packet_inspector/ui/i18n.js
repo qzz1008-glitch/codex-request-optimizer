@@ -586,6 +586,8 @@ const uiI18n = (() => {
     "可在设置中开启容量重试":"Enable capacity retries in Settings",
     "输入后自动定位；支持关键词或 / 开头的路径；始终显示完整 JSON":"Navigate as you type; use keywords or a path starting with /; always show the full JSON",
     "压缩方式":"Compression method",
+    "文本压缩":"Text compression",
+    "图片压缩":"Image compression",
     "接入":"Connected",
     "Codex 接入与原生压缩":"Codex connection and native compression",
     "由本软件管理 zstd 压缩，保留完整内容。":"This app manages lossless zstd compression.",
