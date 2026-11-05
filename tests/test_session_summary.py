@@ -106,6 +106,50 @@ class SessionSummaryTests(unittest.TestCase):
         self.assertIsNone(row["title"])
         self.assertEqual(row["token_window"]["state"], "unavailable")
 
+    def test_latest_packet_ties_and_empty_ids_keep_counts_and_exclude_gets(self):
+        with closing(sqlite3.connect(self.capture / "packets.sqlite")) as db:
+            db.executemany("INSERT INTO packet_summaries VALUES (?,?,?,?,?)", [
+                ("named-a", 115, THREAD, "POST", json.dumps({"outbound_wire_bytes": 10})),
+                ("named-z", 115, THREAD, "POST", json.dumps({"outbound_wire_bytes": 20})),
+                ("unknown-a", 115, "", "POST", json.dumps({"outbound_wire_bytes": 30})),
+                ("unknown-z", 115, None, "POST", json.dumps({"outbound_wire_bytes": 40})),
+                ("unknown-get", 125, "", "GET", json.dumps({"outbound_wire_bytes": 50}))])
+            db.commit()
+        rows = {row["thread_id"]: row for row in self.reader.read(self.capture)["sessions"]}
+        self.assertEqual(rows[THREAD]["packet_count"], 4)
+        self.assertEqual(rows[THREAD]["latest_packet"], {"id": "named-z", "created": 115, "wire_bytes": 20})
+        self.assertEqual(rows[""]["packet_count"], 3)
+        self.assertEqual(rows[""]["latest_packet"], {"id": "unknown-z", "created": 115, "wire_bytes": 40})
+
+    def test_many_sessions_do_not_rescan_newer_sessions_for_each_latest_packet(self):
+        path = (self.capture / "packets.sqlite").resolve()
+        with closing(sqlite3.connect(path)) as db:
+            db.execute("CREATE INDEX packet_summary_thread ON packet_summaries(thread,created DESC,id DESC)")
+            db.executemany("INSERT INTO packet_summaries VALUES (?,?,?,?,?)", [
+                (f"bulk-{group:03}-{turn:03}", 200 + group * 64 + turn, f"bulk-session-{group}", "POST", "{}")
+                for group in range(64) for turn in range(64)])
+            db.commit()
+        original_connect = sqlite3.connect
+        steps = 0
+        def progress():
+            nonlocal steps
+            steps += 1000
+            return int(steps > 250000)
+        def connect(database, *args, **kwargs):
+            db = original_connect(database, *args, **kwargs)
+            if str(database).startswith(path.as_uri()):
+                # Bound SQLite work, not wall time: this remains deterministic
+                # across slower machines and catches a scan per session.
+                db.set_progress_handler(progress, 1000)
+            return db
+        with patch("packet_inspector.session_summary.sqlite3.connect", side_effect=connect):
+            rows = {row["thread_id"]: row for row in self.reader.read(self.capture)["sessions"]}
+        self.assertEqual(len(rows), 66)
+        for group in range(64):
+            row = rows[f"bulk-session-{group}"]
+            self.assertEqual(row["packet_count"], 64)
+            self.assertEqual(row["latest_packet"]["id"], f"bulk-{group:03}-063")
+
     def test_predictive_usage_does_not_replace_real_sidebar_usage(self):
         meta = {"status": 200, "state": "complete", "usage_override_applied": True,
                 "upstream_usage": {"input_tokens": 123456, "output_tokens": 73, "total_tokens": 123529},
