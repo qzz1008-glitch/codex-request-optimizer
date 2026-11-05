@@ -42,17 +42,20 @@ const paths=[directory+"ip-env-scaling-browser-logo.png",directory+"参考图 & 
   assert.deepEqual(Array.from(context.requestImagePaths({...oldMeta,image_path_rewrites:{[paths[0]]:paths[1]}},
     {...body,client_metadata:marker})),[paths[1]],"An explicit retained clipboard copy still takes precedence");
   const info=context.renderImageInfo(paths),actions=buttons(info);
-  assert.equal(actions.length,5,"One folder action per directory and one viewer action per image");
-  assert.deepEqual(actions.map(button=>button.title),["打开路径","查看图片","查看图片","打开路径","查看图片"]);
+  assert.equal(actions.length,8,"One folder action per directory and viewer/folder actions beside every image");
+  assert.deepEqual(actions.map(button=>button.title),["打开路径","查看图片","打开所在文件夹","查看图片","打开所在文件夹","打开路径","查看图片","打开所在文件夹"]);
   assert.deepEqual(descendants(info,"code").map(node=>node.textContent),[directory,"ip-env-scaling-browser-logo.png","参考图 & icon.PNG","C:\\Other\\","second.webp"]);
   for(const button of actions){
     assert.equal(button.type,"button");assert.equal(button.attributes["aria-label"],button.title);
     assert.equal(button.children[0].tagName,"svg");assert.equal(button.children[0].attributes["aria-hidden"],"true");
     assert.equal(button.disabled,false);assert.equal(button.textContent,"");
   }
-  await click(actions[0]);await click(actions[1]);await click(actions[2]);
-  assert.deepEqual(requests.map(({route,data})=>[route,data.path]),[
+  await click(actions[0]);await click(actions[1]);await click(actions[3]);
+  assert.deepEqual(requests.splice(0).map(({route,data})=>[route,data.path]),[
     ["/api/open-directory",directory],["/api/open-image",paths[0]],["/api/open-image",paths[1]]]);
+  await click(actions[2]);await click(actions[4]);await click(actions[7]);
+  assert.deepEqual(requests.splice(0).map(({route,data})=>[route,data.path]),[
+    ["/api/open-directory",directory],["/api/open-directory",directory],["/api/open-directory","C:\\Other\\"]]);
 
   let finish;
   context.api=(route,data)=>{requests.push({route,data});return new Promise(resolve=>{finish=resolve;});};
@@ -61,7 +64,7 @@ const paths=[directory+"ip-env-scaling-browser-logo.png",directory+"参考图 & 
   const pending=click(live);
   assert.equal(live.disabled,true);assert.equal(live.attributes["aria-busy"],"true");
   const refreshed=buttons(context.renderImageInfo(paths))[1];assert.equal(refreshed.disabled,true);
-  await click(refreshed);assert.equal(requests.length,4,"Polling and repeated clicks must not open duplicate viewers");
+  await click(refreshed);assert.equal(requests.length,1,"Polling and repeated clicks must not open duplicate viewers");
   finish({opened:true});await pending;
   assert.equal(live.disabled,false);assert.equal(live.attributes["aria-busy"],"false");
   assert.equal(buttons(context.renderImageInfo(paths))[1].disabled,false);
@@ -70,7 +73,7 @@ const paths=[directory+"ip-env-scaling-browser-logo.png",directory+"参考图 & 
   await click(live);assert.deepEqual(errors,["图片不存在。"]);assert.equal(live.disabled,false);
   context.state.status.open_image_supported=false;
   const unsupported=buttons(context.renderImageInfo(paths));
-  assert.equal(unsupported[0].disabled,false);assert.equal(unsupported[1].disabled,true);
+  assert.equal(unsupported[0].disabled,false);assert.equal(unsupported[1].disabled,true);assert.equal(unsupported[2].disabled,false);
   await click(unsupported[1]);assert.equal(errors.length,1);
   assert.equal(buttons(context.renderImageInfo([])).length,0);
   console.log("image info actions passed");

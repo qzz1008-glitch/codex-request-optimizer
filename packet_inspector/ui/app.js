@@ -2342,8 +2342,8 @@ function imagePathGroups(paths) {
   return [...groups.values()];
 }
 const imagePathOpening=new Set();
-function imagePathAction(kind,path) {
-  const directory=kind==="directory",label=t(directory?"打开路径":"查看图片"),capability=directory?"open_directory_supported":"open_image_supported";
+function imagePathAction(kind,path,labelOverride) {
+  const directory=kind==="directory",label=t(labelOverride||(directory?"打开路径":"查看图片")),capability=directory?"open_directory_supported":"open_image_supported";
   const key=kind+":"+path,button=el("button","image-path-action");
   button.type="button";button.title=label;button.setAttribute("aria-label",label);button.dataset.renderKey="image-action:"+key;
   button.disabled=!state.status?.[capability]||imagePathOpening.has(key);
@@ -2376,7 +2376,7 @@ function renderImagePaths(paths) {
       const item=el("li","image-path-item"),filename=el("code","image-path-name",name);
       item.dataset.renderKey="image:"+path;
       filename.title=path;
-      item.append(filename,imagePathAction("image",path));list.append(item);
+      item.append(filename,imagePathAction("image",path),imagePathAction("directory",group.directory,"打开所在文件夹"));list.append(item);
     }
     section.append(heading,list);images.append(section);
   }
