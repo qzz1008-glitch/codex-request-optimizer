@@ -30,6 +30,7 @@ MAX_IMAGE_BYTES = 50 * 1024 * 1024
 MAX_ATTACHMENTS_BYTES = 256 * 1024 * 1024
 ATTACHMENT_TTL = 7 * 24 * 3600
 MIME_EXTENSIONS = {"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp", "image/gif": ".gif"}
+ATTACHMENT_NAME = re.compile(r"(?:[a-f0-9]{64}|i-[a-f0-9]{30}|i-[a-f0-9]{1,28}-[1-9][0-9]*)\.(?:png|jpg|webp|gif)")
 
 
 def resolve_image_directory(data_dir, value=""):
@@ -89,19 +90,30 @@ class ImageIsolation:
                         "image/webp": payload[:4] == b"RIFF" and payload[8:12] == b"WEBP"}
         if not signature_ok[match[1]]:
             raise ImageIsolationFailure("image_invalid_data", "图片格式与声明不一致，未上传原始图片。")
-        name = hashlib.sha256(payload).hexdigest() + MIME_EXTENSIONS[match[1]]
+        digest = hashlib.sha256(payload).hexdigest()
+        stem, extension = "i-" + digest[:30], MIME_EXTENSIONS[match[1]]
         with self.lock, file_lock(self.lock_path):
             self.directory.mkdir(parents=True, exist_ok=True)
-            target = self.directory / name
-            if target.is_symlink():
-                raise ImageIsolationFailure("image_attachment_conflict", "本地附件路径异常。")
-            if target.exists():
-                target.touch()
-                protected.add(target)
-                return target.resolve()
+            sequence = 0
+            while True:
+                suffix = "-" + str(sequence) if sequence else ""
+                target = self.directory / (stem[:32 - len(suffix)] + suffix + extension)
+                if target.is_symlink() or target.is_junction() or target.exists() and not target.is_file():
+                    raise ImageIsolationFailure("image_attachment_conflict", "本地附件路径异常。")
+                if not target.exists():
+                    break
+                if target.stat().st_size == len(payload):
+                    with target.open("rb") as stream:
+                        same = hashlib.file_digest(stream, "sha256").hexdigest() == digest
+                    if same:
+                        target.touch()
+                        protected.add(target)
+                        return target.resolve()
+                # A short-name collision must never substitute another image.
+                sequence += 1
             total = 0
             for path in self.directory.iterdir():
-                if path.suffix not in MIME_EXTENSIONS.values() or not re.fullmatch(r"[a-f0-9]{64}\.(png|jpg|webp|gif)", path.name):
+                if not ATTACHMENT_NAME.fullmatch(path.name):
                     continue
                 if path.is_symlink() or not path.is_file():
                     continue

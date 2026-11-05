@@ -10,6 +10,7 @@ from .locking import file_lock
 from .request_context import IMAGE_PATH_ATTRIBUTE, local_image_path
 
 CLIPBOARD_NAME = re.compile(r"codex-clipboard-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\.(?:png|jpe?g|webp|gif)", re.I)
+COPY_NAME = re.compile(r"[0-9a-f]{32}\.(?:png|jpe?g|webp|gif)", re.I)
 STAGING_NAME = re.compile(r"\.clipboard-[0-9a-f]{32}\.new")
 
 
@@ -26,9 +27,18 @@ class ClipboardImageCache:
         if not value:
             return None
         source = Path(value)
-        if not CLIPBOARD_NAME.fullmatch(source.name) or source.parent.resolve() not in (self.root, self.directory):
+        parent = source.parent.resolve()
+        if parent == self.directory and (CLIPBOARD_NAME.fullmatch(source.name) or COPY_NAME.fullmatch(source.name)):
+            return source
+        if parent != self.root or not CLIPBOARD_NAME.fullmatch(source.name):
             return None
-        return self.directory / source.name
+        # Keep the complete UUID; only remove its prefix and separators.
+        name = uuid.UUID(source.stem[len("codex-clipboard-"):]).hex + source.suffix.lower()
+        target = self.directory / name
+        legacy = self.directory / source.name
+        if not self._regular(source) and not self._regular(target) and self._regular(legacy):
+            return legacy
+        return target
 
     @staticmethod
     def _regular(path):
@@ -38,7 +48,7 @@ class ClipboardImageCache:
         total, now = 0, time.time()
         for path in self.directory.iterdir():
             staging = STAGING_NAME.fullmatch(path.name)
-            if not (staging or CLIPBOARD_NAME.fullmatch(path.name)) or not self._regular(path):
+            if not (staging or CLIPBOARD_NAME.fullmatch(path.name) or COPY_NAME.fullmatch(path.name)) or not self._regular(path):
                 continue
             info = path.stat()
             if path not in protected and now - info.st_mtime > (3600 if staging else self.ttl):

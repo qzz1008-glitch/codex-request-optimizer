@@ -44,8 +44,9 @@ class ClipboardImageTests(unittest.TestCase):
         raw = b' { "extra" : "\\u0061", "input_body":true, ' + encode(body)[1:]
         wire, coding, metrics = self.isolation.prepare(raw, {}, "/responses", "off")
         result = json.loads(decode_body(wire, coding))
-        target = self.cache.directory / source.name
+        target = Path(metrics["image_paths"][0])
         self.assertEqual(target.parent, (self.temp / "CodexRequestOptimizer").resolve())
+        self.assertEqual(target.stem, uuid.UUID(source.stem[len("codex-clipboard-"):]).hex)
         self.assertEqual(target.read_bytes(), source.read_bytes())
         self.assertTrue(source.is_file())
         self.assertEqual(result["input"][:3], body["input"][:3])
@@ -62,7 +63,36 @@ class ClipboardImageTests(unittest.TestCase):
             with self.subTest(coding=coding):
                 wire, output_coding, _ = self.isolation.prepare(data, {"Content-Encoding": coding}, "/responses/compact", "zstd")
                 body = json.loads(decode_body(wire, output_coding))
-                self.assertEqual(body["input"][0]["content"], str(self.cache.directory / source.name))
+                target = Path(body["input"][0]["content"])
+                self.assertEqual(target.parent, self.cache.directory)
+                self.assertEqual(target.read_bytes(), source.read_bytes())
+
+    def test_compact_copy_names_preserve_the_complete_uuid_and_extension(self):
+        sources = [self.source(number) for number in (0, 1, (1 << 128) - 1)]
+        copied = self.cache.prepare([str(path) for path in sources])
+        names = [Path(copied[str(path)]).name for path in sources]
+        self.assertEqual(names, [uuid.UUID(path.stem[len("codex-clipboard-"):]).hex + ".png" for path in sources])
+        self.assertEqual(len(set(names)), len(sources))
+        self.assertTrue(all(len(Path(name).stem) <= 32 for name in names))
+
+    def test_legacy_cache_paths_remain_usable_after_the_original_is_removed(self):
+        source = self.source()
+        self.cache.directory.mkdir()
+        legacy = self.cache.directory / source.name
+        legacy.write_bytes(source.read_bytes())
+        source.unlink()
+        self.assertEqual(self.cache.prepare([str(source), str(legacy)]),
+                         {str(source): str(legacy), str(legacy): str(legacy)})
+
+    def test_existing_legacy_copy_does_not_keep_new_copies_on_long_names(self):
+        source = self.source()
+        self.cache.directory.mkdir()
+        legacy = self.cache.directory / source.name
+        legacy.write_bytes(source.read_bytes())
+        target = Path(self.cache.prepare([str(source)])[str(source)])
+        self.assertLessEqual(len(target.stem), 32)
+        self.assertEqual(target.read_bytes(), source.read_bytes())
+        self.assertTrue(legacy.is_file())
 
     def test_cached_copies_survive_original_removal_and_protect_all_current_paths(self):
         sources = [self.source(1), self.source(2)]
@@ -111,12 +141,16 @@ class ClipboardImageTests(unittest.TestCase):
         staging = self.cache.directory / (".clipboard-" + "a" * 32 + ".new")
         staging.write_bytes(b"stale")
         os.utime(staging, (1, 1))
+        legacy = self.cache.directory / self.source(3).name
+        legacy.write_bytes(b"old copy")
+        os.utime(legacy, (1, 1))
         other = self.cache.directory / "keep-me.png"
         other.write_bytes(b"keep")
         second = self.source(2)
         self.assertTrue(self.cache.prepare([str(second)]))
         self.assertFalse(target.exists())
         self.assertFalse(staging.exists())
+        self.assertFalse(legacy.exists())
         self.assertEqual(other.read_bytes(), b"keep")
         self.assertTrue(first.exists())
 

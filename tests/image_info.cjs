@@ -18,7 +18,8 @@ const descendants=(node,tag)=>[...(node.tagName===tag?[node]:[]),...node.childre
 const buttons=panel=>descendants(panel,"button");
 const click=button=>button.onclick({currentTarget:button});
 const directory="D:\\ip-scaling\\.codex_runtime\\marketplace_listing\\browser-blue-icon-fix\\";
-const paths=[directory+"ip-env-scaling-browser-logo.png",directory+"参考图 & icon.PNG","C:\\Other\\second.webp"];
+const filename="0123456789abcdef0123456789abcdef.png";
+const paths=[directory+filename,directory+"参考图 & icon.PNG","C:\\Other\\second.webp"];
 (async()=>{
   const upload="C:\\Temp\\codex-isolated-vision-123\\upload.jpg",marker={
     codex_inspector_request_kind:"image_analysis",codex_inspector_image_source_path:paths[0]};
@@ -44,7 +45,7 @@ const paths=[directory+"ip-env-scaling-browser-logo.png",directory+"参考图 & 
   const info=context.renderImageInfo(paths),actions=buttons(info);
   assert.equal(actions.length,8,"One folder action per directory and viewer/folder actions beside every image");
   assert.deepEqual(actions.map(button=>button.title),["打开路径","查看图片","在文件夹中显示","查看图片","在文件夹中显示","打开路径","查看图片","在文件夹中显示"]);
-  assert.deepEqual(descendants(info,"code").map(node=>node.textContent),[directory,"ip-env-scaling-browser-logo.png","参考图 & icon.PNG","C:\\Other\\","second.webp"]);
+  assert.deepEqual(descendants(info,"code").map(node=>node.textContent),[directory,filename,"参考图 & icon.PNG","C:\\Other\\","second.webp"]);
   for(const button of actions){
     assert.equal(button.type,"button");assert.equal(button.attributes["aria-label"],button.title);
     assert.equal(button.children[0].tagName,"svg");assert.equal(button.children[0].attributes["aria-hidden"],"true");

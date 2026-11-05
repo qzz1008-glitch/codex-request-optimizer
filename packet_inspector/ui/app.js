@@ -2375,8 +2375,7 @@ function renderImagePaths(paths) {
     const heading=el("div","image-path-directory-row");heading.append(directory,imagePathAction("directory",group.directory));
     const list=el("ul","image-path-list");
     for(const {name,path} of group.files) {
-      const characters=Array.from(name),label=characters.length>32?characters.slice(0,12).join("")+"…"+characters.slice(-8).join(""):name;
-      const item=el("li","image-path-item"),filename=el("code","image-path-name",label);
+      const item=el("li","image-path-item"),filename=el("code","image-path-name",name);
       item.dataset.renderKey="image:"+path;
       filename.title=path;
       item.append(filename,imagePathAction("image",path),imagePathAction("reveal",path));list.append(item);
