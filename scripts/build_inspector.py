@@ -73,11 +73,14 @@ def collect_licenses(source, work):
     if deps.is_dir():distributions.extend(importlib.metadata.distributions(path=[str(deps)]))
     for distribution in distributions:
         name=(distribution.metadata.get("Name") or "").lower()
-        if name not in {"pyinstaller","zstandard","tomlkit","cryptography","cffi","pycparser","pillow","urllib3"}:continue
+        if name not in {"pyinstaller","zstandard","tomlkit","cryptography","cffi","pycparser","pillow","urllib3","pywin32"}:continue
         for entry in distribution.files or []:
             if "licenses/" in str(entry).replace("\\","/"):
                 source=Path(distribution.locate_file(entry))
-                if source.is_file():shutil.copyfile(source,licenses/(name+"-"+source.name))
+                if source.is_file():
+                    filename = (str(entry).replace("\\","/").split("licenses/",1)[1].replace("/","-")
+                                if name == "pywin32" else source.name)
+                    shutil.copyfile(source,licenses/(name+"-"+filename))
     return licenses
 
 

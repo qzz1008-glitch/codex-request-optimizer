@@ -2342,19 +2342,20 @@ function imagePathGroups(paths) {
   return [...groups.values()];
 }
 const imagePathOpening=new Set();
-function imagePathAction(kind,path,labelOverride) {
-  const directory=kind==="directory",label=t(labelOverride||(directory?"打开路径":"查看图片")),capability=directory?"open_directory_supported":"open_image_supported";
+function imagePathAction(kind,path) {
+  const directory=kind==="directory",reveal=kind==="reveal",label=t(directory?"打开路径":reveal?"在文件夹中显示":"查看图片"),capability=directory?"open_directory_supported":reveal?"reveal_image_supported":"open_image_supported";
   const key=kind+":"+path,button=el("button","image-path-action");
   button.type="button";button.title=label;button.setAttribute("aria-label",label);button.dataset.renderKey="image-action:"+key;
+  if(reveal&&state.status&&!state.status.reveal_image_supported)button.title=t("更新桌面程序后可在文件夹中选中图片。");
   button.disabled=!state.status?.[capability]||imagePathOpening.has(key);
   button.setAttribute("aria-busy",String(imagePathOpening.has(key)));
   const icon=document.createElementNS("http://www.w3.org/2000/svg","svg"),shape=document.createElementNS(icon.namespaceURI,"path");
   icon.setAttribute("viewBox","0 0 24 24");icon.setAttribute("aria-hidden","true");icon.setAttribute("focusable","false");
-  shape.setAttribute("d",directory?"M3 20h18V7h-9l-2-3H3z":"M3 3h18v18H3zM3 16l5-5 5 5 3-3 5 5M16 8h.01");icon.append(shape);button.append(icon);
+  shape.setAttribute("d",directory||reveal?"M3 20h18V7h-9l-2-3H3z":"M3 3h18v18H3zM3 16l5-5 5 5 3-3 5 5M16 8h.01");icon.append(shape);button.append(icon);
   button.onclick=async event=>{
     if(!state.status?.[capability]||imagePathOpening.has(key))return;
     const target=event.currentTarget;imagePathOpening.add(key);target.disabled=true;target.setAttribute("aria-busy","true");
-    try {await api(directory?"/api/open-directory":"/api/open-image",{path});}
+    try {await api(directory?"/api/open-directory":reveal?"/api/reveal-image":"/api/open-image",{path});}
     catch(error) {fail(error);}
     finally {imagePathOpening.delete(key);target.disabled=!state.status?.[capability];target.setAttribute("aria-busy","false");}
   };
@@ -2377,7 +2378,7 @@ function renderImagePaths(paths) {
       const item=el("li","image-path-item"),filename=el("code","image-path-name",label);
       item.dataset.renderKey="image:"+path;
       filename.title=path;
-      item.append(filename,imagePathAction("image",path),imagePathAction("directory",group.directory,"打开所在文件夹"));list.append(item);
+      item.append(filename,imagePathAction("image",path),imagePathAction("reveal",path));list.append(item);
     }
     section.append(heading,list);images.append(section);
   }
