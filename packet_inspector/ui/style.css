@@ -537,12 +537,8 @@ dialog{width:min(760px,calc(var(--desktop-width) - 80px));max-height:calc(var(--
 .protection-details{min-width:0;margin:7px 0 0 5px;padding-left:10px;border-left:2px solid var(--line)}
 .protection-details .fact-row{gap:12px;margin:5px 0;font-size:11px}
 .protection-details .fact-row>span:last-child{text-align:right;white-space:nowrap}
-.request-image-processing{margin-top:12px;padding-top:12px;border-top:1px solid var(--line)}
-.request-image-processing h4{margin:0 0 8px;font-size:12px;font-weight:500}
-.request-image-processing .fact-row{gap:12px;margin:7px 0}
-.request-image-processing .fact-row>span:last-child{white-space:nowrap;text-align:right}
-.image-processing-item+.image-processing-item{margin-top:9px}
-.image-processing-name{color:var(--muted);font-size:11px;line-height:1.5}
+.image-compression-row>span:first-child{flex:none}
+.image-compression-details{min-width:0;white-space:pre-line;text-align:right;line-height:1.5;overflow-wrap:anywhere}
 .protection-details .image-path-group{padding:8px}
 .protection-details .image-path-item{padding:6px 0}
 .packet-protection-panel .protection-inactive>.protection-heading>span:last-child{color:var(--muted)}
