@@ -508,6 +508,7 @@ const uiI18n = (() => {
     "当前系统不支持打开目录。":"Opening folders is unavailable on this system.",
     "无法打开目录，请检查路径和权限。":"Unable to open the folder. Check the path and permissions.",
     "打开路径":"Open folder",
+    "打开所在文件夹":"Open containing folder",
     "查看图片":"View image",
     "请选择有效的本地图片路径。":"Select a valid local image path.",
     "图片不存在。":"The image does not exist.",
