@@ -21,14 +21,16 @@ def provider_upstream(provider, native):
 
 
 def native_upstream(config):
-    # Only inspect the login mode. Credentials remain owned by Codex.
+    # Determine login mode without returning or persisting credentials.
     try:
         auth_text = (Path(config).parent / "auth.json").read_text(encoding="utf-8-sig")
     except (OSError, UnicodeError):
         auth_text = ""
     try:
         data = json.loads(auth_text)
-        mode = data.get("auth_mode", "chatgpt") if isinstance(data, dict) else "chatgpt"
+        mode = "chatgpt"
+        if isinstance(data, dict):
+            mode = data.get("auth_mode") or ("apikey" if data.get("OPENAI_API_KEY") else "chatgpt")
     except ValueError:
         mode = "chatgpt"
     return API_UPSTREAM if mode == "apikey" else "https://chatgpt.com/backend-api/codex"
