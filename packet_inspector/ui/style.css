@@ -546,7 +546,7 @@ dialog{width:min(760px,calc(var(--desktop-width) - 80px));max-height:calc(var(--
 .json-focused{background:var(--soft);box-shadow:inset 3px 0 var(--accent);border-radius:3px}
 
 /* Native desktop title bar and window controls. */
-.window-controls{display:flex;align-self:stretch;flex-shrink:0;margin-left:2px}
+.window-controls{display:flex;align-self:flex-start;flex-shrink:0;height:32px;margin-left:2px}
 .window-controls[hidden]{display:none}
 .window-controls button{display:grid;place-items:center;width:46px;height:100%;padding:0;border:0;border-radius:0;background:transparent;color:#3e4858}
 .window-controls button:hover{background:#e8edf5}
