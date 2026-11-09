@@ -22,7 +22,7 @@ function fixture(connected) {
     state:{status:{profile:{active:connected,can_restore:connected}}},
     compressionSaving:false,settingsSaving:false,settingsOpening:false,settingsEditing:false,
     exitSaving:false,connectSaving:false,connectChecking:false,linkSaving:'',compressionTarget:null,
-    compressionRevision:0,connectSource:'header',connectionResumeSeen:'',connectionProblemKey:'',
+    compressionRevision:0,connectSource:'header',connectionResumeSeen:'',
     restartNotices:{connection:(which,result)=>calls.push(['result',which,result]),render(){}},
     $:element,t:value=>value,setText:(el,value)=>{el.textContent=value;},
     uiI18n:{text:(node,value)=>{node.textContent=typeof value==='function'?value():value;}},
@@ -33,7 +33,7 @@ function fixture(connected) {
     applyLinkAction:async action=>{calls.push(['link',action]);context.state.status.profile={active:false,can_restore:false};return {reload_required:true};},
     linkAction:async action=>{calls.push(['link',action]);context.state.status.profile={active:true,can_restore:true};return {reload_required:true};},
     renderStatus(){},renderConnectionActions(){context.renderCompressionMode();},renderConnectPrompt(){},
-    message:(value,error,diagnostics)=>calls.push(['message',typeof value==='function'?value():value,error,diagnostics]),
+    message:(value,error)=>calls.push(['message',typeof value==='function'?value():value,error]),
     api:async()=>{throw Error('Compression settings must not be used as a connection mode');}
   };
   vm.createContext(context);
@@ -163,13 +163,10 @@ function fixture(connected) {
   context.state.status.log_dir='C:/fixture/logs';
   context.renderConnectionResume();
   assert(calls.filter(call=>call[0]==='result')[1][2].wsl.warnings[0].detail.includes('connection refused'));
-  const feedback=calls.find(call=>call[0]==='message');
-  assert(feedback[1].includes('HCE')&&feedback[1].includes('connection refused')&&feedback[1].includes('C:/fixture/logs'));
-  assert.equal(feedback[2],true,'Persistent failures use the existing error feedback');
-  assert.equal(feedback[3],true,'Supported diagnostic export remains available');
-  assert.equal(element('notice').dataset.feedbackTarget,'app-inline-feedback');
+  assert.equal(calls.some(call=>call[0]==='message'),false,'Connection failures are presented by the header badge');
+  assert(!html.includes('id="notice-diagnostics"'),'Diagnostic downloads have no UI entry');
   context.renderConnectionResume();
-  assert.equal(calls.filter(call=>call[0]==='message').length,1,'The same failure must not repeat feedback');
+  assert.equal(calls.filter(call=>call[0]==='message').length,0,'Repeated failures do not create footer feedback');
   context.state.status.connection_resume={id:'retry-1',state:'pending'};
   context.renderConnectionResume();
   context.renderCompressionMode();
@@ -177,11 +174,10 @@ function fixture(connected) {
   assert.equal(element('notice').hidden,true,'Automatic recovery clears stale failure feedback');
   context.state.status.connection_resume={id:'retry-1',state:'recovering',attempt:2,error:'Temporary sync failure'};
   context.renderConnectionResume();
-  assert.equal(calls.filter(call=>call[0]==='message').length,1,'Temporary automatic retries stay quiet');
+  assert.equal(calls.filter(call=>call[0]==='message').length,0,'Temporary automatic retries stay quiet');
   context.state.status.connection_resume={id:'retry-1',state:'complete',result:{reload_required:false}};
   context.renderConnectionResume();
   assert.equal(element('notice').hidden,true,'A successful retry leaves no stale failure feedback');
-  assert.equal(element('notice').dataset.connectionIssue,undefined);
-  assert.equal(calls.filter(call=>call[0]==='message').length,1,'A successful retry creates no success banner');
+  assert.equal(calls.filter(call=>call[0]==='message').length,0,'A successful retry creates no success banner');
   console.log('Connection controls: manual confirmations and automatic upgrade synchronization covered.');
 })().catch(error=>{console.error(error);process.exitCode=1;});

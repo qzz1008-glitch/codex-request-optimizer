@@ -20,7 +20,7 @@ globalThis.InspectorRestartNotice = {
     if(!rows.length&&event?.state==="attention")add("","接入配置同步失败");
     return rows.slice(0,32);
   },
-  create({status, request, openSettings, busy=()=>false, showConnectionProblem=()=>{}}) {
+  create({status, request, openSettings, busy=()=>false, openLogs=()=>{}}) {
     const $=id=>document.getElementById(id), labels={connection:"Codex 接入",context_tokens:"有效上下文",
       compact_tokens:"自动压缩阈值",capacity_retry:"容量不足重试",image_analysis_mode:"图片解析",
       entry_port:"入口端口",sharing:"共享额度来源",wsl:"WSL 配置",log_dir:"日志目录",cache_dir:"缓存目录"};
@@ -120,17 +120,21 @@ globalThis.InspectorRestartNotice = {
       if(s?.storage_paths_pending)for(const key of ["log_dir","cache_dir"])
         if(s[key]!==s["active_"+key])items.push({key,target:"optimizer",scope:""});
       const chatgpt=items.some(row=>row.target==="chatgpt"),wsl=items.some(row=>row.target==="wsl"),optimizer=items.some(row=>row.target==="optimizer");
-      const portPending=!!s?.entry_port?.pending,warning=InspectorRestartNotice.connectionProblems(s,details).length>0;
+      const portPending=!!s?.entry_port?.pending,problems=InspectorRestartNotice.connectionProblems(s,details),warning=problems.length>0;
+      const log=s?.active_log_dir||s?.log_dir||s?.data_dir||"";
       const failure=error||backendError||storageError,active=items.length>0||!!failure;
-      const nextKey=JSON.stringify([ledger.revision,items,details,s?.provider_warnings,s?.profile?.active,s?.wsl_connection,s?.connection_resume,portPending,warning,failure,working,!!busy(),uiI18n.language]);
+      const nextKey=JSON.stringify([ledger.revision,items,details,s?.provider_warnings,s?.profile?.active,s?.wsl_connection,s?.connection_resume,portPending,problems,log,failure,working,!!busy(),uiI18n.language]);
       if(nextKey===renderKey)return;renderKey=nextKey;
       card.hidden=!active;
       card.dataset.state=active?"pending":"ready";
       badge.dataset.visible=String(active||warning);badge.tabIndex=active||warning?0:-1;
-      badge.textContent=items.length?restartLabel(items,portPending):t(failure?"状态异常":"接入异常");
+      badge.dataset.state=warning||failure?"error":"pending";
+      badge.textContent=warning?t("接入异常"):failure?t("状态异常"):items.length?restartLabel(items,portPending):"";
       $("restart-notice-title").textContent=t(portPending?"先重启本软件，再重启 ChatGPT App":optimizer&&chatgpt?"重启本软件与 ChatGPT App 后生效":optimizer?"重启本软件后生效":chatgpt?"重启 ChatGPT App 后生效":wsl?"重新连接 WSL 会话后生效":failure?"待生效状态暂不可用":"配置生效状态");
-      badge.title=[items.length?pendingTooltip(items,portPending):"",failure?t(failure):!items.length&&warning?t("接入配置同步失败"):""].filter(Boolean).join("\n");
-      badge.setAttribute("aria-label",[badge.textContent,badge.title,t("查看待生效配置或接入错误")].filter(Boolean).join(" · "));
+      badge.title=warning||failure?[...problems.map(row=>[row.scope,t(row.reason),row.detail].filter(Boolean).join(" · ")),
+        failure?t(failure):"",log?t("日志目录：{path}").replace("{path}",()=>log):"",t("点击打开日志目录")].filter(Boolean).join("\n"):
+        (items.length?pendingTooltip(items,portPending):"");
+      badge.setAttribute("aria-label",[badge.textContent,badge.title,t(warning||failure?"打开日志目录":"查看待生效配置或接入错误")].filter(Boolean).join(" · "));
       const tags=$("restart-notice-items");tags.replaceChildren(...items.map(row=>node("li","restart-notice-tag",pendingLabel(row))));
       const message=$("restart-notice-message");
       message.textContent=failure?t(failure):t(chatgpt||wsl?"完成上述操作后再确认；确认只清除提醒。":optimizer?"重启本软件后，状态会自动更新。":"暂无待生效项目；新请求使用已保存的配置。");
@@ -160,7 +164,7 @@ globalThis.InspectorRestartNotice = {
       finally {working=false;render();}
     }
     $("restart-notice-open").addEventListener("click",async()=>{
-      if($("restart-notice").hidden){showConnectionProblem();return;}
+      if(InspectorRestartNotice.connectionProblems(status(),details).length||error||backendError||storageError){await openLogs();return;}
       await openSettings();render();
       $("restart-notice").focus();
     });
@@ -264,9 +268,9 @@ const imageZstdLevelEstimates = [
 let compressionTarget = null, compressionSaving = false, compressionRevision = 0;
 const restartNotices = InspectorRestartNotice.create({status:()=>state.status,request:api,openSettings:()=>openSettings(),
   busy:()=>settingsSaving||linkSaving||compressionSaving||exitSaving||connectSaving||connectionResumeBusy(),
-  showConnectionProblem:()=>renderConnectionResume(true)});
+  openLogs:()=>openLogDirectory().catch(fail)});
 globalThis.inspectorRestartNotices=restartNotices;
-let connectionResumeSeen = "", connectionProblemKey = "";
+let connectionResumeSeen = "";
 let exitRequest = null, exitSaving = false, exitFinished = false, exitRevision = 0;
 let serviceRestartRequest = null, serviceRestartSaving = false, serviceRestartRevision = 0, serviceRestartAction = "";
 let connectSource = null, connectSaving = false, connectChecking = false, startupConnectChecked = false;
@@ -761,10 +765,10 @@ async function selectSession(value) {
   renderSessions();renderList();
   await loadPackets();
 }
-function message(text, error=false,diagnostics=false) {
+function message(text, error=false) {
   const notice=$("notice");uiI18n.text($("notice-text"),text);notice.className="notice"+(error?" error":"");
   notice.dataset.feedbackTarget=$("settings-dialog").open?"settings-inline-feedback":"app-inline-feedback";
-  delete notice.dataset.connectionIssue;$("notice-diagnostics").hidden=!diagnostics;notice.hidden=false;
+  notice.hidden=false;
 }
 function fail(err) { message(err.message || String(err), true); }
 async function api(path, data, signal) { const r = await fetch(path, {method:data === undefined ? "GET" : "POST",headers:data === undefined ? {} : {"Content-Type":"application/json"},body:data === undefined ? undefined : JSON.stringify(data),signal}); const value = await r.json(); if (!r.ok) throw Object.assign(Error(value.error || ("HTTP "+r.status)),{status:r.status}); return value; }
@@ -1409,19 +1413,8 @@ function rememberConnectionResume() {
     try {localStorage.setItem("connection-resume-seen",event.id);}catch {}
   }
 }
-function renderConnectionResume(force=false) {
-  const s=state.status,event=s?.connection_resume,problems=InspectorRestartNotice.connectionProblems(s);
-  const key=problems.length?JSON.stringify([event?.id,problems,s?.active_log_dir||s?.log_dir,uiI18n.language]):"";
-  if(key&&(force||key!==connectionProblemKey)) {
-    const log=s?.active_log_dir||s?.log_dir||s?.data_dir||"",first=problems[0];
-    message(()=>[first.scope,t(first.reason),first.detail].filter(Boolean).join(" · ")+" "+
-      t(event?.error||event?.attempt>1?"请重启本软件后重试；若仍失败，请导出诊断报告反馈。":"可导出诊断报告反馈。")+
-      (log?" "+t("日志目录：{path}").replace("{path}",log):""),true,!!s?.connection_diagnostics_supported);
-    $("notice").dataset.feedbackTarget="app-inline-feedback";$("notice").dataset.connectionIssue=key;
-  } else if(!key&&$("notice").dataset.connectionIssue) {
-    $("notice").hidden=true;delete $("notice").dataset.connectionIssue;$("notice-diagnostics").hidden=true;
-  }
-  connectionProblemKey=key;
+function renderConnectionResume() {
+  const event=state.status?.connection_resume;
   if(!connectionResumeSeen)try {connectionResumeSeen=localStorage.getItem("connection-resume-seen")||"";}catch {}
   if(!event?.id||!["complete","attention"].includes(event.state))return;
   if(event.id===connectionResumeSeen)return;
@@ -1585,6 +1578,10 @@ function fillStorageDirectories() {
 function fillDirectoryOpenButtons() {
   for(const id of ["log-dir","cache-dir","image-save-dir"])
     $(id+"-open").disabled=settingsSaving||!state.status.open_directory_supported||directoryOpening.has(id);
+}
+async function openLogDirectory() {
+  const s=state.status;
+  await api("/api/open-directory",{path:s?.active_log_dir||s?.log_dir||s?.data_dir||""});
 }
 async function openSettingsDirectory(id) {
   if(settingsSaving||!state.status.open_directory_supported||directoryOpening.has(id))return;
