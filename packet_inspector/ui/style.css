@@ -583,6 +583,8 @@ dialog{width:min(760px,calc(var(--desktop-width) - 80px));max-height:calc(var(--
 .restart-notice-badge{display:inline-flex;align-items:center;justify-content:center;width:100px;flex:none;min-height:34px;padding:2px 6px;border:1px solid #e6c178;border-radius:7px;background:#fff7e7;color:#875309;font-size:12px;font-weight:600;line-height:14px;white-space:normal;word-break:keep-all}
 .restart-notice-badge[data-visible="false"]{visibility:hidden;pointer-events:none}
 .restart-notice-badge:hover{background:#ffedc9;border-color:#d6a84d}
+.restart-notice-badge[data-state="error"]{border-color:#e4abab;background:#fff1f1;color:var(--danger)}
+.restart-notice-badge[data-state="error"]:hover{background:#ffe4e4;border-color:#ce8989}
 #settings-dialog>.restart-notice{flex:none;height:112px;box-sizing:border-box;display:grid;grid-template-rows:30px 30px 18px;gap:5px;margin:16px var(--settings-padding) 8px;padding:10px 14px;border:1px solid var(--line);border-radius:10px;background:var(--soft);color:var(--muted)}
 #settings-dialog>.restart-notice[data-state="pending"]{background:#fff8eb;border-color:#eac883;color:#875309}
 .restart-notice-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;min-width:0}
