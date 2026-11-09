@@ -59,6 +59,23 @@ class WindowLifecycleTests(unittest.TestCase):
         self.window.hide.assert_not_called()
         self.window.minimize.assert_not_called()
 
+    def test_exit_closes_once_when_confirmation_and_health_poll_overlap(self):
+        start = threading.Barrier(2)
+
+        def exit_window():
+            start.wait(1)
+            self.lifecycle.exit()
+
+        threads = [threading.Thread(target=exit_window, daemon=True) for _ in range(2)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(1)
+            self.assertFalse(thread.is_alive())
+        self.window.destroy.assert_called_once()
+        self.lifecycle.show()
+        self.window.show.assert_not_called()
+
     def test_exit_cancels_loading_wait_so_a_starting_window_can_upgrade(self):
         result = []
         loading = threading.Event()
@@ -68,6 +85,15 @@ class WindowLifecycleTests(unittest.TestCase):
         waiter.join(1)
         self.assertFalse(waiter.is_alive())
         self.assertEqual(result, [False])
+
+    def test_a_failed_native_close_can_be_retried(self):
+        self.window.destroy.side_effect = [RuntimeError("Window not ready"), None]
+        with self.assertRaises(RuntimeError):
+            self.lifecycle.exit()
+        self.assertFalse(self.lifecycle.exiting.is_set())
+        self.lifecycle.exit()
+        self.assertTrue(self.lifecycle.exiting.is_set())
+        self.assertEqual(self.window.destroy.call_count, 2)
 
     def test_loading_wait_accepts_a_ready_page_but_not_a_closed_window(self):
         loaded = threading.Event()
