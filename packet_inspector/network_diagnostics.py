@@ -331,6 +331,9 @@ class NetworkDiagnostics:
                       "settings": {k: settings.get(k) for k in ("zstd_level", "packet_size_protection_enabled", "budget_bytes",
                                     "capacity_retry_enabled", "image_analysis_mode")},
                       "configuration_changed": bool((result or {}).get("changed")),
+                      "provider_warnings": [{key: safe_text(item[key], limit=400)
+                                             for key in ("file", "provider", "reason", "detail") if key in item}
+                                            for item in (result or {}).get("warnings", [])[:16]],
                       "loopback_proxy": repair,
                       "wsl": (result or {}).get("wsl"),
                       "probe_status": "not_started" if error else "running"}
