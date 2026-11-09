@@ -4,6 +4,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 
@@ -138,6 +139,19 @@ class RestartNoticeApiTests(unittest.TestCase):
         self.assertEqual(code, 200)
         self.assertEqual(result["context_tokens"], 250000)
         self.assertTrue(result["restart_notice"]["error"])
+
+    def test_status_detects_restart_without_acknowledgement_or_config_writes(self):
+        self.server.restart_notices.mark("connection")
+        self.server.restart_notices.mark("wsl", target="wsl", scope="Ubuntu")
+        before = self.config.read_bytes()
+        started = time.time_ns() + 1000000000
+        with patch("packet_inspector.restart_notice.desktop_started_at_ns", return_value=started), \
+             patch("packet_inspector.restart_notice.time.time_ns", return_value=started + 1):
+            code, result = self.api("/api/status", port=self.ui.port)
+        self.assertEqual(code, 200)
+        self.assertEqual(result["restart_notice"]["items"], [{"key": "wsl", "target": "wsl", "scope": "Ubuntu"}])
+        self.assertEqual(self.config.read_bytes(), before)
+        self.assertEqual(self.api("/api/restart-notice")[1]["items"], result["restart_notice"]["items"])
 
     def test_port_pending_blocks_acknowledgement_and_is_visible_to_relay(self):
         desired = 47844 if self.server.port != 47844 else 47846

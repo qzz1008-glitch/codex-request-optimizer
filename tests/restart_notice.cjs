@@ -9,6 +9,7 @@ const root=path.join(__dirname,'../packet_inspector/ui'),read=name=>fs.readFileS
 const app=read('app.js'),moduleSource=app.slice(app.indexOf('globalThis.InspectorRestartNotice = {'),app.indexOf('\nconst $ ='));
 const resumeSource=app.slice(app.indexOf('function connectionResumeBusy()'),app.indexOf('function renderConnectPrompt()'));
 const messageSource=app.slice(app.indexOf('function message('),app.indexOf('function fail('));
+const openLogSource=app.slice(app.indexOf('async function openLogDirectory()'),app.indexOf('async function openSettingsDirectory('));
 const html=read('index.html').replace(/<script\b[^>]*>[\s\S]*?<\/script>/g,'').replace(/<link\b[^>]*>/g,'');
 let browser,cases=0;
 const rects=(page,ids)=>page.evaluate(ids=>ids.map(id=>{const r=document.getElementById(id).getBoundingClientRect();return [r.x,r.y,r.width,r.height];}),ids);
@@ -21,17 +22,18 @@ async function load(page,initial={}) {
     window.t=value=>uiI18n.t(value);window.calls=[];window.noticeBusy=false;window.requestFailure='';
     window.statusData={data_dir:'test',log_dir:'C:/fixture/logs',connection_diagnostics_supported:true,profile:{active:true,config_path:'config.toml'},entry_port:{pending:false,current_port:47844,configured_port:47844},...initial};
     window.state={status:statusData};window.$=id=>document.getElementById(id);
-    window.connectionResumeSeen='';window.connectionProblemKey='';
+    window.connectionResumeSeen='';
+    window.api=async(path,body)=>{calls.push([path,body]);return {ok:true};};
     window.settingsSaving=false;window.linkSaving='';window.renderConnectionActions=()=>{};
     window.notice=InspectorRestartNotice.create({status:()=>statusData,busy:()=>noticeBusy,
-      showConnectionProblem:()=>renderConnectionResume(true),
+      openLogs:()=>openLogDirectory(),
       openSettings:async()=>document.getElementById('settings-dialog').showModal(),
       request:async(path,body)=>{calls.push([path,body]);if(requestFailure)throw Error(requestFailure);
         return {revision:statusData.restart_notice.revision+1,items:statusData.restart_notice.items.filter(row=>row.target!==body.target)};}});
     notice.ingest();
     window.restartNotices=notice;
   },initial);
-  await page.addScriptTag({content:messageSource+'\n'+resumeSource});
+  await page.addScriptTag({content:messageSource+'\n'+resumeSource+'\n'+openLogSource});
   await page.evaluate(()=>{window.feedback=uiI18n.floatingFeedback();renderConnectionResume();});
 }
 async function run() {
@@ -89,8 +91,8 @@ async function run() {
   });
   assert((await page.locator('#restart-notice-title').textContent()).includes('WSL'));
   assert.equal(await page.locator('#restart-notice-chatgpt').evaluate(node=>node.hidden),true);
-  assert.equal(await page.locator('#app-inline-feedback img').count(),0);
-  assert((await page.locator('#app-inline-feedback').textContent()).includes('HTTPS required'));
+  assert.equal(await page.locator('#restart-notice-open img').count(),0);
+  assert((await page.locator('#restart-notice-open').getAttribute('title')).includes('HTTPS required'));
   const problems=await page.evaluate(()=>InspectorRestartNotice.connectionProblems(statusData));
   assert.equal(problems.length,2);assert(problems.some(row=>row.detail.includes('connection refused')));
   await page.evaluate(()=>{notice.change('compact_tokens',null,200000);});
@@ -122,9 +124,9 @@ async function run() {
   assert.equal(await page.locator('dialog[open]').count(),0,'automatic synchronization must not open a result window');
   assert.equal(await page.locator('#connection-resume-dialog').count(),0);
   assert((await page.locator('#restart-notice-title').textContent()).includes('WSL'));
-  assert((await page.locator('#app-inline-feedback').textContent()).includes('WSL'));
-  assert((await page.locator('#app-inline-feedback').textContent()).includes('C:/fixture/logs'));
-  assert.equal(await page.locator('#app-inline-feedback a[download]').isVisible(),true);
+  assert((await page.locator('#restart-notice-open').getAttribute('title')).includes('WSL'));
+  assert((await page.locator('#restart-notice-open').getAttribute('title')).includes('C:/fixture/logs'));
+  assert.equal(await page.locator('a[href*="connection-diagnostics"]').count(),0);
   await page.evaluate(()=>{
     statusData.wsl_connection={targets:[],warnings:[]};statusData.connection_resume={id:'sync-2',state:'complete',result:{changed:false,reload_required:true}};
     renderConnectionResume();notice.ingest();
@@ -137,8 +139,9 @@ async function run() {
   await page.evaluate(()=>{
     statusData.connection_resume={id:'sync-3',state:'attention',attempt:3,error:'Synthetic sync failure',result:{}};renderConnectionResume();notice.ingest();
   });
-  assert((await page.locator('#app-inline-feedback').textContent()).includes('Synthetic sync failure'));
-  assert.equal(await page.locator('dialog[open]').count(),0,'errors reuse the existing footer without a window');
+  assert((await page.locator('#restart-notice-open').getAttribute('title')).includes('Synthetic sync failure'));
+  assert.equal(await page.locator('#notice').evaluate(node=>node.hidden),true,'connection failures do not appear in the footer');
+  assert.equal(await page.locator('dialog[open]').count(),0,'errors use the header without a window');
   assert.deepEqual(await rects(page,syncIds),syncReady);cases++;
 
   await load(page,{data_dir:'backend',connection_reload_required:true,restart_notice:{revision:40,items:[{key:'entry_port',target:'chatgpt',scope:''},{key:'wsl',target:'wsl',scope:'Ubuntu'}]},
@@ -229,24 +232,58 @@ async function run() {
       cases++;
     }
   }
-  await load(page,{data_dir:'warning-only',restart_notice:{revision:1,items:[]},provider_warnings:[{provider:'fixture',detail:'Synthetic connection warning'}]});
+  await load(page,{data_dir:'automatic-restart',connection_reload_required:true,restart_notice:{revision:1,auto_detect_supported:true,
+    items:[{key:'image_analysis_mode',target:'chatgpt',scope:''},{key:'wsl',target:'wsl',scope:'Ubuntu'}]}});
   await page.locator('#restart-notice-open').click();
-  assert.equal(await page.locator('#restart-notice').isVisible(),false);
-  assert.equal(await page.locator('dialog[open]').count(),0,'the warning badge does not open settings');
-  assert((await page.locator('#app-inline-feedback').textContent()).includes('Synthetic connection warning'));
   for(const language of ['zh','en']) {
-    await page.evaluate(language=>{uiI18n.setLanguage(language,{persist:false});renderConnectionResume(true);},language);
-    const [text,link]=await page.locator('#app-inline-feedback').evaluate(node=>[node.querySelector('span').getBoundingClientRect().right,node.querySelector('a').getBoundingClientRect().left]);
-    assert(text<=link,'the diagnostic link stays beside the existing message');
-    assert.equal(await page.locator('#app-inline-feedback').evaluate(node=>node.scrollHeight>node.clientHeight),false);
+    await page.evaluate(language=>{uiI18n.setLanguage(language,{persist:false});notice.render();},language);
+    const message=await page.locator('#restart-notice-message').textContent();
+    assert(message.includes(language==='zh'?'自动清除':'automatically')&&message.includes('WSL'));
+    assert.equal(await page.locator('#restart-notice').evaluate(node=>node.scrollHeight>node.clientHeight),false);
     cases++;
   }
-  await page.route('http://restart.test/api/connection-diagnostics?download=1',route=>route.fulfill({contentType:'application/json',headers:{'Content-Disposition':'attachment; filename="codex-connection-diagnostics.json"'},body:'{"connection":{"state":"attention"},"log_directory":"C:/fixture/logs"}'}));
-  const download=page.waitForEvent('download');await page.locator('#app-inline-feedback a[download]').click();
-  assert.equal((await download).suggestedFilename(),'codex-connection-diagnostics.json');cases++;
-  await page.evaluate(()=>{statusData.provider_warnings=[];renderConnectionResume();notice.ingest();});
+  await page.evaluate(()=>{statusData.restart_notice={revision:2,auto_detect_supported:true,items:[{key:'wsl',target:'wsl',scope:'Ubuntu'}]};notice.ingest();});
+  assert.equal(await page.locator('#restart-notice-chatgpt').evaluate(node=>node.hidden),true);
+  assert.equal(await page.locator('#restart-notice-wsl').isVisible(),true);
+  await page.evaluate(()=>{statusData.restart_notice={revision:3,auto_detect_supported:true,items:[]};notice.ingest();});
+  assert.equal(await page.locator('#restart-notice-open').getAttribute('data-visible'),'false','backend restart detection removes the badge despite legacy sticky flags');
+  assert.equal(await page.locator('#restart-notice').isVisible(),false);
+  assert.equal(await page.evaluate(()=>calls.length),0,'automatic refresh must not send a manual acknowledgement');cases++;
+
+  await load(page,{data_dir:'warning-priority',active_log_dir:'C:/fixture/active-logs',log_dir:'C:/fixture/new-logs',
+    restart_notice:{revision:1,items:[{key:'connection',target:'chatgpt',scope:''}]},provider_warnings:[]});
+  const normalHeader=await rects(page,['restart-notice-open',...headerIds]);
+  const pendingColor=await page.locator('#restart-notice-open').evaluate(node=>getComputedStyle(node).backgroundColor);
+  await page.evaluate(()=>{statusData.provider_warnings=[{provider:'fixture',detail:'Synthetic connection warning'}];notice.ingest();});
+  assert.deepEqual(await rects(page,['restart-notice-open',...headerIds]),normalHeader,'errors replace the badge without shifting the header');
+  assert.notEqual(await page.locator('#restart-notice-open').evaluate(node=>getComputedStyle(node).backgroundColor),pendingColor,'errors have a distinct color');
+  assert.equal(await page.locator('#restart-notice-open').getAttribute('data-state'),'error');
+  assert.equal(await page.locator('#restart-notice-open').textContent(),'接入异常','errors take priority over a pending restart');
+  assert((await page.locator('#restart-notice-open').getAttribute('title')).includes('Synthetic connection warning'));
+  assert(!(await page.locator('#restart-notice-open').getAttribute('title')).includes('待重启'));
+  assert.equal(await page.locator('#notice').evaluate(node=>node.hidden),true);
+  for(const language of ['zh','en']) {
+    await page.evaluate(language=>{uiI18n.setLanguage(language,{persist:false});notice.render();},language);
+    assert.equal(await page.locator('#restart-notice-open').textContent(),language==='en'?'Connection issue':'接入异常');
+    assert((await page.locator('#restart-notice-open').getAttribute('title')).includes(language==='en'?'Click to open the log folder':'点击打开日志目录'));
+    await page.locator('#restart-notice-open').click();
+    assert.deepEqual(await page.evaluate(()=>calls.at(-1)),['/api/open-directory',{path:'C:/fixture/active-logs'}],'open the active log folder, not a pending setting');
+    assert.equal(await page.locator('dialog[open]').count(),0,'the warning badge opens logs instead of settings');
+    assert.equal(await page.locator('a[href*="connection-diagnostics"]').count(),0);
+    cases++;
+  }
+  await page.evaluate(()=>{uiI18n.setLanguage('zh',{persist:false});statusData.provider_warnings=[];renderConnectionResume();notice.ingest();});
+  assert.equal(await page.locator('#restart-notice-open').textContent(),'ChatGPT 待重启','clearing an error restores the existing pending reminder');
+  assert.equal(await page.locator('#restart-notice-open').getAttribute('data-state'),'pending');
+  await page.locator('#restart-notice-open').click();
+  assert.equal(await page.locator('#settings-dialog').evaluate(node=>node.open),true);
+  await page.evaluate(()=>{notice.acknowledge('chatgpt');document.getElementById('settings-dialog').close();});
   assert.equal(await page.locator('#notice').evaluate(node=>node.hidden),true);
   assert.equal(await page.locator('#restart-notice-open').getAttribute('data-visible'),'false');cases++;
+  await load(page,{data_dir:'warning-only',restart_notice:{revision:1,items:[]},provider_warnings:[{provider:'fixture',detail:'Warning with no pending restart'}]});
+  await page.locator('#restart-notice-open').click();
+  assert.equal(await page.locator('#restart-notice').isVisible(),false);
+  assert.deepEqual(await page.evaluate(()=>calls.at(-1)),['/api/open-directory',{path:'C:/fixture/logs'}]);cases++;
   console.log(JSON.stringify({restart_notice:'passed',browser_cases:cases}));
 }
 run().catch(error=>{console.error(error);process.exitCode=1;}).finally(async()=>{if(browser)await browser.close();});
