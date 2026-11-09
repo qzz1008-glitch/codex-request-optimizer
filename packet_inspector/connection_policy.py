@@ -2,6 +2,8 @@
 from copy import deepcopy
 
 from .config_link import PROVIDER
+from .configuration_layers import merge_layers
+from .provider_defaults import provider_auth
 
 
 def native_compression(document, enabled):
@@ -12,9 +14,7 @@ def native_compression(document, enabled):
 
 
 def codex_auth(provider):
-    return (provider.get("requires_openai_auth") is True
-            and provider.get("wire_api", "responses") == "responses"
-            and not any(provider.get(key) for key in ("env_key", "experimental_bearer_token", "auth", "aws", "gateway_oauth")))
+    return provider_auth(provider) == "codex" and provider.get("wire_api", "responses") == "responses"
 
 
 def provider_identity(provider):
@@ -32,11 +32,11 @@ def standardize(document, data, base, original_upstream, native_upstream, *, pri
     for provider_id, provider in providers.items():
         if provider_id in excluded or not isinstance(provider, dict):
             continue
-        effective = {**base.get("model_providers", {}).get(provider_id, {}), **provider}
+        effective = merge_layers(base.get("model_providers", {}).get(provider_id, {}), provider)
         if codex_auth(effective):
             document["model_providers"][provider_id]["name"] = "OpenAI"
     selected = data.get("model_provider", base.get("model_provider", "openai"))
-    source = {**base.get("model_providers", {}).get(selected, {}), **providers.get(selected, {})}
+    source = merge_layers(base.get("model_providers", {}).get(selected, {}), providers.get(selected, {}))
     if selected == "openai" and native_upstream.endswith("/backend-api/codex"):
         source = {"name": "OpenAI", "wire_api": "responses", "requires_openai_auth": True,
                   "base_url": data.get("openai_base_url", base.get("openai_base_url", native_upstream))}
@@ -49,6 +49,7 @@ def standardize(document, data, base, original_upstream, native_upstream, *, pri
     # Only an ID already defined in this file can collide with its new default.
     existing = providers.get(PROVIDER, {})
     if existing and selected != PROVIDER:
+        existing = merge_layers(base.get("model_providers", {}).get(PROVIDER, {}), existing)
         if (provider_identity(existing) != provider_identity(source)
                 or original_upstream(existing.get("base_url", native_upstream), PROVIDER) != source_url):
             raise ValueError("现有 codex_packet_inspector 与所选 provider 的上游或认证不同，未覆盖已有会话的连接配置。")

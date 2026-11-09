@@ -78,15 +78,21 @@ class ProviderConfigTests(unittest.TestCase):
         self.assertNotIn("base_url", restored)
         self.assertTrue(restored["supports_websockets"])
 
-    def test_missing_addresses_for_other_authentication_modes_are_still_reported(self):
+    def test_api_defaults_are_routed_without_guessing_external_auth_endpoints(self):
         self.config.write_text('[model_providers.external]\nname="Keep name"\nenv_key="EXTERNAL_KEY"\n'
                                '[model_providers.gateway]\nrequires_openai_auth=true\n'
                                'gateway_oauth={issuer="https://issuer.invalid"}\n', encoding="utf8")
         before = tomllib.loads(self.config.read_text())["model_providers"]
         result = self.sync()
         after = tomllib.loads(self.config.read_text())["model_providers"]
-        self.assertEqual({row["provider"] for row in result["warnings"]}, {"external", "gateway"})
-        self.assertEqual({key: after[key] for key in before}, before)
+        self.assertEqual({row["provider"] for row in result["warnings"]}, {"gateway"})
+        self.assertEqual(after["gateway"], before["gateway"])
+        self.assertEqual(after["external"]["name"], "Keep name")
+        self.assertEqual(after["external"]["env_key"], "EXTERNAL_KEY")
+        route = self.routes[after["external"]["base_url"].rsplit("/p/", 1)[1]]
+        self.assertEqual(route["upstream"], "https://api.openai.com/v1")
+        self.link.restore()
+        self.assertEqual(tomllib.loads(self.config.read_text())["model_providers"]["external"], before["external"])
 
     def test_unused_remote_http_provider_does_not_block_openai_or_get_modified(self):
         self.config.write_text('model="test"\n[model_providers.local]\nbase_url="http://127.0.0.1:8787/v1"\n'
