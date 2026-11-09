@@ -8,6 +8,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest.mock import patch
 
 from packet_inspector.desktop_ui import DesktopUI
 from packet_inspector.exit_flow import ExitError, ExitRequests, REQUEST_FILE, perform_exit, request_exit
@@ -150,6 +151,18 @@ class ExitIntentTests(unittest.TestCase):
             request_exit(self.folder, fail)
         self.assertEqual(list(self.folder.iterdir()), [])
 
+    def test_exit_diagnostics_overwrite_one_bounded_snapshot(self):
+        requests = ExitRequests(self.folder)
+        for number in range(20):
+            requests.record(state="requested", request_id=str(number), action="direct", stopped=False)
+            requests.record(state="failed", error="x" * 10000)
+        paths = list(self.folder.iterdir())
+        self.assertEqual([path.name for path in paths], ["desktop-exit-result.json"])
+        self.assertLess(paths[0].stat().st_size, 2048)
+        record = json.loads(paths[0].read_text(encoding="utf8"))
+        self.assertEqual(record["request_id"], "19")
+        self.assertEqual(len(record["error"]), 500)
+
     def test_stale_invalid_and_oversized_intents_are_discarded(self):
         path = self.folder / REQUEST_FILE
         for raw in ("not json", "x" * 2048, "[]", json.dumps({"id": "a" * 32, "created": time.time() - 301}),
@@ -248,6 +261,89 @@ class DesktopExitTests(unittest.TestCase):
         self.assertEqual(self.request("/api/exit", {"request_id": identity, "action": "direct"})[0], 200)
         self.assertTrue(self.control.active)
         self.assertTrue(self.control.stopped)
+
+    def test_successful_exit_closes_desktop_even_if_relay_still_answers_status(self):
+        closed = threading.Event()
+        self.ui.exit_callback = closed.set
+        identity = self.intent()
+        self.assertEqual(self.request("/api/exit", {"request_id": identity, "action": "direct"})[0], 200)
+        self.assertTrue(closed.wait(1), "A committed tray exit must explicitly close its desktop window")
+        # A fast restart or an existing entry can still answer before a health poll.
+        self.assertEqual(self.request("/api/status")[0], 200)
+        record = json.loads((self.folder / "desktop-exit-result.json").read_text(encoding="utf8"))
+        self.assertTrue(record["stopped"])
+        self.assertTrue(record["window_close_requested"])
+        self.assertFalse(record["window_closed"])
+        self.ui.exit_requests.window_closed()
+        record = json.loads((self.folder / "desktop-exit-result.json").read_text(encoding="utf8"))
+        self.assertTrue(record["window_closed"])
+        self.assertEqual(record["state"], "closed")
+
+    def test_cancel_and_failed_stop_keep_desktop_available(self):
+        closed = threading.Event()
+        self.ui.exit_callback = closed.set
+        identity = self.intent()
+        self.assertEqual(self.request("/api/exit", {"request_id": identity, "action": "cancel"})[0], 200)
+        self.assertFalse(closed.is_set())
+        record = json.loads((self.folder / "desktop-exit-result.json").read_text(encoding="utf8"))
+        self.assertEqual(record["state"], "cancelled")
+        identity = self.intent()
+        self.control.inflight = 1
+        self.assertEqual(self.request("/api/exit", {"request_id": identity, "action": "direct"})[0], 409)
+        self.assertFalse(closed.is_set())
+        self.assertFalse(self.control.stopped)
+        record = json.loads((self.folder / "desktop-exit-result.json").read_text(encoding="utf8"))
+        self.assertEqual(record["state"], "failed")
+        self.assertFalse(record["window_close_requested"])
+        self.assertIn("仍有请求", record["error"])
+
+    def test_failed_diagnostic_write_does_not_prevent_confirmed_exit(self):
+        closed = threading.Event()
+        self.ui.exit_callback = closed.set
+        self.ui.exit_requests.result_path = self.folder / "missing-directory" / "exit.json"
+        identity = self.intent()
+        self.assertEqual(self.request("/api/exit", {"request_id": identity, "action": "direct"})[0], 200)
+        self.assertTrue(closed.wait(1))
+        self.assertEqual(self.ui.exit_requests.result_error, "FileNotFoundError")
+
+    def test_window_close_failure_is_distinct_from_a_failed_service_stop(self):
+        def fail():
+            raise RuntimeError("Window closing failed")
+
+        self.ui.exit_callback = fail
+        identity = self.intent()
+        self.assertEqual(self.request("/api/exit", {"request_id": identity, "action": "direct"})[0], 200)
+        deadline = time.monotonic() + 1
+        while time.monotonic() < deadline:
+            record = json.loads((self.folder / "desktop-exit-result.json").read_text(encoding="utf8"))
+            if record["state"] == "window_close_failed":
+                break
+            time.sleep(.01)
+        self.assertEqual(record["state"], "window_close_failed")
+        self.assertTrue(record["stopped"])
+        self.assertFalse(record["window_closed"])
+        self.assertEqual(record["error"], "RuntimeError")
+
+    def test_committed_stop_closes_window_when_response_delivery_fails(self):
+        from packet_inspector.desktop_ui import UIHandler
+        closed = threading.Event()
+        self.ui.exit_callback = closed.set
+        identity = self.intent()
+        original = UIHandler._json
+
+        def send(handler, code, value):
+            if code == 200 and value.get("stopped"):
+                raise BrokenPipeError("Client closed during exit")
+            return original(handler, code, value)
+
+        with patch.object(UIHandler, "_json", send):
+            with self.assertRaises(http.client.RemoteDisconnected):
+                self.request("/api/exit", {"request_id": identity, "action": "direct"})
+        self.assertTrue(closed.wait(1))
+        record = json.loads((self.folder / "desktop-exit-result.json").read_text(encoding="utf8"))
+        self.assertTrue(record["stopped"])
+        self.assertTrue(record["window_close_requested"])
+        self.assertIn("BrokenPipeError", record["error"])
 
     def test_ui_without_exit_data_cannot_consume_tray_intents_or_stop_relay(self):
         self.ui.close()

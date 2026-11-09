@@ -231,6 +231,8 @@ def run(arguments):
         chrome._bind(window)
         loaded = threading.Event()
         lifecycle = WindowLifecycle(window, lambda: tray_available(options.data_dir, status))
+        ui.exit_callback = lifecycle.exit
+        window.events.closed += ui.exit_requests.window_closed
         window.events.loaded += loaded.set
 
         def show():

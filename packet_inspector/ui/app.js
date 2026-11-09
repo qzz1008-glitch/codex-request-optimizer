@@ -1438,6 +1438,7 @@ function renderConnectPrompt() {
   const dialog=$("connect-confirm-dialog");
   if(s.ui_desktop&&s.ui_window_opened!==desktopOpenRevision) {
     desktopOpenRevision=s.ui_window_opened;startupConnectChecked=dialog.open||connectChecking||connectSaving;
+    exitFinished=false;
   }
   dialog.setAttribute("aria-busy",String(connectSaving));
   for(const key of ["cancel","apply"])$("connect-confirm-"+key).disabled=connectSaving;

@@ -159,6 +159,7 @@ class DesktopUI(ThreadingHTTPServer):
         self.updates = None
         self.updates_guard = threading.Lock()
         self.exit_requests = ExitRequests(exit_data_dir) if exit_data_dir is not None else None
+        self.exit_callback = None
         self.restart_requests = RestartRequests(exit_data_dir) if exit_data_dir is not None else None
         self.window_opened = 0
         self.thread = None
@@ -250,18 +251,41 @@ class UIHandler(BaseHTTPRequestHandler):
         except ValueError as exc:
             self._json(409, {"error": str(exc)})
             return
-        completed = False
+        completed = stopped = False
+        error = ""
+        code = 200
+        requests.record(state="requested", request_id=data["request_id"], action=data["action"],
+                        relay_port=self.server.relay_port, stopped=False,
+                        window_close_requested=False, window_closed=False, error="")
         try:
             result = ({"cancelled": True} if data["action"] == "cancel"
                       else perform_exit(self._relay_json, data["action"]))
             completed = True
-            self._json(200, result)
+            stopped = result.get("stopped") is True
         except ExitError as exc:
-            self._json(exc.status, {"error": str(exc)})
-        except (OSError, ValueError, TypeError, http.client.HTTPException):
-            self._json(502, {"error": "退出未完成，请检查中转服务后重试。"})
+            error = str(exc)
+            code, result = exc.status, {"error": str(exc)}
+        except (OSError, ValueError, TypeError, http.client.HTTPException) as exc:
+            error = type(exc).__name__ + ": 退出未完成，请检查中转服务后重试。"
+            code, result = 502, {"error": "退出未完成，请检查中转服务后重试。"}
         finally:
+            close_window = self.server.exit_callback if stopped else None
+            requests.record(state="stopped" if stopped else "cancelled" if completed else "failed",
+                            stopped=stopped, window_close_requested=callable(close_window), error=error)
             requests.finish(completed=completed)
+        try:
+            self._json(code, result)
+        except (OSError, ValueError, http.client.HTTPException) as exc:
+            self.close_connection = True
+            requests.record(error=type(exc).__name__ + ": exit_response_write_failed")
+        finally:
+            if callable(close_window):
+                try:
+                    # Closing is part of the committed exit, even if the entry restarts
+                    # before the desktop's next health poll or the HTTP client disconnects.
+                    close_window()
+                except Exception as exc:
+                    requests.record(state="window_close_failed", error=type(exc).__name__)
 
     def _service_restart(self):
         requests = self.server.restart_requests
