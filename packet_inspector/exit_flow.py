@@ -2,14 +2,19 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import re
 import secrets
 import threading
 import time
 
+from . import VERSION
+from .build_info import build_info
+
 
 REQUEST_FILE = "desktop-exit-request.json"
+RESULT_FILE = "desktop-exit-result.json"
 REQUEST_TTL = 300
 
 
@@ -40,9 +45,38 @@ class ExitRequests:
 
     def __init__(self, data_dir):
         self.path = Path(data_dir) / REQUEST_FILE
-        self.lock = threading.Lock()
+        self.result_path = Path(data_dir) / RESULT_FILE
+        self.lock = threading.RLock()
         self.pending = None
         self.busy = False
+        self.result = {}
+        self.result_error = ""
+
+    def record(self, **values):
+        """Overwrite one small snapshot only on explicit exit actions and window closure."""
+        with self.lock:
+            if values.get("state") == "requested":
+                self.result = {"schema": 1, "pid": os.getpid(), "version": VERSION, "build": build_info()}
+            if "error" in values:
+                values["error"] = str(values["error"])[:500]
+            self.result.update(values, updated=time.time())
+            staging = self.result_path.with_suffix(".new")
+            try:
+                staging.write_text(json.dumps(self.result, ensure_ascii=False), encoding="utf8")
+                staging.replace(self.result_path)
+                self.result_error = ""
+            except OSError as exc:
+                self.result_error = type(exc).__name__
+            finally:
+                try:
+                    staging.unlink(missing_ok=True)
+                except OSError:
+                    pass
+
+    def window_closed(self):
+        with self.lock:
+            if self.result.get("stopped"):
+                self.record(state="closed", window_closed=True)
 
     def current(self):
         with self.lock:
