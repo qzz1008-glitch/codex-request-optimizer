@@ -88,6 +88,13 @@ class ConnectionPlanTests(unittest.TestCase):
         auth.write_text('{"auth_mode":"chatgpt","tokens":{"access_token":"renewed"}}', encoding="utf8")
         plan.check()
 
+    def test_legacy_native_api_login_without_auth_mode_uses_the_api_default(self):
+        (self.root / "auth.json").write_text('{"OPENAI_API_KEY":"synthetic"}', encoding="utf8")
+        self.assertEqual(self.link.profile()["upstream"], "https://api.openai.com/v1")
+        plan = self.manager.plan({})
+        plan.check()
+        self.assertEqual({route["upstream"] for route in plan.routes.values()}, {"https://api.openai.com/v1"})
+
     def test_recovery_changes_invalidate_the_plan(self):
         plan = self.manager.plan({})
         self.link._write_state({"changed_by_another_writer": True})
