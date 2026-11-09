@@ -30,6 +30,64 @@ class ProviderConfigTests(unittest.TestCase):
     def sync(self):
         return self.manager.sync(self.routes, lambda routes: setattr(self, "routes", routes))
 
+    def test_standard_account_provider_without_base_url_is_routed_and_restored(self):
+        native = "https://chatgpt.com/backend-api/codex"
+        for selected in ("openai-http", PROVIDER):
+            with self.subTest(selected=selected):
+                self.config.write_text(f'model_provider="{selected}"\n'
+                    'openai_base_url="https://builtin-override.invalid/v1"\n'
+                    '[model_providers.openai-http]\nname="OpenAI"\nwire_api="responses"\n'
+                    'requires_openai_auth=true\nsupports_websockets=false\n'
+                    f'[model_providers.{PROVIDER}]\nname="OpenAI"\nwire_api="responses"\n'
+                    f'requires_openai_auth=true\nbase_url="{native}"\n', encoding="utf8")
+                result = self.sync()
+                self.assertFalse(result["warnings"])
+                data = tomllib.loads(self.config.read_text())
+                route = self.routes[data["model_providers"]["openai-http"]["base_url"].rsplit("/p/", 1)[1]]
+                self.assertEqual(route["upstream"], native, "The built-in override must not affect a custom provider")
+                self.assertEqual(route["provider"], "openai-http")
+                self.assertEqual(data["model_provider"], PROVIDER)
+                self.assertFalse(self.sync()["changed"])
+                self.link.restore()
+                restored = tomllib.loads(self.config.read_text())
+                self.assertNotIn("base_url", restored["model_providers"]["openai-http"])
+                self.assertEqual(restored["openai_base_url"], "https://builtin-override.invalid/v1")
+                self.assertTrue(restored["features"]["enable_request_compression"])
+
+    def test_implicit_account_route_follows_the_existing_login_mode(self):
+        (self.root / "auth.json").write_text('{"auth_mode":"apikey"}', encoding="utf8")
+        self.config.write_text('model_provider="openai-http"\n[model_providers.openai-http]\n'
+                               'name="OpenAI"\nrequires_openai_auth=true\n', encoding="utf8")
+        result = self.sync()
+        self.assertFalse(result["warnings"])
+        self.assertEqual({route["upstream"] for route in self.routes.values()}, {"https://api.openai.com/v1"})
+
+    def test_inherited_account_provider_without_an_address_is_routed_in_profiles(self):
+        self.config.write_text('model_provider="openai-http"\n[model_providers.openai-http]\n'
+                               'name="OpenAI"\nrequires_openai_auth=true\n', encoding="utf8")
+        profile = self.root / "vision.config.toml"
+        profile.write_text('[model_providers.openai-http]\nsupports_websockets=true\n', encoding="utf8")
+        result = self.sync()
+        self.assertFalse(result["warnings"])
+        data = tomllib.loads(profile.read_text())
+        self.assertTrue(data["model_providers"]["openai-http"]["base_url"].startswith(self.manager.endpoint))
+        self.assertFalse(data["model_providers"]["openai-http"]["supports_websockets"])
+        self.assertFalse(self.sync()["changed"])
+        self.link.restore()
+        restored = tomllib.loads(profile.read_text())["model_providers"]["openai-http"]
+        self.assertNotIn("base_url", restored)
+        self.assertTrue(restored["supports_websockets"])
+
+    def test_missing_addresses_for_other_authentication_modes_are_still_reported(self):
+        self.config.write_text('[model_providers.external]\nname="Keep name"\nenv_key="EXTERNAL_KEY"\n'
+                               '[model_providers.gateway]\nrequires_openai_auth=true\n'
+                               'gateway_oauth={issuer="https://issuer.invalid"}\n', encoding="utf8")
+        before = tomllib.loads(self.config.read_text())["model_providers"]
+        result = self.sync()
+        after = tomllib.loads(self.config.read_text())["model_providers"]
+        self.assertEqual({row["provider"] for row in result["warnings"]}, {"external", "gateway"})
+        self.assertEqual({key: after[key] for key in before}, before)
+
     def test_unused_remote_http_provider_does_not_block_openai_or_get_modified(self):
         self.config.write_text('model="test"\n[model_providers.local]\nbase_url="http://127.0.0.1:8787/v1"\n'
             '[model_providers.optional]\nname="Keep this name"\nbase_url="http://remote.invalid/v1"\n'

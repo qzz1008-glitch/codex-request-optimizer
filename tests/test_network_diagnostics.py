@@ -340,6 +340,21 @@ class NetworkRelayTests(unittest.TestCase):
 
 
 class DiagnosticDataTests(unittest.TestCase):
+    def test_connection_snapshot_includes_bounded_redacted_provider_warnings(self):
+        with tempfile.TemporaryDirectory() as directory, patch.object(NetworkDiagnostics, "_probe"):
+            journal = NetworkDiagnostics(directory, {})
+            journal.connection({}, {}, {}, {}, result={"warnings": [
+                {"file": "config.toml", "provider": "custom", "reason": "missing_http_base_url",
+                 "detail": "https://user:private-password@example.invalid/v1?token=private-value",
+                 "ignored": "not included"} for _ in range(20)]})
+            record, = journal.export()["records"]
+            self.assertEqual(len(record["provider_warnings"]), 16)
+            self.assertEqual(record["provider_warnings"][0]["reason"], "missing_http_base_url")
+            encoded = json.dumps(record["provider_warnings"])
+            self.assertNotIn("private-password", encoded)
+            self.assertNotIn("private-value", encoded)
+            self.assertNotIn("ignored", encoded)
+
     def test_network_cause_is_returned_when_no_http_status_exists(self):
         with tempfile.TemporaryDirectory() as td:
             journal=NetworkDiagnostics(Path(td),{})

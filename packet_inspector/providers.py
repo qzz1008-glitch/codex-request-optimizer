@@ -10,7 +10,7 @@ from urllib.parse import urlsplit
 import tomlkit
 
 from .config_link import ConfigLink, PROVIDER, validate_upstream
-from .connection_policy import native_compression, standardize
+from .connection_policy import codex_auth, native_compression, standardize
 from .provider_migration import migration_aliases, migrate_sessions
 from .sharing_config import SHARED_PROVIDER
 
@@ -114,9 +114,15 @@ class ProviderManager:
                     continue
                 if "base_url" in provider:
                     fields.append((["model_providers", provider_id, "base_url"], provider_id, provider["base_url"]))
-                elif "base_url" in inherited and provider.get("supports_websockets"):
-                    self._record(records, data, ["model_providers", provider_id, "supports_websockets"], False)
-                    _put(document, ["model_providers", provider_id, "supports_websockets"], False)
+                elif "base_url" in inherited:
+                    if provider.get("supports_websockets"):
+                        self._record(records, data, ["model_providers", provider_id, "supports_websockets"], False)
+                        _put(document, ["model_providers", provider_id, "supports_websockets"], False)
+                elif codex_auth({**inherited, **provider}):
+                    # A standard account provider without a URL uses Codex's
+                    # auth-dependent default, not the built-in root override.
+                    # Publish an explicit route for saved chats using this ID.
+                    fields.append((["model_providers", provider_id, "base_url"], provider_id, self._native_upstream()))
                 elif not inherited:
                     warnings.append({"file": path.name, "provider": provider_id, "reason": "missing_http_base_url"})
             # Built-in OpenAI uses a root override; its reserved ID cannot be redefined.
