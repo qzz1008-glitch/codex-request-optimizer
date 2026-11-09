@@ -18,7 +18,7 @@ import time
 import tomllib
 from urllib.parse import urlsplit
 
-from .config_link import ConfigLink
+from .config_link import ConfigLink, PROVIDER
 from .providers import ProviderManager
 from .network_diagnostics import safe_text
 
@@ -219,6 +219,23 @@ class LocalWsl:
             raise WslError("metadata_invalid_response")
         return json.loads(lines[0])
 
+    def migrate_providers(self, distribution, home, aliases):
+        # Native Linux SQLite owns its WAL locks; never write it through UNC.
+        request = {"home": home, "backup_dir": str(PurePosixPath(home) / "provider-migration-backups"),
+                   "aliases": aliases, "target": PROVIDER}
+        script = Path(__file__).with_name("provider_migration_worker.py").read_text(encoding="utf-8")
+        script = script.replace("request = json.load(sys.stdin)", "request = " + repr(request))
+        text = self.run(["-d", distribution, "--exec", "sh", "-lc", LABEL_LAUNCH,
+                         "codex-inspector-provider-migration", home], data=script.encode("utf-8"), timeout=15)
+        lines = [line.removeprefix("CPI_PROVIDER_MIGRATION=") for line in text.splitlines()
+                 if line.startswith("CPI_PROVIDER_MIGRATION=")]
+        if len(lines) != 1:
+            raise WslError("metadata_invalid_response")
+        result = json.loads(lines[0])
+        if not isinstance(result, dict) or not {"changed", "backups", "warnings"} <= result.keys():
+            raise WslError("metadata_invalid_response")
+        return result
+
 
 class WslConnection:
     def __init__(self, data_dir, backend=None):
@@ -334,7 +351,9 @@ class WslConnection:
                         marker = hashlib.sha256(endpoint.encode()).hexdigest()
                         # Verify this exact Windows instance before any Linux write.
                         self.backend.probe(target["distribution"], own.port, marker)
-                        update = ProviderManager(link, endpoint, upstream).sync(routes, publish_routes, retry_limit=retry_limit)
+                        update = ProviderManager(link, endpoint, upstream).sync(routes, publish_routes, retry_limit=retry_limit,
+                            session_migrator=lambda aliases: self.backend.migrate_providers(
+                                target["distribution"], target["home"], aliases))
                     else:
                         if not config.is_file() or any(not Path(name).is_file() for name in link._state().get("files", {})):
                             raise WslError("restore_pending")
@@ -343,16 +362,52 @@ class WslConnection:
                                 continue
                             # Manually connected URLs still identify their saved
                             # upstream. Record/backup them before native restore.
-                            ProviderManager(link, endpoint, upstream).sync(routes, publish_routes)
+                            ProviderManager(link, endpoint, upstream).sync(routes, publish_routes,
+                                session_migrator=lambda aliases: self.backend.migrate_providers(
+                                    target["distribution"], target["home"], aliases))
                         update = link.restore()
-                    result["targets"].append({**target, "active": connected, "changed": bool(update.get("reload_required"))})
+                    result["targets"].append({**target, "active": connected, "changed": bool(update.get("reload_required")),
+                                              "migrated_sessions": update.get("session_migration", {}).get("changed", 0)})
                     result["changed"] |= bool(update.get("reload_required"))
                     result["reload_required"] |= bool(update.get("reload_required"))
-                    result["warnings"].extend({"distribution": target["distribution"], "reason": item["reason"]}
+                    result["warnings"].extend({"distribution": target["distribution"],
+                                               **{key: item[key] for key in ("reason", "file", "detail") if key in item}}
                                               for item in update.get("warnings", []))
                 except (OSError, ValueError) as exc:
                     result["warnings"].append(warning(target["distribution"], exc))
             self._labels.clear()
+            return result
+
+    def reconcile_sessions(self, endpoint, upstream, routes):
+        """Check known running installations without reconnecting or probing."""
+        with self._lock:
+            result = {"targets": [], "warnings": [], "changed": False, "reload_required": False}
+            self.result = result
+            targets = list(self._targets())
+            if not targets:
+                return result
+            try:
+                running = self._distributions(refresh=True)
+            except WslError as exc:
+                result["warnings"].append(warning("WSL", exc))
+                return result
+            for directory, target in targets:
+                if target["distribution"] not in running:
+                    continue
+                try:
+                    link = ConfigLink(Path(target["config"]), directory / "link.json")
+                    update = ProviderManager(link, endpoint, upstream).reconcile_sessions(routes,
+                        session_migrator=lambda aliases: self.backend.migrate_providers(
+                            target["distribution"], target["home"], aliases))
+                    changed = bool(update["changed"])
+                    result["targets"].append({**target, "active": False, "changed": changed,
+                                              "migrated_sessions": update["changed"]})
+                    result["changed"] |= changed
+                    result["reload_required"] |= changed
+                    result["warnings"].extend({"distribution": target["distribution"], **item}
+                                              for item in update["warnings"])
+                except (OSError, ValueError) as exc:
+                    result["warnings"].append(warning(target["distribution"], exc))
             return result
 
     def labels(self, ids):

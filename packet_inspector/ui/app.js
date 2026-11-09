@@ -9,11 +9,13 @@ globalThis.InspectorRestartNotice = {
     const rows=[],add=(scope,reason,detail="")=>rows.push({scope,reason,detail:String(detail).slice(0,1000)});
     const error=event?.error||s?.provider_sync_error;
     if(error)add("","接入配置同步失败",error);
+    const providerReasons={session_provider_migration_failed:"会话提供商配置迁移失败",
+      session_provider_ambiguous:"会话提供商配置存在冲突，未自动迁移。"};
     for(const row of s?.provider_warnings??event?.result?.warnings??details?.warnings??[])
-      add(row.provider||"Provider","上游配置不支持接入",row.detail||row.reason);
+      add(row.provider||row.file||"Provider",providerReasons[row.reason]||"上游配置不支持接入",row.detail||row.reason);
     const wsl=s?.wsl_connection??event?.result?.wsl??{warnings:details?.wslWarnings};
     const reasons={relay_unreachable:"WSL 无法访问本机中转，未修改配置。",relay_instance_mismatch:"WSL 连接到其他服务，未修改配置。",
-      config_not_found:"未找到该 WSL 用户的 Codex 配置。",restore_pending:"WSL 配置尚未恢复。"};
+      config_not_found:"未找到该 WSL 用户的 Codex 配置。",restore_pending:"WSL 配置尚未恢复。",...providerReasons};
     for(const row of wsl.warnings||[])add("WSL · "+row.distribution,reasons[row.reason]||"WSL 接入失败",row.detail||row.reason);
     if(!rows.length&&event?.state==="attention")add("","接入配置同步失败");
     return rows.slice(0,32);

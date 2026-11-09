@@ -11,6 +11,7 @@ import tomlkit
 
 from .config_link import ConfigLink, PROVIDER, validate_upstream
 from .connection_policy import native_compression, standardize
+from .provider_migration import migration_aliases, migrate_sessions
 from .sharing_config import SHARED_PROVIDER
 
 MODE = "all-providers-v1"
@@ -73,7 +74,7 @@ class ProviderManager:
         self.endpoint = endpoint.rstrip("/")
         self.default_upstream = default_upstream
 
-    def sync(self, saved_routes, publish, *, retry_limit=None):
+    def sync(self, saved_routes, publish, *, retry_limit=None, session_migrator=None):
         """Publish routes/recovery first, then atomically update each TOML file.
 
         Failed batches roll back their own writes. Concurrent edits are kept,
@@ -85,7 +86,7 @@ class ProviderManager:
         state["connection_policy"] = 1
         routes = deepcopy(saved_routes)
         paths = config_paths(self.link.config)
-        plans, warnings = [], []
+        plans, warnings, prepared = [], [], []
         detected = set()
         base = tomllib.loads(self.link.config.read_text(encoding="utf-8-sig")) if self.link.config.exists() else {}
         for path in paths:
@@ -167,6 +168,20 @@ class ProviderManager:
                             if present and current == record["applied"]:
                                 _put(document, retry_keys, record["before"], record["present"])
                             records.remove(record)
+            prepared.append((path, text, document, data, excluded))
+        # Only equivalent OpenAI-account routes may share the stable ID. A
+        # conflicting profile definition cannot authorize a global migration.
+        original = lambda value, provider: self._original(value, provider, routes)
+        aliases, conflicts = migration_aliases([(path, data, excluded) for path, _, _, data, excluded in prepared],
+                                              original, self._native_upstream())
+        warnings.extend(conflicts)
+        selected = base.get("model_provider", "openai")
+        if prepared[0][3].get("model_provider") == PROVIDER and selected != PROVIDER and selected not in aliases:
+            raise ValueError("所选 provider 在不同配置中存在连接冲突，未切换默认提供商或迁移已有会话。")
+        for path, text, document, _, _ in prepared:
+            for profile in document.get("profiles", {}).values():
+                if isinstance(profile, dict) and profile.get("model_provider") in aliases:
+                    profile["model_provider"] = PROVIDER
             updated = tomlkit.dumps(document)
             tomllib.loads(updated)
             if updated != text:
@@ -181,9 +196,23 @@ class ProviderManager:
                    for path, original, _ in plans):
                 self.link._write_state(prior)
             raise
-        return {"active": True, "changed": bool(plans), "reload_required": bool(plans),
+        migration = migrate_sessions(self.link, sorted(aliases), session_migrator)
+        warnings.extend(migration["warnings"])
+        changed = bool(plans or migration["changed"])
+        return {"active": True, "changed": changed, "reload_required": changed,
                 "provider_count": len(detected),
-                "config_files": len(paths), "backups": backups, "warnings": warnings}
+                "config_files": len(paths), "backups": backups + migration["backups"], "warnings": warnings,
+                "session_migration": migration}
+
+    def reconcile_sessions(self, saved_routes, *, session_migrator=None):
+        """Upgrade disconnected installations without changing their TOML or routes."""
+        documents = [(path, tomllib.loads(path.read_text(encoding="utf-8-sig")) if path.exists() else {}, set())
+                     for path in config_paths(self.link.config)]
+        aliases, warnings = migration_aliases(documents,
+            lambda value, provider: self._original(value, provider, saved_routes), self._native_upstream())
+        result = migrate_sessions(self.link, sorted(aliases), session_migrator)
+        result["warnings"] = warnings + result["warnings"]
+        return result
 
     def _unsupported_providers(self, data, base, path, routes):
         """Optional endpoints must not veto a valid default connection.
