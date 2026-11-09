@@ -11,6 +11,7 @@ import tomllib
 from urllib.parse import urlsplit
 
 from .native_state import read_state, state_databases
+from .provider_defaults import native_upstream, provider_upstream
 
 PROVIDER = "codex_packet_inspector"
 BEGIN = "# BEGIN CODEX PACKET INSPECTOR"
@@ -151,7 +152,8 @@ class ConfigLink:
         all_providers = state.get("mode") == "all-providers-v1"
         active = selected == PROVIDER and bool(state) and BEGIN in text
         provider = data.get("model_providers", {}).get(selected, {})
-        upstream = state.get("upstream", "") if active else provider.get("base_url", "")
+        upstream = state.get("upstream", "") if active else (
+            data.get("openai_base_url", "") if selected == "openai" else provider.get("base_url", ""))
         if all_providers:
             keys = ["openai_base_url"] if selected == "openai" else ["model_providers", selected, "base_url"]
             records = state.get("files", {}).get(str(self.config.resolve()), [])
@@ -162,14 +164,12 @@ class ConfigLink:
             if active and selected == PROVIDER:
                 upstream = state.get("legacy", {}).get("upstream") or upstream
         if not upstream:
-            auth_file = self.config.parent / "auth.json"
-            auth_mode = "chatgpt"
-            if auth_file.is_file():
-                try:
-                    auth_mode = json.loads(auth_file.read_text(encoding="utf8")).get("auth_mode", "chatgpt")
-                except (OSError, ValueError):
-                    pass
-            upstream = "https://api.openai.com/v1" if auth_mode == "apikey" else "https://chatgpt.com/backend-api/codex"
+            upstream = native_upstream(self.config)
+            if selected != "openai":
+                # An absent original field must not resolve to our currently
+                # applied route; use the same default as the connection plan.
+                implicit = {key: value for key, value in provider.items() if key != "base_url"}
+                upstream = provider_upstream(implicit, upstream)
         return {"config_path": str(self.config), "provider": selected, "active": active,
                 "base_url": data.get("openai_base_url", "") if selected == "openai" else provider.get("base_url", ""),
                 "upstream": validate_upstream(upstream), "can_restore": active and bool(state),

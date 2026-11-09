@@ -1,6 +1,7 @@
 """Provider identity checks and migration of saved native configuration."""
 from .config_link import PROVIDER
 from .connection_policy import codex_auth, provider_identity
+from .configuration_layers import merge_layers
 from .provider_migration_worker import migrate
 
 
@@ -44,10 +45,7 @@ def migration_aliases(documents, original_upstream, native_upstream):
     aliases = compatible_aliases(primary, original_upstream, native_upstream) - excluded
     warnings = []
     def inspect(scope, layer, parent, excluded):
-        providers = {key: {**parent.get("model_providers", {}).get(key, {}),
-                           **layer.get("model_providers", {}).get(key, {})}
-                     for key in parent.get("model_providers", {}) | layer.get("model_providers", {})}
-        effective = {**parent, **layer, "model_providers": providers}
+        effective = merge_layers(parent, layer)
         compatible = compatible_aliases(effective, original_upstream, native_upstream) - excluded
         # Only declarations that redefine an old ID can conflict with its main
         # connection. An independent profile can keep its own canonical route.

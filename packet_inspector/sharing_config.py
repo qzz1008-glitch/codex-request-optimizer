@@ -1,8 +1,10 @@
 """Reversible standard provider selection; never changes native login data."""
 import json
 from pathlib import Path
+import tomllib
 import tomlkit
 
+from .connection_plan import ConfigEdit, ConfigSnapshot, ConfigurationBatch
 from .sharing_auth import SharingError
 
 SHARED_PROVIDER = "codex_inspector_shared"
@@ -16,7 +18,8 @@ class SharedProvider:
     def activate(self, endpoint, retry_limit=None, *, label=""):
         if self.path.exists():
             self.restore()
-        text, data = self.link._read()
+        source = ConfigSnapshot.read(self.link.config)
+        text, data = source.text, tomllib.loads(source.text)
         if SHARED_PROVIDER in data.get("model_providers", {}):
             raise SharingError("共享 provider 名称已被占用，请先检查 Codex 配置。")
         provider = {"name": self._name(label), "base_url": endpoint, "wire_api": "responses",
@@ -38,7 +41,8 @@ class SharedProvider:
         document.setdefault("model_providers", {})[SHARED_PROVIDER] = provider
         for item in state["profiles"]:
             document["profiles"][item["name"]]["model_provider"] = SHARED_PROVIDER
-        layers, plans = [], [(self.link.config, text, tomlkit.dumps(document))]
+        layers, sources = [], [source]
+        plans = [ConfigEdit(source, tomlkit.dumps(document))]
         for name in sorted(names):
             # Profile selectors must never become arbitrary filesystem paths.
             if not name or name in {".", ".."} or any(char in name for char in '/\\:'):
@@ -46,8 +50,9 @@ class SharedProvider:
             path = self.link.config.with_name(name + ".config.toml")
             if not path.is_file():
                 continue
-            layer_link = type(self.link)(path, self.path)
-            before, layer_data = layer_link._read()
+            layer_source = ConfigSnapshot.read(path)
+            sources.append(layer_source)
+            before, layer_data = layer_source.text, tomllib.loads(layer_source.text)
             if SHARED_PROVIDER in layer_data.get("model_providers", {}):
                 raise SharingError("共享 provider 名称已被占用，请先检查 Codex 配置。")
             layer = tomlkit.parse(before)
@@ -57,25 +62,28 @@ class SharedProvider:
             layer["model_provider"] = SHARED_PROVIDER
             for item in entries:
                 layer["profiles"][item["name"]]["model_provider"] = SHARED_PROVIDER
-            plans.append((path, before, tomlkit.dumps(layer)))
+            plans.append(ConfigEdit(layer_source, tomlkit.dumps(layer)))
         state["layers"] = layers
+        batch = ConfigurationBatch(tuple(sources), tuple(plans))
+        batch.check()
         self._write_state(state)
         try:
-            from .providers import _write_plans
-            _write_plans(self.link, plans)
+            batch.apply(self.link)
         except Exception:
             # A concurrent edit may prevent rollback. Keep recovery metadata
             # unless every file has returned to its exact original state.
-            if all(path.exists() and path.read_text(encoding="utf-8-sig") == before
-                   for path, before, _updated in plans):
+            if all(ConfigSnapshot.read(source.path).content == source.content for source in sources):
                 self.path.unlink(missing_ok=True)
             raise
 
     def restore(self):
         if not self.path.exists():
             return False
-        state = json.loads(self.path.read_text(encoding="utf8"))
-        text, _ = self.link._read()
+        recovery = ConfigSnapshot.read(self.path)
+        state = json.loads(recovery.text)
+        source = ConfigSnapshot.read(self.link.config)
+        text = source.text
+        sources = [source]
         document = tomlkit.parse(text)
         changed = False
         if document.get("model_provider") == SHARED_PROVIDER:
@@ -98,7 +106,7 @@ class SharedProvider:
         if self._owned_state(current, state):
             del providers[SHARED_PROVIDER]
             changed = True
-        plans = [(self.link.config, text, tomlkit.dumps(document))] if changed else []
+        plans = [ConfigEdit(source, tomlkit.dumps(document))] if changed else []
         for layer in state.get("layers", []):
             name = layer["name"]
             if not isinstance(name, str) or Path(name).name != name or any(char in name for char in '/\\:') or not name.endswith(".config.toml"):
@@ -106,7 +114,9 @@ class SharedProvider:
             path = self.link.config.with_name(name)
             if not path.is_file():
                 continue
-            before, _ = type(self.link)(path, self.path)._read()
+            layer_source = ConfigSnapshot.read(path)
+            sources.append(layer_source)
+            before = layer_source.text
             target = tomlkit.parse(before)
             for values, prior in [(target, layer), *((target.get("profiles", {}).get(p["name"], {}), p)
                                                    for p in layer.get("profiles", []))]:
@@ -117,10 +127,8 @@ class SharedProvider:
                         values["model_provider"] = prior["selected"]
             after = tomlkit.dumps(target)
             if after != before:
-                plans.append((path, before, after))
-        if plans:
-            from .providers import _write_plans
-            _write_plans(self.link, plans)
+                plans.append(ConfigEdit(layer_source, after))
+        ConfigurationBatch(tuple(sources), tuple(plans), (recovery.check,)).apply(self.link)
         self.path.unlink(missing_ok=True)
         return bool(plans)
 

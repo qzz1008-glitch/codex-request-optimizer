@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from dataclasses import dataclass
+import json
 from pathlib import Path
 import secrets
 import tomllib
@@ -9,8 +11,11 @@ from urllib.parse import urlsplit
 
 import tomlkit
 
-from .config_link import ConfigLink, PROVIDER, validate_upstream
-from .connection_policy import codex_auth, native_compression, standardize
+from .config_link import PROVIDER, validate_upstream
+from .connection_policy import native_compression, standardize
+from .connection_plan import CONCURRENT_CHANGE, ConfigEdit, ConfigSnapshot, ConfigurationBatch
+from .configuration_layers import merge_layers
+from .provider_defaults import native_upstream, provider_upstream
 from .provider_migration import migration_aliases, migrate_sessions
 from .sharing_config import SHARED_PROVIDER
 
@@ -43,29 +48,21 @@ def _put(document, keys, value, present=True):
         target.pop(keys[-1], None)
 
 
-def _write_plans(link, plans):
-    written, backups = [], []
-    try:
-        for path, original, updated in plans:
-            current = path.read_text(encoding="utf-8-sig") if path.exists() else ""
-            if current != original:
-                raise ValueError("Codex 配置在扫描期间发生变化，请重新检测")
-            before = path.read_bytes() if path.exists() else None
-            written.append((path, updated, before))
-            backups.append(ConfigLink(path, link.state_path)._write(updated))
-    except Exception:
-        for path, updated, before in reversed(written):
-            # Never overwrite a concurrent edit, even during rollback.
-            if not path.exists() or path.read_text(encoding="utf-8-sig") != updated:
-                continue
-            if before is None:
-                path.unlink()
-            else:
-                staging = path.with_name(path.name + ".inspector-rollback")
-                staging.write_bytes(before)
-                staging.replace(path)
-        raise
-    return backups
+@dataclass(frozen=True, repr=False)
+class ProviderPlan:
+    batch: ConfigurationBatch
+    recovery: ConfigSnapshot
+    prior_state: dict
+    state: dict
+    routes: dict
+    aliases: frozenset
+    warnings: tuple
+    provider_count: int
+    paths: tuple
+
+    def check(self):
+        self.recovery.check()
+        self.batch.check()
 
 
 class ProviderManager:
@@ -80,24 +77,56 @@ class ProviderManager:
         Failed batches roll back their own writes. Concurrent edits are kept,
         with recovery information and extra routes available for a safe retry.
         """
-        prior = self.link._state()
+        plan = self.plan(saved_routes, retry_limit=retry_limit)
+        plan.check()
+        # Publish before switching any URL so an in-flight client always finds
+        # its route. Extra unpublished-in-config routes are harmless on failure.
+        publish(plan.routes)
+        plan.check()
+        self.link._write_state(plan.state)
+        try:
+            backups = plan.batch.apply(self.link)
+        except Exception:
+            if all(ConfigSnapshot.read(source.path).content == source.content for source in plan.batch.sources):
+                self.link._write_state(plan.prior_state)
+            raise
+        migration = migrate_sessions(self.link, sorted(plan.aliases), session_migrator)
+        changed = bool(plan.batch.edits or migration["changed"])
+        return {"active": True, "changed": changed, "reload_required": changed,
+                "provider_count": plan.provider_count,
+                "config_files": len(plan.paths), "backups": backups + migration["backups"],
+                "warnings": [*plan.warnings, *migration["warnings"]],
+                "session_migration": migration,
+                "config_files_verified": True}
+
+    def plan(self, saved_routes, *, retry_limit=None):
+        """Resolve the complete known configuration batch without side effects.
+
+        Connect, automatic resync and upgrade use this same plan. WSL supplies
+        its own config root and metadata worker to the same implementation.
+        """
+        recovery = ConfigSnapshot.read(self.link.state_path)
+        prior = json.loads(recovery.text) if recovery.content is not None else {}
         state = deepcopy(prior) if prior.get("mode") == MODE else {
             "mode": MODE, "files": {}, "legacy": prior}
         state["connection_policy"] = 1
         routes = deepcopy(saved_routes)
-        paths = config_paths(self.link.config)
+        paths = tuple(config_paths(self.link.config))
+        sources = tuple(ConfigSnapshot.read(path) for path in paths)
+        native = self._native_upstream()
         plans, warnings, prepared = [], [], []
         detected = set()
-        base = tomllib.loads(self.link.config.read_text(encoding="utf-8-sig")) if self.link.config.exists() else {}
-        for path in paths:
-            text = path.read_text(encoding="utf-8-sig") if path.exists() else ""
+        base = tomllib.loads(sources[0].text)
+        for source in sources:
+            path, text = source.path, source.text
             data = tomllib.loads(text)
             document = tomlkit.parse(text)
-            excluded, skipped = self._unsupported_providers(data, base, path, routes)
+            parent = base if path == self.link.config else prepared[0][2]
+            excluded, skipped = self._unsupported_providers(data, parent, path, routes)
             warnings.extend(skipped)
-            standardize(document, data, base,
+            standardize(document, data, parent,
                         lambda value, provider: self._original(value, provider, routes),
-                        self._native_upstream(), primary=path == self.link.config, excluded=excluded)
+                        native, primary=path == self.link.config, excluded=excluded)
             native_compression(document, False)
             data = tomllib.loads(tomlkit.dumps(document))
             records = state["files"].setdefault(str(path.resolve()), [])
@@ -108,7 +137,7 @@ class ProviderManager:
                     continue
                 if not isinstance(provider, dict):
                     continue
-                inherited = base.get("model_providers", {}).get(provider_id, {}) if path != self.link.config else {}
+                inherited = parent.get("model_providers", {}).get(provider_id, {}) if path != self.link.config else {}
                 if provider.get("wire_api", inherited.get("wire_api", "responses")) != "responses":
                     warnings.append({"file": path.name, "provider": provider_id, "reason": "unsupported_wire_api"})
                     continue
@@ -118,11 +147,10 @@ class ProviderManager:
                     if provider.get("supports_websockets"):
                         self._record(records, data, ["model_providers", provider_id, "supports_websockets"], False)
                         _put(document, ["model_providers", provider_id, "supports_websockets"], False)
-                elif codex_auth({**inherited, **provider}):
-                    # A standard account provider without a URL uses Codex's
-                    # auth-dependent default, not the built-in root override.
-                    # Publish an explicit route for saved chats using this ID.
-                    fields.append((["model_providers", provider_id, "base_url"], provider_id, self._native_upstream()))
+                elif (implicit := provider_upstream(merge_layers(inherited, provider), native)) is not None:
+                    # Custom providers use their authentication's native
+                    # default, independently of the built-in root override.
+                    fields.append((["model_providers", provider_id, "base_url"], provider_id, implicit))
                 elif not inherited:
                     warnings.append({"file": path.name, "provider": provider_id, "reason": "missing_http_base_url"})
             # Built-in OpenAI uses a root override; its reserved ID cannot be redefined.
@@ -130,9 +158,9 @@ class ProviderManager:
                 original = data.get("openai_base_url")
                 native_record = next((r for r in records if r["keys"] == ["openai_base_url"]), None)
                 if native_record and not native_record["present"] and original == native_record["applied"]:
-                    original = self._native_upstream()
+                    original = native
                 if not original:
-                    original = self._native_upstream()
+                    original = native
                 fields.append((["openai_base_url"], "openai", original))
             for keys, provider_id, current in fields:
                 detected.add(provider_id)
@@ -174,41 +202,27 @@ class ProviderManager:
                             if present and current == record["applied"]:
                                 _put(document, retry_keys, record["before"], record["present"])
                             records.remove(record)
-            prepared.append((path, text, document, data, excluded))
+            prepared.append((source, document, data, excluded))
         # Only equivalent OpenAI-account routes may share the stable ID. A
         # conflicting profile definition cannot authorize a global migration.
         original = lambda value, provider: self._original(value, provider, routes)
-        aliases, conflicts = migration_aliases([(path, data, excluded) for path, _, _, data, excluded in prepared],
-                                              original, self._native_upstream())
+        aliases, conflicts = migration_aliases([(source.path, data, excluded) for source, _, data, excluded in prepared],
+                                              original, native)
         warnings.extend(conflicts)
         selected = base.get("model_provider", "openai")
-        if prepared[0][3].get("model_provider") == PROVIDER and selected != PROVIDER and selected not in aliases:
+        if prepared[0][2].get("model_provider") == PROVIDER and selected != PROVIDER and selected not in aliases:
             raise ValueError("所选 provider 在不同配置中存在连接冲突，未切换默认提供商或迁移已有会话。")
-        for path, text, document, _, _ in prepared:
+        for source, document, _, _ in prepared:
             for profile in document.get("profiles", {}).values():
                 if isinstance(profile, dict) and profile.get("model_provider") in aliases:
                     profile["model_provider"] = PROVIDER
             updated = tomlkit.dumps(document)
             tomllib.loads(updated)
-            if updated != text:
-                plans.append((path, text, updated))
-        # Settings contain no credentials; headers and auth remain in Codex's TOML.
-        publish(routes)
-        self.link._write_state(state)
-        try:
-            backups = _write_plans(self.link, plans)
-        except Exception:
-            if all((path.read_text(encoding="utf-8-sig") if path.exists() else "") == original
-                   for path, original, _ in plans):
-                self.link._write_state(prior)
-            raise
-        migration = migrate_sessions(self.link, sorted(aliases), session_migrator)
-        warnings.extend(migration["warnings"])
-        changed = bool(plans or migration["changed"])
-        return {"active": True, "changed": changed, "reload_required": changed,
-                "provider_count": len(detected),
-                "config_files": len(paths), "backups": backups + migration["backups"], "warnings": warnings,
-                "session_migration": migration}
+            if updated != source.text:
+                plans.append(ConfigEdit(source, updated))
+        guard = lambda: self._check_inputs(paths, native)
+        return ProviderPlan(ConfigurationBatch(sources, tuple(plans), (guard,)), recovery, prior, state, routes,
+                            frozenset(aliases), tuple(warnings), len(detected), paths)
 
     def reconcile_sessions(self, saved_routes, *, session_migrator=None):
         """Upgrade disconnected installations without changing their TOML or routes."""
@@ -227,6 +241,15 @@ class ProviderManager:
         validation failures of an unselected endpoint may be excluded.
         """
         selected = data.get("model_provider", base.get("model_provider", "openai"))
+        if selected not in {"openai", SHARED_PROVIDER}:
+            selected_provider = merge_layers(base.get("model_providers", {}).get(selected, {}),
+                                             data.get("model_providers", {}).get(selected, {}))
+            if not selected_provider:
+                raise ValueError(f"{path.name} · model_provider: 未找到所选 provider 的配置")
+            if selected_provider.get("wire_api", "responses") != "responses":
+                raise ValueError(f"{path.name} · model_provider: 所选 provider 不使用 Responses HTTP 接口")
+            if provider_upstream(selected_provider, self._native_upstream()) is None:
+                raise ValueError(f"{path.name} · model_provider: 无法确定所选 provider 的 HTTP 上游地址")
         excluded, warnings = set(), []
         providers = dict(data.get("model_providers", {}))
         if path != self.link.config and selected in base.get("model_providers", {}):
@@ -244,7 +267,7 @@ class ProviderManager:
             if provider_id == SHARED_PROVIDER or not isinstance(provider, dict):
                 continue
             inherited = base.get("model_providers", {}).get(provider_id, {}) if path != self.link.config else {}
-            effective = {**inherited, **provider}
+            effective = merge_layers(inherited, provider)
             if effective.get("wire_api", "responses") != "responses" or "base_url" not in effective:
                 continue
             candidates.append((f"model_providers.{provider_id}.base_url", provider_id, effective["base_url"]))
@@ -286,14 +309,13 @@ class ProviderManager:
         return current
 
     def _native_upstream(self):
-        # Match the existing login mode without reading or copying credentials.
-        import json
-        auth_file = self.link.config.parent / "auth.json"
-        try:
-            mode = json.loads(auth_file.read_text(encoding="utf8")).get("auth_mode", "chatgpt")
-        except (OSError, ValueError):
-            mode = "chatgpt"
-        return "https://api.openai.com/v1" if mode == "apikey" else "https://chatgpt.com/backend-api/codex"
+        return native_upstream(self.link.config)
+
+    def _check_inputs(self, paths, native):
+        # Token renewal does not invalidate a plan. Only a login-mode change
+        # that changes the implicit HTTP destination does.
+        if tuple(config_paths(self.link.config)) != paths or self._native_upstream() != native:
+            raise ValueError(CONCURRENT_CHANGE)
 
     @staticmethod
     def _record(records, data, keys, applied, original=None):
@@ -310,12 +332,14 @@ class ProviderManager:
 
 
 def restore_providers(link, state):
-    plans = []
+    plans, sources = [], []
     for filename, records in state["files"].items():
         path = Path(filename)
         if not path.exists():
             continue
-        original = path.read_text(encoding="utf-8-sig")
+        source = ConfigSnapshot.read(path)
+        sources.append(source)
+        original = source.text
         data = tomllib.loads(original)
         document = tomlkit.parse(original)
         for record in records:
@@ -327,8 +351,8 @@ def restore_providers(link, state):
             native_compression(document, True)
         updated = tomlkit.dumps(document)
         if updated != original:
-            plans.append((path, original, updated))
-    backups = _write_plans(link, plans)
+            plans.append(ConfigEdit(source, updated))
+    backups = ConfigurationBatch(tuple(sources), tuple(plans)).apply(link)
     legacy = state.get("legacy", {})
     if legacy and not state.get("connection_policy"):
         link._write_state(legacy)
