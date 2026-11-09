@@ -57,7 +57,7 @@ Existing Codex configurations in WSL can also be connected as a validation featu
 
 ## ⚙️ Implementation overview
 
-- **Connection and forwarding**: Codex's standard provider configuration routes requests through a local Python relay. Processed requests continue to the original upstream service.
+- **Connection and forwarding**: Codex's standard provider configuration routes requests through a local Python relay. Processed requests continue to the original upstream service. Connecting or upgrading checks and unifies compatible legacy chat provider settings while preserving conversation content.
 - **Compression and protection**: zstd provides lossless transport compression. Actual upload size determines whether predictive or overflow protection is triggered to control request size.
 - **Image analysis**: Codex manages a separate image tool through standard MCP stdio. Each call starts a fresh ephemeral conversation, returns text only, and cleans up temporary data afterward.
 - **Interface and records**: WebView2 provides the desktop interface, while SQLite stores request records locally. Captured records omit authentication values; JSON views and downloads use redacted copies.

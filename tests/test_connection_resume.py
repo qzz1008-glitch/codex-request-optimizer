@@ -1,6 +1,8 @@
 """Automatic connection reconciliation preserves user intent and relay ownership."""
 import json
+from contextlib import closing
 from pathlib import Path
+import sqlite3
 import tempfile
 import tomllib
 import unittest
@@ -82,6 +84,68 @@ class ConnectionResumeTests(unittest.TestCase):
         self.resume.step()
         self.assertFalse(self.resume.status()["result"]["reload_required"])
         self.assertEqual(before, (self.config.read_bytes(), self.backend.config_path.read_bytes()))
+
+    def test_upgrade_reconciliation_migrates_old_provider_and_requests_restart_without_a_toml_change(self):
+        self.connected()
+        self.resume.step()
+        before = self.config.read_bytes()
+        database = self.root / "state_99.sqlite"
+        with closing(sqlite3.connect(database)) as db, db:
+            db.execute("CREATE TABLE threads(id TEXT PRIMARY KEY,model_provider TEXT)")
+            db.execute("INSERT INTO threads VALUES ('saved-chat','openai')")
+        self.resume.schedule()
+        self.resume.step()
+        result = self.resume.status()["result"]
+        self.assertEqual(self.config.read_bytes(), before)
+        self.assertTrue(result["local_reload_required"])
+        self.assertTrue(result["reload_required"])
+        self.assertEqual(result["session_migration"]["changed"], 1)
+        self.assertTrue(any(item["key"] == "connection" and item["target"] == "chatgpt"
+                            for item in result["restart_notice"]["items"]))
+        with closing(sqlite3.connect(database)) as db:
+            self.assertEqual(db.execute("SELECT model_provider FROM threads").fetchone()[0], "codex_packet_inspector")
+        report = json.loads((self.root / "data" / "connection-resume.json").read_text(encoding="utf8"))
+        self.assertEqual(report["result"]["session_migration"]["changed"], 1)
+        self.resume.schedule()
+        self.resume.step()
+        self.assertEqual(self.resume.status()["result"]["session_migration"]["changed"], 0)
+
+    def test_disconnected_upgrade_repairs_metadata_without_activating_connection(self):
+        self.connected()
+        self.server.set_connection(False)
+        notice = self.server.restart_notices.snapshot()
+        self.server.restart_notices.acknowledge("chatgpt", notice["revision"])
+        before = self.config.read_bytes()
+        database = self.root / "state_99.sqlite"
+        with closing(sqlite3.connect(database)) as db, db:
+            db.execute("CREATE TABLE threads(id TEXT PRIMARY KEY,model_provider TEXT)")
+            db.execute("INSERT INTO threads VALUES ('old-chat','openai')")
+        self.resume.schedule()
+        self.resume.step()
+        result = self.resume.status()["result"]
+        self.assertFalse(result["active"])
+        self.assertFalse(self.server.settings["auto_detect_providers"])
+        self.assertTrue(result["local_reload_required"])
+        self.assertEqual(result["session_migration"]["changed"], 1)
+        self.assertEqual(self.config.read_bytes(), before)
+        self.assertTrue(any(item["key"] == "connection" for item in result["restart_notice"]["items"]))
+
+    def test_local_migration_restart_notice_survives_a_later_wsl_failure(self):
+        self.connected()
+        self.server.set_connection(False)
+        database = self.root / "state_99.sqlite"
+        with closing(sqlite3.connect(database)) as db, db:
+            db.execute("CREATE TABLE threads(id TEXT PRIMARY KEY,model_provider TEXT)")
+            db.execute("INSERT INTO threads VALUES ('old-chat','openai')")
+        self.resume.schedule()
+        with patch.object(self.server.wsl, "reconcile_sessions", side_effect=OSError("WSL unavailable")):
+            self.resume.step()
+        event = self.resume.status()
+        self.assertEqual(event["state"], "recovering")
+        self.assertIn("WSL unavailable", event["error"])
+        self.assertEqual(event["result"]["session_migration"]["changed"], 1)
+        self.assertTrue(event["result"]["local_reload_required"])
+        self.assertTrue(any(item["key"] == "connection" for item in event["result"]["restart_notice"]["items"]))
 
     def test_wsl_pending_changes_are_separate_and_sticky_reload_does_not_recreate_them(self):
         self.connected()

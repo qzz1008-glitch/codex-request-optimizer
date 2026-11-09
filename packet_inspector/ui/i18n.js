@@ -55,6 +55,8 @@ const uiI18n = (() => {
     "上游配置不支持接入":"This upstream configuration cannot be connected",
     "WSL 接入失败":"WSL could not be connected",
     "WSL 配置尚未恢复。":"The WSL configuration has not been restored.",
+    "会话提供商配置迁移失败":"Failed to migrate the chat provider configuration",
+    "会话提供商配置存在冲突，未自动迁移。":"Conflicting chat provider configurations were not migrated automatically.",
     "请重启本软件后重试；若仍失败，请导出诊断报告反馈。":"Restart this app and try again. If the problem persists, export the diagnostic report for feedback.",
     "可导出诊断报告反馈。":"Export the diagnostic report to include with your feedback.",
     "日志目录：{path}":"Log folder: {path}",

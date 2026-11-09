@@ -57,6 +57,10 @@ class FakeWsl:
             raise AssertionError(result.stderr.decode())
         return json.loads(result.stdout.decode().split("CPI_LABELS=", 1)[1])
 
+    def migrate_providers(self, distribution, home, aliases):
+        from packet_inspector.provider_migration_worker import migrate
+        return migrate(self.config_path.parent, self.root / "migration-backups", aliases, "codex_packet_inspector")
+
 
 class WslConnectionTests(unittest.TestCase):
     def setUp(self):
@@ -79,6 +83,57 @@ class WslConnectionTests(unittest.TestCase):
         self.apply()
         self.assertEqual(live_routes, before)
         self.assertGreater(len(self.routes), len(live_routes))
+
+    def test_metadata_only_wsl_migration_reuses_connection_restart_feedback(self):
+        self.apply()
+        config_before = self.backend.config_path.read_bytes()
+        database = self.backend.config_path.parent / "state_99.sqlite"
+        with closing(sqlite3.connect(database)) as db, db:
+            db.execute("CREATE TABLE threads(id TEXT PRIMARY KEY,model_provider TEXT)")
+            db.execute("INSERT INTO threads VALUES ('linux-chat','openai')")
+        result = self.apply()
+        self.assertTrue(result["changed"])
+        self.assertTrue(result["reload_required"])
+        self.assertEqual(result["targets"][0]["migrated_sessions"], 1)
+        self.assertEqual(self.backend.config_path.read_bytes(), config_before)
+        with closing(sqlite3.connect(database)) as db:
+            self.assertEqual(db.execute("SELECT model_provider FROM threads").fetchone()[0], "codex_packet_inspector")
+        self.assertFalse(self.apply()["reload_required"])
+
+    def test_linux_migration_runs_the_bundled_worker_in_isolated_native_python(self):
+        result = {"changed": 2, "backups": ["/home/test/.codex/provider-migration-backups/test.json"],
+                  "warnings": [], "databases": 1}
+        backend = LocalWsl()
+        with patch.object(backend, "run", return_value="screen size warning\nCPI_PROVIDER_MIGRATION=" + json.dumps(result)) as run:
+            self.assertEqual(backend.migrate_providers("Ubuntu-Test", "/home/test/.codex", ["openai"]), result)
+        args, keywords = run.call_args
+        self.assertTrue(any('exec python3 -I -S -' in value for value in args[0]))
+        self.assertEqual(args[0][-1], "/home/test/.codex")
+        tree = ast.parse(keywords["data"].decode("utf8"))
+        request = next(node for node in ast.walk(tree) if isinstance(node, ast.Assign)
+                       and any(isinstance(target, ast.Name) and target.id == "request" for target in node.targets))
+        self.assertEqual(ast.literal_eval(request.value)["aliases"], ["openai"])
+
+    def test_disconnected_metadata_check_does_not_reconnect_probe_or_start_wsl(self):
+        self.apply()
+        self.apply(False)
+        before = self.backend.config_path.read_bytes()
+        database = self.backend.config_path.parent / "state_99.sqlite"
+        with closing(sqlite3.connect(database)) as db, db:
+            db.execute("CREATE TABLE threads(id TEXT PRIMARY KEY,model_provider TEXT)")
+            db.execute("INSERT INTO threads VALUES ('linux-chat','openai')")
+        with patch.object(self.backend, "probe") as probe, patch.object(self.backend, "home") as home:
+            result = self.wsl.reconcile_sessions(ENDPOINT, UPSTREAM, self.routes)
+        probe.assert_not_called()
+        home.assert_not_called()
+        self.assertEqual(result["targets"][0]["migrated_sessions"], 1)
+        self.assertFalse(result["targets"][0]["active"])
+        self.assertEqual(self.backend.config_path.read_bytes(), before)
+        self.backend.distributions = []
+        with patch.object(self.backend, "migrate_providers") as migration:
+            result = self.wsl.reconcile_sessions(ENDPOINT, UPSTREAM, self.routes)
+        migration.assert_not_called()
+        self.assertEqual(result["targets"], [])
 
     def index(self, *, source='"cli"', name="聊天对话串"):
         with closing(sqlite3.connect(self.backend.config_path.parent / "state_42.sqlite")) as db, db:

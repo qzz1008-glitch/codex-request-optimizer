@@ -6,6 +6,7 @@ import threading
 import time
 
 from .network_diagnostics import safe_text
+from .providers import ProviderManager
 from . import VERSION
 
 
@@ -151,10 +152,28 @@ class ConnectionResume:
                     result = {"active": True, "changed": bool(provider.get("changed") or wsl.get("changed")),
                               "local_reload_required": bool(provider.get("reload_required")),
                               "reload_required": reload_required, "warnings": provider.get("warnings", [])[:16],
+                              "session_migration": provider.get("session_migration", {}),
                               "wsl": self._wsl_result(wsl)}
                     server.connection_reload_required |= reload_required
                     self.deferred_wsl = {item["distribution"] for item in wsl.get("deferred", [])}
                     self.next_wsl_scan = time.monotonic() + 30
+                elif not server.settings["auto_detect_providers"] and not server.sharing.remote:
+                    migration = ProviderManager(server.link, server.endpoint, server.settings["upstream"]).reconcile_sessions(
+                        server.settings["provider_routes"])
+                    local_changed = bool(migration["changed"])
+                    server.provider_sync_result["warnings"] = migration["warnings"]
+                    result.update(changed=local_changed, local_reload_required=local_changed,
+                                  reload_required=local_changed, warnings=migration["warnings"][:16],
+                                  session_migration=migration)
+                    server.connection_reload_required |= local_changed
+                    if local_changed:
+                        server.restart_notices.mark("connection")
+                    wsl = server.wsl.reconcile_sessions(server.endpoint, server.settings["upstream"],
+                                                       server.settings["provider_routes"])
+                    result["changed"] |= bool(wsl.get("changed"))
+                    result["reload_required"] |= bool(wsl.get("reload_required"))
+                    result["wsl"] = self._wsl_result(wsl)
+                    server.connection_reload_required |= result["reload_required"]
             except Exception as exc:
                 # Keep serving already-published routes and report the repair.
                 error = safe_text(type(exc).__name__ + ": " + str(exc), (server.settings["relay_token"],), limit=1000)
