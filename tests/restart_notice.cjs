@@ -229,6 +229,24 @@ async function run() {
       cases++;
     }
   }
+  await load(page,{data_dir:'automatic-restart',connection_reload_required:true,restart_notice:{revision:1,auto_detect_supported:true,
+    items:[{key:'image_analysis_mode',target:'chatgpt',scope:''},{key:'wsl',target:'wsl',scope:'Ubuntu'}]}});
+  await page.locator('#restart-notice-open').click();
+  for(const language of ['zh','en']) {
+    await page.evaluate(language=>{uiI18n.setLanguage(language,{persist:false});notice.render();},language);
+    const message=await page.locator('#restart-notice-message').textContent();
+    assert(message.includes(language==='zh'?'自动清除':'automatically')&&message.includes('WSL'));
+    assert.equal(await page.locator('#restart-notice').evaluate(node=>node.scrollHeight>node.clientHeight),false);
+    cases++;
+  }
+  await page.evaluate(()=>{statusData.restart_notice={revision:2,auto_detect_supported:true,items:[{key:'wsl',target:'wsl',scope:'Ubuntu'}]};notice.ingest();});
+  assert.equal(await page.locator('#restart-notice-chatgpt').evaluate(node=>node.hidden),true);
+  assert.equal(await page.locator('#restart-notice-wsl').isVisible(),true);
+  await page.evaluate(()=>{statusData.restart_notice={revision:3,auto_detect_supported:true,items:[]};notice.ingest();});
+  assert.equal(await page.locator('#restart-notice-open').getAttribute('data-visible'),'false','backend restart detection removes the badge despite legacy sticky flags');
+  assert.equal(await page.locator('#restart-notice').isVisible(),false);
+  assert.equal(await page.evaluate(()=>calls.length),0,'automatic refresh must not send a manual acknowledgement');cases++;
+
   await load(page,{data_dir:'warning-only',restart_notice:{revision:1,items:[]},provider_warnings:[{provider:'fixture',detail:'Synthetic connection warning'}]});
   await page.locator('#restart-notice-open').click();
   assert.equal(await page.locator('#restart-notice').isVisible(),false);

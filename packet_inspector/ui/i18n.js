@@ -20,6 +20,8 @@ const uiI18n = (() => {
     "配置生效状态":"Configuration status",
     "暂无待生效项目；新请求使用已保存的配置。":"No pending changes. New requests use the saved configuration.",
     "完成上述操作后再确认；确认只清除提醒。":"Confirm after completing the steps above. This only clears the reminder.",
+    "检测到 ChatGPT App 重启后自动清除提醒；无法检测时可手动确认。":"The reminder clears automatically when ChatGPT App restarts. Confirm manually if detection is unavailable.",
+    "检测到 ChatGPT App 重启后自动清除对应提醒；WSL 仍需手动确认。":"ChatGPT App reminders clear automatically after a detected restart. Confirm WSL reconnections manually.",
     "ChatGPT 已重启":"ChatGPT restarted",
     "WSL 已重新连接":"WSL reconnected",
     "ChatGPT 待重启":"ChatGPT needs a restart",

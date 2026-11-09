@@ -3,10 +3,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
 import secrets
 import threading
+import time
 
+from .desktop_restart import desktop_started_at_ns
 from .locking import file_lock
 
 
@@ -17,12 +20,14 @@ VALUE_KEYS = {"context_tokens", "compact_tokens", "capacity_retry", "image_analy
 
 class RestartNotices:
     def __init__(self, data_dir, config_path):
-        identity = hashlib.sha256(str(Path(config_path).resolve()).casefold().encode()).hexdigest()[:16]
+        self.config_path = Path(config_path).resolve()
+        identity = hashlib.sha256(str(self.config_path).casefold().encode()).hexdigest()[:16]
         self.path = Path(data_dir) / ("restart-notice-" + identity + ".json")
         self.guard = threading.RLock()
         self.error = False
         self.pending = []
         self.memory = {"revision": 0, "items": {}}
+        self.next_detection = 0
 
     def _read(self):
         if not self.path.exists():
@@ -43,7 +48,7 @@ class RestartNotices:
                 raise ValueError("invalid restart notice")
         return data
 
-    def snapshot(self):
+    def snapshot(self, *, port_pending=None):
         with self.guard:
             if not self.pending:
                 try:
@@ -51,14 +56,55 @@ class RestartNotices:
                     self.error = False
                 except (OSError, ValueError, TypeError):
                     self.error = True
+            if port_pending is False and not self.error and not self.pending:
+                self._detect_restart()
             return {"revision": self.memory["revision"],
+                    "auto_detect_supported": os.name == "nt",
                     "items": [{k: row[k] for k in ("key", "target", "scope")}
                               for row in self.memory["items"].values()],
                     "error": "待生效记录无法保存或读取，请勿据此判断配置已生效。" if self.error else ""}
 
+    def _detect_restart(self):
+        items = [row for row in self.memory["items"].values() if row["target"] == "chatgpt"]
+        if not items or time.monotonic() < self.next_detection:
+            return
+        self.next_detection = time.monotonic() + 2
+        try:
+            # The checkpoint survives service upgrades. Older writers leave
+            # its revision stale, so the ledger's last write remains a safe
+            # boundary for their notices too.
+            config_changed = self.config_path.stat().st_mtime_ns
+            changed = max(config_changed, self._checkpoint(self.memory) or self.path.stat().st_mtime_ns)
+            started = desktop_started_at_ns()
+            if started is None or not changed < started <= time.time_ns():
+                return
+            if self.config_path.stat().st_mtime_ns != config_changed:
+                return
+            self.acknowledge("chatgpt", self.memory["revision"])
+        except (OSError, ValueError):
+            # Concurrent saves and unreadable process/config state cannot
+            # establish a restart. Keep the reminder and manual confirmation.
+            return
+
+    @staticmethod
+    def _checkpoint(data):
+        checkpoint = data.get("desktop_restart")
+        if (isinstance(checkpoint, dict) and type(checkpoint.get("revision")) is int
+                and checkpoint["revision"] == data["revision"]
+                and type(checkpoint.get("changed_at_ns")) is int and checkpoint["changed_at_ns"] > 0):
+            return checkpoint["changed_at_ns"]
+        return 0
+
+    @staticmethod
+    def _advance(data, changed_at=None):
+        checkpoint = changed_at if changed_at is not None else RestartNotices._checkpoint(data)
+        data["revision"] += 1
+        if checkpoint:
+            data["desktop_restart"] = {"revision": data["revision"], "changed_at_ns": checkpoint}
+
     @staticmethod
     def _apply(data, operation):
-        key, target, scope, changed, before, after = operation
+        key, target, scope, changed, before, after, changed_at = operation
         identity = target + ":" + key + ":" + scope
         previous = data["items"].get(identity)
         if changed and before == after:
@@ -71,7 +117,7 @@ class RestartNotices:
             if changed:
                 row.update(before=baseline, after=after)
             data["items"][identity] = row
-        data["revision"] += 1
+        RestartNotices._advance(data, changed_at if target == "chatgpt" else None)
 
     def _write(self, data):
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -103,8 +149,9 @@ class RestartNotices:
             raise ValueError("invalid restart notice item")
         if changed and before == after:
             return self.snapshot()
-        operation = (key, target, scope, changed, before, after)
+        operation = (key, target, scope, changed, before, after, time.time_ns())
         with self.guard:
+            self.next_detection = 0
             self.pending.append(operation)
             try:
                 self._flush()
@@ -130,7 +177,7 @@ class RestartNotices:
                     if target == "chatgpt" and port_pending:
                         raise ValueError("请先重启请求优化器应用新端口，再重启 ChatGPT App。")
                     data["items"] = {k: v for k, v in data["items"].items() if v["target"] != target}
-                    data["revision"] += 1
+                    self._advance(data)
                     self._write(data)
                     self.memory, self.error = data, False
             except OSError as exc:

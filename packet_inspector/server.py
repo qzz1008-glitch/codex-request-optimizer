@@ -644,10 +644,11 @@ class InspectorServer(ThreadingHTTPServer):
         except Exception as exc:
             profile = {"active": False, "config_error": type(exc).__name__}
         storage = self.store.stats()
+        entry_port = port_status(self.data_dir, self.public_port)
         return {"version": VERSION, "ui_version": VERSION, "capture_enabled": self.settings["capture_enabled"],
                 "connection_state": "connected" if profile.get("active") else "disconnected",
                 "connection_policy": 1, "connection_reload_required": self.connection_reload_required,
-                "restart_notice": self.restart_notices.snapshot(),
+                "restart_notice": self.restart_notices.snapshot(port_pending=bool(entry_port["pending"] or entry_port.get("error"))),
                 "trend_packets_supported": True,
                 "zstd_level": self.settings["zstd_level"],
                 "image_zstd_level": self.settings["image_zstd_level"],
@@ -704,7 +705,7 @@ class InspectorServer(ThreadingHTTPServer):
                 "auto_detect_providers": self.settings["auto_detect_providers"],
                 "provider_routing_supported": True, "upgrade_drain_supported": True,
                 "updates_supported": True,
-                "entry_port_supported": True, "entry_port": port_status(self.data_dir, self.public_port),
+                "entry_port_supported": True, "entry_port": entry_port,
                 "worker_id": self.worker_id, "worker_state": self.worker_state,
                 "public_port": self.public_port,
                 "provider_count": self.provider_sync_result.get("provider_count", len({r["provider"] for r in self.settings["provider_routes"].values()})),
@@ -881,7 +882,8 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/status" and self.command == "GET":
             self._json(200, self.server.status())
         elif path == "/api/restart-notice" and self.command == "GET":
-            self._json(200, self.server.restart_notices.snapshot())
+            entry_port = port_status(self.server.data_dir, self.server.public_port)
+            self._json(200, self.server.restart_notices.snapshot(port_pending=bool(entry_port["pending"] or entry_port.get("error"))))
         elif path == "/api/restart-notice" and self.command == "POST":
             data = json.loads(self._body(8192))
             if not isinstance(data, dict):
