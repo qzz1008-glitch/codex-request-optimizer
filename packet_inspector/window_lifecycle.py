@@ -84,6 +84,7 @@ class WindowLifecycle:
     def __init__(self, window, can_hide):
         self.window, self.can_hide = window, can_hide
         self.exiting = threading.Event()
+        self.exit_guard = threading.Lock()
         self.closed = threading.Event()
         self.hidden = threading.Event()
         self.attention = TaskbarAttention(window)
@@ -104,7 +105,7 @@ class WindowLifecycle:
         return False
 
     def show(self):
-        if self.closed.is_set():
+        if self.exiting.is_set() or self.closed.is_set():
             return
         if str(self.window.native.WindowState) == "Minimized":
             self.window.restore()
@@ -123,6 +124,13 @@ class WindowLifecycle:
         return False
 
     def exit(self):
-        self.exiting.set()
-        if not self.closed.is_set():
-            self.window.destroy()
+        with self.exit_guard:
+            if self.exiting.is_set():
+                return
+            self.exiting.set()
+            try:
+                if not self.closed.is_set():
+                    self.window.destroy()
+            except Exception:
+                self.exiting.clear()
+                raise

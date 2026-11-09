@@ -44,6 +44,22 @@ function fixture(connected) {
 }
 
 (async()=>{
+  {
+    const {context:c,element:node,calls:history}=fixture(false);
+    Object.assign(c,{desktopOpenRevision:0,startupConnectChecked:true,exitFinished:true});
+    Object.assign(c.state.status,{ui_desktop:true,ui_window_opened:0});
+    vm.runInContext(source.slice(source.indexOf('function renderConnectPrompt()'),source.indexOf('function renderExitRequest()')),c);
+    c.refreshStatus=async()=>c.renderConnectPrompt();
+    await c.requestConnection();
+    assert.equal(node('connect-confirm-dialog').open,false,'A completed exit remains final during ordinary polling');
+    c.state.status.ui_window_opened=1;
+    await c.requestConnection();
+    assert.equal(c.exitFinished,false,'Reopening the desktop starts a new connection interaction');
+    assert.equal(node('connect-confirm-dialog').open,true);
+    await c.confirmConnection();
+    assert.equal(c.state.status.profile.active,true);
+    assert.equal(history.filter(call=>call[0]==='link'&&call[1]==='activate').length,1);
+  }
   let {context,element,buttons,calls}=fixture(false);
   context.renderCompressionMode();
   assert.equal(buttons[0].attrs['aria-pressed'],'true');
