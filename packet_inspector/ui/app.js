@@ -1708,7 +1708,7 @@ function setSettingsMessage(text,error=false) {
 function renderSettingsSaveProgress() {
   $("settings-save").setAttribute("aria-busy",String(settingsSaving));
   $("settings-save-label").textContent=t(settingsSaving?"保存中":"保存");
-  const log=$("settings-save-log"),states={running:["…","处理中"],done:["✓","已保存"],error:["×","失败"]};
+  const log=$("settings-save-log"),states={running:["…","处理中"],done:["✓",""],error:["×","失败"]};
   log.replaceChildren(...settingsSaveProgress.steps.map(step=>{
     const item=el("li"),[mark,label]=states[step.state];item.dataset.state=step.state;
     const icon=el("span","settings-step-icon",mark);icon.setAttribute("aria-hidden","true");

@@ -98,6 +98,7 @@ async function run(){
  });
  await noPopup(page);assert.equal(await page.locator('#settings-inline-feedback').getAttribute('role'),'alert');
  assert.equal(await page.locator('#settings-inline-feedback .settings-save-log li').count(),6);
+ assert.equal((await page.locator('#settings-inline-feedback .settings-save-log').textContent()).includes('已保存'),false,'completed steps do not repeat the saved confirmation');
  assert.equal(await page.locator('#settings-inline-feedback [id]').count(),0);
  assert.deepEqual(await geometry(page,settingsIds),beforeSave);
  await page.evaluate(()=>finishSettingsSave());
