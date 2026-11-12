@@ -340,8 +340,9 @@ class LANSharingTests(unittest.TestCase):
         with patch.object(self.owner.sharing, "_host_upstream", return_value=self.target):
             return self.owner.sharing.start_host("127.0.0.1", free_port(), **options)["link"]
 
-    def remote_request(self, link, path="/v1/status", body=None, grant=True, client=None, with_exit=True, exit_link=None):
-        host, port, token, fingerprint = parse_link(link)
+    def remote_request(self, link, path="/v1/status", body=None, grant=True, client=None, with_exit=True, exit_link=None,
+                       kind="quota"):
+        host, port, token, fingerprint = (parse_link if kind == "quota" else parse_egress_link)(link)
         opener = pinned_opener(host, port, fingerprint)
         headers = {"Authorization": "Bearer " + token, CLIENT_HEADER: client or self.guest.sharing.vault.client_id} if grant else {}
         if with_exit and path.startswith(("/v1/responses", "/v1/models")):
@@ -395,39 +396,60 @@ class LANSharingTests(unittest.TestCase):
             return next(row for row in result["credentials"] if row["id"] == identifier)
 
         for kind, controller in (("quota", self.owner.sharing), ("exit", self.owner.egress)):
-            with self.subTest(kind=kind):
+            with self.subTest(kind=kind), \
+                    patch("packet_inspector.sharing.automatic_address", return_value="127.0.0.1"), \
+                    patch("packet_inspector.shared_egress.automatic_address", return_value="127.0.0.1"), \
+                    patch.object(self.owner.sharing, "_host_upstream", return_value=self.target):
                 with patch("packet_inspector.sharing_credentials.time.time", return_value=now - 2 * 86400):
                     identifier, token = vault.issue(kind, kind, expires_at=now - 60)
-                with patch.object(controller, "ensure_service") as start:
-                    for enabled in (False, True, False, True):
-                        row = edit(identifier, enabled=enabled)
-                        self.assertEqual(row["enabled"], enabled)
-                        self.assertEqual(row["expires_at"], now - 60)
-                        self.assertTrue(row["expired"])
+                link = None
+                for enabled in (False, True, False, True):
+                    row = edit(identifier, enabled=enabled)
+                    self.assertEqual(row["enabled"], enabled)
+                    self.assertEqual(row["expires_at"], now - 60)
+                    self.assertTrue(row["expired"])
+                    if enabled:
+                        self.assertIsNotNone(controller.listener, "Expiry rejects use without closing the channel")
+                        link = controller.credential_link(identifier)
+                        code, payload = self.remote_request(link, kind=kind)
+                        self.assertEqual(code, 403)
+                        error = json.loads(payload)
+                        self.assertEqual(error["error"], "sharing_credential_expired" if kind == "quota" else "exit_unavailable")
+                        if kind == "quota":
+                            self.assertIn("已到期", error["message"])
+                    else:
                         self.assertIsNone(controller.listener)
-                    start.assert_not_called()
+                        if link:
+                            with self.assertRaises(OSError):
+                                self.remote_request(link, kind=kind)
                 with self.assertRaisesRegex(SharingError, "已到期"):
                     vault.authenticate(kind, "Bearer " + token, "a" * 64)
-                with patch("packet_inspector.sharing.automatic_address", return_value="127.0.0.1"), \
-                        patch("packet_inspector.shared_egress.automatic_address", return_value="127.0.0.1"), \
-                        patch.object(self.owner.sharing, "_host_upstream", return_value=self.target):
-                    row = edit(identifier, expires_at=now + 2 * 86400)
-                    self.assertTrue(row["enabled"])
-                    self.assertFalse(row["expired"])
-                    self.assertIsNotNone(controller.listener, "Renewing an enabled grant restores its service")
+                listener = controller.listener
+                edit(identifier, label=kind + " expired")
+                other, _ = vault.issue(kind, kind + " other")
+                edit(other, enabled=False)
+                self.assertIs(controller.listener, listener, "An enabled expired grant keeps the channel open")
+                code, result = self.local_api("/api/sharing", {"action": "credential_delete", "id": other})
+                self.assertEqual(code, 200, result)
+                self.assertIs(controller.listener, listener, "Deleting another grant must not close this channel")
+                row = edit(identifier, expires_at=now + 2 * 86400)
+                self.assertTrue(row["enabled"])
+                self.assertFalse(row["expired"])
+                self.assertIs(controller.listener, listener, "Renewal keeps the existing channel")
+                vault.authenticate(kind, "Bearer " + token, "a" * 64)
+                edit(identifier, enabled=False)
+                self.assertIsNone(controller.listener)
+                row = edit(identifier, expires_at=now + 3 * 86400)
+                self.assertFalse(row["enabled"], "Renewing a disabled grant must not enable it")
+                self.assertIsNone(controller.listener)
+                with self.assertRaisesRegex(SharingError, "已停用"):
                     vault.authenticate(kind, "Bearer " + token, "a" * 64)
-                    row = edit(identifier, enabled=False)
-                    self.assertIsNone(controller.listener)
-                    row = edit(identifier, expires_at=now + 3 * 86400)
-                    self.assertFalse(row["enabled"], "Renewing a disabled grant must not enable it")
-                    self.assertIsNone(controller.listener)
-                    with self.assertRaisesRegex(SharingError, "已停用"):
-                        vault.authenticate(kind, "Bearer " + token, "a" * 64)
-                    row = edit(identifier, enabled=True)
-                    self.assertEqual(row["expires_at"], now + 3 * 86400)
-                    self.assertIsNotNone(controller.listener)
-                    vault.authenticate(kind, "Bearer " + token, "a" * 64)
-                    edit(identifier, enabled=False)
+                row = edit(identifier, enabled=True)
+                self.assertEqual(row["expires_at"], now + 3 * 86400)
+                self.assertIsNotNone(controller.listener)
+                vault.authenticate(kind, "Bearer " + token, "a" * 64)
+                edit(identifier, enabled=False)
+        self.assertEqual(self.received, [], "Expired or disabled grants never reach the upstream")
 
     def test_automatic_binding_uses_saved_ports_without_interrupting_active_sharing(self):
         quota, exit_port = free_port(), free_port()
