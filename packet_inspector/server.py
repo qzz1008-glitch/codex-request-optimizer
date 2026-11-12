@@ -935,7 +935,7 @@ class Handler(BaseHTTPRequestHandler):
                         reset = action == "credential_reset"
                         draft = vault.update(data.get("id"), data, reset=reset, dry_run=True)
                         controller = self.server.sharing if draft["kind"] == "quota" else self.server.egress
-                        if (draft["direction"] == "out" and draft["enabled"] and not draft["expired"] and
+                        if (draft["direction"] == "out" and draft["enabled"] and
                                 (data.get("enabled") is True or "expires_at" in data)):
                             controller.ensure_service()
                         if draft["direction"] == "in":
@@ -943,7 +943,7 @@ class Handler(BaseHTTPRequestHandler):
                         else:
                             vault.update(data.get("id"), data, reset=reset)
                         if draft["direction"] == "out" and not any(row["kind"] == draft["kind"] and row["direction"] == "out"
-                                   and row["enabled"] and not row["expired"] for row in vault.rows()):
+                                   and row["enabled"] for row in vault.rows()):
                             if draft["kind"] == "quota":
                                 self.server.sharing.stop_host()
                             else:

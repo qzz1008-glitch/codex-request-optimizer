@@ -644,7 +644,7 @@ class Sharing:
                         if row["kind"] == "exit":
                             controller.local_link = ""
                 if not any(other["kind"] == row["kind"] and other["direction"] == "out" and
-                           other["enabled"] and not other["expired"] for other in self.vault.rows()):
+                           other["enabled"] for other in self.vault.rows()):
                     if row["kind"] == "quota":
                         self.stop_host()
                     else:

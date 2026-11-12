@@ -207,7 +207,7 @@ globalThis.InspectorSharing=(()=>{
   const partial=row=>(data(row).totals?.missing_responses||0)+(data(row).totals?.unpriced_responses||0)>0;
   const money=(value,rows)=>(rows.some(partial)?"≥ ":"")+dollars(value);
   function isActive(row){return row.direction==="in"&&row.id===(row.kind==="quota"?current.client?.active_id:current.egress?.selection?.active_id);}
-  const lending=row=>row.enabled!==false;
+  const lending=row=>row.enabled!==false&&(row.kind==="quota"?current?.host?.running===true:current?.egress?.host?.active===true);
   function expired(row){const d=data(row);return d.expired===true||(Number.isFinite(d.expires_at)&&Date.now()>=d.expires_at*1000);}
   function status(row){return (row.direction==="out"?lending(row):isActive(row))?"启用中":"停用中";}
 
