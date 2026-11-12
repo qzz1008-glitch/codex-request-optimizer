@@ -175,6 +175,7 @@ const uiI18n = (() => {
     "启用":"Enable",
     "停用中":"Disabled",
     "启用中":"Enabled",
+    "已过期":"Expired",
     "使用":"Use",
     "暂无凭据":"No credentials yet",
     "每周刷新":"Weekly reset",
