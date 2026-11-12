@@ -658,12 +658,18 @@ class _ObservedConnection:
         return result
 
     def getresponse(self):
+        sock = self.sock
         if not self.trace:
-            return super().getresponse()
+            response = super().getresponse()
+            if sock is not None:
+                response.inspector_set_read_timeout = sock.settimeout
+            return response
         self.trace.record["phase"] = "response_headers"
         started = time.monotonic()
         try:
             response = super().getresponse()
+            if sock is not None:
+                response.inspector_set_read_timeout = sock.settimeout
             self.trace.record["http_version"] = response.version
             return response
         finally:

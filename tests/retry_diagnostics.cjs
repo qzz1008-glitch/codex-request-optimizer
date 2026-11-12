@@ -7,7 +7,7 @@ const dictionary = vm.runInNewContext(translations.slice(translations.indexOf('c
 let english = false;
 const context = {nf:new Intl.NumberFormat('en-US'), t:key=>english?(dictionary[key]||key):key};
 vm.createContext(context);
-vm.runInContext(source.slice(source.indexOf('function capacityRetryCount('), source.indexOf('function listTokens(')), context);
+vm.runInContext(source.slice(source.indexOf('function autoRetryCount('), source.indexOf('function listTokens(')), context);
 vm.runInContext(source.slice(source.indexOf('function sortInputTokens('),source.indexOf('function sortedTokenPackets(')),context);
 vm.runInContext('class Trends {\n' + source.slice(source.indexOf('  static events(packet)'), source.indexOf('  static markerShape(')) + '\n}\nthis.events=Trends.events;', context);
 function packet(fields={}, count=0) {
@@ -17,6 +17,9 @@ function packet(fields={}, count=0) {
 }
 assert.equal(context.packetProtection({native_retry_advised:true,capacity_retry_count:0}).retry,true);
 assert.deepEqual(Array.from(context.events({native_retry_advised:true})),['retry']);
+assert.equal(context.packetProtection({bad_request_retry_count:2,capacity_retry_count:0}).retry,true);
+assert.equal(context.autoRetryCount({bad_request_retry_count:2,capacity_retry_count:0}),2);
+assert.deepEqual(Array.from(context.events({bad_request_retry_count:2})),['retry']);
 let p = packet({outcome:'capacity_error',capacity_error_seen:true,stop_reason:'retry_limit'},3);
 assert.equal(context.packetProtection(p).retry, true);
 assert.deepEqual(Array.from(context.events(p)), ['retry']);

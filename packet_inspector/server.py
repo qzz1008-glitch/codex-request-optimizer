@@ -47,6 +47,8 @@ from .installation import manage_installation
 from .startup import configure_startup, startup_supported
 from .native_retry import (DEFAULT_RETRIES, MAX_RETRIES, DEFAULT_DELAY_SECONDS, MAX_DELAY_SECONDS,
                            NativeRetryStream, prepare_http_error)
+from .bad_request_retry import (DEFAULT_RETRIES as DEFAULT_BAD_REQUEST_RETRIES,
+                                MAX_RETRIES as MAX_BAD_REQUEST_RETRIES, retry_bad_request)
 from .response_events import notify
 from .http_io import UPSTREAM_READ_TIMEOUT_SECONDS
 from .retry_diagnostics import RetryJournal, ResponseObservation
@@ -169,6 +171,8 @@ class InspectorServer(ThreadingHTTPServer):
                          "start_on_login": False, "capacity_retry_enabled": False,
                          "capacity_retry_max_retries": DEFAULT_RETRIES,
                          "capacity_retry_delay_seconds": DEFAULT_DELAY_SECONDS,
+                         "bad_request_retry_enabled": False,
+                         "bad_request_retry_max_retries": DEFAULT_BAD_REQUEST_RETRIES,
                          "image_isolation_enabled": False, "image_analysis_mode": "native", "image_save_dir": "",
                          "auto_detect_providers": True, "provider_routes": {},
                           "log_dir": "", "cache_dir": "",
@@ -189,6 +193,12 @@ class InspectorServer(ThreadingHTTPServer):
         self.settings["capacity_retry_delay_seconds"] = (
             min(delay, MAX_DELAY_SECONDS) if isinstance(delay, int) and not isinstance(delay, bool) and delay >= 1
             else DEFAULT_DELAY_SECONDS)
+        limit = self.settings["bad_request_retry_max_retries"]
+        self.settings["bad_request_retry_max_retries"] = (
+            min(limit, MAX_BAD_REQUEST_RETRIES) if isinstance(limit, int) and not isinstance(limit, bool) and limit >= 1
+            else DEFAULT_BAD_REQUEST_RETRIES)
+        if not isinstance(self.settings["bad_request_retry_enabled"], bool):
+            self.settings["bad_request_retry_enabled"] = False
         if upstream:
             self.settings["upstream"] = validate_upstream(upstream)
         elif not self.settings.get("upstream"):
@@ -668,6 +678,9 @@ class InspectorServer(ThreadingHTTPServer):
                 "capacity_retry_delay_seconds": self.settings["capacity_retry_delay_seconds"],
                 "capacity_retry_mode": "native",
                 "capacity_retry_supported": True,
+                "bad_request_retry_enabled": self.settings["bad_request_retry_enabled"],
+                "bad_request_retry_max_retries": self.settings["bad_request_retry_max_retries"],
+                "bad_request_retry_supported": True,
                 "sharing_settings_supported": True,
                 "upgrade_prepare_supported": True,
                 "sharing_handover_protocol": SHARING_HANDOVER_PROTOCOL if os.name == "nt" else 0,
@@ -1123,7 +1136,7 @@ class Handler(BaseHTTPRequestHandler):
                 if not candidate["packet_size_protection_enabled"]:
                     candidate["auto_zstd_level_enabled"] = False
                 for key in ("capture_enabled",
-                            "start_on_login", "capacity_retry_enabled"):
+                            "start_on_login", "capacity_retry_enabled", "bad_request_retry_enabled"):
                     if key in data:
                         if not isinstance(data[key], bool):
                             raise ValueError("invalid boolean setting: " + key)
@@ -1145,6 +1158,7 @@ class Handler(BaseHTTPRequestHandler):
                                        ("max_packets", 10, MAX_PACKETS), ("max_detail_packets", 0, MAX_PACKETS),
                                        ("sharing_port", 1, 65535), ("egress_port", 1, 65535),
                                        ("capacity_retry_max_retries", 1, MAX_RETRIES),
+                                       ("bad_request_retry_max_retries", 1, MAX_BAD_REQUEST_RETRIES),
                                        ("capacity_retry_delay_seconds", 1, MAX_DELAY_SECONDS)):
                     if key in data:
                         value = data[key]
@@ -1603,6 +1617,8 @@ class Handler(BaseHTTPRequestHandler):
             return settings["capacity_retry_enabled"], settings["capacity_retry_delay_seconds"]
         native_policy = current_retry_policy if capacity_retry else None
         response_path = urlsplit(suffix).path.rstrip("/")
+        bad_request_retry_enabled = (retry_settings["bad_request_retry_enabled"] and self.command == "POST"
+                                     and response_path.endswith(("/responses", "/responses/compact")))
         diagnostic = None
         if self.command == "POST" and (response_path.endswith("/responses") or response_path.endswith("/responses/compact")):
             try:
@@ -1611,23 +1627,27 @@ class Handler(BaseHTTPRequestHandler):
                     endpoint="compact" if response_path.endswith("/compact") else "responses",
                     enabled=retry_settings["capacity_retry_enabled"], eligible=response_path.endswith("/responses"),
                     max_retries=retry_settings["capacity_retry_max_retries"],
-                    on_summary=lambda summary: update(capacity_retry_count=summary["retry_count"],
+                    bad_request_enabled=bad_request_retry_enabled,
+                    bad_request_max_retries=retry_settings["bad_request_retry_max_retries"],
+                    on_summary=lambda summary: update(capacity_retry_count=max(0, summary["retry_count"]-summary["bad_request_retry_count"]),
+                                                       bad_request_retry_count=summary["bad_request_retry_count"],
                                                        capacity_retry_diagnostic=summary))
             except Exception as exc:
                 self.server.retry_journal._error(exc)
-        if capacity_retry or trigger_size is not None:
+        if capacity_retry or bad_request_retry_enabled or trigger_size is not None:
             headers = {key: value for key, value in headers.items() if key.lower() != "accept-encoding"}
             headers["Accept-Encoding"] = "identity"
         request = Request(upstream + suffix,
                           data=outbound_body if body or self.command in {"POST", "PUT", "PATCH"} else None,
                           headers=headers, method=self.command)
-        network_trace = self.server.network_diagnostics.request(upstream + suffix, self.command, headers, outbound_body,
-            opener=request_opener,
-            packet_id=packet_id, session_id=capture_meta.get("thread_id"),
-            kind="compact" if response_path.endswith("/compact") else "responses",
-            ingress_bytes=len(body), ingress_encoding=self.headers.get("Content-Encoding", "identity"),
-            outgoing_encoding=outbound_encoding, zstd_level=applied_zstd_level,
-            preparation_ms=round((time.monotonic() - started) * 1000, 1))
+        def new_network_trace():
+            return self.server.network_diagnostics.request(upstream + suffix, self.command, headers, outbound_body,
+                opener=request_opener, packet_id=packet_id, session_id=capture_meta.get("thread_id"),
+                kind="compact" if response_path.endswith("/compact") else "responses",
+                ingress_bytes=len(body), ingress_encoding=self.headers.get("Content-Encoding", "identity"),
+                outgoing_encoding=outbound_encoding, zstd_level=applied_zstd_level,
+                preparation_ms=round((time.monotonic() - started) * 1000, 1))
+        network_trace = new_network_trace()
         sent_headers = False
         received = 0
         observation = None
@@ -1635,23 +1655,40 @@ class Handler(BaseHTTPRequestHandler):
         network_error = None
         relay_state, relay_error, diagnostic_error = "relay_error", "", ""
         relay_phase = "upstream_open"
-        try:
+        def open_attempt(retry, timeout):
+            nonlocal network_trace
+            if retry:
+                network_trace = new_network_trace()
+            notify(diagnostic.record if diagnostic else None, "attempt_started", attempt=retry + 1,
+                   reason="bad_request" if retry else "initial", timeout_ms=round(timeout * 1000))
             try:
-                # A separate local upstream can transform the body again, so its
-                # final upload is unknown. Direct uploads use these exact bytes.
-                if not local_upstream:
-                    update(outbound_wire_bytes=len(outbound_body),
-                           outbound_content_encoding=outbound_encoding)
-                opener = request_opener
-                notify(diagnostic.record if diagnostic else None, "attempt_started", attempt=1)
                 with network_trace.active():
-                    response = opener.open(request, timeout=UPSTREAM_READ_TIMEOUT_SECONDS)
+                    response = request_opener.open(request, timeout=timeout)
             except HTTPError as exc:
                 response = exc
-            if shared_client:
-                response = prepare_shared_error(response)
             network_trace.response(response)
             notify(diagnostic.record if diagnostic else None, "response_headers", status=response.status)
+            return response
+
+        def rejected_attempt(prefix):
+            network_trace.feed(prefix)
+            network_trace.record.update(downstream_headers_sent=False, relay_state="retrying")
+            network_trace.finish()
+
+        try:
+            # A separate local upstream can transform the body again, so its
+            # final upload is unknown. Direct uploads use these exact bytes.
+            if not local_upstream:
+                update(outbound_wire_bytes=len(outbound_body), outbound_content_encoding=outbound_encoding)
+            response = open_attempt(0, UPSTREAM_READ_TIMEOUT_SECONDS)
+            if bad_request_retry_enabled:
+                response = retry_bad_request(response, open_attempt,
+                    max_retries=retry_settings["bad_request_retry_max_retries"], started=started,
+                    enabled=lambda: self.server.settings["bad_request_retry_enabled"],
+                    before_retry=rejected_attempt, record=update,
+                    on_event=diagnostic.record if diagnostic else None)
+            if shared_client:
+                response = prepare_shared_error(response)
             response = prepare_http_error(response, native_policy, update, diagnostic.record if diagnostic else None)
             with response:
                 status = response.status

@@ -842,15 +842,15 @@ function packetStatus(p) {
   if(p.state==="complete")return "complete";
   return "waiting";
 }
-function capacityRetryCount(p) {
-  return Number.isInteger(p.capacity_retry_count)&&p.capacity_retry_count>0?p.capacity_retry_count:0;
+function autoRetryCount(p) {
+  return [p.capacity_retry_count,p.bad_request_retry_count].reduce((sum,n)=>sum+(Number.isInteger(n)&&n>0?n:0),0);
 }
 function packetProtection(p) {
   return {
     predictive:p.usage_override_applied===true,
     overflow:p.overflow_compaction_calls>0 || p.overflow_cache_hit===true ||
       typeof p.relay_error==="string" && p.relay_error.startsWith("overflow_"),
-    retry:p.native_retry_advised===true||capacityRetryCount(p)>0,
+    retry:p.native_retry_advised===true||autoRetryCount(p)>0,
     optimization:p.image_isolation_applied===true||Number.isSafeInteger(p.image_isolation_removed)&&p.image_isolation_removed>0
   };
 }
@@ -1076,7 +1076,7 @@ function renderList() {
   const sessionCount=selectedSessionGroup()?.packet_count;
   const total=!filtered?state.status.storage.count:!state.filters.kind && !state.filters.status && state.filters.thread && Number.isFinite(sessionCount)?sessionCount:null;
   setText($("record-count"),total===null?nf.format(state.packets.length)+(state.canLoadMore?"+":"")+t(" 条"):nf.format(total)+t(" 条"));
-  const signature=JSON.stringify([state.selected,state.status.budget_bytes,state.older,state.canLoadMore,state.sort,state.direction,state.filters,state.packets.map(p=>[p.id,p.created,p.method,p.is_compaction,requestKind(p),p.state,p.status,p.duration_ms,p.decoded_bytes,p.outbound_wire_bytes,p.outbound_content_encoding,p.thread_id,p.overflow_compaction_calls,p.overflow_cache_hit,p.overflow_original_wire_bytes,p.usage_override_applied,p.capacity_retry_count,p.native_retry_advised,p.native_retry_delay_ms,p.relay_error,p.upstream_usage?.input_tokens,p.image_isolation_applied,p.image_isolation_removed,p.image_paths,p.image_path_rewrites])]);
+  const signature=JSON.stringify([state.selected,state.status.budget_bytes,state.older,state.canLoadMore,state.sort,state.direction,state.filters,state.packets.map(p=>[p.id,p.created,p.method,p.is_compaction,requestKind(p),p.state,p.status,p.duration_ms,p.decoded_bytes,p.outbound_wire_bytes,p.outbound_content_encoding,p.thread_id,p.overflow_compaction_calls,p.overflow_cache_hit,p.overflow_original_wire_bytes,p.usage_override_applied,p.capacity_retry_count,p.bad_request_retry_count,p.native_retry_advised,p.native_retry_delay_ms,p.relay_error,p.upstream_usage?.input_tokens,p.image_isolation_applied,p.image_isolation_removed,p.image_paths,p.image_path_rewrites])]);
   if(signature===state.listVersion)return;
   state.listVersion=signature;
   const root=$("packet-rows"), fragment=document.createDocumentFragment(); renderSort();
@@ -1096,7 +1096,7 @@ function renderList() {
     const after=el("span","packet-size",compact(upload));
     after.title=upload===null?t("转发请求大小未记录"):t("转发请求：")+bytes(upload);
     row.dataset.packetId=p.id;row.dataset.session=p.thread_id||"";row.title=(states[p.state]||p.state)+(p.status?" · HTTP "+p.status:"")+"\n"+(p.thread_id?"session_id: "+p.thread_id:t("会话未识别"));
-    if(flags.retry)row.title+="\n"+(p.native_retry_advised===true?t("已向 Codex 发送重试提示"):t("自动重试：{count} 次").replace("{count}",nf.format(capacityRetryCount(p))));
+    if(flags.retry)row.title+="\n"+(p.native_retry_advised===true?t("已向 Codex 发送重试提示"):t("自动重试：{count} 次").replace("{count}",nf.format(autoRetryCount(p))));
     if(protection.length)after.title+=t("\n已触发请求保护：")+protection.join(" · ");
     for (const [index,value] of [time,type,before].entries()) {
       const td=el("td",index===1?"packet-kind":"");
@@ -1229,6 +1229,7 @@ function fillSettings() {
   $("capacity-retry").disabled=settingsSaving||!s.capacity_retry_supported;
   $("capacity-retry-count").disabled=settingsSaving||s.capacity_retry_mode!=="native"||!Number.isInteger(s.capacity_retry_max_retries);
   $("capacity-retry-delay").disabled=settingsSaving||s.capacity_retry_mode!=="native"||!Number.isInteger(s.capacity_retry_delay_seconds);
+  fillBadRequestRetry();
   fillImageAnalysisMode();
   $("startup-hint").textContent=t(s.start_on_login_supported?(s.startup_state_known===false?"无法读取开机启动状态，请重新保存设置。":"登录 Windows 后自动启动。"):"开机启动仅支持已安装的 Windows 版本。");
   $("runtime-settings-message").hidden=!!s.capacity_retry_supported;
@@ -1653,6 +1654,13 @@ function fillContextSettings(data) {
   }
   syncContextDefaults();
 }
+function fillBadRequestRetry() {
+  const s=state.status,enabled=$("bad-request-retry"),count=$("bad-request-retry-count");
+  if(!settingsEditing){enabled.checked=!!s.bad_request_retry_enabled;count.value=s.bad_request_retry_max_retries??1;}
+  enabled.disabled=settingsSaving||!s.bad_request_retry_supported;
+  count.disabled=enabled.disabled||!enabled.checked;
+}
+$("bad-request-retry").addEventListener("change",fillBadRequestRetry);
 function renderContextPlaceholders() {
   if(!contextSettings)return;
   for(const key of ["context","compact"])$(key+"-tokens").placeholder="";
@@ -1678,6 +1686,8 @@ function readSettingsDraft() {
     capacity_retry_enabled:$("capacity-retry").checked,
     capacity_retry_max_retries:$("capacity-retry-count").value,
     capacity_retry_delay_seconds:$("capacity-retry-delay").value,
+    bad_request_retry_enabled:$("bad-request-retry").checked,
+    bad_request_retry_max_retries:$("bad-request-retry").checked?$("bad-request-retry-count").value:String(state.status.bad_request_retry_max_retries??1),
     image_analysis_mode:selectedImageAnalysisMode(),
     image_save_dir:$("image-save-dir").value,
     log_dir:$("log-dir").value,
@@ -1756,6 +1766,8 @@ async function saveSettings() {
     ["capacity_retry_enabled","capacity_retry_enabled",draft.capacity_retry_enabled,s.capacity_retry_supported],
     ["capacity_retry_max_retries","capacity_retry_max_retries",Number(draft.capacity_retry_max_retries),Number.isInteger(s.capacity_retry_max_retries)],
     ["capacity_retry_delay_seconds","capacity_retry_delay_seconds",Number(draft.capacity_retry_delay_seconds),Number.isInteger(s.capacity_retry_delay_seconds)],
+    ["bad_request_retry_enabled","bad_request_retry_enabled",draft.bad_request_retry_enabled,s.bad_request_retry_supported],
+    ["bad_request_retry_max_retries","bad_request_retry_max_retries",Number(draft.bad_request_retry_max_retries),s.bad_request_retry_supported],
     ["image_analysis_mode","image_analysis_mode" in s?"image_analysis_mode":"image_isolation_enabled",
       "image_analysis_mode" in s?draft.image_analysis_mode:draft.image_analysis_mode==="optimized",
       s.image_isolation_supported||["native","disabled","optimized"].includes(s.image_analysis_mode)],
@@ -1893,7 +1905,7 @@ async function openSettings() {
 function packetDetailVersion(p) {
   return JSON.stringify([p.state,p.status,p.duration_ms,p.outbound_wire_bytes,p.outbound_content_encoding,
     p.relay_content_encoding,p.relay_zstd_level,p.transport_content_encoding,p.transport_zstd_level,
-    p.usage_override_request_bytes,p.usage_override_applied,p.capacity_retry_count,p.native_retry_advised,
+    p.usage_override_request_bytes,p.usage_override_applied,p.capacity_retry_count,p.bad_request_retry_count,p.native_retry_advised,
     p.native_retry_delay_ms,p.capacity_retry_diagnostic?.updated,p.details_evicted,
     p.upstream_usage,p.reported_usage,p.overflow_compaction_calls,p.overflow_cache_hit,p.overflow_original_wire_bytes,
     p.relay_wire_bytes,p.image_isolation_applied,p.image_isolation_removed,p.image_paths,p.image_path_rewrites,
@@ -1925,7 +1937,7 @@ async function selectPacket(id,refresh=false,expectedListRequest=null) {
 }
 function renderProtectionPanelState() {
   const panel=$("packet-protection-panel");if(!panel)return;
-  const enabled={size:state.status?.packet_size_protection_enabled===true,retry:state.status?.capacity_retry_enabled===true,
+  const enabled={size:state.status?.packet_size_protection_enabled===true,retry:state.status?.capacity_retry_enabled===true||state.status?.bad_request_retry_enabled===true,
     optimization:state.status?.image_analysis_mode?state.status.image_analysis_mode==="optimized":state.status?.image_isolation_enabled===true};
   const rows=[...panel.querySelectorAll("[data-protection]")];
   const disabled=!rows.some(row=>enabled[row.dataset.protection]);
@@ -1935,7 +1947,7 @@ function renderProtectionPanelState() {
   for(const row of rows) {
     const inactive=!enabled[row.dataset.protection];
     row.classList.toggle("protection-inactive",inactive);
-    const hint={retry:"可在设置中开启容量重试",optimization:"可在设置中开启解图优化"};
+    const hint={retry:"可在设置中开启自动重试",optimization:"可在设置中开启解图优化"};
     row.title=inactive?t(hint[row.dataset.protection]||"可在设置中开启请求大小保护"):"";
   }
 }
@@ -2000,7 +2012,7 @@ function renderCompression(m) {
     const after=[m.relay_wire_bytes,m.outbound_wire_bytes].find(value=>Number.isSafeInteger(value)&&value>=0);
     fact(overflow,t("处理后大小"),size(after));
   }
-  const retryCount=capacityRetryCount(m),retry=item("retry","retry");
+  const retryCount=autoRetryCount(m),retry=item("retry","retry");
   if(retry)fact(retry,t("重试次数"),retryCount>0?nf.format(retryCount):"—");
   const optimization=item("optimization","optimization");
   if(optimization) {
@@ -2641,7 +2653,7 @@ class TokenTrendView {
     const result=[];
     if(packet.usage_override_applied===true)result.push("predictive");
     if(packet.overflow_compaction_calls>0||packet.overflow_cache_hit===true||String(packet.relay_error||"").startsWith("overflow_"))result.push("overflow");
-    if(packet.native_retry_advised===true||packet.capacity_retry_count>0)result.push("retry");
+    if(packet.native_retry_advised===true||[packet.capacity_retry_count,packet.bad_request_retry_count].some(n=>Number.isInteger(n)&&n>0))result.push("retry");
     if(packet.is_compaction)result.push("compact");
     return result;
   }

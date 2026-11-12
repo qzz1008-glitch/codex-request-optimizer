@@ -64,9 +64,10 @@ class RetryJournal:
         self.last_error = type(error).__name__
 
     def begin(self, *, packet_id=None, session_id="", endpoint="responses", enabled=False,
-              eligible=True, max_retries=3, on_summary=None):
+              eligible=True, max_retries=3, on_summary=None, bad_request_enabled=False, bad_request_max_retries=1):
         return RetryTrace(self, packet_id=packet_id, session_id=session_id, endpoint=endpoint,
-                          enabled=enabled, eligible=eligible, max_retries=max_retries, on_summary=on_summary)
+                          enabled=enabled, eligible=eligible, max_retries=max_retries, on_summary=on_summary,
+                          bad_request_enabled=bad_request_enabled, bad_request_max_retries=bad_request_max_retries)
 
     def save(self, document):
         raw = json.dumps(document, ensure_ascii=False, separators=(",", ":"))
@@ -160,7 +161,8 @@ class RetryJournal:
 
 
 class RetryTrace:
-    def __init__(self, journal, *, packet_id, session_id, endpoint, enabled, eligible, max_retries, on_summary):
+    def __init__(self, journal, *, packet_id, session_id, endpoint, enabled, eligible, max_retries, on_summary,
+                 bad_request_enabled=False, bad_request_max_retries=1):
         self.journal, self.on_summary = journal, on_summary
         now = journal.clock()
         self.document = {"version": 2, "mode": "native", "id": packet_id or uuid.uuid4().hex, "packet_id": packet_id,
@@ -168,9 +170,12 @@ class RetryTrace:
                          "endpoint": endpoint if endpoint in {"responses", "compact"} else "other", "created": now, "updated": now,
                          "enabled": bool(enabled), "eligible": bool(eligible), "max_retries": max_retries,
                          "attempt_count": 0, "retry_count": 0, "scheduled_retries": 0,
+                         "bad_request_retry_enabled": bool(bad_request_enabled),
+                         "bad_request_retry_max_retries": bad_request_max_retries, "bad_request_retry_count": 0,
                          "capacity_error_seen": False, "final_capacity_error": False,
                           "state": "active", "outcome": "pending",
-                          "stop_reason": "endpoint_not_eligible" if not eligible else "disabled" if not enabled else "",
+                          "stop_reason": ("" if bad_request_enabled else
+                                          "endpoint_not_eligible" if not eligible else "disabled" if not enabled else ""),
                           "events_dropped": 0, "events": []}
         self.saved = False
         self.record("request_started")
@@ -180,7 +185,8 @@ class RetryTrace:
         keys = ("version", "id", "updated", "enabled", "eligible", "max_retries", "attempt_count", "retry_count",
                 "scheduled_retries", "capacity_error_seen", "final_capacity_error", "state", "outcome",
                  "stop_reason", "probe_reason", "http_status", "first_output_event", "terminal_event", "observation_reason",
-                 "native_retry_advised", "native_retry_delay_ms")
+                 "native_retry_advised", "native_retry_delay_ms", "bad_request_retry_enabled",
+                 "bad_request_retry_max_retries", "bad_request_retry_count", "bad_request_retry_stop_reason")
         return {**{key: self.document[key] for key in keys if key in self.document}, "journal_saved": self.saved}
 
     def record(self, event, **fields):
@@ -198,6 +204,8 @@ class RetryTrace:
         if event == "attempt_started":
             d["attempt_count"] = fields["attempt"]
             d["retry_count"] = max(0, fields["attempt"] - 1)
+            if fields.get("reason") == "bad_request":
+                d["bad_request_retry_count"] = max(0, fields["attempt"] - 1)
             for key in ("terminal_event", "probe_reason", "http_status", "first_output_event", "observation_reason"):
                 d.pop(key, None)
             d["final_capacity_error"] = False
@@ -205,6 +213,10 @@ class RetryTrace:
             d["native_retry_advised"] = True
             d["native_retry_delay_ms"] = fields["delay_ms"]
             d["stop_reason"] = "native_retry_delegated"
+        elif event == "bad_request_retry_stopped":
+            d["bad_request_retry_stop_reason"] = safe.get("reason", "")
+        elif event == "bad_request_retry_finished":
+            d["bad_request_retry_stop_reason"] = "response_selected"
         elif event == "response_headers":
             d["http_status"] = fields["status"]
         elif event == "probe_finished":
