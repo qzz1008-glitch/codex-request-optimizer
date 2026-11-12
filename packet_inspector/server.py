@@ -935,7 +935,8 @@ class Handler(BaseHTTPRequestHandler):
                         reset = action == "credential_reset"
                         draft = vault.update(data.get("id"), data, reset=reset, dry_run=True)
                         controller = self.server.sharing if draft["kind"] == "quota" else self.server.egress
-                        if draft["direction"] == "out" and data.get("enabled") is True:
+                        if (draft["direction"] == "out" and draft["enabled"] and not draft["expired"] and
+                                (data.get("enabled") is True or "expires_at" in data)):
                             controller.ensure_service()
                         if draft["direction"] == "in":
                             self.server.sharing.rename_credential(draft["id"], draft["label"])

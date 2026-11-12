@@ -384,6 +384,51 @@ class LANSharingTests(unittest.TestCase):
         finally:
             client.close()
 
+    def test_credential_toggle_and_expiry_are_independent(self):
+        vault = self.owner.sharing.vault
+        now = time.time()
+        self.owner.settings["sharing_port"] = free_port()
+
+        def edit(identifier, **changes):
+            code, result = self.local_api("/api/sharing", {"action": "credential_edit", "id": identifier, **changes})
+            self.assertEqual(code, 200, result)
+            return next(row for row in result["credentials"] if row["id"] == identifier)
+
+        for kind, controller in (("quota", self.owner.sharing), ("exit", self.owner.egress)):
+            with self.subTest(kind=kind):
+                with patch("packet_inspector.sharing_credentials.time.time", return_value=now - 2 * 86400):
+                    identifier, token = vault.issue(kind, kind, expires_at=now - 60)
+                with patch.object(controller, "ensure_service") as start:
+                    for enabled in (False, True, False, True):
+                        row = edit(identifier, enabled=enabled)
+                        self.assertEqual(row["enabled"], enabled)
+                        self.assertEqual(row["expires_at"], now - 60)
+                        self.assertTrue(row["expired"])
+                        self.assertIsNone(controller.listener)
+                    start.assert_not_called()
+                with self.assertRaisesRegex(SharingError, "已到期"):
+                    vault.authenticate(kind, "Bearer " + token, "a" * 64)
+                with patch("packet_inspector.sharing.automatic_address", return_value="127.0.0.1"), \
+                        patch("packet_inspector.shared_egress.automatic_address", return_value="127.0.0.1"), \
+                        patch.object(self.owner.sharing, "_host_upstream", return_value=self.target):
+                    row = edit(identifier, expires_at=now + 2 * 86400)
+                    self.assertTrue(row["enabled"])
+                    self.assertFalse(row["expired"])
+                    self.assertIsNotNone(controller.listener, "Renewing an enabled grant restores its service")
+                    vault.authenticate(kind, "Bearer " + token, "a" * 64)
+                    row = edit(identifier, enabled=False)
+                    self.assertIsNone(controller.listener)
+                    row = edit(identifier, expires_at=now + 3 * 86400)
+                    self.assertFalse(row["enabled"], "Renewing a disabled grant must not enable it")
+                    self.assertIsNone(controller.listener)
+                    with self.assertRaisesRegex(SharingError, "已停用"):
+                        vault.authenticate(kind, "Bearer " + token, "a" * 64)
+                    row = edit(identifier, enabled=True)
+                    self.assertEqual(row["expires_at"], now + 3 * 86400)
+                    self.assertIsNotNone(controller.listener)
+                    vault.authenticate(kind, "Bearer " + token, "a" * 64)
+                    edit(identifier, enabled=False)
+
     def test_automatic_binding_uses_saved_ports_without_interrupting_active_sharing(self):
         quota, exit_port = free_port(), free_port()
         while exit_port == quota:
