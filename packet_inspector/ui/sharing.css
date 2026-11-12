@@ -115,6 +115,8 @@
 .sharing-row-status[data-state=disabled]{color:var(--muted)}
 .sharing-row-status[data-state=disabled] .sharing-cell-value{color:var(--muted);background:color-mix(in srgb,var(--muted) 7%,var(--panel));border-color:color-mix(in srgb,var(--muted) 22%,var(--line))}
 .sharing-row-status .sharing-cell-value:hover{filter:brightness(.96)}
+.sharing-row-status .sharing-cell-value:disabled{opacity:1}
+.sharing-row-status .sharing-cell-value[aria-busy=true]::before{display:none}
 .sharing-expiry-cell{display:inline-flex;align-items:center;width:calc(10ch + 16px)}
 .sharing-table .sharing-expiry-trigger{display:inline-flex;align-items:center;justify-content:space-between;width:100%;text-align:left}
 .sharing-expiry-cell[data-expired=true],.sharing-table .sharing-expiry-cell[data-expired=true]>.sharing-expiry-trigger{color:var(--warn);text-decoration:underline dotted;text-underline-offset:3px}
