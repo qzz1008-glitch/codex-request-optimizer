@@ -244,7 +244,7 @@ globalThis.InspectorSharing=(()=>{
     const scale=Math.min(1,Math.max(0,width-recent-Math.min(120,width*.2))/shared);
     const widths=[upper[0]*scale,0,upper[3]*scale,recent,upper[5]*scale,upper[6]*scale];
     widths[1]=width-widths.reduce((sum,value)=>sum+value,0);
-    target.classList.toggle("sharing-network-narrow-actions",widths[5]<(document.documentElement?.lang?.startsWith("en")?136:112));
+    target.classList.toggle("sharing-network-narrow-actions",widths[5]<(document.documentElement?.lang?.startsWith("en")?158:130));
     target.style.width=target.style.minWidth="";
     columns.forEach((column,index)=>{column.style.width=widths[index]+"px";});
   }
