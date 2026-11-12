@@ -13,7 +13,7 @@ A local request analysis and optimization tool for Codex on Windows x64 (64-bit)
 - **🧠 Context settings**: adjust the context window and automatic compaction threshold, or restore model defaults.
 - **🖼️ Image optimization**: choose Native, Disable, or Optimize mode. Optimization uses a separate analysis session to reduce image content in the main context. Size protection can also downscale oversized image requests, which may lose detail.
 - **🔁 Capacity retries**: let Codex wait and retry automatically when a model is at capacity. Set the retry count and delay.
-- **🔁 Request error retries**: optionally intercept a generic 400 containing only `Bad Request` and make 1–9 additional attempts in the relay. Disabled by default, with one retry when enabled; field and parameter errors pass through unchanged.
+- **🔁 Request error retries**: optionally intercept a generic 400 containing only `Bad Request` and make 1–9 additional attempts in the relay. Disabled by default, with three retries when enabled; field and parameter errors pass through unchanged.
 - **🔎 Analysis and trends**: inspect request sizes, token usage, errors, and redacted JSON by session. View trends, request changes, and protection events.
 - **🤝 LAN sharing**: lend or borrow Codex quota and network exits independently. Manage credentials, expiry, reference spending limits, and weekly resets.
 
