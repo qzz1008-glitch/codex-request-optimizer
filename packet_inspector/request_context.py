@@ -95,7 +95,7 @@ TREND_METADATA_FIELDS = (
     "is_compaction", "request_kind", "request_purpose", "session_kind", "image_isolation_worker",
     "usage_override_applied", "usage_override_request_bytes", "overflow_compaction_calls",
     "overflow_cache_hit", "overflow_original_wire_bytes", "relay_error", "capacity_retry_count",
-    "native_retry_advised", "outbound_wire_bytes",
+    "native_retry_advised", "bad_request_retry_count", "outbound_wire_bytes",
 )
 
 
