@@ -20,14 +20,14 @@ async function run(){
   await page.evaluate(()=>{
     window.$=id=>document.getElementById(id);window.settingsSaving=false;window.settingsEditing=false;
     window.settingsLanguage=null;window.selectedImageAnalysisMode=()=> 'native';
-    window.state={status:{bad_request_retry_enabled:false,bad_request_retry_max_retries:1,bad_request_retry_supported:true}};
+    window.state={status:{bad_request_retry_enabled:false,bad_request_retry_supported:true}};
     window.settingsBaseline=null;
   });
   await page.addScriptTag({content:controls+'\n'+draft});
   await page.evaluate(()=>{fillBadRequestRetry();settingsEditing=true;settingsBaseline=readSettingsDraft();document.getElementById('settings-dialog').showModal();});
   const enabled=page.locator('#bad-request-retry'),count=page.locator('#bad-request-retry-count');
   assert.equal(await enabled.isChecked(),false);assert.equal(await enabled.isDisabled(),false);
-  assert.equal(await count.inputValue(),'1');assert.equal(await count.isDisabled(),true);cases++;
+  assert.equal(await count.inputValue(),'3');assert.equal(await count.isDisabled(),true);cases++;
   for(const language of ['zh','en']){
     await page.evaluate(language=>{uiI18n.setLanguage(language,{persist:false});settingsLanguage=language;settingsBaseline=readSettingsDraft();},language);
     await enabled.check();assert.equal(await count.isDisabled(),false);

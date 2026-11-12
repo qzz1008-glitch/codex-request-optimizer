@@ -1656,7 +1656,7 @@ function fillContextSettings(data) {
 }
 function fillBadRequestRetry() {
   const s=state.status,enabled=$("bad-request-retry"),count=$("bad-request-retry-count");
-  if(!settingsEditing){enabled.checked=!!s.bad_request_retry_enabled;count.value=s.bad_request_retry_max_retries??1;}
+  if(!settingsEditing){enabled.checked=!!s.bad_request_retry_enabled;count.value=s.bad_request_retry_max_retries??3;}
   enabled.disabled=settingsSaving||!s.bad_request_retry_supported;
   count.disabled=enabled.disabled||!enabled.checked;
 }
@@ -1687,7 +1687,7 @@ function readSettingsDraft() {
     capacity_retry_max_retries:$("capacity-retry-count").value,
     capacity_retry_delay_seconds:$("capacity-retry-delay").value,
     bad_request_retry_enabled:$("bad-request-retry").checked,
-    bad_request_retry_max_retries:$("bad-request-retry").checked?$("bad-request-retry-count").value:String(state.status.bad_request_retry_max_retries??1),
+    bad_request_retry_max_retries:$("bad-request-retry").checked?$("bad-request-retry-count").value:String(state.status.bad_request_retry_max_retries??3),
     image_analysis_mode:selectedImageAnalysisMode(),
     image_save_dir:$("image-save-dir").value,
     log_dir:$("log-dir").value,

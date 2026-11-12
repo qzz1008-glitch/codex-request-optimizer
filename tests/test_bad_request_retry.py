@@ -149,7 +149,7 @@ class BadRequestRelayTests(unittest.TestCase):
 
     def test_new_install_stays_off_until_enabled(self):
         self.assertFalse(self.initial_settings["bad_request_retry_enabled"])
-        self.assertEqual(self.initial_settings["bad_request_retry_max_retries"], 1)
+        self.assertEqual(self.initial_settings["bad_request_retry_max_retries"], 3)
         self.server.settings["bad_request_retry_enabled"] = False
         with patch.object(self.server.local_opener, "open", return_value=Response(BAD_REQUEST, status=400, content_type="application/json")) as opened:
             self.assertEqual(self.relay(b'{}'), (400, BAD_REQUEST))

@@ -64,7 +64,7 @@ class RetryJournal:
         self.last_error = type(error).__name__
 
     def begin(self, *, packet_id=None, session_id="", endpoint="responses", enabled=False,
-              eligible=True, max_retries=3, on_summary=None, bad_request_enabled=False, bad_request_max_retries=1):
+              eligible=True, max_retries=3, on_summary=None, bad_request_enabled=False, bad_request_max_retries=3):
         return RetryTrace(self, packet_id=packet_id, session_id=session_id, endpoint=endpoint,
                           enabled=enabled, eligible=eligible, max_retries=max_retries, on_summary=on_summary,
                           bad_request_enabled=bad_request_enabled, bad_request_max_retries=bad_request_max_retries)
@@ -162,7 +162,7 @@ class RetryJournal:
 
 class RetryTrace:
     def __init__(self, journal, *, packet_id, session_id, endpoint, enabled, eligible, max_retries, on_summary,
-                 bad_request_enabled=False, bad_request_max_retries=1):
+                 bad_request_enabled=False, bad_request_max_retries=3):
         self.journal, self.on_summary = journal, on_summary
         now = journal.clock()
         self.document = {"version": 2, "mode": "native", "id": packet_id or uuid.uuid4().hex, "packet_id": packet_id,

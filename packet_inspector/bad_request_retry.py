@@ -8,7 +8,7 @@ from .http_io import UPSTREAM_READ_TIMEOUT_SECONDS
 from .native_retry import PrefixResponse, header_delay
 from .response_events import notify
 
-DEFAULT_RETRIES = 1
+DEFAULT_RETRIES = 3
 MAX_RETRIES = 9
 MAX_ERROR_BYTES = 4096
 RETRY_DELAY_SECONDS = 1
