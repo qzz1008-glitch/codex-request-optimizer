@@ -31,13 +31,13 @@ async function run(){
   "window.updateStatus=null;window.updateBusy=false;window.settingsSaving=false;window.updateAction='';window.updateFeedbackVisible=true;",
   "window.updateRevision=0;window.updateStatusLoading=false;window.settingsOpening=false;window.compressionSaving=false;window.exitSaving=false;window.connectSaving=false;window.connectChecking=false;",
   "window.refreshStatus=async()=>{};window.loadContextSettings=async()=>{};window.readSettingsDraft=()=>({});",
-  "window.resetSettingsSaveProgress=()=>{};window.renderLanguageSelection=()=>{};window.renderConnectionActions=()=>{};window.updateSettingsSaveState=()=>{};",
+  "window.settingsSaveProgress={total:0,steps:[]};window.renderLanguageSelection=()=>{};window.renderConnectionActions=()=>{};window.updateSettingsSaveState=()=>{};",
   "window.closeZstdLevelPicker=()=>{};window.discardSettingsDraft=()=>{};",
   "function el(tag,cls,value){const node=document.createElement(tag);node.className=cls;node.textContent=value;return node;}",
   extract('function renderUpdates()','async function selectPacket('),
   extract('globalThis.InspectorRestartNotice = {','\nconst $ ='),
   "window.restartNotices=InspectorRestartNotice.create({status:()=>state.status,request:async()=>{},openSettings:async()=>{}});",
-  extract('function setSettingsMessage(','function renderSettingsSaveProgress('),
+  extract('function setSettingsMessage(','async function runSettingsSaveStep('),
   extract('function finishSettingsSave()','async function saveSettings()'),
   extract('function closeSettings()','action("settings-close"'),
   extract('function message(','function fail(')
@@ -93,16 +93,20 @@ async function run(){
  await page.evaluate(()=>uiI18n.setLanguage('zh',{persist:false}));
  const settingsIds=['settings-dialog','settings-save','settings-restore','context-settings'],beforeSave=await geometry(page,settingsIds);
  await page.evaluate(()=>{
-  setSettingsMessage('正在保存设置… 2/3');const log=document.getElementById('settings-save-log');log.hidden=false;
-  for(let i=0;i<6;i++){const li=document.createElement('li');li.textContent='Saving section '+i;li.dataset.state=i===5?'error':'done';log.append(li);}
+  settingsSaveProgress={total:6,steps:Array.from({length:6},(_,i)=>({label:'Saving section '+i,state:i===5?'error':'done'}))};
+  renderSettingsSaveProgress();setSettingsMessage('正在保存设置… 2/3');
  });
  await noPopup(page);assert.equal(await page.locator('#settings-inline-feedback').getAttribute('role'),'alert');
  assert.equal(await page.locator('#settings-inline-feedback .settings-save-log li').count(),6);
  assert.equal(await page.locator('#settings-inline-feedback [id]').count(),0);
  assert.deepEqual(await geometry(page,settingsIds),beforeSave);
- await page.evaluate(()=>{document.getElementById('settings-save-log').replaceChildren();document.getElementById('settings-save-log').hidden=true;finishSettingsSave();});
+ await page.evaluate(()=>finishSettingsSave());
  await noPopup(page);assert(await page.locator('#settings-dialog').evaluate(node=>node.open));
- assert((await page.locator('#settings-inline-feedback').textContent()).includes('设置已保存'));cases++;
+ assert.equal((await page.locator('#settings-inline-feedback').textContent()).trim(),'设置已保存。');
+ assert.equal(await page.locator('#settings-inline-feedback .settings-save-log').count(),0,'successful saves leave only the confirmation');
+ assert.equal(await page.locator('#settings-save-log li').count(),0);
+ assert.equal(await page.locator('#settings-save-log').evaluate(node=>node.hidden),true);
+ assert.deepEqual(await geometry(page,settingsIds),beforeSave);cases++;
  for(const id of ['entry-port-message','context-message','packet-size-message','runtime-settings-message','image-isolation-message','image-save-dir-message']){
   await page.evaluate(id=>{setSettingsMessage('');feedbackText(id,'Synthetic field error: '+id,true);},id);await noPopup(page);
   assert((await page.locator('#settings-inline-feedback').textContent()).includes(id));

@@ -1743,6 +1743,7 @@ function trackSettingsRestart(field,before,after) {
   restartNotices.change(field,before,after);
 }
 function finishSettingsSave() {
+  resetSettingsSaveProgress();
   setSettingsMessage("设置已保存。");
   restartNotices.ingest();
 }
