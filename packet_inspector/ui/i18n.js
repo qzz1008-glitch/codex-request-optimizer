@@ -830,7 +830,7 @@ const uiI18n = (() => {
     "无法读取开机启动状态，请重新保存设置。":"The startup state could not be read. Save the settings again.",
     "模型容量不足时自动重试":"Automatically retry when the model is at capacity",
     "容量不足重试":"Retry at capacity",
-    "通用400重试":"Retry generic 400",
+    "请求异常重试":"Retry request errors",
     "仅重试通用 Bad Request；字段或参数错误保持原样。":"Retry only generic Bad Request errors; field and parameter errors pass through unchanged.",
     "重试次数":"Retry count",
     "次":"times",
