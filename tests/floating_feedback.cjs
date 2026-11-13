@@ -150,6 +150,53 @@ async function run(){
  assert((await page.locator('#settings-inline-feedback').textContent()).includes('Must be at least'));
  await page.locator('#entry-port').fill('47844');assert.equal(await page.locator('#entry-port').getAttribute('aria-invalid'),'false');cases++;
  await page.evaluate(()=>document.getElementById('settings-dialog').close());
+ const recovery=await load();
+ await recovery.addScriptTag({content:"window.$=id=>document.getElementById(id);\n"+extract('function message(','uiI18n.floatingFeedback();')});
+ await recovery.evaluate(async()=>{
+  window.replies=[];window.serviceFailure={ok:false,status:502,body:{error:'forwarding_service_unavailable'}};
+  window.fetch=async()=>{
+   const reply=replies.shift();if(!reply)throw Error('Missing synthetic API response');
+   if(reply.hold)await new Promise(resolve=>{window.releaseResponse=resolve;});
+   return {ok:reply.ok!==false,status:reply.status||200,json:async()=>reply.body||{}};
+  };
+  window.callApi=async(path,data)=>{try{await api(path,data);}catch(error){fail(error);}};
+  replies.push(serviceFailure);await callApi('/api/packets?limit=100');
+ });await noPopup(recovery);
+ assert.equal(await recovery.locator('#app-inline-feedback').textContent(),'forwarding_service_unavailable');
+ await recovery.evaluate(async()=>{replies.push({});await callApi('/api/status');});
+ assert.equal(await recovery.locator('#notice').evaluate(node=>node.hidden),false,'another endpoint cannot clear the failed operation');
+ await recovery.evaluate(async()=>{replies.push({});await callApi('/api/packets?limit=50');});await noPopup(recovery);
+ assert.equal(await recovery.locator('#notice').evaluate(node=>node.hidden),true);
+ assert.equal(await recovery.locator('#app-inline-feedback').textContent(),'');cases++;
+ await recovery.evaluate(async()=>{
+  replies.push(serviceFailure);await callApi('/api/settings',{});
+  replies.push({});await callApi('/api/settings');
+ });
+ assert.equal(await recovery.locator('#notice').evaluate(node=>node.hidden),false,'a read cannot confirm a failed write recovered');
+ await recovery.evaluate(async()=>{replies.push({});await callApi('/api/settings',{});});await noPopup(recovery);
+ assert.equal(await recovery.locator('#notice').evaluate(node=>node.hidden),true);cases++;
+ await recovery.evaluate(async()=>{
+  replies.push({ok:false,status:400,body:{error:'Synthetic save failure'}});await callApi('/api/settings',{});
+  replies.push({});await callApi('/api/settings',{});
+ });await noPopup(recovery);
+ assert.equal(await recovery.locator('#notice').evaluate(node=>node.hidden),false);
+ assert.equal(await recovery.locator('#app-inline-feedback').textContent(),'Synthetic save failure');cases++;
+ await recovery.evaluate(async()=>{
+  replies.push(serviceFailure);await callApi('/api/status');message('Synthetic operation failure',true);
+  replies.push({});await callApi('/api/status');
+ });await noPopup(recovery);
+ assert.equal(await recovery.locator('#app-inline-feedback').textContent(),'Synthetic operation failure');cases++;
+ await recovery.evaluate(()=>{replies.push({hold:true});window.earlierRequest=api('/api/status');});
+ await recovery.evaluate(async()=>{replies.push(serviceFailure);await callApi('/api/status');releaseResponse();await earlierRequest;});
+ assert.equal(await recovery.locator('#notice').evaluate(node=>node.hidden),false,'an older success cannot clear a newer failure');
+ await recovery.evaluate(async()=>{replies.push({});await callApi('/api/status');});await noPopup(recovery);
+ assert.equal(await recovery.locator('#notice').evaluate(node=>node.hidden),true);cases++;
+ await recovery.evaluate(async()=>{
+  document.getElementById('settings-dialog').showModal();replies.push(serviceFailure);await callApi('/api/status');
+ });await noPopup(recovery);
+ assert.equal(await recovery.locator('#settings-inline-feedback').textContent(),'forwarding_service_unavailable');
+ await recovery.evaluate(async()=>{replies.push({});await callApi('/api/status');});await noPopup(recovery);
+ assert.equal(await recovery.locator('#settings-inline-feedback').textContent(),'');cases++;
  const sharing=await load();
  await sharing.evaluate(()=>{
   document.getElementById('records-view').hidden=true;document.getElementById('sharing-view').hidden=false;

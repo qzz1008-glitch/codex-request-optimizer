@@ -768,11 +768,28 @@ async function selectSession(value) {
 }
 function message(text, error=false) {
   const notice=$("notice");uiI18n.text($("notice-text"),text);notice.className="notice"+(error?" error":"");
+  delete notice.dataset.recoverEndpoint;delete notice.dataset.recoverSequence;
   notice.dataset.feedbackTarget=$("settings-dialog").open?"settings-inline-feedback":"app-inline-feedback";
   notice.hidden=false;
 }
-function fail(err) { message(err.message || String(err), true); }
-async function api(path, data, signal) { const r = await fetch(path, {method:data === undefined ? "GET" : "POST",headers:data === undefined ? {} : {"Content-Type":"application/json"},body:data === undefined ? undefined : JSON.stringify(data),signal}); const value = await r.json(); if (!r.ok) throw Object.assign(Error(value.error || ("HTTP "+r.status)),{status:r.status}); return value; }
+function fail(err) {
+  message(err.message || String(err), true);
+  if(err.message==="forwarding_service_unavailable"&&err.requestSequence) {
+    const notice=$("notice");notice.dataset.recoverEndpoint=err.requestKey;notice.dataset.recoverSequence=String(err.requestSequence);
+  }
+}
+let apiRequestSequence=0;
+async function api(path, data, signal) {
+  const method=data===undefined?"GET":"POST",requestKey=method+" "+path.split("?")[0],requestSequence=++apiRequestSequence;
+  const r=await fetch(path,{method,headers:data===undefined?{}:{"Content-Type":"application/json"},body:data===undefined?undefined:JSON.stringify(data),signal});
+  const value=await r.json();
+  if(!r.ok)throw Object.assign(Error(value.error||("HTTP "+r.status)),{status:r.status,requestKey,requestSequence});
+  const notice=$("notice");
+  if(notice.dataset.recoverEndpoint===requestKey&&requestSequence>Number(notice.dataset.recoverSequence)) {
+    notice.hidden=true;delete notice.dataset.recoverEndpoint;delete notice.dataset.recoverSequence;
+  }
+  return value;
+}
 function action(id, fn) { $(id).addEventListener("click", () => Promise.resolve().then(fn).catch(fail)); }
 action("notice-dismiss",()=>{$("notice").hidden=true;});
 uiI18n.floatingFeedback();
