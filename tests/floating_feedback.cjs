@@ -93,15 +93,17 @@ async function run(){
  await page.evaluate(()=>uiI18n.setLanguage('zh',{persist:false}));
  const settingsIds=['settings-dialog','settings-save','settings-restore','context-settings'],beforeSave=await geometry(page,settingsIds);
  await page.evaluate(()=>{
-  settingsSaveProgress={total:6,steps:Array.from({length:6},(_,i)=>({label:'Saving section '+i,state:i===5?'error':'done'}))};
+  settingsSaving=true;
+  settingsSaveProgress={total:6,steps:Array.from({length:6},(_,i)=>({label:'Saving section '+i,state:i===5?'error':i===4?'running':'done'}))};
   renderSettingsSaveProgress();setSettingsMessage('正在保存设置… 2/3');
  });
  await noPopup(page);assert.equal(await page.locator('#settings-inline-feedback').getAttribute('role'),'alert');
  assert.equal(await page.locator('#settings-inline-feedback .settings-save-log li').count(),6);
- assert.equal((await page.locator('#settings-inline-feedback .settings-save-log').textContent()).includes('已保存'),false,'completed steps do not repeat the saved confirmation');
+ assert.equal(/处理中|已保存|失败/.test(await page.locator('#settings-inline-feedback .settings-save-log').textContent()),false,'progress rows have no separate status text');
+ assert.equal(await page.locator('.settings-step-state').count(),0);
  assert.equal(await page.locator('#settings-inline-feedback [id]').count(),0);
  assert.deepEqual(await geometry(page,settingsIds),beforeSave);
- await page.evaluate(()=>finishSettingsSave());
+ await page.evaluate(()=>{settingsSaving=false;finishSettingsSave();});
  await noPopup(page);assert(await page.locator('#settings-dialog').evaluate(node=>node.open));
  assert.equal((await page.locator('#settings-inline-feedback').textContent()).trim(),'设置已保存。');
  assert.equal(await page.locator('#settings-inline-feedback .settings-save-log').count(),0,'successful saves leave only the confirmation');

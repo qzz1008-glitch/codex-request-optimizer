@@ -1708,11 +1708,11 @@ function setSettingsMessage(text,error=false) {
 function renderSettingsSaveProgress() {
   $("settings-save").setAttribute("aria-busy",String(settingsSaving));
   $("settings-save-label").textContent=t(settingsSaving?"保存中":"保存");
-  const log=$("settings-save-log"),states={running:["…","处理中"],done:["✓",""],error:["×","失败"]};
+  const log=$("settings-save-log"),icons={running:"…",done:"✓",error:"×"};
   log.replaceChildren(...settingsSaveProgress.steps.map(step=>{
-    const item=el("li"),[mark,label]=states[step.state];item.dataset.state=step.state;
-    const icon=el("span","settings-step-icon",mark);icon.setAttribute("aria-hidden","true");
-    item.append(icon,el("span","settings-step-label",t(step.label)),el("span","settings-step-state",t(label)));
+    const item=el("li");item.dataset.state=step.state;
+    const icon=el("span","settings-step-icon",icons[step.state]);icon.setAttribute("aria-hidden","true");
+    item.append(icon,el("span","settings-step-label",t(step.label)));
     return item;
   }));
   log.hidden=!settingsSaveProgress.steps.length;log.scrollTop=log.scrollHeight;
