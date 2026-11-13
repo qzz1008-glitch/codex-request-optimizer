@@ -597,7 +597,7 @@ dialog{width:min(760px,calc(var(--desktop-width) - 80px));max-height:calc(var(--
 .restart-pending-field::after{content:attr(data-restart-label);position:absolute;right:2px;top:-13px;padding:0 4px;background:var(--panel);color:#96600b;font-size:10px;font-weight:500;line-height:15px;pointer-events:none}
 #connection-settings.restart-pending-connection>h3{color:#96600b}
 .connection-pending-label{display:inline-block;vertical-align:middle;margin-left:5px;padding:0 6px;border:1px solid #eac883;border-radius:5px;background:#fff8eb;color:#875309;font-size:10px;font-weight:500;line-height:18px}
-.inline-feedback .notice{display:flex;align-items:center;gap:8px;min-width:0;margin:0;padding:0;border:0;background:none;color:inherit}
+.inline-feedback .notice{position:static;inset:auto;z-index:auto;display:flex;align-items:center;gap:8px;width:100%;max-width:none;min-width:0;margin:0;padding:0;border:0;border-radius:0;background:none;box-shadow:none;color:inherit;font:inherit}
 .inline-feedback .notice>span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .inline-feedback .notice>a{flex:none;color:var(--accent);font-size:inherit;white-space:nowrap}
 @container settings-dialog (max-width:650px){#settings-dialog>.restart-notice{margin-inline:20px}.restart-notice-heading strong{font-size:12px}.restart-notice-actions{gap:4px}}
