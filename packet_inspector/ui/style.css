@@ -448,9 +448,8 @@ code.session-id{font-family:Consolas,"Cascadia Mono",monospace;font-size:11px;wo
 #settings-dialog .settings-feedback{min-width:0}
 #settings-dialog .settings-feedback .help{max-height:60px;overflow-y:auto}
 #settings-dialog .settings-save-log{display:grid;gap:4px;max-height:84px;margin:6px 0 0;padding:0;overflow:auto;list-style:none;color:var(--muted);font-size:12px;line-height:18px}
-#settings-dialog .settings-save-log li{display:grid;grid-template-columns:12px minmax(0,1fr) auto;align-items:baseline;gap:6px}
+#settings-dialog .settings-save-log li{display:grid;grid-template-columns:12px minmax(0,1fr);align-items:baseline;gap:6px}
 #settings-dialog .settings-save-log .settings-step-label{min-width:0;overflow-wrap:anywhere}
-#settings-dialog .settings-save-log .settings-step-state{white-space:nowrap}
 #settings-dialog .settings-save-log li[data-state=running]{color:var(--accent)}
 #settings-dialog .settings-save-log li[data-state=done] .settings-step-icon{color:var(--green)}
 #settings-dialog .settings-save-log li[data-state=error]{color:var(--danger)}
