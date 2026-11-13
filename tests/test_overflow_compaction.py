@@ -38,6 +38,13 @@ def delegation_notice(number=1):
             "future_metadata": {"preserved": number}}
 
 
+def native_context(number=1, name="future_agent_context"):
+    return {"type": "function_call_output", "id": f"opaque-context-{number}", "name": name,
+            "namespace": "agent", "output": '{"page_id":null}',
+            "internal_chat_message_metadata_passthrough": {"turn_id": f"turn-{number}", "create_time": number},
+            "future_metadata": {"preserved": number}}
+
+
 def make_body(items, **extra):
     value = {"model": "test", "stream": True, "input": items, "store": False, **extra}
     return json.dumps(value, ensure_ascii=True, indent=1).encode()
@@ -364,20 +371,25 @@ class OverflowTests(unittest.TestCase):
             outputs = [i.get("call_id") for i in request["input"] if i.get("type") in {"function_call_output", "custom_tool_call_output"}]
             self.assertEqual(sorted(calls), sorted(outputs))
 
-    def test_delegations_are_standalone_and_do_not_split_pending_tool_groups(self):
-        notice = delegation_notice()
-        items = [message("before", 30),
-                 {"type": "function_call", "call_id": "a", "name": "one", "arguments": "{}"},
-                 notice, {"type": "function_call_output", "call_id": "a", "output": "done"},
-                 delegation_notice(2), message("latest", 30)]
-        self.assertEqual(safe_cuts(items), [1, 4, 5])
-        # A notification ID never closes a real tool call, even if IDs coincide.
-        items[1]["call_id"] = notice["id"]
-        del items[3]
-        self.assertEqual(safe_cuts(items), [1])
+    def test_native_context_items_do_not_split_pending_tool_groups(self):
+        for notice in (delegation_notice(), native_context()):
+            with self.subTest(notice=notice["id"]):
+                items = [message("before", 30),
+                         {"type": "function_call", "call_id": "a", "name": "one", "arguments": "{}"},
+                         notice, {"type": "function_call_output", "call_id": "a", "output": "done"},
+                         delegation_notice(2), message("latest", 30)]
+                self.assertEqual(safe_cuts(items), [1, 4, 5])
+                # A context item never closes a real call, even if IDs coincide.
+                items[1]["call_id"] = notice["id"]
+                del items[3]
+                self.assertEqual(safe_cuts(items), [1])
 
-    def test_delegations_survive_compaction_restart_reuse_and_regrowth_verbatim(self):
+    def test_native_context_survives_compaction_restart_reuse_and_regrowth_verbatim(self):
         notices = [delegation_notice(n) for n in range(1, 6)]
+        notices += [native_context(n, name) for n, name in enumerate(("codex_apps_open_page",
+                    "codex_apps_selected_page_part_1_of_1", "future_agent_context_v9"), 1)]
+        notices[-1]["output"] = {"future_payload": ["opaque", 17]}
+        notice_ids = {i["id"] for i in notices}
         items = self.items[:7] + notices + self.items[7:]
         unchanged = deepcopy(items)
         body = make_body(items)
@@ -386,18 +398,18 @@ class OverflowTests(unittest.TestCase):
         self.assertLessEqual(len(wire), self.budget)
         self.assertEqual(items, unchanged)
         source = json.loads(wire)["input"]
-        self.assertEqual([i for i in source if i.get("id", "").startswith("fco_")], notices)
+        self.assertEqual([i for i in source if i.get("id") in notice_ids], notices)
         self.assertEqual(source[-1], items[-1])
         restarted = OverflowCompactor(self.root)
         wire, _, meta = self.run_prepare(body, compactor=restarted, budget=6000)
         self.assertTrue(meta["overflow_cache_hit"])
         self.assertEqual(meta["overflow_compaction_calls"], 0)
-        self.assertEqual([i for i in json.loads(wire)["input"] if i.get("id", "").startswith("fco_")], notices)
+        self.assertEqual([i for i in json.loads(wire)["input"] if i.get("id") in notice_ids], notices)
         larger = make_body(items + [message(i) for i in range(100, 116)])
         wire, _, meta = self.run_prepare(larger, compactor=restarted, budget=6000)
         self.assertTrue(meta["overflow_cache_hit"])
         self.assertGreater(meta["overflow_compaction_calls"], 0)
-        self.assertEqual([i for i in json.loads(wire)["input"] if i.get("id", "").startswith("fco_")], notices)
+        self.assertEqual([i for i in json.loads(wire)["input"] if i.get("id") in notice_ids], notices)
         self.assertLessEqual(len(wire), self.budget)
 
     def test_under_budget_delegation_request_is_not_rewritten(self):
@@ -410,7 +422,9 @@ class OverflowTests(unittest.TestCase):
         notice = delegation_notice()
         for item in ({**notice, "call_id": "missing"}, {**notice, "call_id": None},
                      {**notice, "output": "ordinary result"},
-                     {**notice, "output": notice["output"].replace("</codex_delegation>", "")}):
+                      {**notice, "output": notice["output"].replace("</codex_delegation>", "")},
+                      {**native_context(), "call_id": "missing-real-call"},
+                      {**native_context(), "namespace": "functions"}):
             with self.subTest(item=item), self.assertRaises(OverflowFailure) as error:
                 safe_cuts([message("before", 30), item, message("latest", 30)])
             self.assertEqual(error.exception.code, "overflow_tool_pairing")
@@ -763,7 +777,8 @@ class OverflowRelayTests(unittest.TestCase):
             self.assertEqual(db.execute("SELECT count(*) FROM mappings").fetchone()[0], 0)
 
     def test_http_native_compaction_uses_small_pre_summary_and_validates_both_uploads(self):
-        history = [message(i, 700) for i in range(140)]
+        contexts = [native_context(1, "codex_apps_open_page"), native_context(2, "future_agent_context_v9")]
+        history = [message(i, 700) for i in range(70)] + contexts + [message(i, 700) for i in range(70, 140)]
         value = json.loads(native_body(history))
         raw = make_body(value["input"], client_metadata=value["client_metadata"])
         original, _ = prepare_request(raw, {}, "POST", "/responses", "zstd")
@@ -778,10 +793,13 @@ class OverflowRelayTests(unittest.TestCase):
         self.assertEqual(native_request["client_metadata"], value["client_metadata"])
         self.assertEqual(native_request["input"][-1], value["input"][-1])
         self.assertGreater(len(native_request["input"]), len(history) * 3 // 4)
+        self.assertEqual([i for i in native_request["input"] if i.get("id") in {c["id"] for c in contexts}], contexts)
 
     def test_http_overflow_and_cache_reuse_preserve_standalone_delegations(self):
         self.server.settings["budget_bytes"] = 6000
         notices = [delegation_notice(n) for n in range(1, 6)]
+        notices += [native_context(1, "codex_apps_open_page"), native_context(2, "future_agent_context_v9")]
+        notice_ids = {i["id"] for i in notices}
         items = [message(i) for i in range(7)] + notices + [message(i) for i in range(7, 14)]
         for current in (items, items + [message("new", 30)]):
             status, body = self.post(current, session="delegation-test")
@@ -792,15 +810,17 @@ class OverflowRelayTests(unittest.TestCase):
         self.assertEqual(len(final), 2)
         self.assertTrue(all(size <= 6000 for size, _, _ in requests))
         for body in final:
-            self.assertEqual([i for i in body["input"] if i.get("id", "").startswith("fco_")], notices)
+            self.assertEqual([i for i in body["input"] if i.get("id") in notice_ids], notices)
         self.assertEqual(self.config.read_bytes(), self.original_config)
 
     def test_http_true_orphan_still_returns_pairing_error_without_upstream_calls(self):
-        orphan = {**delegation_notice(), "call_id": "missing-real-call"}
-        status, body = self.post([message(i) for i in range(14)] + [orphan, message("latest", 30)])
-        self.assertEqual(status, 413)
-        self.assertEqual(json.loads(body)["error"]["code"], "overflow_tool_pairing")
-        self.assertEqual(self.up.requests, [])
+        for item in (delegation_notice(), native_context()):
+            with self.subTest(item=item["id"]):
+                orphan = {**item, "call_id": "missing-real-call"}
+                status, body = self.post([message(i) for i in range(14)] + [orphan, message("latest", 30)])
+                self.assertEqual(status, 413)
+                self.assertEqual(json.loads(body)["error"]["code"], "overflow_tool_pairing")
+                self.assertEqual(self.up.requests, [])
 
     def test_failed_compaction_never_sends_original_turn(self):
         self.up.fail = True
