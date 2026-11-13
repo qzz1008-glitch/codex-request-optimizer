@@ -37,6 +37,25 @@ def is_delegation_notice(item):
             and isinstance(output, str) and DELEGATION_NOTICE.fullmatch(output.strip()) is not None)
 
 
+def is_native_context_item(item):
+    """Native agent envelopes are standalone context, not tool results.
+
+    Names, payloads, opaque IDs and metadata contents can evolve. Keep the
+    origin envelope as the discriminator, and always honor an actual call ID.
+    Older delegation notices lacked this envelope and retain their strict check.
+    """
+    if is_delegation_notice(item):
+        return True
+    if (not isinstance(item, dict) or item.get("type") != "function_call_output"
+            or item.get("call_id") is not None):
+        return False
+    return (item.get("namespace") == "agent"
+            and isinstance(item.get("id"), str) and bool(item["id"])
+            and isinstance(item.get("name"), str) and bool(item["name"])
+            and "output" in item
+            and isinstance(item.get("internal_chat_message_metadata_passthrough"), dict))
+
+
 def last_user_text(body):
     inputs = body.get("input") if isinstance(body, dict) else None
     if not isinstance(inputs, list):

@@ -4,7 +4,8 @@ import unittest
 from packet_inspector.analyzer import inspect_request
 from packet_inspector.request_context import (
     IMAGE_ANALYST_PREFIXES, NEXT_MESSAGE_PREFIX, TITLE_REQUEST_PREFIX,
-    is_delegation_notice, local_image_path, request_image_paths, request_session_context, temporary_kind_from_metadata, temporary_request_kind,
+    is_delegation_notice, is_native_context_item, local_image_path, request_image_paths,
+    request_session_context, temporary_kind_from_metadata, temporary_request_kind,
 )
 
 
@@ -42,6 +43,42 @@ class RequestContextTests(unittest.TestCase):
         self.assertEqual(metadata["pairing"], {"calls": 1, "outputs": 1, "missing_outputs": 0, "orphan_outputs": 0})
         metadata, _ = inspect_request(json.dumps({"input": [{**self.delegation_notice(), "output": "ordinary result"}]}).encode(), {}, "/responses")
         self.assertEqual(metadata["pairing"]["orphan_outputs"], 1)
+
+    def native_context(self, **fields):
+        return {"type": "function_call_output", "id": "opaque-native-message-id", "namespace": "agent",
+                "name": "codex_apps_open_page", "output": '{"page_id":null}',
+                "internal_chat_message_metadata_passthrough": {"turn_id": "native-turn", "create_time": 1},
+                **fields}
+
+    def test_native_context_envelopes_allow_new_names_payloads_and_metadata(self):
+        for name, output in (("codex_apps_open_page", '{"page_id":null}'),
+                             ("codex_apps_selected_page_part_1_of_1", "Companion Page snapshot"),
+                             ("future_agent_context_v9", {"future_payload": ["opaque", 17]})):
+            with self.subTest(name=name):
+                item = self.native_context(name=name, output=output,
+                    internal_chat_message_metadata_passthrough={"future_metadata": {"keep": True}})
+                self.assertTrue(is_native_context_item(item))
+                self.assertTrue(is_native_context_item({**item, "call_id": None}))
+        self.assertTrue(is_native_context_item(self.delegation_notice()))
+
+    def test_native_origin_does_not_exempt_real_or_unidentified_tool_results(self):
+        item = self.native_context()
+        cases = [{**item, "call_id": value} for value in ("real-call", "")]
+        cases += [{**item, "namespace": "functions"}, {**item, "type": "custom_tool_call_output"},
+                  {**item, "internal_chat_message_metadata_passthrough": "unconfirmed"}]
+        cases += [{key: value for key, value in item.items() if key != missing}
+                  for missing in ("id", "name", "namespace", "output", "internal_chat_message_metadata_passthrough")]
+        for value in cases:
+            with self.subTest(value=value):
+                self.assertFalse(is_native_context_item(value))
+
+    def test_analyzer_counts_only_real_results_among_native_context_items(self):
+        item = self.native_context()
+        body = {"input": [item, self.native_context(name="future_agent_context"),
+                          {"type": "function_call", "call_id": "real-call", "name": "example", "arguments": "{}"},
+                          {**item, "call_id": "real-call"}, {**item, "call_id": "missing-call"}]}
+        metadata, _ = inspect_request(json.dumps(body).encode(), {}, "/responses")
+        self.assertEqual(metadata["pairing"], {"calls": 1, "outputs": 2, "missing_outputs": 0, "orphan_outputs": 1})
 
     def test_specific_purpose_wins_over_generic_subagent_metadata(self):
         for meta, expected in (({"session_kind": "subagent", "request_kind": "image_analysis"}, "image_analysis"),

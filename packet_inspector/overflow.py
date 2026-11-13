@@ -21,7 +21,7 @@ from .analyzer import JsonBytes, MAX_BODY, classify_request, decode_body, encode
 from .transport import DEFAULT_ZSTD_LEVEL, PreparedRequest, prepare_request_info, prepare_zstd
 from .maintenance import SQLiteReclaimer
 from .locking import file_lock
-from .request_context import is_delegation_notice
+from .request_context import is_native_context_item
 from .response_events import decode_sse, EVENT_BOUNDARY
 
 
@@ -75,7 +75,7 @@ def user_text_parts(item):
 
 
 def protected(item):
-    if is_delegation_notice(item):
+    if is_native_context_item(item):
         return True
     if item.get("role") in {"system", "developer"} or item.get("type") in CATALOG_TYPES | {"compaction", "context_compaction"}:
         return True
@@ -145,7 +145,7 @@ def rebuild_prefix(items, summary, max_user_tokens=RETAINED_USER_TOKENS):
 def safe_cuts(items):
     """Only compact closed tool groups; always leave the last item/group intact."""
     seen_calls, last_items = set(), {}
-    notices = {index for index, item in enumerate(items) if is_delegation_notice(item)}
+    notices = {index for index, item in enumerate(items) if is_native_context_item(item)}
     for index, item in enumerate(items):
         kind = item.get("type", "message")
         if kind in CALL_TYPES | OUTPUT_TYPES and index not in notices:
