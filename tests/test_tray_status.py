@@ -17,6 +17,11 @@ def usage(inputs):
     return {"input_tokens": inputs, "output_tokens": 10, "total_tokens": inputs + 10}
 
 
+def estimate(inputs, **fields):
+    return {"state": "available", "source": "codex_estimate", "estimated": True,
+            "input_tokens": inputs, **fields}
+
+
 class TrayStatisticsTests(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
@@ -75,6 +80,51 @@ class TrayStatisticsTests(unittest.TestCase):
         result = self.store.tray_statistics()
         self.assertEqual(result["compaction_samples"], 5)
         self.assertEqual(result["average_compact_input_tokens"], 400000)
+
+    def test_rewritten_compactions_use_original_estimates_with_equal_session_weight(self):
+        self.record(compact=True, thread_id="replaced", overflow_cache_hit=True,
+                    upstream_usage=usage(67062), request_token_estimate=estimate(277176),
+                    reported_usage=usage(500000))
+        self.record(compact=True, thread_id="replaced", overflow_compaction_calls=1,
+                    request_token_estimate=estimate(300000))
+        self.record(compact=True, thread_id="unchanged", usage_override_applied=True,
+                    upstream_usage=usage(250000), request_token_estimate=estimate(900000))
+        self.record(compact=True, status=500, overflow_cache_hit=True,
+                    upstream_usage=usage(67062), request_token_estimate=estimate(900000))
+        self.record(overflow_cache_hit=True, upstream_usage=usage(67062),
+                    request_token_estimate=estimate(900000))
+        self.record(compact=True, method="GET", overflow_cache_hit=True,
+                    upstream_usage=usage(67062), request_token_estimate=estimate(900000))
+
+        with patch.object(self.store, "get", side_effect=AssertionError("loaded request body")), \
+                patch("packet_inspector.storage.json.loads", side_effect=AssertionError("decoded metadata")):
+            result = self.store.tray_statistics()
+        self.assertEqual(result["compaction_samples"], 3)
+        self.assertEqual(result["average_compact_input_tokens"], 269294)
+
+    def test_rewritten_compactions_without_valid_original_estimates_are_not_samples(self):
+        invalid = [None, {}, estimate(277176, state="unavailable"),
+                   estimate(277176, source="upstream_response"),
+                   estimate(277176, estimated=False), estimate(277176, estimated="true"),
+                   estimate(True), estimate(-1), estimate(1.5), estimate("277176")]
+        for value in invalid:
+            with self.subTest(value=value):
+                self.record(compact=True, overflow_cache_hit=True, upstream_usage=usage(67062),
+                            request_token_estimate=value)
+                result = self.store.tray_statistics()
+                self.assertEqual(result["compaction_samples"], 0)
+                self.assertIsNone(result["average_compact_input_tokens"])
+        self.record(compact=True, request_token_estimate=estimate(277176))
+        self.assertIsNone(self.store.tray_statistics()["average_compact_input_tokens"])
+
+    def test_revision_cache_tracks_original_estimate_and_replacement_changes(self):
+        packet = self.record(compact=True, overflow_cache_hit=True, upstream_usage=usage(67062),
+                             request_token_estimate=estimate(277176))
+        self.assertEqual(self.store.tray_statistics()["average_compact_input_tokens"], 277176)
+        self.store.update(packet, request_token_estimate=estimate(300000))
+        self.assertEqual(self.store.tray_statistics()["average_compact_input_tokens"], 300000)
+        self.store.update(packet, overflow_cache_hit=False)
+        self.assertEqual(self.store.tray_statistics()["average_compact_input_tokens"], 67062)
 
     def test_revision_cache_tracks_usage_updates_and_retention_without_writing_data(self):
         packet = self.record(compact=True, upstream_usage=usage(200000))

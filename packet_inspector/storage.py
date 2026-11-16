@@ -16,7 +16,7 @@ from .analyzer import CLASSIFICATION_VERSION, classify_request, encode, compare_
 from .maintenance import SQLiteReclaimer
 from .request_context import packet_metadata, request_session_context, temporary_request_kind, trend_packet_metadata
 from .response_usage import compact_packet_usage, packet_usage
-from .token_estimate import request_basis, calibrate, overflow_applied, unavailable
+from .token_estimate import SOURCE, request_basis, calibrate, overflow_applied, unavailable
 from .token_window import is_token_request
 from .request_types import image_request_kind
 
@@ -442,6 +442,15 @@ class Store:
             usage_valid = " AND ".join(
                 f"json_type(meta,'$.upstream_usage.{key}')='integer' AND json_extract(meta,'$.upstream_usage.{key}')>=0"
                 for key in ("input_tokens", "output_tokens", "total_tokens"))
+            replaced = """(json_type(meta,'$.overflow_compaction_calls')='integer'
+                AND json_extract(meta,'$.overflow_compaction_calls')>0)
+                OR json_type(meta,'$.overflow_cache_hit')='true'"""
+            # Use the original context estimate when a summary replaced the input.
+            estimate_valid = """json_extract(meta,'$.request_token_estimate.state')='available'
+                AND json_extract(meta,'$.request_token_estimate.source')=?
+                AND json_type(meta,'$.request_token_estimate.estimated')='true'
+                AND json_type(meta,'$.request_token_estimate.input_tokens')='integer'
+                AND json_extract(meta,'$.request_token_estimate.input_tokens')>=0"""
             row = c.execute(f"""WITH counters AS (
                 SELECT thread,created,CASE WHEN json_type(meta,'$.usage_override_applied')='true'
                     OR (json_type(meta,'$.overflow_compaction_calls')='integer' AND json_extract(meta,'$.overflow_compaction_calls')>0)
@@ -451,8 +460,11 @@ class Store:
                     OR (json_type(meta,'$.capacity_retry_count')='integer' AND json_extract(meta,'$.capacity_retry_count')>0)
                     THEN 1 ELSE 0 END AS protected,
                 CASE WHEN kind='compaction' AND method='POST' AND status=200
-                    AND state IN ('streaming','complete') AND {usage_valid}
-                    THEN json_extract(meta,'$.upstream_usage.input_tokens') END AS compact_tokens
+                    AND state IN ('streaming','complete') THEN
+                    CASE WHEN {replaced} THEN
+                        CASE WHEN {estimate_valid} THEN json_extract(meta,'$.request_token_estimate.input_tokens') END
+                    WHEN {usage_valid} THEN json_extract(meta,'$.upstream_usage.input_tokens') END
+                END AS compact_tokens
                 FROM packet_summaries),
                 session_compactions AS (
                     SELECT avg(compact_tokens) AS average_tokens FROM counters
@@ -463,7 +475,7 @@ class Store:
                     min(created) AS first_recorded_at,max(created) AS last_recorded_at,
                     count(compact_tokens) AS compaction_samples,
                     (SELECT avg(average_tokens) FROM session_compactions) AS average_compact_input_tokens
-                FROM counters""").fetchone()
+                FROM counters""", (SOURCE,)).fetchone()
             result = dict(row)
             self._tray_cache = revision, result
             return dict(result)
