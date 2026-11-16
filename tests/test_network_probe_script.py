@@ -44,7 +44,8 @@ class Fixture(BaseHTTPRequestHandler):
             self.server.release_connect.wait(5)
             self.close_connection = True
             return
-        self.reply(403, "text/html", b'<title>HIS Proxy Notification</title>upload blocked',
+        status = getattr(self.server, "connect_status", 403)
+        self.reply(status, "text/html", b'' if status == 200 else b'<title>HIS Proxy Notification</title>upload blocked',
                    server="netentsec_page_push")
 
     def do_POST(self):
@@ -211,8 +212,86 @@ Assert ((Get-ProbeVerdict $r $false).code -eq 'upload_blocked') 'A real POST may
                 self.assertIn("实际上传 0/20000 B", result.stdout)
                 self.assertEqual(report["mode"], "upload_limit")
                 self.assertEqual(report["script_sha256"], hashlib.sha256(SOURCE.read_bytes()).hexdigest())
+                self.assertEqual(report["target_source"], "explicit_target")
+                self.assertIn("curl", report["runtime"]["curl_details"])
+                self.assertTrue(Path(report["runtime"]["curl_path"]).is_file())
+                self.assertIn("interfaces", report["network"])
+                self.assertEqual(rows[0]["route"]["reason"], "proxy_for_https")
+                self.assertEqual(rows[0]["timeouts"]["connect_seconds"], 5)
+                self.assertEqual(rows[0]["timeouts"]["total_seconds"], 1)
+                self.assertTrue(rows[0]["progress"]["tcp_confirmed"])
+                self.assertTrue(rows[0]["progress"]["connect_sent"])
+                self.assertFalse(rows[0]["progress"]["tls_confirmed"])
+                self.assertFalse(rows[0]["progress"]["request_headers_sent"])
+                self.assertEqual(rows[0]["progress"]["upload"], "not_sent")
+                self.assertEqual(rows[0]["progress"]["connect_status"], None if held else 403)
+                self.assertIn("--trace-time", rows[0]["curl_arguments"])
+                self.assertNotIn("--insecure", rows[0]["curl_arguments"])
+                self.assertRegex(rows[0]["transport_detail"], r"(?m)^\d{2}:\d{2}:\d{2}\.\d+ > CONNECT ")
+                self.assertTrue(rows[0]["started"] < rows[0]["finished"])
+                self.assertEqual(report["address_probe"]["scope"], "independent_dns_tcp_probe")
+                self.assertTrue(report["address_probe"]["local_endpoint"].startswith("127.0.0.1:"))
+                detail = (report_dir / "upload_20000-response.txt").read_text(encoding="utf8")
+                self.assertRegex(detail, r'"failure_stage"\s*:\s*"proxy_connect"')
+                self.assertIn("Timestamped curl transport", detail)
                 self.assertEqual(list(self.scratch.iterdir()), [])
                 proxy.release_connect.set()
+
+    def test_tunnel_success_and_tls_failure_remain_separate_in_diagnostics(self):
+        proxy = self.gateway()
+        proxy.connect_status = 200
+        result = self.run_ps(f'''
+$route = @{{mode='proxy';source='fixture';endpoint='http://127.0.0.1:{proxy.server_port}';bypass=$false}}
+$r = Invoke-Probe 'tls_failure' ([uri]'https://fixture.invalid/responses') $route 20000 2
+if ($r.progress.connect_status -ne 200 -or -not $r.progress.tcp_confirmed -or $r.progress.tls_confirmed -or $r.progress.request_headers_sent) {{
+    throw ($r | ConvertTo-Json -Depth 8)
+}}
+if ($r.curl_exit -eq 0 -or -not $r.transport_detail -or $r.failure_stage -eq 'proxy_connect') {{ throw 'TLS failure evidence lost or misattributed' }}
+'PASS: CONNECT succeeded while origin TLS did not complete'
+''')
+        self.assertIn("PASS:", result)
+
+    def test_large_native_trace_keeps_final_error_and_redacts_credentials(self):
+        result = self.run_ps(r'''
+$path = Join-Path $PSScriptRoot 'large-trace.txt'
+foreach ($encoding in @([Text.Encoding]::Default, [Text.Encoding]::UTF8)) {
+    $message = '无法检查证书是否已吊销 / certificate status café'
+    $expected = $encoding.GetString($encoding.GetBytes($message))
+    $text = "11:33:39.000000 > CONNECT fixture.invalid:443 HTTP/1.1`r`n" +
+        ("11:33:39.001000 * verbose TLS certificate line`r`n" * 4000) +
+        "11:33:44.000000 * $message`r`nProxy-Authenticate: Negotiate private-challenge`r`nAuthorization: Bearer private-token`r`n"
+    [IO.File]::WriteAllBytes($path, $encoding.GetBytes($text))
+    $decoded = Read-LimitedText $path -NativeOutput -PreserveTail
+    if (-not $decoded.Contains('> CONNECT ') -or -not $decoded.Contains($expected) -or -not $decoded.Contains('diagnostic truncated')) { throw 'Beginning or final error was lost' }
+    if ($decoded.Contains('private-challenge') -or $decoded.Contains('private-token')) { throw 'Credentials leaked into transport log' }
+    if ([Text.Encoding]::UTF8.GetByteCount($decoded) -gt ($script:ResponseLimit + 1024)) { throw 'Transport retention exceeded its budget' }
+}
+'PASS: large native traces retain both ends within a fixed budget'
+''')
+        self.assertIn("PASS:", result)
+
+    def test_script_errors_keep_their_location_and_completed_local_probe(self):
+        output = self.run_ps(r'''
+$r = Invoke-Probe 'invalid_body' ([uri]'https://fixture.invalid/responses') @{mode='direct';endpoint='';bypass=$true} 1 1
+if (-not $r.script_error.id -or -not $r.script_error.stack -or $r.script_error.position -notmatch 'Test body is too small') { throw 'Per-probe script error location missing' }
+'PASS: unexpected script failures retain their location'
+''')
+        self.assertIn("PASS:", output)
+        relay = self.gateway()
+        directory = self.root / "fatal-report"
+        result = subprocess.run(
+            [POWERSHELL, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(self.ps1),
+             "-Target", f"http://127.0.0.1:{relay.server_port}/responses", "-RelayPort", str(relay.server_port),
+             "-OutputDirectory", str(directory), "-FindUploadLimit"],
+            env=self.environment, capture_output=True, text=True, encoding="utf8", timeout=25)
+        self.assertEqual(result.returncode, 1)
+        failure = json.loads((directory / "fatal-error.txt").read_text(encoding="utf8"))
+        self.assertIn("Refusing to upload test bodies to the relay itself", failure["exceptions"][0]["message"])
+        self.assertTrue(failure["script_error"]["id"])
+        self.assertTrue(failure["script_error"]["stack"])
+        self.assertIn("probe.ps1", failure["script_error"]["position"])
+        self.assertTrue((directory / "local_direct-response.txt").is_file())
+        self.assertFalse(relay.calls)
 
     def test_native_diagnostic_encoding_and_redaction(self):
         result = self.run_ps(r'''
@@ -300,6 +379,14 @@ Assert ((Get-UploadConclusion @($small,$near) @(64000,950000)).status -eq 'block
         self.assertEqual([r["verdict"] for r in report["results"]],
                          ["local_ok", "local_ok", "api_response", "api_response", "upload_blocked"])
         self.assertEqual([c["bytes"] for c in upstream.calls], [64_000, 950_000, 1_100_000])
+        for row, call in zip(report["results"][2:], upstream.calls):
+            self.assertEqual(row["request_sha256"], hashlib.sha256(call["body"]).hexdigest())
+            self.assertEqual(row["progress"]["upload"], "complete")
+            self.assertTrue(row["progress"]["request_headers_sent"])
+            self.assertIn("local_ip", row["flow"])
+            self.assertIn("time_pretransfer", row["flow"])
+            self.assertIn("[redacted]", row["response_header_text"])
+            self.assertNotIn("must-not-be-recorded", row["response_header_text"])
         for call in upstream.calls:
             with self.assertRaises(json.JSONDecodeError):
                 json.loads(call["body"])
