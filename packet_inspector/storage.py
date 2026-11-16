@@ -453,11 +453,16 @@ class Store:
                 CASE WHEN kind='compaction' AND method='POST' AND status=200
                     AND state IN ('streaming','complete') AND {usage_valid}
                     THEN json_extract(meta,'$.upstream_usage.input_tokens') END AS compact_tokens
-                FROM packet_summaries)
+                FROM packet_summaries),
+                session_compactions AS (
+                    SELECT avg(compact_tokens) AS average_tokens FROM counters
+                    WHERE compact_tokens IS NOT NULL AND nullif(trim(thread),'') IS NOT NULL
+                    GROUP BY trim(thread))
                 SELECT count(*) AS recorded_requests,coalesce(sum(protected),0) AS protected_requests,
                     count(DISTINCT nullif(trim(thread),'')) AS recorded_sessions,
                     min(created) AS first_recorded_at,max(created) AS last_recorded_at,
-                    count(compact_tokens) AS compaction_samples,avg(compact_tokens) AS average_compact_input_tokens
+                    count(compact_tokens) AS compaction_samples,
+                    (SELECT avg(average_tokens) FROM session_compactions) AS average_compact_input_tokens
                 FROM counters""").fetchone()
             result = dict(row)
             self._tray_cache = revision, result

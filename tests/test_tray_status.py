@@ -52,6 +52,30 @@ class TrayStatisticsTests(unittest.TestCase):
         reopened = Store(self.root, max_count=100, max_detail_count=0)
         self.assertEqual(reopened.tray_statistics(), result)
 
+    def test_compaction_average_gives_each_session_equal_weight(self):
+        for tokens in (100000, 200000, 300000):
+            self.record(compact=True, thread_id="frequent", upstream_usage=usage(tokens))
+        self.record(compact=True, thread_id="infrequent", upstream_usage=usage(600000))
+        self.record(compact=True, thread_id="no-valid-samples", reported_usage=usage(900000))
+        self.record(compact=True, thread_id="frequent", status=500, upstream_usage=usage(900000))
+        self.record(thread_id="no-compaction", upstream_usage=usage(900000))
+
+        result = self.store.tray_statistics()
+        self.assertEqual(result["compaction_samples"], 4)
+        self.assertEqual(result["average_compact_input_tokens"], 400000)
+
+    def test_unidentified_compactions_do_not_form_a_session_average(self):
+        for thread in ("", " "):
+            self.record(compact=True, thread_id=thread, upstream_usage=usage(900000))
+        self.assertIsNone(self.store.tray_statistics()["average_compact_input_tokens"])
+
+        self.record(compact=True, thread_id="one", upstream_usage=usage(100000))
+        self.record(compact=True, thread_id=" one ", upstream_usage=usage(300000))
+        self.record(compact=True, thread_id="two", upstream_usage=usage(600000))
+        result = self.store.tray_statistics()
+        self.assertEqual(result["compaction_samples"], 5)
+        self.assertEqual(result["average_compact_input_tokens"], 400000)
+
     def test_revision_cache_tracks_usage_updates_and_retention_without_writing_data(self):
         packet = self.record(compact=True, upstream_usage=usage(200000))
         connect, queries = self.store.connect, []
