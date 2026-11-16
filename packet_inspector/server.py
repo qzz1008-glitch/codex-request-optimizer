@@ -334,6 +334,7 @@ class InspectorServer(ThreadingHTTPServer):
                 if fingerprint != self.provider_fingerprint or time.monotonic() >= self.provider_next_scan:
                     self.auto_sync_providers()
             self.overflow.maintenance()
+            self.image_isolation.maintenance(self.overflow.busy)
             self.updates.poll()
             self.store.reclaimer.run(self.overflow.busy)
             self.retry_journal.prune()
@@ -722,6 +723,7 @@ class InspectorServer(ThreadingHTTPServer):
                 "retention_policy": self.settings["retention_policy"],
                 "capture_errors": self.capture_errors, "analysis_errors": self.analysis_errors,
                 "maintenance_errors": self.maintenance_errors, "overflow_cache": self.overflow.cache_status(),
+                "image_cache": self.image_isolation.cache_status(),
                 "active_requests": self.active_requests,
                 "relay_active_requests": self.active_requests,
                 "auto_detect_providers": self.settings["auto_detect_providers"],
@@ -1580,6 +1582,7 @@ class Handler(BaseHTTPRequestHandler):
                 if trigger_size is not None:
                     update(usage_override_request_bytes=trigger_size, usage_override_trigger_bytes=trigger_threshold(budget))
             if image_worker:
+                image_isolation.observe_request(body, dict(self.headers.items()))
                 update(image_isolation_worker=True)
             if protection_enabled and not image_worker and self.command == "POST" and urlsplit(suffix).path.rstrip("/").endswith("/responses"):
                 outbound_body, outbound_encoding, overflow_meta = self.server.overflow.prepare(

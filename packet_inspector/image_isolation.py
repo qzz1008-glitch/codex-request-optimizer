@@ -30,6 +30,7 @@ def is_analysis_request(raw, headers):
 MAX_IMAGE_BYTES = 50 * 1024 * 1024
 MAX_ATTACHMENTS_BYTES = 256 * 1024 * 1024
 ATTACHMENT_TTL = 7 * 24 * 3600
+CLEANUP_INTERVAL = 600
 MIME_EXTENSIONS = {"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp", "image/gif": ".gif"}
 
 
@@ -68,10 +69,113 @@ class ImageIsolation:
         self.previous_directory = (Path(directory) / "image-attachments").resolve()
         self.lock_path = Path(directory) / "image-attachments.lock"
         self.lock = threading.RLock()
+        self.active_references = {}
+        self.next_cleanup = 0.0
+        self.last_cleanup = {"state": "not_run", "expired": 0, "reclaimed_bytes": 0}
         self.clipboard = ClipboardImageCache(self.directory, self._copy_payload,
                                             legacy_directories=[self.previous_directory],
                                             max_file_bytes=MAX_IMAGE_BYTES,
                                             ttl=ATTACHMENT_TTL)
+
+    def _prune(self, protected=(), *, stop=None):
+        """Caller holds the storage locks; only owned files in the two cache roots qualify."""
+        pinned = set(protected)
+        for references in self.active_references.values():
+            pinned.update(references.copy())
+        result = {"state": "checked", "expired": 0, "reclaimed_bytes": 0, "bytes": 0, "errors": 0}
+        now = time.time()
+        for directory in dict.fromkeys((self.directory, self.previous_directory)):
+            if directory.is_symlink() or directory.is_junction() or not directory.is_dir():
+                continue
+            try:
+                entries = os.scandir(directory)
+            except OSError:
+                result["errors"] += 1
+                continue
+            with entries:
+                for entry in entries:
+                    if stop and stop():
+                        return {**result, "state": "deferred"}
+                    path = Path(entry.path)
+                    staging = STAGING_NAME.fullmatch(path.name)
+                    if not (staging or ATTACHMENT_NAME.fullmatch(path.name)):
+                        continue
+                    try:
+                        if not self.clipboard._regular(path):
+                            continue
+                        info = path.stat()
+                        if path not in pinned and now - info.st_mtime > (3600 if staging else ATTACHMENT_TTL):
+                            if stop and stop():
+                                return {**result, "state": "deferred"}
+                            try:
+                                path.unlink()
+                            except FileNotFoundError:
+                                continue
+                            except OSError:
+                                result["errors"] += 1
+                                result["bytes"] += info.st_size
+                            else:
+                                result["expired"] += 1
+                                result["reclaimed_bytes"] += info.st_size
+                        else:
+                            result["bytes"] += info.st_size
+                    except OSError:
+                        result["errors"] += 1
+        return result
+
+    def maintenance(self, busy, *, force=False):
+        now = time.monotonic()
+        if not force and now < self.next_cleanup:
+            return self.last_cleanup
+        if busy.is_set() or not self.lock.acquire(blocking=False):
+            return self.last_cleanup
+        try:
+            if busy.is_set():
+                return self.last_cleanup
+            if not any(path.is_dir() for path in (self.directory, self.previous_directory)):
+                self.last_cleanup = {"state": "absent", "expired": 0, "reclaimed_bytes": 0, "bytes": 0}
+                self.next_cleanup = now + CLEANUP_INTERVAL
+                return self.last_cleanup
+            with file_lock(self.lock_path, blocking=False):
+                self.last_cleanup = self._prune(stop=busy.is_set)
+            self.next_cleanup = now + (5 if self.last_cleanup["state"] == "deferred" else CLEANUP_INTERVAL)
+        except BlockingIOError:
+            self.next_cleanup = now + 5
+        except OSError as error:
+            self.last_cleanup = {"state": "error", "expired": 0, "reclaimed_bytes": 0,
+                                 "error": type(error).__name__, "errno": error.errno}
+            self.next_cleanup = now + 60
+        finally:
+            self.lock.release()
+        if not busy.is_set():
+            self.clipboard.prune()
+        return self.last_cleanup
+
+    def cache_status(self):
+        return {"ttl_seconds": ATTACHMENT_TTL, "max_bytes": MAX_ATTACHMENTS_BYTES,
+                "cleanup_interval_seconds": CLEANUP_INTERVAL, **self.last_cleanup}
+
+    def refresh_references(self, paths):
+        if not paths:
+            return set()
+        with self.lock, file_lock(self.lock_path):
+            references = self.clipboard.retained_paths(paths)
+            for path in references:
+                try:
+                    os.utime(path, None)
+                except OSError:
+                    continue
+            return references
+
+    def observe_request(self, raw, headers):
+        """Independent image analysis also refreshes retained sources, with capture disabled too."""
+        try:
+            coding = next((v for k, v in headers.items() if k.lower() == "content-encoding"), "identity")
+            body = json.loads(decode_body(raw, coding))
+            if isinstance(body, dict):
+                self.refresh_references(request_image_paths(body))
+        except Exception:
+            pass  # Optional usage observation must not change the forwarding outcome.
 
     def _copy_payload(self, payload, extension, protected):
         try:
@@ -137,16 +241,7 @@ class ImageIsolation:
                         return target.resolve()
                 # A short-name collision must never substitute another image.
                 sequence += 1
-            total = 0
-            for path in self.directory.iterdir():
-                staging = STAGING_NAME.fullmatch(path.name)
-                if not (staging or ATTACHMENT_NAME.fullmatch(path.name)) or not self.clipboard._regular(path):
-                    continue
-                info = path.stat()
-                if path not in protected and time.time() - info.st_mtime > (3600 if staging else ATTACHMENT_TTL):
-                    path.unlink()
-                else:
-                    total += info.st_size
+            total = self._prune(protected)["bytes"]
             if total + len(payload) > MAX_ATTACHMENTS_BYTES:
                 raise ImageIsolationFailure("image_attachment_storage_full", "图片附件缓存已满，未上传原始图片。", 507)
             staging = self.directory / (uuid.uuid4().hex + ".new")
@@ -160,6 +255,18 @@ class ImageIsolation:
 
     def prepare(self, raw, headers, path, compression, *, zstd_level=3,
                 auto_zstd_level=False, budget_bytes=None):
+        protected = set()
+        with self.lock:
+            self.active_references[id(protected)] = protected
+        try:
+            return self._prepare(raw, headers, path, compression, protected=protected,
+                                 zstd_level=zstd_level, auto_zstd_level=auto_zstd_level, budget_bytes=budget_bytes)
+        finally:
+            with self.lock:
+                self.active_references.pop(id(protected))
+
+    def _prepare(self, raw, headers, path, compression, *, protected, zstd_level,
+                 auto_zstd_level, budget_bytes):
         coding = next((v for k, v in headers.items() if k.lower() == "content-encoding"), "identity")
         try:
             decoded = decode_body(raw, coding)
@@ -171,9 +278,10 @@ class ImageIsolation:
         if body.get("previous_response_id") or body.get("conversation"):
             raise ImageIsolationFailure("image_server_context_unsupported", "服务器续接上下文可能已含图片；请使用完整上下文的新请求。")
         inputs = body.get("input", [])
-        replacements, protected, image_paths = [], set(), set()
+        replacements, image_paths = [], set()
         image_references, bindings, texts = request_image_paths(body), {}, []
-        protected.update(self.clipboard.retained_paths(image_references))
+        with self.lock:
+            protected.update(self.refresh_references(image_references))
         index = None
 
         def rewrite_text(text, pointer):

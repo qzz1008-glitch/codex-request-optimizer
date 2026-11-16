@@ -834,8 +834,11 @@ class ImageRelayTests(unittest.TestCase):
 
     def test_independent_analysis_keeps_images_without_a_special_provider_or_header(self):
         self.enable()
+        retained = self.server.image_isolation._store(image_part()["image_url"], set())
         body = request_body()
         body["input"][-1]["content"][0]["text"] = IMAGE_ANALYST_PREFIXES[-1] + " Read the error."
+        body["client_metadata"] = {"codex_inspector_request_kind": "image_analysis",
+                                   "codex_inspector_image_source_path": str(retained)}
         raw = encode(body)
         self.server.settings["packet_size_protection_enabled"] = True
         capture_before = self.server.settings["capture_enabled"]
@@ -844,10 +847,12 @@ class ImageRelayTests(unittest.TestCase):
                 self.server.settings["capture_enabled"] = capture
                 for coding in ("identity", "zstd"):
                     wire = zstandard.ZstdCompressor().compress(raw) if coding == "zstd" else raw
-                    with self.subTest(capture=capture, coding=coding), patch.object(
+                    with self.server.maintenance_guard, self.subTest(capture=capture, coding=coding), patch.object(
                             self.server.image_isolation, "prepare", side_effect=AssertionError("independent image was rewritten")), patch.object(
                             self.server.overflow, "prepare", side_effect=AssertionError("independent image was compacted")):
+                        os.utime(retained, (1, 1))
                         self.assertEqual(self.relay(wire, headers={"Content-Encoding": coding})[0], 200)
+                        self.assertGreater(retained.stat().st_mtime, 1)
                     outgoing = self.up.requests[-1]
                     encoding = next((value for key, value in outgoing["headers"].items()
                                      if key.lower() == "content-encoding"), "identity")

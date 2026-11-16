@@ -3,6 +3,7 @@ from contextlib import closing
 import http.client
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+import os
 from pathlib import Path
 import sqlite3
 import tempfile
@@ -344,14 +345,25 @@ class CleanupRelayTests(unittest.TestCase):
                 with server.overflow._connect() as db:
                     db.execute("UPDATE mappings SET updated=?", (time.time() - 8 * 86400,))
                 server.overflow.next_cleanup = 0.0
+                images = []
+                with server.maintenance_guard:
+                    for directory in (server.image_isolation.directory, server.image_isolation.previous_directory):
+                        directory.mkdir(parents=True, exist_ok=True)
+                        path = directory / ("i-" + "a" * 30 + ".png")
+                        path.write_bytes(b"synthetic expired image")
+                        stamp = time.time() - 8 * 86400
+                        os.utime(path, (stamp, stamp))
+                        images.append(path)
+                    server.image_isolation.next_cleanup = 0
                 deadline = time.monotonic() + 5
                 remaining = 1
-                while remaining and time.monotonic() < deadline:
+                while (remaining or any(path.exists() for path in images)) and time.monotonic() < deadline:
                     with closing(sqlite3.connect(server.overflow.path)) as db:
                         remaining = db.execute("SELECT count(*) FROM mappings").fetchone()[0]
                     time.sleep(.02)
                 self.assertFalse(server.settings["packet_size_protection_enabled"])
                 self.assertEqual(remaining, 0)
+                self.assertTrue(all(not path.exists() for path in images))
                 self.assertEqual(server.maintenance_errors, 0)
             finally:
                 server.server_close()
