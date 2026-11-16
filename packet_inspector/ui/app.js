@@ -1244,6 +1244,7 @@ function fillSettings() {
   for(const id of ["sharing-port","exit-port"])$(id).disabled=settingsSaving||!s.sharing_settings_supported;
   $("start-on-login").disabled=settingsSaving||!s.start_on_login_supported;
   $("capacity-retry").disabled=settingsSaving||!s.capacity_retry_supported;
+  fillIncrementalTransport();
   $("capacity-retry-count").disabled=settingsSaving||s.capacity_retry_mode!=="native"||!Number.isInteger(s.capacity_retry_max_retries);
   $("capacity-retry-delay").disabled=settingsSaving||s.capacity_retry_mode!=="native"||!Number.isInteger(s.capacity_retry_delay_seconds);
   fillBadRequestRetry();
@@ -1691,6 +1692,7 @@ let updateStatus=null, updateBusy=false, updateAction="", updateFeedbackVisible=
 let updateRevision=0,updateStatusLoading=false;
 function readSettingsDraft() {
   const draft={
+    incremental_transport_enabled:$("incremental-transport").checked,
     entry_port:$("entry-port").value,
     sharing_port:$("sharing-port").value,
     egress_port:$("exit-port").value,
@@ -1774,6 +1776,7 @@ async function saveSettings() {
   const protectionSupported="packet_size_protection_enabled" in s,storage=storageLimitSettings(s);
   const entries=[
     ["zstd_level","zstd_level",Number(draft.zstd_level),Number.isInteger(s.zstd_level)],
+    ["incremental_transport_enabled","incremental_transport_enabled",draft.incremental_transport_enabled,s.incremental_transport_supported],
     ["sharing_port","sharing_port",Number(draft.sharing_port),s.sharing_settings_supported],
     ["egress_port","egress_port",Number(draft.egress_port),s.sharing_settings_supported],
     ["image_zstd_level","image_zstd_level",Number(draft.image_zstd_level),Number.isInteger(s.image_zstd_level)],
@@ -1981,7 +1984,10 @@ function renderCompression(m) {
   const encoding=hasTransport?m.transport_content_encoding:summaryTriggered?null:m.relay_content_encoding||m.outbound_content_encoding;
   const level=hasTransport?m.transport_zstd_level:summaryTriggered?null:m.relay_zstd_level;
   const method=typeof encoding==="string"?encoding.trim().toLowerCase():"";
-  if(method&&method!=="identity") {
+  if(m.incremental_transport==="websocket") {
+    fact(sizes,t("上下文传输"),t("WebSocket 增量"));
+    if(m.incremental_bootstrap_requests>0)fact(sizes,t("上下文恢复"),t("{count} 段").replace("{count}",m.incremental_bootstrap_requests));
+  } else if(method&&method!=="identity") {
     const grade=method==="zstd"&&Number.isInteger(level)&&level>=1&&level<=22?t("{level}级").replace("{level}",level):"";
     fact(sizes,t("文本压缩"),grade?`${method} · ${grade}`:method);
   }
@@ -2563,6 +2569,12 @@ function fillPacketProtection() {
 }
 $("packet-size-protection").addEventListener("change",fillPacketProtection);
 $("auto-zstd-level").addEventListener("change",fillZstdLevel);
+function fillIncrementalTransport() {
+  const input=$("incremental-transport"),s=state.status,supported=s.incremental_transport_supported===true;
+  if(!settingsEditing)input.checked=s.incremental_transport_enabled===true;
+  input.disabled=settingsSaving||!supported;
+  input.title=supported?"":t("当前中转暂不支持此功能。");
+}
 for(const key of ["context","compact"]) {
   const input=$(key+"-tokens"),useDefault=$(key+"-default");
   input.closest(".context-value").addEventListener("click",()=>{
