@@ -27,7 +27,7 @@ vm.runInContext(extract('function readSettingsDraft()','function changedSettings
 context.fillImageDirectory();
 assert.equal(context.$('log-dir').value,'C:\\Inspector');
 assert.equal(context.$('cache-dir').value,'C:\\Inspector');
-assert.equal(context.$('image-save-dir').value,'C:\\Inspector\\image-attachments');
+assert.equal(context.$('image-save-dir').value,'C:\\Inspector\\images');
 assert.equal(context.$('log-dir').disabled,false);
 assert.equal(context.$('image-save-dir').disabled,true);
 assert.equal(context.$('image-save-dir-open').disabled,false);

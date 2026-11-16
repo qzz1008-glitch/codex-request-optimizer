@@ -1573,7 +1573,7 @@ async function confirmServiceRestart(action) {
 }
 function imageDefaultDirectory() {
   const s=state.status,dataDir=s.data_dir||"",separator=dataDir.includes("\\")?"\\":"/";
-  return s.image_save_dir_default||(dataDir?dataDir.replace(/[\\/]+$/,"")+separator+"image-attachments":"");
+  return s.image_save_dir_default||(dataDir?dataDir.replace(/[\\/]+$/,"")+separator+"images":"");
 }
 function fillImageDirectory() {
   fillStorageDirectories();
