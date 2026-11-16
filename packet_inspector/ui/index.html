@@ -222,9 +222,6 @@
       <div class="runtime-setting-row runtime-retry-row"><div class="runtime-toggle"><input id="bad-request-retry" type="checkbox" aria-labelledby="bad-request-retry-label"><span id="bad-request-retry-label" title="仅重试通用 Bad Request；字段或参数错误保持原样。">请求异常重试</span></div><div class="capacity-retry-options"><div class="capacity-retry-limit"><label for="bad-request-retry-count">重试次数</label><input id="bad-request-retry-count" type="number" min="1" max="9" step="1" value="3" inputmode="numeric" required><span>次</span></div></div></div>
       <p id="runtime-settings-message" data-feedback-source data-feedback-target="settings-inline-feedback" class="help" role="status" hidden></p>
     </section>
-    <section id="incremental-settings"><h3>上下文传输</h3>
-      <div class="runtime-setting-row"><div class="runtime-toggle"><input id="incremental-transport" type="checkbox" aria-labelledby="incremental-transport-label" aria-describedby="incremental-transport-hint"><span id="incremental-transport-label">增量传输（试验）</span></div><p id="incremental-transport-hint" class="help muted runtime-inline-hint">减少重复上传；缓存失效时自动恢复。保存后对新请求生效。</p></div>
-    </section>
     <section id="compression-settings" aria-labelledby="compression-settings-title" aria-disabled="false">
       <h3 id="compression-settings-title">传输压缩</h3>
       <div class="zstd-level-control" data-settings-field="zstd_level">
