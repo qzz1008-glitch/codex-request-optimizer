@@ -73,7 +73,7 @@ def collect_licenses(source, work):
     if deps.is_dir():distributions.extend(importlib.metadata.distributions(path=[str(deps)]))
     for distribution in distributions:
         name=(distribution.metadata.get("Name") or "").lower()
-        if name not in {"pyinstaller","zstandard","tomlkit","cryptography","cffi","pycparser","pillow","urllib3","pywin32"}:continue
+        if name not in {"pyinstaller","zstandard","tomlkit","cryptography","cffi","pycparser","pillow","urllib3","pywin32","websockets"}:continue
         for entry in distribution.files or []:
             if "licenses/" in str(entry).replace("\\","/"):
                 source=Path(distribution.locate_file(entry))
@@ -102,6 +102,7 @@ def compile_executable(snapshot, mode, portable_dev, work, stage, licenses):
              "--name",name,"--icon",str(icon),"--distpath",str(stage),
              "--workpath",str(build/"app"),"--specpath",str(build/"spec"),
              "--paths",str(source),"--collect-submodules","zstandard","--hidden-import","zstandard.backend_c",
+             "--collect-submodules","websockets",
              "--add-data",str(source/"packet_inspector"/"ui")+os.pathsep+"packet_inspector/ui",
              "--add-data",str(profile)+os.pathsep+"packet_inspector",
              "--add-data",str(manifest)+os.pathsep+"packet_inspector",

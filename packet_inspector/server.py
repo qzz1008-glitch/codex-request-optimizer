@@ -51,6 +51,7 @@ from .bad_request_retry import (DEFAULT_RETRIES as DEFAULT_BAD_REQUEST_RETRIES,
                                 MAX_RETRIES as MAX_BAD_REQUEST_RETRIES, retry_bad_request)
 from .response_events import notify
 from .http_io import UPSTREAM_READ_TIMEOUT_SECONDS
+from .incremental import IncrementalTransport, IncrementalFailure, prepare as prepare_incremental
 from .retry_diagnostics import RetryJournal, ResponseObservation
 from .network_diagnostics import NetworkDiagnostics, DiagnosticHTTPHandler, DiagnosticHTTPSHandler
 from .loopback_proxy import repair_loopback_proxy
@@ -140,6 +141,7 @@ def protection_settings(saved, *, default_enabled=False):
                               if type(budget) is int else DEFAULT_BUDGET_BYTES)
     values["auto_zstd_level_enabled"] = (values.get("auto_zstd_level_enabled") is True
                                          and values["packet_size_protection_enabled"] is True)
+    values["incremental_transport_enabled"] = values.get("incremental_transport_enabled") is True
     for key, default in (("sharing_port", 47846), ("egress_port", 47847)):
         value = values.get(key)
         values[key] = value if type(value) is int and 1 <= value <= 65535 else default
@@ -167,6 +169,7 @@ class InspectorServer(ThreadingHTTPServer):
                          "zstd_level": DEFAULT_ZSTD_LEVEL,
                          "image_zstd_level": DEFAULT_IMAGE_ZSTD_LEVEL,
                          "packet_size_protection_enabled": False,
+                         "incremental_transport_enabled": False,
                          "ui_language": "zh",
                          "start_on_login": False, "capacity_retry_enabled": False,
                          "capacity_retry_max_retries": DEFAULT_RETRIES,
@@ -255,6 +258,7 @@ class InspectorServer(ThreadingHTTPServer):
         self._describe_transport(self.opener)
         self.local_opener = build_opener(ProxyHandler({}), DiagnosticHTTPHandler(), DiagnosticHTTPSHandler(), NoRedirect())
         self.overflow = OverflowCompactor(self.cache_dir)
+        self.incremental = IncrementalTransport()
         self.compression_policy = CompressionPolicy(self.store)
         self._startup_step("image_tools.initialize")
         self.image_config = ImageToolConfig(self.link, self.data_dir, lambda: self.endpoint)
@@ -332,6 +336,7 @@ class InspectorServer(ThreadingHTTPServer):
                 if fingerprint != self.provider_fingerprint or time.monotonic() >= self.provider_next_scan:
                     self.auto_sync_providers()
             self.overflow.maintenance()
+            self.incremental.prune()
             self.updates.poll()
             self.store.reclaimer.run(self.overflow.busy)
             self.retry_journal.prune()
@@ -600,6 +605,9 @@ class InspectorServer(ThreadingHTTPServer):
         presentation = getattr(self, "presentation", None)
         if presentation is not None:
             presentation.stop()
+        incremental = getattr(self, "incremental", None)
+        if incremental is not None:
+            incremental.clear()
         stop = getattr(self, "analysis_stop", None)
         if stop is not None:
             stop.set()
@@ -614,6 +622,9 @@ class InspectorServer(ThreadingHTTPServer):
             value = protection_settings(self.settings if candidate is None else candidate)
             staging.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding="utf8")
             staging.replace(self.settings_path)
+            if (hasattr(self, "incremental") and value.get("incremental_transport_enabled")
+                    != self.settings.get("incremental_transport_enabled")):
+                self.incremental.clear()
             self.settings = value
 
     @property
@@ -664,6 +675,8 @@ class InspectorServer(ThreadingHTTPServer):
                 "image_zstd_level": self.settings["image_zstd_level"],
                 "auto_zstd_level_enabled": self.settings["auto_zstd_level_enabled"],
                 "auto_image_zstd_level": AUTO_IMAGE_ZSTD_LEVEL,
+                "incremental_transport_supported": True,
+                "incremental_transport_enabled": self.settings["incremental_transport_enabled"],
                 "ui_language": self.settings["ui_language"],
                 "packet_size_protection_enabled": self.settings["packet_size_protection_enabled"],
                 "overflow_compaction_enabled": self.settings["packet_size_protection_enabled"],
@@ -1137,7 +1150,7 @@ class Handler(BaseHTTPRequestHandler):
                 if not candidate["packet_size_protection_enabled"]:
                     candidate["auto_zstd_level_enabled"] = False
                 for key in ("capture_enabled",
-                            "start_on_login", "capacity_retry_enabled", "bad_request_retry_enabled"):
+                            "start_on_login", "capacity_retry_enabled", "bad_request_retry_enabled", "incremental_transport_enabled"):
                     if key in data:
                         if not isinstance(data[key], bool):
                             raise ValueError("invalid boolean setting: " + key)
@@ -1437,6 +1450,7 @@ class Handler(BaseHTTPRequestHandler):
             json_image = is_json_image_request(suffix, self.headers)
             zstd_level = self.server.settings["image_zstd_level" if json_image else "zstd_level"]
             protection_enabled = self.server.settings["packet_size_protection_enabled"]
+            incremental_enabled = self.server.settings["incremental_transport_enabled"] and compression == "zstd"
             budget = self.server.settings["budget_bytes"]
             image_enabled = self.server.settings["image_isolation_enabled"]
             image_isolation = self.server.image_isolation
@@ -1492,6 +1506,7 @@ class Handler(BaseHTTPRequestHandler):
         # urllib preserves content bytes, does not decompress responses, and
         # uses the OS/environment proxy. Redirects and inference retries are disabled.
         trigger_size = None
+        incremental_plan = None
         applied_zstd_level = None
         compression_scope = hashlib.sha256(upstream.encode()).hexdigest()
         auto_key, auto_decision = None, None
@@ -1565,13 +1580,16 @@ class Handler(BaseHTTPRequestHandler):
             if auto_decision is not None:
                 next_phase = self.server.compression_policy.finish(auto_key, auto_decision, len(outbound_body), budget)
                 update(relay_auto_zstd_next_phase=next_phase)
-            if protection_enabled and not image_worker:
+            if incremental_enabled and not image_worker and not shared_client and self.command == "POST" and hasattr(request_opener, "inspector_proxies"):
+                incremental_plan = prepare_incremental(upstream + suffix, outbound_body, outbound_encoding, headers,
+                    capture_meta.get("thread_id"), budget, scope=json.dumps(request_opener.inspector_proxies, sort_keys=True))
+            if protection_enabled and not image_worker and incremental_plan is None:
                 trigger_size = usage_trigger_size(body, dict(self.headers.items()), self.command, suffix, len(outbound_body), budget)
                 if trigger_size is not None:
                     update(usage_override_request_bytes=trigger_size, usage_override_trigger_bytes=trigger_threshold(budget))
             if image_worker:
                 update(image_isolation_worker=True)
-            if protection_enabled and not image_worker and self.command == "POST" and urlsplit(suffix).path.rstrip("/").endswith("/responses"):
+            if protection_enabled and not image_worker and incremental_plan is None and self.command == "POST" and urlsplit(suffix).path.rstrip("/").endswith("/responses"):
                 outbound_body, outbound_encoding, overflow_meta = self.server.overflow.prepare(
                     outbound_body, outbound_encoding, source_body, headers, suffix, upstream, compression, budget,
                     lambda compact_body, encoding: self._checkpoint(upstream, suffix, headers, compact_body, encoding,
@@ -1664,7 +1682,12 @@ class Handler(BaseHTTPRequestHandler):
                    reason="bad_request" if retry else "initial", timeout_ms=round(timeout * 1000))
             try:
                 with network_trace.active():
-                    response = request_opener.open(request, timeout=timeout)
+                    if incremental_plan is not None:
+                        response = self.server.incremental.open(incremental_plan, headers,
+                            request_opener.inspector_proxies, self.server.transport_context, update, timeout=timeout,
+                            retain=lambda: self.server.settings["incremental_transport_enabled"])
+                    else:
+                        response = request_opener.open(request, timeout=timeout)
             except HTTPError as exc:
                 response = exc
             network_trace.response(response)
@@ -1745,7 +1768,11 @@ class Handler(BaseHTTPRequestHandler):
             network_error = exc
             relay_error = diagnostic_error = type(exc).__name__
             if not sent_headers:
-                error_status, error_payload = network_trace.client_error(exc)
+                if isinstance(exc, IncrementalFailure):
+                    error_status = exc.status
+                    error_payload = {"error": {"code": exc.code, "message": exc.message, "phase": relay_phase}}
+                else:
+                    error_status, error_payload = network_trace.client_error(exc)
                 update(client_error_status=error_status, network_diagnostic_id=network_trace.record["id"],
                        network_failure_phase=error_payload["error"]["phase"], network_error=error_payload["error"])
                 self._json(error_status, error_payload)
