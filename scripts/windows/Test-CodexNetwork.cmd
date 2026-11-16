@@ -35,12 +35,43 @@ function Protect-Text([object]$Value) {
     $text = [regex]::Replace($text, '(?i)(^|[;\s=])[^;\s/@:]+:[^;\s/@]+@', '$1[redacted]@')
     $text = [regex]::Replace($text, '(?i)(https?://[^\s<>"''?#]+)\?[^\s<>"'']*', '$1?[redacted]')
     $text = [regex]::Replace($text, '(?im)\b(authorization|proxy-authorization|cookie|set-cookie)\s*[:=][^\r\n]*', '$1: [redacted]')
+    $text = [regex]::Replace($text, '(?im)\b((?:www|proxy)-authenticate:\s*\S+)[ \t]+[^\r\n]+', '$1 [redacted]')
     $text = [regex]::Replace($text, '(?i)(["'']?(?:password|access_token|refresh_token|api_key|client_secret)["'']?\s*[:=]\s*)["'']?[^\s,;<>]+', '$1[redacted]')
     return $text
 }
 
 function Write-Utf8([string]$Path, [string]$Text) {
     [IO.File]::WriteAllText($Path, $Text, $script:Utf8)
+}
+
+function Get-FileSha256([string]$Path) {
+    $hasher = [Security.Cryptography.SHA256]::Create(); $file = $null
+    try {
+        $file = [IO.File]::OpenRead($Path)
+        return [BitConverter]::ToString($hasher.ComputeHash($file)).Replace('-', '').ToLowerInvariant()
+    } finally {
+        if ($file) { $file.Dispose() }
+        $hasher.Dispose()
+    }
+}
+
+function Get-NetworkEnvironment {
+    $items = @()
+    try {
+        foreach ($adapter in [Net.NetworkInformation.NetworkInterface]::GetAllNetworkInterfaces()) {
+            if ($adapter.OperationalStatus -ne 'Up' -or $items.Count -ge 16) { continue }
+            try {
+                $properties = $adapter.GetIPProperties()
+                $items += @{
+                    name = $adapter.Name; type = [string]$adapter.NetworkInterfaceType
+                    addresses = @($properties.UnicastAddresses | Select-Object -First 8 | ForEach-Object { $_.Address.ToString() })
+                    dns = @($properties.DnsAddresses | Select-Object -First 8 | ForEach-Object { $_.ToString() })
+                    gateways = @($properties.GatewayAddresses | Select-Object -First 4 | ForEach-Object { $_.Address.ToString() })
+                }
+            } catch { $items += @{ name = $adapter.Name; exceptions = @(Get-ExceptionDetails $_.Exception) } }
+        }
+        return @{ interfaces = $items }
+    } catch { return @{ exceptions = @(Get-ExceptionDetails $_.Exception) } }
 }
 
 function Get-ProxyContext {
@@ -78,37 +109,40 @@ function Get-ProxyContext {
         windows_server = Protect-Text $(if ($registry) { $registry.ProxyServer } else { '' })
         windows_bypass = $(if ($registry) { [string]$registry.ProxyOverride } else { '' })
         pac_configured = [bool]($registry -and $registry.AutoConfigURL)
+        pac_url = Protect-Text $(if ($registry) { [string]$registry.AutoConfigURL } else { '' })
         auto_detect = $(if ($registry -and $null -ne $registry.AutoDetect) { [bool]$registry.AutoDetect } else { $null })
     }
 }
 
 function Get-Route([uri]$Uri, [hashtable]$Context, [switch]$Direct) {
     $bypass = [bool]$Direct
+    $reason = $(if ($Direct) { 'explicit_direct' } else { 'no_proxy_for_scheme' })
+    $matchedRule = ''
     $hostName = $Uri.Host.Trim('[', ']').ToLowerInvariant()
     $parsedIP = $null
     if ([Net.IPAddress]::TryParse($hostName, [ref]$parsedIP)) { $hostName = $parsedIP.ToString() }
     if (-not $bypass -and $Context.bypass_mode -eq 'environment') {
         foreach ($part in $Context.no_proxy.Split(',')) {
             $entry = $part.Trim().ToLowerInvariant()
-            if ($entry -eq '*') { $bypass = $true; break }
+            if ($entry -eq '*') { $bypass = $true; $matchedRule = $part.Trim(); break }
             if (-not $entry) { continue }
             if ($entry -match '^\[([^\]]+)\](?::(\d+))?$') {
-                if ($hostName -eq $Matches[1] -and (-not $Matches[2] -or $Uri.Port -eq [int]$Matches[2])) { $bypass = $true; break }
+                if ($hostName -eq $Matches[1] -and (-not $Matches[2] -or $Uri.Port -eq [int]$Matches[2])) { $bypass = $true; $matchedRule = $part.Trim(); break }
                 continue
             }
             $entry = $entry.TrimStart('.')
             $hostPort = $hostName + ':' + $Uri.Port
             if ($hostName -eq $entry -or $hostName.EndsWith('.' + $entry) -or $hostPort -eq $entry -or $hostPort.EndsWith('.' + $entry)) {
-                $bypass = $true; break
+                $bypass = $true; $matchedRule = $part.Trim(); break
             }
         }
     } elseif (-not $bypass) {
         foreach ($part in $Context.windows_bypass.Split(';')) {
             $entry = $part.Trim()
             if (-not $entry) { continue }
-            if ($entry -eq '<local>' -and -not $hostName.Contains('.') -and -not $hostName.Contains(':')) { $bypass = $true; break }
+            if ($entry -eq '<local>' -and -not $hostName.Contains('.') -and -not $hostName.Contains(':')) { $bypass = $true; $matchedRule = $entry; break }
             $pattern = '^' + [regex]::Escape($entry).Replace('\*', '.*').Replace('\?', '.') + '$'
-            if ($hostName -match $pattern -or ($hostName + ':' + $Uri.Port) -match $pattern) { $bypass = $true; break }
+            if ($hostName -match $pattern -or ($hostName + ':' + $Uri.Port) -match $pattern) { $bypass = $true; $matchedRule = $entry; break }
         }
     }
     $proxy = $null
@@ -123,8 +157,11 @@ function Get-Route([uri]$Uri, [hashtable]$Context, [switch]$Direct) {
         $builder.UserName = ''; $builder.Password = ''; $builder.Query = ''; $builder.Fragment = ''
         $proxy = $builder.Uri.AbsoluteUri
         $safeProxy = $proxy
+        $reason = 'proxy_for_' + $Uri.Scheme
     }
-    return @{ proxy = $proxy; mode = $(if ($proxy) { 'proxy' } else { 'direct' }); endpoint = $safeProxy; bypass = $bypass; source = $Context.source }
+    if ($matchedRule) { $reason = $(if ($Context.bypass_mode -eq 'environment') { 'no_proxy_match' } else { 'windows_bypass_match' }) }
+    return @{ proxy = $proxy; mode = $(if ($proxy) { 'proxy' } else { 'direct' }); endpoint = $safeProxy
+        bypass = $bypass; source = $Context.source; reason = $reason; matched_rule = $matchedRule }
 }
 
 function Get-ExceptionDetails([Exception]$Exception) {
@@ -138,6 +175,11 @@ function Get-ExceptionDetails([Exception]$Exception) {
     return $items
 }
 
+function Get-ScriptErrorDetails([Management.Automation.ErrorRecord]$Record) {
+    return @{ id = $Record.FullyQualifiedErrorId; category = [string]$Record.CategoryInfo.Category
+        position = Protect-Text $Record.InvocationInfo.PositionMessage; stack = Protect-Text $Record.ScriptStackTrace }
+}
+
 function Quote-NativeArgument([string]$Value) {
     # Windows command-line quoting; Process.Start does not invoke a shell.
     $value = [regex]::Replace($Value, '(\\*)"', '$1$1\"')
@@ -145,13 +187,32 @@ function Quote-NativeArgument([string]$Value) {
     return '"' + $value + '"'
 }
 
-function Read-LimitedText([string]$Path, [switch]$NativeOutput) {
+function Read-LimitedText([string]$Path, [switch]$NativeOutput, [switch]$PreserveTail) {
     if (-not (Test-Path -LiteralPath $Path)) { return '' }
     $file = [IO.File]::OpenRead($Path)
     try {
         $buffer = New-Object byte[] ($script:ResponseLimit + 1)
         $length = $file.Read($buffer, 0, $buffer.Length)
         $length = [Math]::Min($length, $script:ResponseLimit)
+        if ($PreserveTail -and $file.Length -gt $script:ResponseLimit) {
+            # Preserve complete lines at both ends: large TLS/header dumps
+            # must not displace the final curl error. Decode/redact afterwards.
+            $half = [int]($script:ResponseLimit / 2)
+            $headEnd = $half
+            while ($headEnd -gt 0 -and $buffer[$headEnd - 1] -ne 10) { $headEnd-- }
+            $tail = New-Object byte[] $half
+            $null = $file.Seek(-$half, [IO.SeekOrigin]::End)
+            $tailLength = $file.Read($tail, 0, $tail.Length)
+            $tailStart = 0
+            while ($tailStart -lt $tailLength -and $tail[$tailStart] -ne 10) { $tailStart++ }
+            if ($tailStart -lt $tailLength) { $tailStart++ }
+            $marker = [Text.Encoding]::ASCII.GetBytes("`r`n[... diagnostic truncated; keeping beginning and end ...]`r`n")
+            $combined = New-Object byte[] ($headEnd + $marker.Length + $tailLength - $tailStart)
+            [Array]::Copy($buffer, 0, $combined, 0, $headEnd)
+            [Array]::Copy($marker, 0, $combined, $headEnd, $marker.Length)
+            [Array]::Copy($tail, $tailStart, $combined, ($headEnd + $marker.Length), ($tailLength - $tailStart))
+            $buffer = $combined; $length = $combined.Length
+        }
         if ($NativeOutput) {
             # Windows curl's localized Schannel errors can use the ANSI code
             # page even when this PowerShell process writes UTF-8 reports.
@@ -182,24 +243,44 @@ function Write-ProbeResult([hashtable]$Result) {
     Write-Host ('  ' + $label + $uploaded + ' · ' + $Result.message)
 }
 
+function Write-ProbeDetails([string]$Directory, [hashtable]$Result) {
+    $metadata = @{}
+    foreach ($key in @('key', 'url', 'method', 'started', 'finished', 'elapsed_ms', 'bytes', 'written_bytes',
+        'request_sha256', 'route', 'timeouts', 'curl_path', 'curl_arguments', 'curl_exit', 'tls_revocation',
+        'flow', 'progress', 'verdict', 'message', 'failure_stage', 'forced_termination', 'response_truncated',
+        'response_headers_truncated', 'transport_truncated', 'exceptions', 'script_error', 'diagnostic_exceptions')) {
+        if ($Result.ContainsKey($key)) { $metadata[$key] = $Result[$key] }
+    }
+    $http = $(if ($Result.status) { 'HTTP ' + $Result.status } else { '无 HTTP 响应' })
+    $lines = @($http, '', 'Request / connection / result', ($metadata | ConvertTo-Json -Depth 10))
+    if ($Result.response_header_text) { $lines += ''; $lines += 'Response headers'; $lines += $Result.response_header_text }
+    $lines += ''; $lines += 'Response body'; $lines += $Result.body
+    if ($Result.transport_detail) { $lines += ''; $lines += 'Timestamped curl transport'; $lines += $Result.transport_detail }
+    Write-Utf8 (Join-Path $Directory ($Result.key + '-response.txt')) ($lines -join "`r`n")
+}
+
 function Invoke-Probe([string]$Key, [uri]$Uri, [hashtable]$Route, [int]$Bytes, [int]$Seconds) {
     $result = @{ key = $Key; url = Protect-Text $Uri.AbsoluteUri; bytes = $Bytes; written_bytes = 0
-        route = @{ mode = $Route.mode; source = $Route.source; proxy = $Route.endpoint; bypass = $Route.bypass }
+        started = [DateTime]::UtcNow.ToString('o'); method = $(if ($Bytes -gt 0) { 'POST' } else { 'GET' })
+        timeouts = @{ connect_seconds = 5; total_seconds = $Seconds; watchdog_seconds = $Seconds + 3 }
+        route = @{ mode = $Route.mode; source = $Route.source; proxy = $Route.endpoint; bypass = $Route.bypass
+            reason = $Route.reason; matched_rule = $Route.matched_rule }
         authentication_sent = $false; encoding = 'identity'; headers = @{}; body = ''; status = 0 }
     $timer = [Diagnostics.Stopwatch]::StartNew()
-    $process = $null; $files = @()
+    $process = $null; $files = @(); $tracePath = $null; $stderr = $null
     try {
         $curl = (Get-Command curl.exe -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
         $version = [string](& $curl --disable --version | Select-Object -First 1)
+        $result['curl_path'] = $curl
         $tlsArguments = @(Get-CurlTlsArguments $version $Uri)
         $result['tls_revocation'] = $(if ($tlsArguments.Count) { 'best_effort' } else { 'default' })
         $prefix = Join-Path ([IO.Path]::GetTempPath()) ('codex-network-test-' + [guid]::NewGuid().ToString('N'))
         $headerPath = $prefix + '.headers'; $bodyPath = $prefix + '.response'; $tracePath = $prefix + '.trace'; $requestPath = $prefix + '.request'
         $files = @($headerPath, $bodyPath, $tracePath, $requestPath)
-        $format = 'http_code=%{http_code}\nhttp_connect=%{http_connect}\nremote_ip=%{remote_ip}\nremote_port=%{remote_port}\ntime_namelookup=%{time_namelookup}\ntime_connect=%{time_connect}\ntime_appconnect=%{time_appconnect}\ntime_starttransfer=%{time_starttransfer}\ntime_total=%{time_total}\nsize_upload=%{size_upload}\nsize_download=%{size_download}\nssl_verify_result=%{ssl_verify_result}\n'
+        $format = 'http_code=%{http_code}\nhttp_connect=%{http_connect}\nhttp_version=%{http_version}\nremote_ip=%{remote_ip}\nremote_port=%{remote_port}\nlocal_ip=%{local_ip}\nlocal_port=%{local_port}\nnum_connects=%{num_connects}\nnum_redirects=%{num_redirects}\ntime_namelookup=%{time_namelookup}\ntime_connect=%{time_connect}\ntime_appconnect=%{time_appconnect}\ntime_pretransfer=%{time_pretransfer}\ntime_starttransfer=%{time_starttransfer}\ntime_total=%{time_total}\nsize_upload=%{size_upload}\nsize_download=%{size_download}\nssl_verify_result=%{ssl_verify_result}\n'
         # --disable must be first: an existing curlrc must not inject auth,
         # retries, a different proxy or other per-user request behavior.
-        $arguments = @('--disable', '--silent', '--show-error', '--verbose', '--http1.1', '--retry', '0', '--connect-timeout', '5',
+        $arguments = @('--disable', '--silent', '--show-error', '--verbose', '--trace-time', '--http1.1', '--retry', '0', '--connect-timeout', '5',
             '--max-time', [string]$Seconds, '--max-filesize', [string]$script:ResponseLimit,
             '--noproxy', '', '--proxy', [string]$Route.endpoint,
             '--user-agent', 'CodexRequestOptimizer/StandaloneNetworkTest', '--header', 'Accept: application/json',
@@ -222,10 +303,17 @@ function Invoke-Probe([string]$Key, [uri]$Uri, [hashtable]$Route, [int]$Bytes, [
                     $stream.Write($chunk, 0, $count); $remaining -= $count
                 }
             } finally { $stream.Dispose() }
+            $result['request_sha256'] = Get-FileSha256 $requestPath
             $arguments += @('--header', 'Content-Type: application/json', '--header', 'Content-Encoding: identity',
                 '--data-binary', ('@' + $requestPath))
         }
         $arguments += @('--url', $Uri.AbsoluteUri)
+        # Record the effective options without retaining ephemeral paths.
+        $result['curl_arguments'] = @($arguments | ForEach-Object {
+            $argument = [string]$_
+            foreach ($path in $files) { $argument = $argument.Replace($path, '[temporary-file]') }
+            Protect-Text $argument
+        })
         $process = New-Object Diagnostics.Process
         $process.StartInfo.FileName = $curl
         $process.StartInfo.Arguments = (($arguments | ForEach-Object { Quote-NativeArgument $_ }) -join ' ')
@@ -234,6 +322,7 @@ function Invoke-Probe([string]$Key, [uri]$Uri, [hashtable]$Route, [int]$Bytes, [
         [void]$process.Start()
         $stdout = $process.StandardOutput.ReadToEndAsync(); $stderr = $process.StandardError.ReadToEndAsync()
         if (-not $process.WaitForExit(($Seconds + 3) * 1000)) {
+            $result['forced_termination'] = $true
             $process.Kill(); $process.WaitForExit(); throw 'curl exceeded its deadline'
         }
         $result['curl_exit'] = $process.ExitCode
@@ -247,6 +336,8 @@ function Invoke-Probe([string]$Key, [uri]$Uri, [hashtable]$Route, [int]$Bytes, [
         if (-not $result.status -and [int]$metrics['http_connect'] -ge 400) { $result.status = [int]$metrics['http_connect'] }
         if ($metrics['size_upload']) { $result.written_bytes = [int64][double]::Parse($metrics['size_upload'], [Globalization.CultureInfo]::InvariantCulture) }
         $headers = Read-LimitedText $headerPath
+        $result['response_header_text'] = $headers
+        $result['response_headers_truncated'] = (Test-Path -LiteralPath $headerPath) -and (Get-Item -LiteralPath $headerPath).Length -gt $script:ResponseLimit
         foreach ($line in ($headers -split '\r?\n')) {
             # Discard the CONNECT/interim header set when the final one starts.
             if ($line -match '^HTTP/\S+ \d{3}') { $result.headers = @{}; continue }
@@ -259,21 +350,57 @@ function Invoke-Probe([string]$Key, [uri]$Uri, [hashtable]$Route, [int]$Bytes, [
         }
         $result.body = Read-LimitedText $bodyPath
         $result['response_truncated'] = $process.ExitCode -eq 63 -or ((Test-Path -LiteralPath $bodyPath) -and (Get-Item -LiteralPath $bodyPath).Length -gt $script:ResponseLimit)
-        $result['transport_detail'] = Protect-Text ((Read-LimitedText $tracePath -NativeOutput) + $stderr.Result)
         if ($process.ExitCode -ne 0) {
             $result['exceptions'] = @(@{ type = 'curl'; message = ('curl exit ' + $process.ExitCode) })
         }
-    } catch { $result['exceptions'] = @(Get-ExceptionDetails $_.Exception) }
+    } catch {
+        $result['exceptions'] = @(Get-ExceptionDetails $_.Exception)
+        $result['script_error'] = Get-ScriptErrorDetails $_
+    }
     finally {
+        # Preserve the last transport evidence even when the watchdog or
+        # response parsing failed before the normal result path completed.
+        if ($tracePath) {
+            try {
+                $result['transport_truncated'] = (Test-Path -LiteralPath $tracePath) -and (Get-Item -LiteralPath $tracePath).Length -gt $script:ResponseLimit
+                $nativeError = $(if ($stderr -and $stderr.Status -eq 'RanToCompletion') { [string]$stderr.Result } else { '' })
+                $result['transport_detail'] = Protect-Text ((Read-LimitedText $tracePath -NativeOutput -PreserveTail) + $nativeError)
+            } catch { $result['diagnostic_exceptions'] = @(Get-ExceptionDetails $_.Exception) }
+        }
         if ($process) { $process.Dispose() }
         # Only these four exact temporary files belong to this invocation.
         foreach ($path in $files) { Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue }
         $result['elapsed_ms'] = $timer.ElapsedMilliseconds
+        $result['finished'] = [DateTime]::UtcNow.ToString('o')
     }
     $verdict = Get-ProbeVerdict $result ($Bytes -eq 0)
     $result['verdict'] = $verdict.code; $result['message'] = $verdict.message
     if ($verdict.failure_stage) { $result['failure_stage'] = $verdict.failure_stage }
+    $result['progress'] = Get-TransportProgress $result $Uri
     return $result
+}
+
+function Get-TransportProgress([hashtable]$Result, [uri]$Uri) {
+    $trace = [regex]::Replace([string]$Result.transport_detail, '(?m)^\d{2}:\d{2}:\d{2}\.\d+\s+', '')
+    $connectSent = $trace -match '(?m)^> CONNECT '
+    $requestSent = $trace -match '(?m)^> (GET|POST) '
+    $status = 0; $connect = 0; $tlsTime = 0.0
+    if ($Result.flow) {
+        $null = [int]::TryParse([string]$Result.flow['http_code'], [ref]$status)
+        $null = [int]::TryParse([string]$Result.flow['http_connect'], [ref]$connect)
+        $null = [double]::TryParse([string]$Result.flow['time_appconnect'], [Globalization.NumberStyles]::Float,
+            [Globalization.CultureInfo]::InvariantCulture, [ref]$tlsTime)
+    }
+    # These are positive observations, not inferred failures. In particular,
+    # curl may leave TCP timing at zero while waiting for a CONNECT response.
+    return @{
+        tcp_confirmed = $connectSent -or $requestSent -or $trace -match '(?m)^\* Connected to '
+        connect_sent = $connectSent; connect_status = $(if ($connect) { $connect } else { $null })
+        tls_confirmed = $Uri.Scheme -eq 'https' -and ($tlsTime -gt 0 -or $status -ge 100)
+        request_headers_sent = $requestSent; response_status = $(if ($status) { $status } else { $null })
+        upload = $(if ($Result.bytes -eq 0) { 'not_applicable' } elseif ($Result.written_bytes -eq $Result.bytes) { 'complete' }
+            elseif ($Result.written_bytes -gt 0) { 'partial' } else { 'not_sent' })
+    }
 }
 
 
@@ -287,7 +414,7 @@ function Get-ProbeVerdict([hashtable]$Result, [bool]$Local) {
         return @{ code = 'gateway_error'; message = ('代理拒绝 HTTPS 隧道（CONNECT HTTP ' + $connectStatus + '），正文未发送'); failure_stage = 'proxy_connect' }
     }
     if ($Result.curl_exit -eq 28 -and $Result.written_bytes -eq 0 -and $connectStatus -eq 0 -and
-        $Result.transport_detail -match '(?m)^> CONNECT ') {
+        $Result.transport_detail -match '(?m)^(?:\d{2}:\d{2}:\d{2}\.\d+\s+)?> CONNECT ') {
         return @{ code = 'timeout'; message = '未收到代理 CONNECT 响应，HTTPS 隧道未建立，正文未发送'; failure_stage = 'proxy_connect' }
     }
     if ($Result.status -eq 407) { return @{ code = 'proxy_auth'; message = '代理要求认证（407）' } }
@@ -316,20 +443,25 @@ function Get-ProbeVerdict([hashtable]$Result, [bool]$Local) {
 }
 
 function Get-AddressProbe([string]$Name, [int]$Port) {
-    $result = @{ host = $Name; port = $Port }
+    $result = @{ host = $Name; port = $Port; started = [DateTime]::UtcNow.ToString('o'); scope = 'independent_dns_tcp_probe' }
+    $timer = [Diagnostics.Stopwatch]::StartNew(); $stage = 'dns'
     try {
         $dns = [Net.Dns]::GetHostAddressesAsync($Name)
         if (-not $dns.Wait(3000)) { throw 'DNS timeout (3s)' }
         $result['addresses'] = @($dns.Result | ForEach-Object { $_.IPAddressToString })
+        $result['dns_ms'] = $timer.ElapsedMilliseconds; $stage = 'tcp'
         $tcp = New-Object Net.Sockets.TcpClient
         try {
             $connect = $tcp.BeginConnect($Name, $Port, $null, $null)
             if (-not $connect.AsyncWaitHandle.WaitOne(3000)) { throw 'TCP connect timeout (3s)' }
             $tcp.EndConnect($connect); $result['tcp'] = 'connected'
             $result['peer'] = [string]$tcp.Client.RemoteEndPoint
+            $result['local_endpoint'] = [string]$tcp.Client.LocalEndPoint
+            $result['tcp_ms'] = $timer.ElapsedMilliseconds - $result.dns_ms
             $connect.AsyncWaitHandle.Close()
         } finally { $tcp.Dispose() }
-    } catch { $result['exceptions'] = @(Get-ExceptionDetails $_.Exception) }
+    } catch { $result['failure_stage'] = $stage; $result['exceptions'] = @(Get-ExceptionDetails $_.Exception) }
+    finally { $result['elapsed_ms'] = $timer.ElapsedMilliseconds }
     return $result
 }
 
@@ -447,7 +579,8 @@ function Start-NetworkTest {
     $OutputDirectory = [IO.Path]::GetFullPath($OutputDirectory)
     $script:ReportDirectory = $OutputDirectory
     $curlPath = (Get-Command curl.exe -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
-    $curlVersion = (& $curlPath --disable --version | Select-Object -First 1)
+    $curlDetails = @(& $curlPath --disable --version)
+    $curlVersion = $curlDetails | Select-Object -First 1
     Write-Host '不修改配置；不发送 Codex 登录凭据；不调用模型。1 MB = 1,000,000 字节。'
     if ($FindUploadLimit) { Write-Host '依次测试 20、40、60…1,000 kB，共 50 档；1 kB = 1,000 字节。' }
     Write-Host ('结果目录：' + $OutputDirectory)
@@ -458,12 +591,14 @@ function Start-NetworkTest {
     Write-Host '[1/6] 检查本机入口（直连）…'
     $results += Invoke-Probe 'local_direct' $local $direct 0 3
     Write-ProbeResult $results[-1]
+    Write-ProbeDetails $OutputDirectory $results[-1]
+    $targetSource = $(if ($Target) { 'explicit_target' } else { 'official_default' })
     if (-not $Target -and $results[0].verdict -eq 'local_ok') {
         $settings = Invoke-Probe 'saved_upstream' ([uri]('http://127.0.0.1:' + $RelayPort + '/api/status')) $direct 0 3
         try {
             $status = $settings.body | ConvertFrom-Json -ErrorAction Stop
             $base = $(if ($status.profile.upstream) { [string]$status.profile.upstream } else { [string]$status.upstream })
-            if ($base) { $Target = $base.TrimEnd('/') + '/responses' }
+            if ($base) { $Target = $base.TrimEnd('/') + '/responses'; $targetSource = 'relay_configuration' }
         } catch { }
     }
     if (-not $Target) { $Target = 'https://chatgpt.com/backend-api/codex/responses' }
@@ -474,20 +609,20 @@ function Start-NetworkTest {
     $route = Get-Route $destination $context -Direct:$loopback
     $safeContext = @{}
     foreach ($key in $context.Keys) { if ($key -ne 'map') { $safeContext[$key] = $context[$key] } }
-    $report = @{ version = 1; started = (Get-Date).ToUniversalTime().ToString('o'); hostname = [Environment]::MachineName
+    $report = @{ version = 2; started = (Get-Date).ToUniversalTime().ToString('o'); hostname = [Environment]::MachineName
         os = [Environment]::OSVersion.VersionString; powershell = [string]$PSVersionTable.PSVersion
         target = $destination.AbsoluteUri; proxy = $safeContext; results = @(); authentication_sent = $false; curl_version = [string]$curlVersion
         note = 'Synthetic malformed JSON, identity encoding. No inference. API rejection is sample evidence, not formal permission approval. Native ChatGPT uses a different network stack.' }
+    $report['target_source'] = $targetSource
+    $report['runtime'] = @{ local_time = [DateTimeOffset]::Now.ToString('o'); os_64bit = [Environment]::Is64BitOperatingSystem
+        process_64bit = [Environment]::Is64BitProcess; clr = [Environment]::Version.ToString(); curl_path = $curlPath
+        curl_details = ($curlDetails -join "`n") }
+    $report['network'] = Get-NetworkEnvironment
+    $report['log_limits'] = @{ response_body_bytes = $script:ResponseLimit; response_header_bytes = $script:ResponseLimit
+        transport_bytes = $script:ResponseLimit; transport_policy = 'first_and_last_complete_lines_plus_truncation_notice' }
     $report['mode'] = $(if ($FindUploadLimit) { 'upload_limit' } else { 'quick' })
     if ($scriptPath -and (Test-Path -LiteralPath $scriptPath -PathType Leaf)) {
-        $hasher = [Security.Cryptography.SHA256]::Create(); $sourceFile = $null
-        try {
-            $sourceFile = [IO.File]::OpenRead($scriptPath)
-            $report['script_sha256'] = [BitConverter]::ToString($hasher.ComputeHash($sourceFile)).Replace('-', '').ToLowerInvariant()
-        } finally {
-            if ($sourceFile) { $sourceFile.Dispose() }
-            $hasher.Dispose()
-        }
+        $report['script_sha256'] = Get-FileSha256 $scriptPath
     }
     Write-Host ('上游：' + $report.target)
     Write-Host ('代理来源：' + $route.source + '；本次路径：' + $(if ($route.endpoint) { $route.endpoint } else { 'direct' }))
@@ -495,6 +630,8 @@ function Start-NetworkTest {
     Write-Host '[2/6] 检查本机入口（当前代理规则）…'
     $results += Invoke-Probe 'local_proxy' $local (Get-Route $local $context) 0 5
     Write-ProbeResult $results[-1]
+    Write-ProbeDetails $OutputDirectory $results[-1]
+    $report.results = $results; Write-Utf8 (Join-Path $OutputDirectory 'report.json') ($report | ConvertTo-Json -Depth 14)
     Write-Host ('[3/6] 检查' + $(if ($route.mode -eq 'proxy') { '代理' } else { '上游直连' }) + '连通性（DNS / TCP）…')
     $peer = $(if ($route.endpoint) { [uri]$route.endpoint } else { $destination })
     $report['address_probe'] = Get-AddressProbe $peer.DnsSafeHost $peer.Port
@@ -515,23 +652,21 @@ function Start-NetworkTest {
             else { Write-Host ('[' + ($index + 4) + '/6] 测试上传 ' + ($size / 1000) + ' kB…') }
             $probe = Invoke-Probe ('upload_' + $size) $destination $route $size $TimeoutSeconds
             $results += $probe
+            Write-ProbeDetails $OutputDirectory $probe
             $stopUploads = $probe.verdict -in @('network_error', 'tls_revocation_error', 'tls_error', 'dns_error', 'timeout', 'proxy_auth', 'gateway_error')
             Write-ProbeResult $probe
         }
         if ($FindUploadLimit) { $report['upload_limit'] = Get-UploadScanSummary $results }
         $report.results = $results; Write-Utf8 (Join-Path $OutputDirectory 'report.json') ($report | ConvertTo-Json -Depth 14)
     }
-    $lines = @($title, ('时间：' + $report.started), ('电脑：' + $report.hostname), ('上游：' + $report.target), ('代理来源：' + $route.source), ('本次代理：' + $route.endpoint), '')
+    $lines = @($title, ('时间：' + $report.started), ('电脑：' + $report.hostname), ('脚本 SHA-256：' + $report.script_sha256),
+        ('curl：' + $curlVersion + ' · ' + $curlPath), ('上游：' + $report.target + ' · 来源 ' + $targetSource),
+        ('代理来源：' + $route.source), ('本次代理：' + $route.endpoint), ('选路依据：' + $route.reason), '')
     foreach ($result in $results) {
         $http = $(if ($result.status) { 'HTTP ' + $result.status } else { '无 HTTP 响应' })
         $uploaded = $(if ($result.bytes -gt 0) { ' | 实际上传 ' + [long]$result.written_bytes + '/' + $result.bytes + ' B' } else { '' })
         $lines += $result.key + $uploaded + ' | ' + $http + ' | ' + $result.message
-        $details = @($http)
-        foreach ($key in $result.headers.Keys) { $details += $key + ': ' + $result.headers[$key] }
-        $details += ''; $details += $result.body
-        if ($result.transport_detail) { $details += ''; $details += $result.transport_detail }
-        if ($result.exceptions) { $details += ($result.exceptions | ConvertTo-Json -Depth 8) }
-        Write-Utf8 (Join-Path $OutputDirectory ($result.key + '-response.txt')) ($details -join "`r`n")
+        Write-ProbeDetails $OutputDirectory $result
     }
     $report['conclusions'] = @(Get-NetworkConclusions $results $route $report.address_probe)
     if ($FindUploadLimit) { $report.conclusions = @($report.conclusions | Select-Object -First 2) }
@@ -555,7 +690,9 @@ if (-not $LoadOnly) {
     catch {
         Write-Host ('测试未完成：' + (Protect-Text $_.Exception.Message)) -ForegroundColor Red
         if ($script:ReportDirectory -and (Test-Path -LiteralPath $script:ReportDirectory)) {
-            Write-Utf8 (Join-Path $script:ReportDirectory 'fatal-error.txt') ((Get-ExceptionDetails $_.Exception) | ConvertTo-Json -Depth 8)
+            $failure = @{ time = [DateTime]::UtcNow.ToString('o'); hostname = [Environment]::MachineName
+                exceptions = @(Get-ExceptionDetails $_.Exception); script_error = Get-ScriptErrorDetails $_ }
+            Write-Utf8 (Join-Path $script:ReportDirectory 'fatal-error.txt') ($failure | ConvertTo-Json -Depth 8)
             Write-Host ('错误详情：' + $script:ReportDirectory)
         }
         exit 1
