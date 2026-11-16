@@ -1,113 +1,169 @@
-"""Keep relay-owned copies of Codex clipboard images in one temporary folder."""
+"""Resolve clipboard references into the single shared image attachment cache."""
+import json
+import os
 from pathlib import Path
 import re
 import tempfile
 import threading
 import time
 import uuid
+import weakref
 
 from .locking import file_lock
 from .request_context import IMAGE_PATH_ATTRIBUTE, local_image_path
 
 CLIPBOARD_NAME = re.compile(r"codex-clipboard-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\.(?:png|jpe?g|webp|gif)", re.I)
 COPY_NAME = re.compile(r"[0-9a-f]{32}\.(?:png|jpe?g|webp|gif)", re.I)
-STAGING_NAME = re.compile(r"\.clipboard-[0-9a-f]{32}\.new")
+ATTACHMENT_NAME = re.compile(r"(?:[a-f0-9]{64}|[a-f0-9]{32}|i-[a-f0-9]{30}|i-[a-f0-9]{1,28}-[1-9][0-9]*)\.(?:png|jpe?g|webp|gif)", re.I)
+STAGING_NAME = re.compile(r"(?:\.clipboard-)?[0-9a-f]{32}\.new")
+MAX_ALIASES = 4096
+MAX_ALIAS_BYTES = 4 * 1024 * 1024
+_LOCKS = weakref.WeakValueDictionary()
+_LOCKS_GUARD = threading.Lock()
 
 
 class ClipboardImageCache:
-    def __init__(self, *, root=None, max_file_bytes=50 * 1024 * 1024,
-                 max_bytes=256 * 1024 * 1024, ttl=7 * 24 * 3600):
+    def __init__(self, directory, store, *, root=None, legacy_directories=(),
+                 max_file_bytes=50 * 1024 * 1024, ttl=7 * 24 * 3600):
         self.root = Path(root or tempfile.gettempdir()).resolve()
-        self.directory = self.root / "CodexRequestOptimizer"
-        self.max_file_bytes, self.max_bytes, self.ttl = max_file_bytes, max_bytes, ttl
-        self.lock = threading.RLock()
-
-    def destination(self, value):
-        value = local_image_path(value)
-        if not value:
-            return None
-        source = Path(value)
-        parent = source.parent.resolve()
-        if parent == self.directory and (CLIPBOARD_NAME.fullmatch(source.name) or COPY_NAME.fullmatch(source.name)):
-            return source
-        if parent != self.root or not CLIPBOARD_NAME.fullmatch(source.name):
-            return None
-        # Keep the complete UUID; only remove its prefix and separators.
-        name = uuid.UUID(source.stem[len("codex-clipboard-"):]).hex + source.suffix.lower()
-        target = self.directory / name
-        legacy = self.directory / source.name
-        if not self._regular(source) and not self._regular(target) and self._regular(legacy):
-            return legacy
-        return target
+        self.directory, self.store = Path(directory).resolve(), store
+        self.legacy_directory = self.root / "CodexRequestOptimizer"
+        self.previous_directories = {Path(path).resolve() for path in legacy_directories}
+        self.aliases_path = self.directory / ".clipboard-paths.json"
+        with _LOCKS_GUARD:
+            self.lock = _LOCKS.setdefault(os.path.normcase(str(self.directory)), threading.RLock())
+        self.max_file_bytes, self.ttl = max_file_bytes, ttl
 
     @staticmethod
     def _regular(path):
         return not path.is_symlink() and not path.is_junction() and path.is_file()
 
-    def _prune(self, protected):
-        total, now = 0, time.time()
-        for path in self.directory.iterdir():
-            staging = STAGING_NAME.fullmatch(path.name)
-            if not (staging or CLIPBOARD_NAME.fullmatch(path.name) or COPY_NAME.fullmatch(path.name)) or not self._regular(path):
-                continue
-            info = path.stat()
-            if path not in protected and now - info.st_mtime > (3600 if staging else self.ttl):
-                path.unlink()
-            else:
-                total += info.st_size
-        return total
+    def _eligible(self, path):
+        parent = path.parent.resolve()
+        if parent == self.directory or parent in self.previous_directories:
+            return bool(ATTACHMENT_NAME.fullmatch(path.name))
+        if parent == self.legacy_directory:
+            return bool(CLIPBOARD_NAME.fullmatch(path.name) or COPY_NAME.fullmatch(path.name))
+        return parent == self.root and bool(CLIPBOARD_NAME.fullmatch(path.name))
 
-    def prepare(self, paths):
+    def _retained(self, path):
+        parent = path.parent.resolve()
+        if parent in {self.directory, self.legacy_directory, *self.previous_directories}:
+            return path if self._regular(path) else None
+        if CLIPBOARD_NAME.fullmatch(path.name) and not self.legacy_directory.is_symlink() and not self.legacy_directory.is_junction():
+            compact = uuid.UUID(path.stem[len("codex-clipboard-"):]).hex + path.suffix.lower()
+            source = path.stat() if self._regular(path) else None
+            for name in (compact, path.name):
+                legacy = self.legacy_directory / name
+                if self._regular(legacy):
+                    info = legacy.stat()
+                    if source is None or (source.st_size == info.st_size and source.st_mtime_ns <= info.st_mtime_ns):
+                        return legacy
+        return None
+
+    def _cached(self, record):
+        name = record.get("name", "")
+        if not isinstance(name, str) or not (ATTACHMENT_NAME.fullmatch(name) or CLIPBOARD_NAME.fullmatch(name)):
+            return None
+        path = Path(record["path"]) if isinstance(record.get("path"), str) else self.directory / name
+        parents = {self.directory, self.legacy_directory, *self.previous_directories}
+        return path if path.name == name and path.parent.resolve() in parents else None
+
+    def _load(self):
+        try:
+            if self.aliases_path.stat().st_size <= MAX_ALIAS_BYTES:
+                result = json.loads(self.aliases_path.read_text(encoding="utf8"))
+                if isinstance(result, dict):
+                    return {key: value for key, value in result.items()
+                            if isinstance(value, dict) and isinstance(value.get("used"), (int, float))}
+        except (OSError, ValueError):
+            pass
+        return {}
+
+    def _save(self, aliases):
+        now = time.time()
+        ordered = sorted(((key, value) for key, value in aliases.items()
+                          if now - value["used"] <= self.ttl), key=lambda row: row[1]["used"], reverse=True)
+        retained, size = {}, 2
+        for key, value in ordered[:MAX_ALIASES]:
+            size += len(json.dumps({key: value}, ensure_ascii=False).encode("utf8")) + 2
+            if size > MAX_ALIAS_BYTES:
+                break
+            retained[key] = value
+        staging = self.directory / (uuid.uuid4().hex + ".new")
+        try:
+            staging.write_text(json.dumps(retained, ensure_ascii=False), encoding="utf8")
+            staging.replace(self.aliases_path)
+        finally:
+            staging.unlink(missing_ok=True)
+
+    def prepare(self, paths, *, protected=None):
         candidates = {}
         for value in paths[:32]:
-            target = self.destination(value)
-            if target:
-                candidates[local_image_path(value)] = target
-        protected, copied = set(candidates.values()), {}
-        for value, target in candidates.items():
-            staging = None
-            try:
-                source = Path(value)
-                if self.directory.is_symlink() or self.directory.is_junction():
-                    continue
-                if not self._regular(source) and not self._regular(target):
-                    continue
-                self.directory.mkdir(parents=True, exist_ok=True)
-                with self.lock, file_lock(self.directory / ".clipboard.lock"):
-                    source_info = source.stat() if self._regular(source) else None
-                    target_info = target.stat() if self._regular(target) else None
-                    fresh = target_info is not None and (source_info is None or source == target or
-                            (source_info.st_size == target_info.st_size and
-                             source_info.st_mtime_ns <= target_info.st_mtime_ns))
-                    if fresh and 0 < target_info.st_size <= self.max_file_bytes:
-                        target.touch()
-                        self._prune(protected)
-                        copied[value] = str(target)
-                        continue
-                    if target.is_symlink() or target.is_junction() or source_info is None or source == target:
-                        continue
-                    size = source_info.st_size
-                    total = self._prune(protected) - (target_info.st_size if target_info else 0)
-                    if not 0 < size <= self.max_file_bytes or total + size > self.max_bytes:
-                        continue
-                    with source.open("rb") as stream:
-                        payload = stream.read(self.max_file_bytes + 1)
-                    if not 0 < len(payload) <= self.max_file_bytes or total + len(payload) > self.max_bytes:
-                        continue
-                    staging = self.directory / (".clipboard-" + uuid.uuid4().hex + ".new")
-                    with staging.open("xb") as stream:
-                        stream.write(payload)
-                    staging.replace(target)
-                    copied[value] = str(target)
-            except OSError:
-                # A missing original or unwritable cache must not break an otherwise valid request.
-                continue
-            finally:
-                if staging is not None:
+            value = local_image_path(value)
+            if value and self._eligible(Path(value)):
+                candidates[value] = Path(value)
+        if not candidates or self.directory.is_symlink() or self.directory.is_junction():
+            return {}
+        protected = protected if protected is not None else set()
+        pinned = set(protected)
+        copied = {}
+        try:
+            self.directory.mkdir(parents=True, exist_ok=True)
+            with self.lock, file_lock(self.directory / ".clipboard-paths.lock"):
+                aliases = self._load()
+                # Pin all retained references before a store call can prune them.
+                for value, path in candidates.items():
+                    key = os.path.normcase(str(path.resolve()))
+                    record = aliases.get(key, {})
+                    cached = self._cached(record) or self._retained(path)
+                    if cached is not None and self._regular(cached):
+                        if cached.parent.resolve() == self.directory:
+                            cached.touch()
+                        pinned.add(cached)
+                for value, path in candidates.items():
                     try:
-                        staging.unlink(missing_ok=True)
+                        key = os.path.normcase(str(path.resolve()))
+                        record = aliases.get(key, {})
+                        cached = self._cached(record)
+                        retained = self._retained(path)
+                        direct = path.parent.resolve() in {self.directory, self.legacy_directory, *self.previous_directories}
+                        source = path if self._regular(path) else None
+                        info = source.stat() if source else None
+                        fresh = (source is None or direct or
+                                 (record.get("size") == info.st_size and record.get("mtime") == info.st_mtime_ns))
+                        if retained is not None:
+                            cached, fresh = retained, True
+                        if fresh and cached is not None and self._regular(cached) and 0 < cached.stat().st_size <= self.max_file_bytes:
+                            target = cached
+                        else:
+                            if source is None:
+                                continue
+                            info = source.stat()
+                            if not 0 < info.st_size <= self.max_file_bytes:
+                                continue
+                            with source.open("rb") as stream:
+                                payload = stream.read(self.max_file_bytes + 1)
+                            if not 0 < len(payload) <= self.max_file_bytes:
+                                continue
+                            extension = ".jpg" if source.suffix.lower() == ".jpeg" else source.suffix.lower()
+                            target = self.store(payload, extension, pinned)
+                            if target is None:
+                                continue
+                        target.touch()
+                        protected.add(target)
+                        pinned.add(target)
+                        copied[value] = str(target)
+                        if not direct:
+                            aliases[key] = {"name": target.name, "path": str(target), "used": time.time(),
+                                            "size": info.st_size if info else record.get("size"),
+                                            "mtime": info.st_mtime_ns if info else record.get("mtime")}
                     except OSError:
-                        pass
+                        # Path-only references can still use their original if copying fails.
+                        continue
+                self._save(aliases)
+        except OSError:
+            pass
         return copied
 
 

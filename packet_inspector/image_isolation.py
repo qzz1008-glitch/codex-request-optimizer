@@ -2,6 +2,7 @@
 import base64
 import binascii
 import hashlib
+from itertools import chain
 import json
 import os
 from pathlib import Path
@@ -12,7 +13,7 @@ import time
 import uuid
 
 from .analyzer import JsonBytes, decode_body, encode
-from .clipboard_images import ClipboardImageCache, rewrite_clipboard_text
+from .clipboard_images import ATTACHMENT_NAME, STAGING_NAME, ClipboardImageCache, rewrite_clipboard_text
 from .overflow import encode_changed_info
 from .locking import file_lock
 from .request_context import request_image_paths, temporary_request_kind
@@ -30,14 +31,13 @@ MAX_IMAGE_BYTES = 50 * 1024 * 1024
 MAX_ATTACHMENTS_BYTES = 256 * 1024 * 1024
 ATTACHMENT_TTL = 7 * 24 * 3600
 MIME_EXTENSIONS = {"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp", "image/gif": ".gif"}
-ATTACHMENT_NAME = re.compile(r"(?:[a-f0-9]{64}|i-[a-f0-9]{30}|i-[a-f0-9]{1,28}-[1-9][0-9]*)\.(?:png|jpg|webp|gif)")
 
 
 def resolve_image_directory(data_dir, value=""):
     if not isinstance(value, str) or "\x00" in value:
         raise ValueError("图片保存路径必须是绝对文件夹路径。")
     if not value.strip():
-        return (Path(data_dir) / "image-attachments").resolve()
+        return (Path(data_dir) / "images").resolve()
     try:
         directory = Path(os.path.expandvars(value.strip())).expanduser()
         if not directory.is_absolute():
@@ -65,10 +65,21 @@ class ImageIsolationFailure(Exception):
 class ImageIsolation:
     def __init__(self, directory, attachment_dir=""):
         self.directory = resolve_image_directory(directory, attachment_dir)
+        self.previous_directory = (Path(directory) / "image-attachments").resolve()
         self.lock_path = Path(directory) / "image-attachments.lock"
         self.lock = threading.RLock()
-        self.clipboard = ClipboardImageCache(max_file_bytes=MAX_IMAGE_BYTES,
-                                            max_bytes=MAX_ATTACHMENTS_BYTES, ttl=ATTACHMENT_TTL)
+        self.clipboard = ClipboardImageCache(self.directory, self._copy_payload,
+                                            legacy_directories=[self.previous_directory],
+                                            max_file_bytes=MAX_IMAGE_BYTES,
+                                            ttl=ATTACHMENT_TTL)
+
+    def _copy_payload(self, payload, extension, protected):
+        try:
+            return self._store_payload(payload, extension, protected)
+        except ImageIsolationFailure as error:
+            if error.code != "image_attachment_storage_full":
+                raise
+            return None
 
     def _store(self, image_url, protected):
         if not isinstance(image_url, str):
@@ -90,9 +101,24 @@ class ImageIsolation:
                         "image/webp": payload[:4] == b"RIFF" and payload[8:12] == b"WEBP"}
         if not signature_ok[match[1]]:
             raise ImageIsolationFailure("image_invalid_data", "图片格式与声明不一致，未上传原始图片。")
+        return self._store_payload(payload, MIME_EXTENSIONS[match[1]], protected)
+
+    def _store_payload(self, payload, extension, protected):
         digest = hashlib.sha256(payload).hexdigest()
-        stem, extension = "i-" + digest[:30], MIME_EXTENSIONS[match[1]]
+        stem = "i-" + digest[:30]
         with self.lock, file_lock(self.lock_path):
+            if self.previous_directory != self.directory and self.previous_directory.is_dir():
+                # Existing contexts must keep their original paths and cache prefixes.
+                candidates = chain((self.previous_directory / (stem + extension),
+                                    self.previous_directory / (digest + extension)),
+                                   self.previous_directory.glob("i-" + digest[:24] + "*" + extension))
+                for existing in candidates:
+                    if self.clipboard._regular(existing) and existing.stat().st_size == len(payload):
+                        with existing.open("rb") as stream:
+                            if hashlib.file_digest(stream, "sha256").hexdigest() == digest:
+                                existing.touch()
+                                protected.add(existing)
+                                return existing.resolve()
             self.directory.mkdir(parents=True, exist_ok=True)
             sequence = 0
             while True:
@@ -113,12 +139,11 @@ class ImageIsolation:
                 sequence += 1
             total = 0
             for path in self.directory.iterdir():
-                if not ATTACHMENT_NAME.fullmatch(path.name):
-                    continue
-                if path.is_symlink() or not path.is_file():
+                staging = STAGING_NAME.fullmatch(path.name)
+                if not (staging or ATTACHMENT_NAME.fullmatch(path.name)) or not self.clipboard._regular(path):
                     continue
                 info = path.stat()
-                if path not in protected and time.time() - info.st_mtime > ATTACHMENT_TTL:
+                if path not in protected and time.time() - info.st_mtime > (3600 if staging else ATTACHMENT_TTL):
                     path.unlink()
                 else:
                     total += info.st_size
@@ -148,8 +173,7 @@ class ImageIsolation:
         inputs = body.get("input", [])
         replacements, protected = [], set()
         index = None
-        copied = self.clipboard.prepare(request_image_paths(body))
-        protected.update(Path(value) for value in copied.values())
+        copied = self.clipboard.prepare(request_image_paths(body), protected=protected)
 
         def rewrite_text(text, pointer):
             nonlocal index

@@ -769,6 +769,34 @@ class ImageRelayTests(unittest.TestCase):
         self.assertEqual(meta["image_isolation_removed"], 1)
         self.assertEqual(inbound["body"]["input"][-1]["content"][1]["type"], "input_image")
 
+    def test_clipboard_relay_uses_one_stable_cache_before_and_after_source_cleanup(self):
+        self.enable()
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp).resolve()
+            source = root / "codex-clipboard-00000000-0000-0000-0000-000000000123.png"
+            part = image_part()
+            source.write_bytes(base64.b64decode(part["image_url"].split(",", 1)[1]))
+            body = request_body()
+            tag = '<image path="' + str(source) + '">'
+            body["input"][-1]["content"].insert(1, {"type": "input_text", "text": tag})
+            cache = self.server.image_isolation.clipboard
+            with patch.object(cache, "root", root), patch.object(cache, "legacy_directory", root / "CodexRequestOptimizer"):
+                requests = []
+                for original_exists in (True, False):
+                    if not original_exists:
+                        source.unlink()
+                    self.assertEqual(self.relay(encode(body))[0], 200)
+                    requests.append(self.up.requests[-1]["body"])
+                    parts = json.loads(requests[-1])["input"][-1]["content"]
+                    target = Path(parts[2]["text"])
+                    self.assertEqual(target.parent, (self.server.data_dir / "images").resolve())
+                    self.assertEqual(parts[1]["text"], tag.replace(str(source), str(target)))
+                    meta, inbound = self.latest()
+                    self.assertEqual(meta["image_paths"], [str(target)])
+                    self.assertEqual(inbound["body"]["input"][-1]["content"][1]["text"], tag)
+                self.assertEqual(requests[0], requests[1])
+                self.assertFalse(cache.legacy_directory.exists())
+
     def test_tool_images_are_rewritten_before_forwarding_and_in_later_history(self):
         self.enable()
         for custom in (False, True):
@@ -878,7 +906,7 @@ class ImageRelayTests(unittest.TestCase):
             self.assertEqual(self.api("/api/settings", {"image_isolation_enabled": value})[0], 400)
 
     def test_image_save_directory_default_and_custom_path_preserve_old_images(self):
-        default = (self.server.data_dir / "image-attachments").resolve()
+        default = (self.server.data_dir / "images").resolve()
         status = self.api("/api/status")[1]
         self.assertTrue(status["image_save_dir_supported"])
         self.assertEqual(status["image_save_dir"], str(default))
