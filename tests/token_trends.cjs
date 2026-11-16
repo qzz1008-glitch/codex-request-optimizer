@@ -72,12 +72,61 @@ function dualRows(){return [
 function idleRows(){return [12,1].flatMap((hours,chunk)=>Array.from({length:13},(_,index)=>packet(800+chunk*20+index,{
  created:now-hours*3600+index*300,upstream_usage:{input_tokens:100+index*100},outbound_wire_bytes:100000+index*10000
 })));}
+function crossingRows(){const start=now-12*3600;return [
+ packet(1401,{created:start,native_retry_advised:true,upstream_usage:{input_tokens:100},outbound_wire_bytes:1000}),
+ packet(1402,{created:start+9*3600,usage_override_applied:true,upstream_usage:{input_tokens:400},outbound_wire_bytes:4000}),
+ packet(1403,{created:start-60,thread_id:'busy-session',state:'streaming',upstream_usage:{input_tokens:10},outbound_wire_bytes:100})];}
 function eventRows(){return [
  packet(701,{usage_override_applied:true}),packet(702,{overflow_cache_hit:true,native_retry_advised:true}),
  packet(703,{thread_id:'session-b',native_retry_advised:true}),packet(704,{thread_id:'session-b',is_compaction:true}),
  packet(705),packet(706,{thread_id:'session-b',usage_override_applied:true,native_retry_advised:true})
 ].map((row,index)=>({...row,upstream_usage:{input_tokens:100+index*100},...(row.overflow_cache_hit?{request_token_estimate:estimate(100+index*100)}:{}),outbound_wire_bytes:100000+index*100000}));}
 (async()=>{
+ await test('a curve crossing the viewport stays visible with neither endpoint in view',()=>{
+  const {result}=rendered(crossingRows()),start=now-12*3600;
+  result.hours=3;result.windowEnd=start+6*3600;result.render();
+  assert.equal(result.model().matched.length,1);
+  for(const chart of result.charts){
+   assert.equal(chart.empty.hidden,true);assert.equal(chart.points.length,0);
+   assert.equal(chartNodes(chart,'trend-curve').length,1);assert.match(chartNodes(chart,'trend-curve')[0].attrs.d,/L/);
+   assert.equal(chartNodes(chart,'trend-sample').length,0);assert.equal(chart.eventNodes.length,0);
+   const [layer]=chartNodes(chart,'trend-series-line'),[clip]=chart.svg.all(node=>node.tag==='clipPath');
+   assert.equal(layer.attrs['clip-path'],`url(#${clip.attrs.id})`);
+   assert.equal(Number(clip.children[0].attrs.x),chart.bounds.left);
+   assert.equal(Number(clip.children[0].attrs.width),chart.bounds.width-chart.bounds.left-chart.bounds.right);
+  }
+ });
+ await test('curves continue to viewport edges with one endpoint and never extend beyond the last request',()=>{
+  const {result}=rendered(crossingRows()),start=now-12*3600;
+  for(const [hours,end,visible] of [[3,start+3*3600,id(1401)],[4,start+10*3600,id(1402)]]){
+   result.hours=hours;result.windowEnd=end;result.render();
+   for(const chart of result.charts){
+    assert.equal(chart.empty.hidden,true);assert.deepEqual(Array.from(chart.points,p=>p.packet.id),[visible]);
+    assert.match(chartNodes(chart,'trend-curve')[0].attrs.d,/L/);assert.equal(chart.eventNodes.length,1);
+   }
+  }
+  result.hours=1;result.windowEnd=null;result.render();
+  assert.equal(result.model().matched.length,0);
+  for(const chart of result.charts){assert.equal(chart.empty.hidden,false);assert.equal(chartNodes(chart,'trend-curve').length,0);}
+ });
+ await test('each metric keeps its closest known boundary values across missing samples',()=>{
+  const rows=crossingRows(),start=now-12*3600;
+  rows.push(packet(1404,{created:start+3600,outbound_wire_bytes:2000}),packet(1405,{created:start+8*3600,outbound_wire_bytes:3000}));
+  const {result}=rendered(rows);result.hours=3;result.windowEnd=start+6*3600;result.render();
+  assert.deepEqual(Array.from(result.charts[0].linePoints,p=>p.packet.id),[id(1404),id(1405)]);
+  assert.deepEqual(Array.from(result.charts[1].linePoints,p=>p.packet.id),[id(1401),id(1402)]);
+ });
+ await test('a crossing curve can be highlighted without inventing request points or callouts',()=>{
+  const {result,ids}=rendered(crossingRows()),start=now-12*3600;
+  result.hours=3;result.windowEnd=start+6*3600;result.render();
+  for(const chart of result.charts){
+   const [a,b]=chart.linePoints,x=chart.bounds.x(start+4.5*3600),ratio=(x-a.x)/(b.x-a.x),y=a.y+(b.y-a.y)*ratio;
+   chart.svg.onpointermove({clientX:x,clientY:y});assert.equal(result.hoverSeries,'session-a');assert.equal(result.hover,null);
+   assert.equal(ids.get('trend-time-tooltip').hidden,true);assert.ok(result.charts.every(value=>value.tooltip.hidden));
+   result.render();assert.equal(result.hoverSeries,'session-a');
+   chart.svg.onpointermove({clientX:chart.bounds.left-10,clientY:y});assert.equal(result.hoverSeries,null);
+  }
+ });
  await test('size axis steps use decimal bytes and match the configured limit units',()=>{
   const scale=View.sizeScale(1000000);
   assert.equal(scale.step,200000);assert.equal(scale.max,1000000);
