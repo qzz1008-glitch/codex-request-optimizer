@@ -266,112 +266,94 @@ Assert ((Get-UploadConclusion @($small,$near) @(64000,950000)).status -eq 'block
         self.assertFalse(relay.calls, "Synthetic upload bodies must bypass the relay")
         self.assertFalse(list(self.scratch.glob("codex-network-test-*")), "Temporary probe files must be removed")
 
-    def test_upload_search_handles_bounds_incomplete_uploads_and_inconsistent_policy(self):
+    def test_upload_scan_summary_keeps_uncertain_and_incomplete_samples_distinct(self):
         result = self.run_ps(r'''
 function Assert($Value, $Message) { if (-not $Value) { throw $Message } }
 function Sample([int]$Size, [string]$Verdict) {
     return @{key=('upload_' + $Size);bytes=$Size;written_bytes=$Size;verdict=$Verdict;message='fixture'}
 }
-$rows = @((Sample 950000 'api_response'), (Sample 1100000 'upload_blocked'))
-$state = Get-UploadSearchState $rows 2000000 1000
-Assert ($state.next_bytes -eq 1025000) 'Bisect between a complete upload and an explicit size restriction'
-$rows = @((Sample 1000000 'api_response'), (Sample 1000500 'size_blocked'))
-$state = Get-UploadSearchState $rows 2000000 1000
-Assert ($state.status -eq 'bounded' -and $null -eq $state.next_bytes) 'Stop within configured precision'
-$state = Get-UploadSearchState @((Sample 2000000 'api_response')) 2000000 1000
-Assert ($state.status -eq 'at_least' -and $null -eq $state.smallest_blocked_bytes) 'A passed ceiling is only a lower bound'
-$rows = @((Sample 64000 'upload_blocked'), (Sample 1100000 'api_response'))
-Assert ((Get-UploadSearchState $rows 2000000 1000).status -eq 'inconclusive') 'Inconsistent size decisions are not a size limit'
-$partial = Sample 950000 'api_response'; $partial.written_bytes = 1
-Assert ((Get-UploadSearchState @($partial) 2000000 1000).status -eq 'inconclusive') 'Partial writes cannot establish permission'
-Assert ((Get-UploadSearchState @((Sample 1000 'upload_blocked')) 2000000 1000).status -eq 'no_passing_sample') 'All blocked does not mean a zero-byte limit'
-$unknown = Sample 950000 'unknown'
-Assert ($null -eq (Get-UploadSearchState @($unknown) 2000000 1000).next_bytes) 'Generic 403 and unknown responses stop probing'
-$state = Get-UploadSearchState @((Sample 1100000 'api_response')) 2000000 1000
-Assert ($state.next_bytes -eq 2000000) 'Exponential growth respects the user ceiling'
-'PASS: bounded search, incomplete uploads and uncertain outcomes'
+$rows = @(1..50 | ForEach-Object { Sample ($_ * 20000) 'api_response' })
+$state = Get-UploadScanSummary $rows
+Assert ($state.status -eq 'at_least' -and $state.samples -eq 50 -and $state.step_bytes -eq 20000 -and $state.max_test_bytes -eq 1000000) 'All 50 samples cover the fixed range'
+Assert ($null -eq $state.smallest_blocked_bytes) 'A passed ceiling is only a lower bound'
+$rows[0] = Sample 20000 'upload_blocked'
+Assert ((Get-UploadScanSummary $rows).status -eq 'inconclusive') 'Inconsistent size decisions are not a size limit'
+$rows[0] = Sample 20000 'api_response'; $rows[0].written_bytes = 1
+Assert ((Get-UploadScanSummary $rows).status -eq 'inconclusive') 'Partial writes cannot establish permission'
+$rows = @(1..50 | ForEach-Object { Sample ($_ * 20000) 'upload_blocked' })
+Assert ((Get-UploadScanSummary $rows).status -eq 'no_passing_sample') 'All blocked does not mean a zero-byte limit'
+$rows = @(1..50 | ForEach-Object { Sample ($_ * 20000) 'skipped' })
+$rows[0] = Sample 20000 'network_error'
+$state = Get-UploadScanSummary $rows
+Assert ($state.status -eq 'incomplete' -and $state.samples -eq 1 -and $state.skipped_samples -eq 49) 'Skipped samples remain explicitly untested'
+'PASS: fixed scan summaries preserve uncertain and incomplete outcomes'
 ''')
         self.assertIn("PASS:", result)
 
-    def test_upload_limit_launcher_locates_boundary_without_authentication(self):
+    def test_upload_limit_launcher_scans_all_fifty_sizes_even_after_a_size_block(self):
         upstream, relay = self.gateway(), self.gateway()
+        upstream.upload_limit_bytes = 550_000
         relay.upstream = f"http://127.0.0.1:{upstream.server_port}"
         report_dir = self.root / "limit-report"
         source = SOURCE.read_text(encoding="utf8")
         source = source.replace("[int]$RelayPort = 47844", f"[int]$RelayPort = {relay.server_port}")
-        source = source.replace("[int]$MaxUploadBytes = 20000000", "[int]$MaxUploadBytes = 2000000")
         source = source.replace("[string]$OutputDirectory = ''", "[string]$OutputDirectory = '" + str(report_dir).replace("'", "''") + "'")
         launcher = self.root / "Test Upload Limit.cmd"
         launcher.write_bytes(source.encode("utf8"))
         result = subprocess.run(["cmd.exe", "/d", "/c", str(launcher), "--upload-limit"], env=self.environment,
-                                capture_output=True, text=True, encoding="utf8", timeout=40)
+                                capture_output=True, text=True, encoding="utf8", timeout=60)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         report = json.loads((report_dir / "report.json").read_text(encoding="utf8"))
         limit = report["upload_limit"]
         self.assertEqual(limit["status"], "bounded")
-        self.assertLessEqual(limit["largest_unblocked_bytes"], 1_000_000)
-        self.assertGreater(limit["smallest_blocked_bytes"], 1_000_000)
-        self.assertLessEqual(limit["smallest_blocked_bytes"] - limit["largest_unblocked_bytes"], 1000)
-        self.assertLessEqual(len(upstream.calls), 12)
-        self.assertEqual(len({call["bytes"] for call in upstream.calls}), len(upstream.calls), "Do not repeat samples")
+        self.assertEqual(limit["largest_unblocked_bytes"], 540_000)
+        self.assertEqual(limit["smallest_blocked_bytes"], 560_000)
+        self.assertEqual(limit["step_bytes"], 20_000)
+        self.assertEqual(limit["max_test_bytes"], 1_000_000)
+        self.assertEqual([call["bytes"] for call in upstream.calls], list(range(20_000, 1_000_001, 20_000)))
         for call in upstream.calls:
             self.assertNotIn("authorization", {key.lower() for key in call["headers"]})
             with self.assertRaises(json.JSONDecodeError):
                 json.loads(call["body"])
-        self.assertIn("最大未拦截样本", (report_dir / "summary.txt").read_text(encoding="utf8"))
+        summary = (report_dir / "summary.txt").read_text(encoding="utf8")
+        self.assertIn("最大未拦截样本", summary)
+        self.assertIn("实际上传 20000/20000 B", summary)
+        self.assertEqual(len(report["conclusions"]), 2, "Fixed legacy permission samples are not relevant to the range scan")
         self.assertFalse(relay.calls)
         self.assertFalse(list(self.scratch.glob("codex-network-test-*")))
 
-    def test_search_stops_at_ceiling_and_reports_at_least_rather_than_maximum(self):
+    def test_scan_includes_one_megabyte_but_never_uploads_more(self):
         upstream, relay = self.gateway(), self.gateway()
         upstream.upload_limit_bytes = 10_000_000
         report_dir = self.root / "ceiling-report"
         result = subprocess.run([POWERSHELL, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(self.ps1),
                                  "-Target", f"http://127.0.0.1:{upstream.server_port}/responses",
                                  "-RelayPort", str(relay.server_port), "-OutputDirectory", str(report_dir),
-                                 "-FindUploadLimit", "-NoPrompt", "-MaxUploadBytes", "2000000"],
-                                env=self.environment, capture_output=True, text=True, encoding="utf8", timeout=30)
+                                 "-FindUploadLimit"],
+                                env=self.environment, capture_output=True, text=True, encoding="utf8", timeout=60)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         report = json.loads((report_dir / "report.json").read_text(encoding="utf8"))
         self.assertEqual(report["upload_limit"]["status"], "at_least")
-        self.assertEqual(report["upload_limit"]["largest_unblocked_bytes"], 2_000_000)
+        self.assertEqual(report["upload_limit"]["largest_unblocked_bytes"], 1_000_000)
         self.assertIsNone(report["upload_limit"]["smallest_blocked_bytes"])
-        self.assertEqual([call["bytes"] for call in upstream.calls], [64_000, 950_000, 1_100_000, 2_000_000])
+        self.assertEqual(report["upload_limit"]["unblocked_samples"], 50)
+        self.assertEqual([call["bytes"] for call in upstream.calls], list(range(20_000, 1_000_001, 20_000)))
 
-    def test_prompt_accepts_decimal_range_and_rejects_invalid_input_before_network(self):
-        upstream, relay = self.gateway(), self.gateway()
-        report_dir = self.root / "prompt-report"
-        text = f'''
-$FindUploadLimit = $true; $NoPrompt = $false
-$Target = 'http://127.0.0.1:{upstream.server_port}/responses'; $RelayPort = {relay.server_port}
-$OutputDirectory = '{str(report_dir).replace("'", "''")}'
-function Read-Host {{ return '0.002' }}
-$null = Start-NetworkTest
-$report = Get-Content -LiteralPath (Join-Path $OutputDirectory 'report.json') -Raw -Encoding UTF8 | ConvertFrom-Json
-if ($report.upload_limit.max_test_bytes -ne 2000) {{ throw 'Decimal MB prompt was not applied' }}
-function Read-Host {{ return 'not-a-number' }}
-try {{ $null = Start-NetworkTest; throw 'Invalid input was accepted' }} catch {{
-    if ($_.Exception.Message -notlike '*请输入*') {{ throw }}
-}}
-'PASS: prompted range validation'
-'''
-        self.assertIn("PASS:", self.run_ps(text))
-        self.assertEqual([call["bytes"] for call in upstream.calls], [2000])
-
-    def test_uncertain_rejection_stops_search_without_treating_generic_403_as_size_limit(self):
+    def test_scan_records_generic_403_without_treating_it_as_a_size_limit(self):
         upstream, relay = self.gateway(), self.gateway()
         report_dir = self.root / "unknown-report"
         result = subprocess.run([POWERSHELL, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(self.ps1),
                                  "-Target", f"http://127.0.0.1:{upstream.server_port}/forbidden/responses",
                                  "-RelayPort", str(relay.server_port), "-OutputDirectory", str(report_dir),
-                                 "-FindUploadLimit", "-NoPrompt", "-MaxUploadBytes", "2000000"],
-                                env=self.environment, capture_output=True, text=True, encoding="utf8", timeout=30)
+                                 "-FindUploadLimit"],
+                                env=self.environment, capture_output=True, text=True, encoding="utf8", timeout=60)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         report = json.loads((report_dir / "report.json").read_text(encoding="utf8"))
         self.assertEqual(report["upload_limit"]["status"], "inconclusive")
         self.assertIsNone(report["upload_limit"]["largest_unblocked_bytes"])
         self.assertIsNone(report["upload_limit"]["smallest_blocked_bytes"])
-        self.assertEqual(len(upstream.calls), 1)
+        self.assertEqual(report["upload_limit"]["unknown_samples"], 50)
+        self.assertEqual(len(upstream.calls), 50)
 
     def test_connection_failure_stops_following_uploads(self):
         upstream, relay = self.gateway(), self.gateway()
