@@ -25,6 +25,21 @@ def request_window_exit(data_dir):
     return _signal_window(data_dir, "-exit")
 
 
+def allow_window_activation():
+    """Pass explicit user activation across the tray/desktop process boundary."""
+    if os.name != "nt":
+        return False
+    user = ctypes.WinDLL("user32", use_last_error=True)
+    user.AllowSetForegroundWindow.argtypes = [wintypes.DWORD]
+    user.AllowSetForegroundWindow.restype = wintypes.BOOL
+    return bool(user.AllowSetForegroundWindow(0xFFFFFFFF))  # ASFW_ANY
+
+
+def request_main_window(data_dir):
+    """Activate an existing desktop host without launching another EXE."""
+    return _signal_window(data_dir, "-show")
+
+
 def request_tray_panel(data_dir):
     """Raise an existing panel without launching or extracting another EXE."""
     return _signal_window(data_dir, "-tray-panel")
@@ -66,6 +81,8 @@ def _signal_window(data_dir, suffix, *, notify=True):
     if not handle:
         return False
     try:
+        if notify and suffix == "-show":
+            allow_window_activation()
         return bool(kernel.SetEvent(handle)) if notify else True
     finally:
         kernel.CloseHandle(handle)
@@ -107,9 +124,31 @@ class WindowLifecycle:
     def show(self):
         if self.exiting.is_set() or self.closed.is_set():
             return
+        if os.name == "nt":
+            form = self.window.native
+            if form.IsDisposed or form.Disposing:
+                return
+            if form.InvokeRequired:
+                from System import Action
+                # Tray/bridge callbacks run outside the WinForms thread. Queue
+                # the entire operation so restore and activation stay ordered.
+                form.BeginInvoke(Action(self._show))
+                return
+        self._show()
+
+    def _show(self):
+        # A queued tray action must not resurrect a closing/upgrading window.
+        if self.exiting.is_set() or self.closed.is_set():
+            return
+        form = self.window.native
+        if os.name == "nt" and (form.IsDisposed or form.Disposing or window_exit_requested(self.window)):
+            return
         if str(self.window.native.WindowState) == "Minimized":
             self.window.restore()
         self.window.show()
+        if os.name == "nt":
+            form.BringToFront()
+            form.Activate()
         self.attention.clear()
         self.hidden.clear()
 

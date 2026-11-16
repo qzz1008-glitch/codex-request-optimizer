@@ -2,10 +2,12 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+import sys
 import threading
 import unittest
 from unittest.mock import Mock, patch
 
+from packet_inspector.tray_panel import TrayPanel
 from packet_inspector.window_lifecycle import WindowLifecycle
 from tests import test_router
 
@@ -20,7 +22,10 @@ class WindowLifecycleTests(unittest.TestCase):
     def setUp(self):
         self.window = Mock()
         self.window.events = SimpleNamespace(closing=Callbacks(), closed=Callbacks(), before_show=Callbacks())
-        self.window.native = SimpleNamespace(WindowState="Normal")
+        self.window.native = Mock(WindowState="Normal", InvokeRequired=False, IsDisposed=False, Disposing=False)
+        platform = patch("packet_inspector.window_lifecycle.os", SimpleNamespace(name="nt"))
+        platform.start()
+        self.addCleanup(platform.stop)
         self.marked = patch("packet_inspector.window_lifecycle.window_exit_requested", return_value=False)
         self.exit_requested = self.marked.start()
         self.addCleanup(self.marked.stop)
@@ -36,7 +41,73 @@ class WindowLifecycleTests(unittest.TestCase):
         self.lifecycle.show()
         self.window.restore.assert_called_once()
         self.window.show.assert_called_once()
+        self.window.native.BringToFront.assert_called_once()
+        self.window.native.Activate.assert_called_once()
         self.assertFalse(self.lifecycle.hidden.is_set())
+
+    def test_covered_maximized_window_is_activated_without_changing_its_size(self):
+        self.window.native.WindowState = "Maximized"
+        calls = Mock()
+        calls.attach_mock(self.window.show, "show")
+        calls.attach_mock(self.window.native.BringToFront, "front")
+        calls.attach_mock(self.window.native.Activate, "activate")
+        self.lifecycle.show()
+        self.assertEqual([call[0] for call in calls.mock_calls], ["show", "front", "activate"])
+        self.window.restore.assert_not_called()
+        self.assertEqual(self.window.native.WindowState, "Maximized")
+
+    def queue_show(self):
+        self.window.native.InvokeRequired = True
+        with patch.dict(sys.modules, {"System": SimpleNamespace(Action=lambda callback: callback)}):
+            self.lifecycle.show()
+        self.window.native.BeginInvoke.assert_called_once()
+        self.window.show.assert_not_called()
+        self.window.native.Activate.assert_not_called()
+        return self.window.native.BeginInvoke.call_args.args[0]
+
+    def test_tray_thread_queues_the_entire_restore_and_activation_on_the_ui_thread(self):
+        self.window.native.WindowState = "Minimized"
+        queued = self.queue_show()
+        self.window.restore.assert_not_called()
+        queued()
+        self.window.restore.assert_called_once()
+        self.window.show.assert_called_once()
+        self.window.native.Activate.assert_called_once()
+
+    def test_custom_menu_open_exit_and_restart_all_activate_the_same_main_window(self):
+        panel = TrayPanel(Mock(), "http://127.0.0.1/", ".", self.lifecycle.show)
+
+        def confirm_in_main_window(_folder, show):
+            show()
+            return {"ok": True}
+
+        with patch("packet_inspector.exit_flow.request_exit", side_effect=confirm_in_main_window), \
+                patch("packet_inspector.service_restart.restart_from_tray", side_effect=confirm_in_main_window):
+            for action in (panel.open_main, panel.exit_app, panel.restart_service):
+                with self.subTest(action=action.__name__):
+                    self.window.native.Activate.reset_mock()
+                    self.assertEqual(action(), {"ok": True})
+                    self.window.native.Activate.assert_called_once()
+                    self.window.destroy.assert_not_called()
+
+    def test_queued_show_does_not_reopen_an_exiting_closed_or_disposed_window(self):
+        for state in ("exiting", "closed", "disposed", "disposing", "upgrade"):
+            with self.subTest(state=state):
+                self.window.native.BeginInvoke.reset_mock()
+                queued = self.queue_show()
+                if state in ("exiting", "closed"):
+                    getattr(self.lifecycle, state).set()
+                elif state == "upgrade":
+                    self.exit_requested.return_value = True
+                else:
+                    setattr(self.window.native, "IsDisposed" if state == "disposed" else "Disposing", True)
+                queued()
+                self.window.show.assert_not_called()
+                self.window.native.Activate.assert_not_called()
+                self.lifecycle.exiting.clear()
+                self.lifecycle.closed.clear()
+                self.window.native.IsDisposed = self.window.native.Disposing = False
+                self.exit_requested.return_value = False
 
     def test_no_tray_keeps_window_reachable_in_taskbar(self):
         self.lifecycle.can_hide = lambda: False

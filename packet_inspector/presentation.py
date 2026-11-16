@@ -36,7 +36,9 @@ class WorkerPresentation:
         return value
 
     def _open_window(self):
-        self._launch_window()
+        from .window_lifecycle import request_main_window
+        if not request_main_window(self.server.data_dir):
+            self._launch_window()
 
     def _show_panel(self):
         from .window_lifecycle import request_tray_panel

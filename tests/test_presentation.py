@@ -124,6 +124,13 @@ class PresentationTests(unittest.TestCase):
         self.assertIn(str(self.data), launch.call_args.args[0])
         self.assertEqual(launch.call_args.kwargs["env"]["PYINSTALLER_RESET_ENVIRONMENT"], "1")
 
+    def test_main_window_is_signaled_without_launching_or_extracting_another_exe(self):
+        with patch("packet_inspector.window_lifecycle.request_main_window", return_value=True) as signal, \
+                patch("packet_inspector.presentation.subprocess.Popen") as launch:
+            self.presentation._open_window()
+        signal.assert_called_once_with(self.data)
+        launch.assert_not_called()
+
     def test_ready_panel_is_signaled_directly_without_starting_another_exe(self):
         with patch("packet_inspector.window_lifecycle.request_tray_panel", return_value=True) as signal, \
                 patch("packet_inspector.presentation.subprocess.Popen") as launch:
