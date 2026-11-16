@@ -15,9 +15,6 @@ param(
     [string]$OutputDirectory = '',
     [int]$TimeoutSeconds = 20,
     [switch]$FindUploadLimit = ($env:CODEX_NETWORK_TEST_UPLOAD_LIMIT -eq '1'),
-    [int]$MaxUploadBytes = 20000000,
-    [int]$PrecisionBytes = 1000,
-    [switch]$NoPrompt = ($env:CODEX_NETWORK_TEST_NO_PAUSE -eq '1'),
     [switch]$LoadOnly
 )
 
@@ -28,6 +25,8 @@ $ErrorActionPreference = 'Stop'
 $OutputEncoding = [Console]::OutputEncoding
 $script:Utf8 = New-Object System.Text.UTF8Encoding($false)
 $script:ResponseLimit = 65536
+$script:UploadMaximumBytes = 1000000
+$script:UploadStepBytes = 20000
 
 function Protect-Text([object]$Value) {
     $text = [string]$Value
@@ -389,51 +388,39 @@ function Format-UploadBytes([long]$Bytes) {
     return [string]::Format([Globalization.CultureInfo]::InvariantCulture, '{0:N0} B ({1:0.###} MB)', $Bytes, ($Bytes / 1000000))
 }
 
-function Get-UploadSearchState([object[]]$Results, [int]$Maximum, [int]$Precision) {
-    if ($Maximum -lt 1000 -or $Maximum -gt 100000000 -or $Precision -lt 1 -or $Precision -gt $Maximum) { throw 'Invalid upload search range' }
+function Get-UploadScanSummary([object[]]$Results) {
     $samples = @($Results | Where-Object { $_.key -like 'upload_*' })
     $passed = @($samples | Where-Object { $_.verdict -eq 'api_response' -and $_.written_bytes -eq $_.bytes })
     $blocked = @($samples | Where-Object { $_.verdict -in @('upload_blocked', 'size_blocked') })
     $low = 0; $high = $null
     if ($passed.Count) { $low = [int]($passed | ForEach-Object { $_.bytes } | Measure-Object -Maximum).Maximum }
     if ($blocked.Count) { $high = [int]($blocked | ForEach-Object { $_.bytes } | Measure-Object -Minimum).Minimum }
-    $state = @{ status = 'probing'; largest_unblocked_bytes = $(if ($passed.Count) { $low } else { $null })
-        smallest_blocked_bytes = $high; max_test_bytes = $Maximum; precision_bytes = $Precision
-        samples = $samples.Count; next_bytes = $null; message = '' }
-    $unknown = @($samples | Where-Object { $_ -notin $passed -and $_ -notin $blocked })
-    if ($unknown.Count) {
-        $state.status = 'inconclusive'; $state.message = '无法确定上限：' + $unknown[0].message + '；详见对应响应文件。'
+    $skipped = @($samples | Where-Object { $_.verdict -eq 'skipped' })
+    $unknown = @($samples | Where-Object { $_ -notin $passed -and $_ -notin $blocked -and $_ -notin $skipped })
+    $planned = [int]($script:UploadMaximumBytes / $script:UploadStepBytes)
+    $state = @{ status = 'incomplete'; largest_unblocked_bytes = $(if ($passed.Count) { $low } else { $null })
+        smallest_blocked_bytes = $high; max_test_bytes = $script:UploadMaximumBytes; step_bytes = $script:UploadStepBytes
+        samples = $samples.Count - $skipped.Count; planned_samples = $planned; skipped_samples = $skipped.Count
+        unblocked_samples = $passed.Count; blocked_samples = $blocked.Count; unknown_samples = $unknown.Count; message = '' }
+    if ($skipped.Count -or $samples.Count -ne $planned) {
+        $state.message = '实际测试 ' + $state.samples + '/' + $planned + ' 档，扫描未完成；各档状态及错误见明细。'
+    } elseif ($unknown.Count) {
+        $state.status = 'inconclusive'; $state.message = '已测试全部 ' + $planned + ' 档，其中 ' + $unknown.Count + ' 档响应无法判定，不能确认统一上限；详见对应响应文件。'
     } elseif ($null -ne $high -and $low -ge $high) {
         $state.status = 'inconclusive'; $state.message = '大小判定不一致：较大包通过、较小包受限，无法确定统一上限。'
-    } elseif ($null -ne $high -and $low -eq 0 -and $high -le 1000) {
-        $state.status = 'no_passing_sample'; $state.message = '最小测试包 ' + (Format-UploadBytes $high) + ' 仍受限，未找到可通过的大小。'
-    } elseif ($null -ne $high -and $low -gt 0 -and ($high - $low) -le $Precision) {
+    } elseif (-not $passed.Count) {
+        $state.status = 'no_passing_sample'; $state.message = '全部 ' + $planned + ' 档均被拦截，未找到可通过的大小。'
+    } elseif ($blocked.Count) {
         $state.status = 'bounded'; $state.message = '最大未拦截样本 ' + (Format-UploadBytes $low) + '；最小被拦截样本 ' + (Format-UploadBytes $high) + '。'
-    } elseif ($null -eq $high -and $low -ge $Maximum) {
-        $state.status = 'at_least'; $state.message = '至少 ' + (Format-UploadBytes $low) + ' 本次未见拦截；已到探测范围，尚未测到上限。'
-    } elseif ($null -ne $high) {
-        $state.next_bytes = [int][Math]::Max(1000, [Math]::Floor(($low + $high) / 2))
     } else {
-        $state.next_bytes = [int][Math]::Min($Maximum, [Math]::Max(64000, $low * 2))
+        $state.status = 'at_least'; $state.message = '全部 ' + $planned + ' 档本次均未见拦截，已完成 1 MB 以内扫描。'
     }
     return $state
 }
 
 function Start-NetworkTest {
-    $title = $(if ($FindUploadLimit) { '上传大小上限测试' } else { 'Codex 代理与上传测试' })
+    $title = $(if ($FindUploadLimit) { '1 MB 以内上传测试' } else { 'Codex 代理与上传测试' })
     Write-Host $title -ForegroundColor Cyan
-    if ($FindUploadLimit) {
-        if (-not $NoPrompt) {
-            $answer = Read-Host ('最大探测范围（MB，直接回车 ' + ($MaxUploadBytes / 1000000) + '；最大 100）')
-            if ($answer.Trim()) {
-                $megabytes = 0D
-                if (-not [decimal]::TryParse($answer.Trim(), [Globalization.NumberStyles]::AllowDecimalPoint, [Globalization.CultureInfo]::InvariantCulture, [ref]$megabytes) -or $megabytes -lt 0.001 -or $megabytes -gt 100) { throw '请输入 0.001 到 100 的 MB 数值，小数使用英文点。' }
-                $MaxUploadBytes = [int][Math]::Floor($megabytes * 1000000)
-            }
-        }
-        $null = Get-UploadSearchState @() $MaxUploadBytes ([Math]::Min($PrecisionBytes, $MaxUploadBytes))
-        $PrecisionBytes = [Math]::Min($PrecisionBytes, $MaxUploadBytes)
-    }
     if ($RelayPort -lt 1 -or $RelayPort -gt 65535 -or $TimeoutSeconds -lt 1 -or $TimeoutSeconds -gt 60) { throw 'Invalid port or timeout' }
     $scriptPath = $env:CODEX_NETWORK_TEST_SCRIPT
     if (-not $OutputDirectory) {
@@ -446,7 +433,7 @@ function Start-NetworkTest {
     $curlPath = (Get-Command curl.exe -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
     $curlVersion = (& $curlPath --disable --version | Select-Object -First 1)
     Write-Host '不修改配置；不发送 Codex 登录凭据；不调用模型。1 MB = 1,000,000 字节。'
-    if ($FindUploadLimit) { Write-Host ('上传上限探测：范围 ' + (Format-UploadBytes $MaxUploadBytes) + '；边界精度 ' + $PrecisionBytes + ' B。') }
+    if ($FindUploadLimit) { Write-Host '依次测试 20、40、60…1,000 kB，共 50 档；1 kB = 1,000 字节。' }
     Write-Host ('结果目录：' + $OutputDirectory)
     $context = Get-ProxyContext
     $local = [uri]('http://127.0.0.1:' + $RelayPort + '/health')
@@ -489,42 +476,29 @@ function Start-NetworkTest {
     } else { Write-Host '  DNS / TCP 检测失败，详情已写入报告。' }
     $sizes = @(64000, 950000, 1100000)
     if ($FindUploadLimit) {
-        $sizes = @($sizes | Where-Object { $_ -le $MaxUploadBytes })
-        if (-not $sizes.Count) { $sizes = @($MaxUploadBytes) }
+        $sizes = @(for ($size = $script:UploadStepBytes; $size -le $script:UploadMaximumBytes; $size += $script:UploadStepBytes) { $size })
     }
     $stopUploads = $false
     for ($index = 0; $index -lt $sizes.Count; $index++) {
         $size = $sizes[$index]
-        if ($FindUploadLimit) { Write-Host ('[基线 ' + ($index + 1) + '/' + $sizes.Count + '] 测试上传 ' + (Format-UploadBytes $size) + '…') }
-        else { Write-Host ('[' + ($index + 4) + '/6] 测试上传 ' + ($size / 1000) + ' kB…') }
         if ($stopUploads) {
-            $results += @{ key = 'upload_' + $size; bytes = $size; status = 0; verdict = 'skipped'; message = '上一项未完成有效验证，已跳过'; body = ''; headers = @{} }
+            $results += @{ key = 'upload_' + $size; bytes = $size; written_bytes = 0; status = 0; verdict = 'skipped'; message = '上一项连接失败，已跳过'; body = ''; headers = @{} }
         } else {
+            if ($FindUploadLimit) { Write-Host ('[扫描 ' + ($index + 1) + '/' + $sizes.Count + '] 测试上传 ' + ($size / 1000) + ' kB…') }
+            else { Write-Host ('[' + ($index + 4) + '/6] 测试上传 ' + ($size / 1000) + ' kB…') }
             $probe = Invoke-Probe ('upload_' + $size) $destination $route $size $TimeoutSeconds
             $results += $probe
             $stopUploads = $probe.verdict -in @('network_error', 'tls_revocation_error', 'tls_error', 'dns_error', 'timeout', 'proxy_auth', 'gateway_error')
-            if ($FindUploadLimit -and $probe.verdict -notin @('api_response', 'upload_blocked', 'size_blocked')) { $stopUploads = $true }
+            Write-ProbeResult $probe
         }
-        Write-ProbeResult $results[-1]
+        if ($FindUploadLimit) { $report['upload_limit'] = Get-UploadScanSummary $results }
         $report.results = $results; Write-Utf8 (Join-Path $OutputDirectory 'report.json') ($report | ConvertTo-Json -Depth 14)
-    }
-    if ($FindUploadLimit) {
-        while ($true) {
-            $search = Get-UploadSearchState $results $MaxUploadBytes $PrecisionBytes
-            $report['upload_limit'] = $search
-            Write-Utf8 (Join-Path $OutputDirectory 'report.json') ($report | ConvertTo-Json -Depth 14)
-            if ($null -eq $search.next_bytes) { break }
-            $size = $search.next_bytes
-            Write-Host ('[上限探测 ' + ($search.samples + 1) + '] 测试上传 ' + (Format-UploadBytes $size) + '…')
-            $results += Invoke-Probe ('upload_' + $size) $destination $route $size $TimeoutSeconds
-            Write-ProbeResult $results[-1]
-            $report.results = $results
-        }
     }
     $lines = @($title, ('时间：' + $report.started), ('电脑：' + $report.hostname), ('上游：' + $report.target), ('代理来源：' + $route.source), ('本次代理：' + $route.endpoint), '')
     foreach ($result in $results) {
         $http = $(if ($result.status) { 'HTTP ' + $result.status } else { '无 HTTP 响应' })
-        $lines += $result.key + ' | ' + $http + ' | ' + $result.message
+        $uploaded = $(if ($result.bytes -gt 0) { ' | 实际上传 ' + [long]$result.written_bytes + '/' + $result.bytes + ' B' } else { '' })
+        $lines += $result.key + $uploaded + ' | ' + $http + ' | ' + $result.message
         $details = @($http)
         foreach ($key in $result.headers.Keys) { $details += $key + ': ' + $result.headers[$key] }
         $details += ''; $details += $result.body
@@ -533,11 +507,12 @@ function Start-NetworkTest {
         Write-Utf8 (Join-Path $OutputDirectory ($result.key + '-response.txt')) ($details -join "`r`n")
     }
     $report['conclusions'] = @(Get-NetworkConclusions $results $route $report.address_probe)
+    if ($FindUploadLimit) { $report.conclusions = @($report.conclusions | Select-Object -First 2) }
     $lines += ''; $lines += '本次检测结论（1 MB = 1,000,000 字节）'
     foreach ($conclusion in $report.conclusions) {
         $lines += $conclusion.label + '：' + $conclusion.result + '（' + $conclusion.detail + '）'
     }
-    if ($FindUploadLimit) { $lines += ''; $lines += '上传大小上限（本次目标及代理路径）：' + $report.upload_limit.message; $lines += '探测范围 ' + (Format-UploadBytes $MaxUploadBytes) + '；边界精度 ' + $PrecisionBytes + ' B。' }
+    if ($FindUploadLimit) { $lines += ''; $lines += '上传扫描结果（本次目标及代理路径）：' + $report.upload_limit.message; $lines += '范围 20～1,000 kB；步长 20 kB；共 50 档。' }
     $lines += '上传权限为本次目标、路径及样本的实测判断；未携带登录凭据导致的 401 属于预期响应，不代表企业审批记录。'
     $lines += '本机探测使用本脚本的网络栈；ChatGPT 实际接入以中转收到请求为准。'
     $report['finished'] = (Get-Date).ToUniversalTime().ToString('o'); $report.results = $results
