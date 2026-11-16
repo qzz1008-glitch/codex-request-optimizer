@@ -888,9 +888,7 @@ function imageOptimizationRows(packets) {
     const session=packet.thread_id||"";
     if(!seen.has(session))seen.set(session,new Set());
     const images=seen.get(session);
-    for(const value of Array.isArray(packet.image_paths)?packet.image_paths:[]) {
-      const source=localImagePath(value);if(!source)continue;
-      const path=localImagePath(packet.image_path_rewrites?.[source])||source;
+    for(const path of requestImagePaths(packet,null)) {
       const key=/^(?:[A-Za-z]:[/\\]|\\\\|\/\/)/.test(path)?path.replace(/\\/g,"/").replace(/\/+/g,"/").toLowerCase():path;
       if(!images.has(key)){images.add(key);marked.add(packet.id);}
     }
@@ -2317,6 +2315,8 @@ function requestImagePaths(meta,body) {
     for(const [from,to] of Object.entries(meta.image_path_rewrites).slice(0,32)) {
       const source=localImagePath(from),target=localImagePath(to);if(source&&target)rewrites.set(source,target);
     }
+  const retired=/(?:^|[\\/])CodexRequestOptimizer[\\/](?:[a-f\d]{32}|codex-clipboard-[a-f\d-]{36})\.(?:png|jpe?g|webp|gif)$/i;
+  const contextPath=value=>{const source=localImagePath(value),path=rewrites.get(source)||source;return path&&!retired.test(path)?path:null;};
   const sources=new Set();
   for(const value of [body?.client_metadata,body?.metadata]) {
     if(!value||typeof value!=="object"||Array.isArray(value))continue;
@@ -2330,8 +2330,13 @@ function requestImagePaths(meta,body) {
       const path=localImagePath(candidate.codex_inspector_image_source_path);if(path)sources.add(path);
     }
   }
-  if(sources.size===1)return [...sources].map(path=>rewrites.get(path)||path);
-  const paths=new Set(), add=value=>{const path=localImagePath(value);if(path&&paths.size<32)paths.add(rewrites.get(path)||path);};
+  if(sources.size===1)return [...sources].map(contextPath).filter(Boolean);
+  if(meta.image_isolation_applied===true||meta.image_isolation_removed>0) {
+    // Show the relay's context replacements, without merging original clipboard references.
+    return [...new Set((Array.isArray(meta.image_paths)?meta.image_paths:[])
+      .map(contextPath).filter(Boolean))];
+  }
+  const paths=new Set(), add=value=>{const path=contextPath(value);if(path&&paths.size<32)paths.add(path);};
   if(Array.isArray(meta.image_paths))meta.image_paths.forEach(add);
   for(const item of Array.isArray(body?.input)?body.input:[]) {
     if(item?.role!=="user")continue;

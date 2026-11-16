@@ -63,7 +63,7 @@ class ClipboardImageTests(unittest.TestCase):
         self.assertEqual(target.parent.name, "images")
         self.assertEqual(target.read_bytes(), payload)
         self.assertEqual(source.read_bytes(), payload)
-        self.assertFalse(self.cache.legacy_directory.exists())
+        self.assertFalse((self.temp / "CodexRequestOptimizer").exists())
 
     def test_existing_inline_cache_is_reused_without_another_copy(self):
         payload = b"\x89PNG\r\n\x1a\nsynthetic existing attachment"
@@ -72,13 +72,61 @@ class ClipboardImageTests(unittest.TestCase):
         self.assertEqual(self.cache.prepare([str(source)]), {str(source): str(existing)})
         self.assertEqual(list(self.isolation.directory.glob("*.png")), [existing])
 
+    def test_inline_image_supplies_the_path_when_the_original_is_missing_or_different(self):
+        payload = b"\x89PNG\r\n\x1a\nsynthetic inline attachment"
+        source = self.source(content=b"different native clipboard encoding")
+        tag = '<image path="' + str(source) + '">'
+        body = {"input": [{"role": "user", "content": [
+            {"type": "input_text", "text": tag}, self.inline(payload)]}]}
+        for original_exists in (True, False):
+            if not original_exists:
+                source.unlink()
+            with self.subTest(original_exists=original_exists):
+                wire, coding, meta = self.isolation.prepare(encode(body), {}, "/responses", "off")
+                parts = json.loads(decode_body(wire, coding))["input"][0]["content"]
+                target = Path(parts[1]["text"])
+                self.assertEqual(parts[0]["text"], tag.replace(str(source), str(target)))
+                self.assertEqual(target.read_bytes(), payload)
+                self.assertEqual(meta["image_paths"], [str(target)])
+                self.assertEqual(list(self.isolation.directory.glob("*.png")), [target])
+        restarted = ImageIsolation(self.root / "data")
+        restarted.clipboard.root = self.temp.resolve()
+        self.assertEqual(restarted.clipboard.prepare([str(source)]), {str(source): str(target)})
+        self.assertFalse((self.temp / "CodexRequestOptimizer").exists())
+
+    def test_inline_save_does_not_prune_referenced_permanent_paths(self):
+        source = self.source(content=b"previous image")
+        previous = Path(self.cache.prepare([str(source)])[str(source)])
+        source.unlink()
+        os.utime(previous, (1, 1))
+        payload = b"\x89PNG\r\n\x1a\nsynthetic new attachment"
+        body = {"input": [{"role": "user", "content": str(source)},
+                          {"role": "user", "content": [self.inline(payload)]}]}
+        wire, coding, meta = self.isolation.prepare(encode(body), {}, "/responses", "off")
+        self.assertEqual(json.loads(decode_body(wire, coding))["input"][0]["content"], str(previous))
+        self.assertTrue(previous.is_file())
+        self.assertIn(str(previous), meta["image_paths"])
+
+    def test_replaced_alias_is_not_included_in_display_paths(self):
+        source = self.source(content=b"different clipboard encoding")
+        old = Path(self.cache.prepare([str(source)])[str(source)])
+        payload = b"\x89PNG\r\n\x1a\nsynthetic inline encoding"
+        tag = '<image path="' + str(source) + '">'
+        body = {"input": [{"role": "user", "content": [
+            {"type": "input_text", "text": tag}, self.inline(payload)]}]}
+        wire, coding, meta = self.isolation.prepare(encode(body), {}, "/responses", "off")
+        parts = json.loads(decode_body(wire, coding))["input"][0]["content"]
+        target = Path(parts[1]["text"])
+        self.assertNotEqual(target, old)
+        self.assertEqual(parts[0]["text"], tag.replace(str(source), str(target)))
+        self.assertEqual(meta["image_paths"], [str(target)])
+
     def test_aliases_survive_restart_after_original_is_removed(self):
         source = self.source()
         expected = self.cache.prepare([str(source)])
         source.unlink()
         restarted = ImageIsolation(self.root / "data")
         restarted.clipboard.root = self.temp.resolve()
-        restarted.clipboard.legacy_directory = self.cache.legacy_directory
         self.assertEqual(restarted.clipboard.prepare([str(source)]), expected)
         self.assertEqual(len(list(restarted.directory.glob("*.png"))), 1)
 
@@ -119,37 +167,33 @@ class ClipboardImageTests(unittest.TestCase):
         source.unlink()
         self.assertEqual(self.cache.prepare([str(source)]), {})
 
-    def test_historical_context_keeps_both_existing_paths_and_old_files(self):
+    def test_historical_permanent_cache_is_the_only_context_path(self):
         payload = b"\x89PNG\r\n\x1a\nsynthetic historical image"
         source = self.source(content=payload)
-        self.cache.legacy_directory.mkdir()
-        legacy = self.cache.legacy_directory / (uuid.UUID(source.stem[len("codex-clipboard-"):]).hex + ".png")
-        legacy.write_bytes(payload)
         previous = self.root / "data" / "image-attachments"
         previous.mkdir(parents=True)
         saved = previous.resolve() / ("i-" + hashlib.sha256(payload).hexdigest()[:30] + ".png")
         saved.write_bytes(payload)
         self.cache.previous_directories.add(previous.resolve())
-        for path in (source, legacy, saved):
+        for path in (source, saved):
             os.utime(path, (1, 1))
         tag = '<image path="' + str(source) + '">'
         body = {"input": [{"role": "user", "content": [
             {"type": "input_text", "text": tag}, self.inline(payload)]}]}
         expected = encode({"input": [{"role": "user", "content": [
-            {"type": "input_text", "text": tag.replace(str(source), str(legacy))},
+            {"type": "input_text", "text": tag.replace(str(source), str(saved))},
             {"type": "input_text", "text": str(saved)}]}]})
         for original_exists in (True, False):
             if not original_exists:
                 source.unlink()
             wire, coding, meta = self.isolation.prepare(encode(body), {}, "/responses", "off")
-            self.assertEqual(decode_body(wire, coding), expected, "Existing upstream context paths must remain byte-for-byte stable")
-            self.assertEqual(meta["image_paths"], sorted([str(legacy), str(saved)]))
+            self.assertEqual(decode_body(wire, coding), expected)
+            self.assertEqual(meta["image_paths"], [str(saved)])
             self.assertEqual(list(self.isolation.directory.glob("*.png")), [])
-        for path in (legacy, saved):
-            os.utime(path, (1, 1))
+        os.utime(saved, (1, 1))
         self.cache.prepare([str(self.source(2, b"new attachment"))])
-        self.assertEqual(legacy.read_bytes(), payload)
         self.assertEqual(saved.read_bytes(), payload)
+        self.assertFalse((self.temp / "CodexRequestOptimizer").exists())
 
     def test_concurrent_isolation_instances_reuse_the_same_cache(self):
         source = self.source()
@@ -161,17 +205,14 @@ class ClipboardImageTests(unittest.TestCase):
         self.assertIn(str(source), results[0])
         self.assertEqual(len(list(self.isolation.directory.glob("*.png"))), 1)
 
-    def test_modified_original_does_not_reuse_a_stale_legacy_image(self):
+    def test_modified_original_does_not_reuse_a_stale_alias(self):
         source = self.source(content=b"old")
-        self.cache.legacy_directory.mkdir()
-        legacy = self.cache.legacy_directory / (uuid.UUID(source.stem[len("codex-clipboard-"):]).hex + ".png")
-        legacy.write_bytes(b"old")
-        self.assertEqual(self.cache.prepare([str(source)])[str(source)], str(legacy))
+        old = Path(self.cache.prepare([str(source)])[str(source)])
         source.write_bytes(b"new")
-        os.utime(legacy, (1, 1))
         target = Path(self.cache.prepare([str(source)])[str(source)])
+        self.assertNotEqual(target, old)
         self.assertEqual(target.read_bytes(), b"new")
-        self.assertEqual(legacy.read_bytes(), b"old")
+        self.assertEqual(old.read_bytes(), b"old")
 
     def test_rewrites_user_image_references_and_preserves_originals_and_other_bytes(self):
         source = self.source()
@@ -187,7 +228,7 @@ class ClipboardImageTests(unittest.TestCase):
         result = json.loads(decode_body(wire, coding))
         target = Path(metrics["image_paths"][0])
         self.assertEqual(target.parent, self.isolation.directory)
-        self.assertFalse(self.cache.legacy_directory.exists())
+        self.assertFalse((self.temp / "CodexRequestOptimizer").exists())
         self.assertEqual(target.stem, "i-" + hashlib.sha256(source.read_bytes()).hexdigest()[:30])
         self.assertEqual(target.read_bytes(), source.read_bytes())
         self.assertTrue(source.is_file())
@@ -219,27 +260,32 @@ class ClipboardImageTests(unittest.TestCase):
         duplicate = self.source(2, sources[0].read_bytes())
         self.assertEqual(self.cache.prepare([str(duplicate)])[str(duplicate)], copied[str(sources[0])])
 
-    def test_legacy_cache_paths_remain_usable_after_the_original_is_removed(self):
+    def test_removed_temporary_cache_is_not_an_image_source(self):
         source = self.source()
-        self.cache.legacy_directory.mkdir()
-        legacy = self.cache.legacy_directory / source.name
+        retired = self.temp / "CodexRequestOptimizer"
+        retired.mkdir()
+        legacy = retired / source.name
         legacy.write_bytes(source.read_bytes())
         source.unlink()
-        copied = self.cache.prepare([str(source), str(legacy)])
-        self.assertEqual(copied[str(source)], copied[str(legacy)])
-        self.assertEqual(Path(copied[str(source)]).parent, self.cache.legacy_directory)
-        self.assertEqual(Path(copied[str(source)]).read_bytes(), legacy.read_bytes())
-
-    def test_existing_legacy_copy_keeps_its_path_without_a_new_copy(self):
-        source = self.source()
-        self.cache.legacy_directory.mkdir()
-        legacy = self.cache.legacy_directory / source.name
-        legacy.write_bytes(source.read_bytes())
-        target = Path(self.cache.prepare([str(source)])[str(source)])
-        self.assertEqual(target, legacy)
-        self.assertEqual(target.read_bytes(), source.read_bytes())
-        self.assertTrue(legacy.is_file())
+        self.assertEqual(self.cache.prepare([str(source), str(legacy)]), {})
         self.assertEqual(list(self.isolation.directory.glob("*.png")), [])
+
+    def test_obsolete_alias_to_temporary_copy_is_discarded(self):
+        source = self.source()
+        retired = self.temp / "CodexRequestOptimizer"
+        retired.mkdir()
+        legacy = retired / (uuid.uuid4().hex + ".png")
+        legacy.write_bytes(source.read_bytes())
+        self.isolation.directory.mkdir(parents=True)
+        key = os.path.normcase(str(source.resolve()))
+        self.cache.aliases_path.write_text(json.dumps({key: {
+            "name": legacy.name, "path": str(legacy), "used": 1e12}}), encoding="utf8")
+        target = Path(self.cache.prepare([str(source)])[str(source)])
+        self.assertEqual(target.parent, self.isolation.directory)
+        self.assertEqual(target.read_bytes(), source.read_bytes())
+        self.assertEqual(list(self.isolation.directory.glob("*.png")), [target])
+        saved = json.loads(self.cache.aliases_path.read_text(encoding="utf8"))
+        self.assertEqual(saved[key]["path"], str(target))
 
     def test_cached_copies_survive_original_removal_and_protect_all_current_paths(self):
         sources = [self.source(1, b"first"), self.source(2, b"second")]

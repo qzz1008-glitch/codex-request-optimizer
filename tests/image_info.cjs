@@ -42,6 +42,26 @@ const paths=[directory+filename,directory+"参考图 & icon.PNG","C:\\Other\\sec
     metadata:{...marker,codex_inspector_image_source_path:paths[1]}})),[upload],"Conflicting sources must not be guessed");
   assert.deepEqual(Array.from(context.requestImagePaths({...oldMeta,image_path_rewrites:{[paths[0]]:paths[1]}},
     {...body,client_metadata:marker})),[paths[1]],"An explicit retained clipboard copy still takes precedence");
+  const savedDirectory="C:\\Users\\example\\.codex-packet-inspector\\image-attachments\\";
+  const saved=[savedDirectory+"i-"+"a".repeat(30)+".png",savedDirectory+"i-"+"b".repeat(30)+".png"];
+  const retired="C:\\Users\\example\\AppData\\Local\\Temp\\CodexRequestOptimizer\\";
+  const temporary=[retired+"1".repeat(32)+".png",retired+"2".repeat(32)+".png"];
+  const clipboardPath="C:\\Temp\\codex-clipboard-03e0b476-9b71-4aab-8be6-dd96754b0f1d.png";
+  const original={input:[{role:"user",content:'<image path="'+clipboardPath+'">'}]};
+  const optimized={image_isolation_applied:true,image_paths:[...saved,...temporary],
+    image_path_rewrites:{[clipboardPath]:temporary[0]}};
+  const actual=Array.from(context.requestImagePaths(optimized,original));
+  assert.deepEqual(actual,saved,"Only the permanent context paths are displayed for optimized requests");
+  assert.deepEqual(descendants(context.renderImageInfo(actual),"code").map(node=>node.textContent),
+    [savedDirectory,...saved.map(path=>path.slice(savedDirectory.length))]);
+  assert.deepEqual(Array.from(context.requestImagePaths({image_isolation_removed:1,image_paths:[saved[0]]},original)),
+    [saved[0]],"The original clipboard path must not be added back");
+  assert.deepEqual(Array.from(context.requestImagePaths({image_isolation_applied:true,image_paths:[clipboardPath],
+    image_path_rewrites:{[clipboardPath]:saved[0]}},original)),[saved[0]]);
+  assert.deepEqual(Array.from(context.requestImagePaths({image_isolation_applied:true,image_paths:[]},original)),[]);
+  assert.deepEqual(Array.from(context.requestImagePaths({image_paths:temporary},null)),[]);
+  assert.deepEqual(Array.from(context.requestImagePaths({}, {client_metadata:{...marker,
+    codex_inspector_image_source_path:temporary[0]}})),[],"Retired paths are also hidden in old image analysis records");
   const info=context.renderImageInfo(paths),actions=buttons(info);
   assert.equal(actions.length,8,"One folder action per directory and viewer/folder actions beside every image");
   assert.deepEqual(actions.map(button=>button.title),["打开路径","查看图片","在文件夹中显示","查看图片","在文件夹中显示","打开路径","查看图片","在文件夹中显示"]);

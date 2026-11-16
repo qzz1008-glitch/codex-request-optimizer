@@ -16,7 +16,7 @@ from .analyzer import JsonBytes, decode_body, encode
 from .clipboard_images import ATTACHMENT_NAME, STAGING_NAME, ClipboardImageCache, rewrite_clipboard_text
 from .overflow import encode_changed_info
 from .locking import file_lock
-from .request_context import request_image_paths, temporary_request_kind
+from .request_context import IMAGE_PATH_ATTRIBUTE, local_image_path, request_image_paths, temporary_request_kind
 
 
 def is_analysis_request(raw, headers):
@@ -171,9 +171,10 @@ class ImageIsolation:
         if body.get("previous_response_id") or body.get("conversation"):
             raise ImageIsolationFailure("image_server_context_unsupported", "服务器续接上下文可能已含图片；请使用完整上下文的新请求。")
         inputs = body.get("input", [])
-        replacements, protected = [], set()
+        replacements, protected, image_paths = [], set(), set()
+        image_references, bindings, texts = request_image_paths(body), {}, []
+        protected.update(self.clipboard.retained_paths(image_references))
         index = None
-        copied = self.clipboard.prepare(request_image_paths(body), protected=protected)
 
         def rewrite_text(text, pointer):
             nonlocal index
@@ -236,7 +237,7 @@ class ImageIsolation:
                 parts = item.get(field)
                 if isinstance(parts, str):
                     if field == "content":
-                        rewrite_text(parts, pointer)
+                        texts.append((parts, pointer))
                     continue
                 if not isinstance(parts, list):
                     continue
@@ -245,11 +246,19 @@ class ImageIsolation:
                         continue
                     if part.get("type") != "input_image":
                         if field == "content":
-                            rewrite_text(part.get("text"), f"{pointer}/{j}/text")
+                            texts.append((part.get("text"), f"{pointer}/{j}/text"))
                         continue
                     if part.get("file_id"):
                         raise ImageIsolationFailure("image_reference_unsupported", "图片文件 ID 无法转换成本地路径，原图未转发。")
                     image_path = self._store(part.get("image_url"), protected)
+                    image_paths.add(image_path)
+                    if field == "content" and j and isinstance(parts[j - 1], dict):
+                        preceding = parts[j - 1].get("text")
+                        tags = list(IMAGE_PATH_ATTRIBUTE.finditer(preceding)) if isinstance(preceding, str) else []
+                        if len(tags) == 1:
+                            source = local_image_path(tags[0][1])
+                            if source and self.clipboard.is_clipboard_source(Path(source)):
+                                bindings[source] = str(image_path)
                     text = str(image_path)
                     index = index or JsonBytes(decoded)
                     a, b = index.spans[f"{pointer}/{j}"]
@@ -263,6 +272,10 @@ class ImageIsolation:
             return isinstance(value, list) and any(has_image(v) for v in value)
         if has_image(inputs):
             raise ImageIsolationFailure("image_location_unsupported", "当前图片位置不能安全替换，原图未转发。")
+        copied = self.clipboard.prepare(image_references, protected=protected, bindings=bindings)
+        image_paths.update(Path(target) for target in copied.values())
+        for text, pointer in texts:
+            rewrite_text(text, pointer)
         if not replacements:
             return None
         changed = decoded
@@ -273,7 +286,7 @@ class ImageIsolation:
         return prepared.body, prepared.encoding, {"image_isolation_applied": True, "image_isolation_removed": images_removed,
                                 "relay_zstd_level": prepared.zstd_level,
                                 "native_image_tools_hidden": hidden_tools,
-                                "image_paths": sorted(str(path.resolve()) for path in protected),
+                                "image_paths": sorted(str(path.resolve()) for path in image_paths),
                                 "image_path_rewrites": {source: target for source, target in copied.items() if source != target},
                                 "image_isolation_decoded_before": len(decoded),
                                 "image_isolation_decoded_after": len(changed)}

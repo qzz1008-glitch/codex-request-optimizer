@@ -13,7 +13,6 @@ from .locking import file_lock
 from .request_context import IMAGE_PATH_ATTRIBUTE, local_image_path
 
 CLIPBOARD_NAME = re.compile(r"codex-clipboard-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\.(?:png|jpe?g|webp|gif)", re.I)
-COPY_NAME = re.compile(r"[0-9a-f]{32}\.(?:png|jpe?g|webp|gif)", re.I)
 ATTACHMENT_NAME = re.compile(r"(?:[a-f0-9]{64}|[a-f0-9]{32}|i-[a-f0-9]{30}|i-[a-f0-9]{1,28}-[1-9][0-9]*)\.(?:png|jpe?g|webp|gif)", re.I)
 STAGING_NAME = re.compile(r"(?:\.clipboard-)?[0-9a-f]{32}\.new")
 MAX_ALIASES = 4096
@@ -27,7 +26,6 @@ class ClipboardImageCache:
                  max_file_bytes=50 * 1024 * 1024, ttl=7 * 24 * 3600):
         self.root = Path(root or tempfile.gettempdir()).resolve()
         self.directory, self.store = Path(directory).resolve(), store
-        self.legacy_directory = self.root / "CodexRequestOptimizer"
         self.previous_directories = {Path(path).resolve() for path in legacy_directories}
         self.aliases_path = self.directory / ".clipboard-paths.json"
         with _LOCKS_GUARD:
@@ -42,23 +40,15 @@ class ClipboardImageCache:
         parent = path.parent.resolve()
         if parent == self.directory or parent in self.previous_directories:
             return bool(ATTACHMENT_NAME.fullmatch(path.name))
-        if parent == self.legacy_directory:
-            return bool(CLIPBOARD_NAME.fullmatch(path.name) or COPY_NAME.fullmatch(path.name))
-        return parent == self.root and bool(CLIPBOARD_NAME.fullmatch(path.name))
+        return self.is_clipboard_source(path)
+
+    def is_clipboard_source(self, path):
+        return path.parent.resolve() == self.root and bool(CLIPBOARD_NAME.fullmatch(path.name))
 
     def _retained(self, path):
         parent = path.parent.resolve()
-        if parent in {self.directory, self.legacy_directory, *self.previous_directories}:
+        if parent in {self.directory, *self.previous_directories}:
             return path if self._regular(path) else None
-        if CLIPBOARD_NAME.fullmatch(path.name) and not self.legacy_directory.is_symlink() and not self.legacy_directory.is_junction():
-            compact = uuid.UUID(path.stem[len("codex-clipboard-"):]).hex + path.suffix.lower()
-            source = path.stat() if self._regular(path) else None
-            for name in (compact, path.name):
-                legacy = self.legacy_directory / name
-                if self._regular(legacy):
-                    info = legacy.stat()
-                    if source is None or (source.st_size == info.st_size and source.st_mtime_ns <= info.st_mtime_ns):
-                        return legacy
         return None
 
     def _cached(self, record):
@@ -66,7 +56,7 @@ class ClipboardImageCache:
         if not isinstance(name, str) or not (ATTACHMENT_NAME.fullmatch(name) or CLIPBOARD_NAME.fullmatch(name)):
             return None
         path = Path(record["path"]) if isinstance(record.get("path"), str) else self.directory / name
-        parents = {self.directory, self.legacy_directory, *self.previous_directories}
+        parents = {self.directory, *self.previous_directories}
         return path if path.name == name and path.parent.resolve() in parents else None
 
     def _load(self):
@@ -75,7 +65,8 @@ class ClipboardImageCache:
                 result = json.loads(self.aliases_path.read_text(encoding="utf8"))
                 if isinstance(result, dict):
                     return {key: value for key, value in result.items()
-                            if isinstance(value, dict) and isinstance(value.get("used"), (int, float))}
+                            if isinstance(value, dict) and isinstance(value.get("used"), (int, float))
+                            and self._cached(value) is not None}
         except (OSError, ValueError):
             pass
         return {}
@@ -97,7 +88,28 @@ class ClipboardImageCache:
         finally:
             staging.unlink(missing_ok=True)
 
-    def prepare(self, paths, *, protected=None):
+    def retained_paths(self, paths):
+        """Protect existing context paths before an inline image can trigger pruning."""
+        if not paths:
+            return set()
+        aliases, retained = self._load(), set()
+        for value in paths[:32]:
+            value = local_image_path(value)
+            if not value:
+                continue
+            try:
+                path = Path(value)
+                if not self._eligible(path):
+                    continue
+                key = os.path.normcase(str(path.resolve()))
+                for target in (self._retained(path), self._cached(aliases.get(key, {}))):
+                    if target is not None and self._regular(target):
+                        retained.add(target)
+            except OSError:
+                continue
+        return retained
+
+    def prepare(self, paths, *, protected=None, bindings=None):
         candidates = {}
         for value in paths[:32]:
             value = local_image_path(value)
@@ -107,6 +119,7 @@ class ClipboardImageCache:
             return {}
         protected = protected if protected is not None else set()
         pinned = set(protected)
+        bindings = bindings or {}
         copied = {}
         try:
             self.directory.mkdir(parents=True, exist_ok=True)
@@ -116,7 +129,8 @@ class ClipboardImageCache:
                 for value, path in candidates.items():
                     key = os.path.normcase(str(path.resolve()))
                     record = aliases.get(key, {})
-                    cached = self._cached(record) or self._retained(path)
+                    bound = self._retained(Path(bindings[value])) if value in bindings else None
+                    cached = bound or self._cached(record) or self._retained(path)
                     if cached is not None and self._regular(cached):
                         if cached.parent.resolve() == self.directory:
                             cached.touch()
@@ -126,8 +140,9 @@ class ClipboardImageCache:
                         key = os.path.normcase(str(path.resolve()))
                         record = aliases.get(key, {})
                         cached = self._cached(record)
-                        retained = self._retained(path)
-                        direct = path.parent.resolve() in {self.directory, self.legacy_directory, *self.previous_directories}
+                        bound = self._retained(Path(bindings[value])) if value in bindings else None
+                        retained = bound or self._retained(path)
+                        direct = path.parent.resolve() in {self.directory, *self.previous_directories}
                         source = path if self._regular(path) else None
                         info = source.stat() if source else None
                         fresh = (source is None or direct or

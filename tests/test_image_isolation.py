@@ -780,7 +780,7 @@ class ImageRelayTests(unittest.TestCase):
             tag = '<image path="' + str(source) + '">'
             body["input"][-1]["content"].insert(1, {"type": "input_text", "text": tag})
             cache = self.server.image_isolation.clipboard
-            with patch.object(cache, "root", root), patch.object(cache, "legacy_directory", root / "CodexRequestOptimizer"):
+            with patch.object(cache, "root", root):
                 requests = []
                 for original_exists in (True, False):
                     if not original_exists:
@@ -795,7 +795,7 @@ class ImageRelayTests(unittest.TestCase):
                     self.assertEqual(meta["image_paths"], [str(target)])
                     self.assertEqual(inbound["body"]["input"][-1]["content"][1]["text"], tag)
                 self.assertEqual(requests[0], requests[1])
-                self.assertFalse(cache.legacy_directory.exists())
+                self.assertFalse((root / "CodexRequestOptimizer").exists())
 
     def test_tool_images_are_rewritten_before_forwarding_and_in_later_history(self):
         self.enable()
