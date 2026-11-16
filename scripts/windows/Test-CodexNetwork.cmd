@@ -178,7 +178,8 @@ function Get-CurlTlsArguments([string]$Version, [uri]$Uri) {
 
 function Write-ProbeResult([hashtable]$Result) {
     $label = $(if ($Result.status) { 'HTTP ' + $Result.status } else { '无 HTTP 响应' })
-    Write-Host ('  ' + $label + ' · ' + $Result.message)
+    $uploaded = $(if ($Result.bytes -gt 0) { ' · 实际上传 ' + [long]$Result.written_bytes + '/' + $Result.bytes + ' B' } else { '' })
+    Write-Host ('  ' + $label + $uploaded + ' · ' + $Result.message)
 }
 
 function Invoke-Probe([string]$Key, [uri]$Uri, [hashtable]$Route, [int]$Bytes, [int]$Seconds) {
@@ -271,6 +272,7 @@ function Invoke-Probe([string]$Key, [uri]$Uri, [hashtable]$Route, [int]$Bytes, [
     }
     $verdict = Get-ProbeVerdict $result ($Bytes -eq 0)
     $result['verdict'] = $verdict.code; $result['message'] = $verdict.message
+    if ($verdict.failure_stage) { $result['failure_stage'] = $verdict.failure_stage }
     return $result
 }
 
@@ -278,6 +280,16 @@ function Invoke-Probe([string]$Key, [uri]$Uri, [hashtable]$Route, [int]$Bytes, [
 function Get-ProbeVerdict([hashtable]$Result, [bool]$Local) {
     $body = [string]$Result.body
     $gateway = $Result.headers['server'] -match 'netentsec' -or $body -match 'HIS Proxy Notification'
+    $connectStatus = 0
+    if ($Result.flow) { $null = [int]::TryParse([string]$Result.flow['http_connect'], [ref]$connectStatus) }
+    if ($connectStatus -ge 400) {
+        if ($connectStatus -eq 407) { return @{ code = 'proxy_auth'; message = '代理要求认证（CONNECT HTTP 407），正文未发送'; failure_stage = 'proxy_connect' } }
+        return @{ code = 'gateway_error'; message = ('代理拒绝 HTTPS 隧道（CONNECT HTTP ' + $connectStatus + '），正文未发送'); failure_stage = 'proxy_connect' }
+    }
+    if ($Result.curl_exit -eq 28 -and $Result.written_bytes -eq 0 -and $connectStatus -eq 0 -and
+        $Result.transport_detail -match '(?m)^> CONNECT ') {
+        return @{ code = 'timeout'; message = '未收到代理 CONNECT 响应，HTTPS 隧道未建立，正文未发送'; failure_stage = 'proxy_connect' }
+    }
     if ($Result.status -eq 407) { return @{ code = 'proxy_auth'; message = '代理要求认证（407）' } }
     if ($gateway -and $body -match '该网站上传文件受限|申请上传|upload.{0,80}(restrict|block|permission)') { return @{ code = 'upload_blocked'; message = '企业网关限制上传' } }
     if ($Result.status -eq 413) { return @{ code = 'size_blocked'; message = '请求大小被限制（413）' } }
@@ -404,6 +416,10 @@ function Get-UploadScanSummary([object[]]$Results) {
         unblocked_samples = $passed.Count; blocked_samples = $blocked.Count; unknown_samples = $unknown.Count; message = '' }
     if ($skipped.Count -or $samples.Count -ne $planned) {
         $state.message = '实际测试 ' + $state.samples + '/' + $planned + ' 档，扫描未完成；各档状态及错误见明细。'
+        $attempted = @($samples | Where-Object { $_.verdict -ne 'skipped' })
+        if ($attempted.Count -eq 1 -and $attempted[0].failure_stage -eq 'proxy_connect') {
+            $state.message = '未测得上传大小：代理 HTTPS 隧道未建立，正文未发送；后续 ' + $skipped.Count + ' 档未测试。'
+        }
     } elseif ($unknown.Count) {
         $state.status = 'inconclusive'; $state.message = '已测试全部 ' + $planned + ' 档，其中 ' + $unknown.Count + ' 档响应无法判定，不能确认统一上限；详见对应响应文件。'
     } elseif ($null -ne $high -and $low -ge $high) {
@@ -462,6 +478,17 @@ function Start-NetworkTest {
         os = [Environment]::OSVersion.VersionString; powershell = [string]$PSVersionTable.PSVersion
         target = $destination.AbsoluteUri; proxy = $safeContext; results = @(); authentication_sent = $false; curl_version = [string]$curlVersion
         note = 'Synthetic malformed JSON, identity encoding. No inference. API rejection is sample evidence, not formal permission approval. Native ChatGPT uses a different network stack.' }
+    $report['mode'] = $(if ($FindUploadLimit) { 'upload_limit' } else { 'quick' })
+    if ($scriptPath -and (Test-Path -LiteralPath $scriptPath -PathType Leaf)) {
+        $hasher = [Security.Cryptography.SHA256]::Create(); $sourceFile = $null
+        try {
+            $sourceFile = [IO.File]::OpenRead($scriptPath)
+            $report['script_sha256'] = [BitConverter]::ToString($hasher.ComputeHash($sourceFile)).Replace('-', '').ToLowerInvariant()
+        } finally {
+            if ($sourceFile) { $sourceFile.Dispose() }
+            $hasher.Dispose()
+        }
+    }
     Write-Host ('上游：' + $report.target)
     Write-Host ('代理来源：' + $route.source + '；本次路径：' + $(if ($route.endpoint) { $route.endpoint } else { 'direct' }))
     if ($context.pac_configured) { Write-Host '检测到 PAC；本测试按中转的环境变量/手动代理规则选路，不执行 PAC。' -ForegroundColor Yellow }

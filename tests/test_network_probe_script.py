@@ -1,5 +1,6 @@
 """Run the standalone Windows probe only against isolated local fixtures."""
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -36,6 +37,15 @@ class Fixture(BaseHTTPRequestHandler):
         body = (json.dumps({"profile": {"upstream": self.server.upstream}}).encode()
                 if self.path == "/api/status" else b'{"app":"codex-packet-inspector","ok":true}')
         self.reply(200, "application/json", body)
+
+    def do_CONNECT(self):
+        self.server.calls.append({"method": "CONNECT", "path": self.path})
+        if getattr(self.server, "hold_connect", False):
+            self.server.release_connect.wait(5)
+            self.close_connection = True
+            return
+        self.reply(403, "text/html", b'<title>HIS Proxy Notification</title>upload blocked',
+                   server="netentsec_page_push")
 
     def do_POST(self):
         body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
@@ -154,6 +164,55 @@ Assert ((Get-ProbeVerdict $r $false).code -eq 'timeout') 'Timeout is distinguish
 'PASS: TLS settings preserve verification and failures identify their stage'
 ''')
         self.assertIn("PASS:", result)
+
+    def test_connect_failures_are_distinct_from_post_upload_failures(self):
+        result = self.run_ps(r'''
+function Assert($Value, $Message) { if (-not $Value) { throw $Message } }
+$r = @{status=0;headers=@{};body='';bytes=20000;written_bytes=0;curl_exit=28;
+    exceptions=@(@{type='curl'});flow=@{http_connect='000'};
+    transport_detail="> CONNECT chatgpt.com:443 HTTP/1.1`r`n* Connection timed out after 5015 milliseconds"}
+$v = Get-ProbeVerdict $r $false
+Assert ($v.code -eq 'timeout' -and $v.failure_stage -eq 'proxy_connect' -and $v.message -match '正文未发送') 'CONNECT timeout is not a payload-size result'
+$r.flow.http_connect = '200'
+Assert (-not (Get-ProbeVerdict $r $false).failure_stage) 'A timeout after CONNECT success must not be blamed on the tunnel'
+$r.flow.http_connect = '403'; $r.status = 403; $r.curl_exit = 56
+$r.body = '<title>HIS Proxy Notification</title>该网站上传文件受限'
+Assert ((Get-ProbeVerdict $r $false).code -eq 'gateway_error') 'CONNECT rejection cannot establish a body-size limit, even with an upload block page'
+$r.flow.http_connect = '200'
+Assert ((Get-ProbeVerdict $r $false).code -eq 'upload_blocked') 'A real POST may be rejected by Content-Length before the body is sent'
+'PASS: tunnel failures and actual POST size blocks stay distinct'
+''')
+        self.assertIn("PASS:", result)
+
+    def test_scan_reports_no_upload_measurement_when_connect_fails(self):
+        for held in (False, True):
+            with self.subTest(timeout=held):
+                proxy, relay = self.gateway(), self.gateway()
+                proxy.hold_connect = held
+                proxy.release_connect = threading.Event()
+                self.addCleanup(proxy.release_connect.set)
+                report_dir = self.root / ("connect-timeout" if held else "connect-rejected")
+                environment = dict(self.environment, HTTPS_PROXY=f"http://127.0.0.1:{proxy.server_port}",
+                                   NO_PROXY="127.0.0.1,localhost", CODEX_NETWORK_TEST_SCRIPT=str(SOURCE))
+                result = subprocess.run(
+                    [POWERSHELL, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(self.ps1),
+                     "-Target", "https://fixture.invalid/responses", "-RelayPort", str(relay.server_port),
+                     "-OutputDirectory", str(report_dir), "-TimeoutSeconds", "1", "-FindUploadLimit"],
+                    env=environment, capture_output=True, text=True, encoding="utf8", timeout=25)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                report = json.loads((report_dir / "report.json").read_text(encoding="utf8"))
+                rows = [r for r in report["results"] if r["key"].startswith("upload_")]
+                self.assertEqual(rows[0]["verdict"], "timeout" if held else "gateway_error")
+                self.assertEqual(rows[0]["failure_stage"], "proxy_connect")
+                self.assertEqual(rows[0]["written_bytes"], 0)
+                self.assertTrue(all(r["verdict"] == "skipped" for r in rows[1:]))
+                self.assertEqual(proxy.calls, [{"method": "CONNECT", "path": "fixture.invalid:443"}])
+                self.assertIn("未测得上传大小", report["upload_limit"]["message"])
+                self.assertIn("实际上传 0/20000 B", result.stdout)
+                self.assertEqual(report["mode"], "upload_limit")
+                self.assertEqual(report["script_sha256"], hashlib.sha256(SOURCE.read_bytes()).hexdigest())
+                self.assertEqual(list(self.scratch.iterdir()), [])
+                proxy.release_connect.set()
 
     def test_native_diagnostic_encoding_and_redaction(self):
         result = self.run_ps(r'''
