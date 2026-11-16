@@ -32,10 +32,6 @@ urllib3: MIT License.
 Used for HTTPS CONNECT with independently verified proxy and upstream TLS.
 https://github.com/urllib3/urllib3
 
-websockets: BSD 3-Clause License.
-Used for optional incremental Responses transport over TLS WebSocket connections.
-https://github.com/python-websockets/websockets
-
 cryptography: Apache License 2.0 or BSD 3-Clause License.
 Used to create temporary certificates for encrypted LAN sharing.
 https://github.com/pyca/cryptography
@@ -48,6 +44,6 @@ which permits distributing bundled applications under their own licenses.
 https://pyinstaller.org/en/stable/license.html
 
 The build embeds available license texts from the installed Python,
-python-zstandard, TOML Kit, cryptography, websockets and PyInstaller distributions in THIRD_PARTY_LICENSES/,
+python-zstandard, TOML Kit, cryptography and PyInstaller distributions in THIRD_PARTY_LICENSES/,
 and appends the same texts below in the distributed THIRD_PARTY_NOTICES.txt.
 No Codex desktop resources or OpenAI executable are redistributed.
