@@ -218,8 +218,8 @@ class NetworkRelayTests(unittest.TestCase):
                           headers={"Content-Type": "application/json", "Origin": self.server.ui_url.rstrip("/")})
         with self.client.open(request) as response:
             self.assertEqual(response.status, 200)
-        self.assertEqual(self.server.store.path.parent, self.root / "data")
-        self.assertEqual(self.server.network_diagnostics.path.parent, self.root / "data")
+        self.assertEqual(self.server.store.path.parent, self.root / "data" / "cache")
+        self.assertEqual(self.server.network_diagnostics.path.parent, self.root / "data" / "logs")
         self.assertTrue(self.server.status()["storage_paths_pending"])
         self.send("/html")
         self.assertTrue(self.server.network_diagnostics.path.exists())
@@ -230,6 +230,42 @@ class NetworkRelayTests(unittest.TestCase):
             self.assertEqual(replacement.network_diagnostics.path.parent, logs)
             self.assertFalse(replacement.status()["storage_paths_pending"])
             self.assertFalse(replacement.network_diagnostics.path.exists())
+
+    def test_unified_root_applies_all_three_directories_only_on_next_launch(self):
+        target = self.root / "new data"
+        active = (self.server.cache_dir, self.server.log_dir, self.server.image_isolation.directory)
+        request = Request(self.server.ui_url.rstrip("/") + "/api/settings",
+                          data=json.dumps({"storage_dir": str(target)}).encode(),
+                          headers={"Content-Type": "application/json", "Origin": self.server.ui_url.rstrip("/")})
+        with self.client.open(request) as response:
+            status = json.load(response)
+        self.assertEqual(status["storage_dir"], str(target))
+        self.assertEqual(status["storage_layout"], "grouped")
+        self.assertTrue(status["storage_paths_pending"])
+        self.assertEqual((self.server.cache_dir, self.server.log_dir, self.server.image_isolation.directory), active)
+        self.send("/html")  # The current relay and error logging still use the original locations.
+        with InspectorServer(("127.0.0.1", 0), self.root / "data", self.config, self.upstream) as replacement:
+            self.assertEqual(replacement.store.path.parent, target / "cache")
+            self.assertEqual(replacement.overflow.path.parent, target / "cache")
+            self.assertEqual(replacement.retry_journal.path.parent, target / "logs")
+            self.assertEqual(replacement.network_diagnostics.path.parent, target / "logs")
+            self.assertEqual(replacement.image_isolation.directory, target / "images")
+            self.assertFalse(replacement.status()["storage_paths_pending"])
+        self.assertTrue(self.server.store.path.exists())
+
+    def test_unwritable_child_does_not_partially_save_root_or_other_settings(self):
+        target = self.root / "blocked data"
+        target.mkdir()
+        (target / "images").write_text("not a directory", encoding="utf8")
+        previous = self.server.settings_path.read_bytes()
+        request = Request(self.server.ui_url.rstrip("/") + "/api/settings",
+                          data=json.dumps({"storage_dir": str(target), "zstd_level": 9}).encode(),
+                          headers={"Content-Type": "application/json", "Origin": self.server.ui_url.rstrip("/")})
+        with self.assertRaises(HTTPError) as error:
+            self.client.open(request)
+        error.exception.close()
+        self.assertEqual(error.exception.code, 400)
+        self.assertEqual(self.server.settings_path.read_bytes(), previous)
 
     def test_invalid_directory_does_not_save_any_settings(self):
         previous = dict(self.server.settings)

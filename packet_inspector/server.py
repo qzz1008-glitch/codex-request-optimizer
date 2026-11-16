@@ -36,7 +36,7 @@ from .response_usage import packet_usage
 from .response_summary import ResponseSummary
 from .session_summary import SessionSummaries
 from .storage import DEFAULT_STORAGE_BYTES, Store
-from .storage_paths import resolve_directory, path_settings
+from .storage_paths import resolve_directory, path_settings, grouped_paths
 from .transport import (AUTO_IMAGE_ZSTD_LEVEL, DEFAULT_IMAGE_ZSTD_LEVEL, DEFAULT_ZSTD_LEVEL,
                         PreparedRequest, prepare_request_info, validate_zstd_level)
 from .request_types import is_json_image_request
@@ -175,8 +175,10 @@ class InspectorServer(ThreadingHTTPServer):
                          "bad_request_retry_max_retries": DEFAULT_BAD_REQUEST_RETRIES,
                          "image_isolation_enabled": False, "image_analysis_mode": "native", "image_save_dir": "",
                          "auto_detect_providers": True, "provider_routes": {},
-                          "log_dir": "", "cache_dir": "",
-                         **protection_settings(saved)}
+                         "log_dir": "", "cache_dir": "",
+                         **protection_settings(saved),
+                         **(grouped_paths(self.data_dir, saved.get("storage_dir", ""))
+                            if not settings_exist or isinstance(saved.get("storage_dir"), str) else {})}
         self.settings.pop("ui_token", None)
         self.settings["image_analysis_mode"] = image_mode(saved)
         self.settings["image_isolation_enabled"] = self.settings["image_analysis_mode"] == "optimized"
@@ -366,6 +368,8 @@ class InspectorServer(ThreadingHTTPServer):
                 with self.guard:
                     if self.settings_path.exists():
                         saved = json.loads(self.settings_path.read_text(encoding="utf8"))
+                    if isinstance(saved.get("storage_dir"), str):
+                        saved.update(grouped_paths(self.data_dir, saved["storage_dir"]))
                         self.settings = {**self.settings, **protection_settings(saved)}
                         self.settings["image_analysis_mode"] = image_mode(saved)
                         self.settings["image_isolation_enabled"] = self.settings["image_analysis_mode"] == "optimized"
@@ -694,11 +698,16 @@ class InspectorServer(ThreadingHTTPServer):
                 "loopback_proxy_repair_supported": True,
                 "network_diagnostics_errors": self.network_diagnostics.errors,
                 "storage_paths_supported": True,
+                "storage_dir_supported": True,
+                "storage_dir": str(resolve_directory(self.data_dir, self.settings.get("storage_dir") or "")),
+                "storage_layout": "grouped" if isinstance(self.settings.get("storage_dir"), str) else "legacy",
                 "log_dir": str(resolve_directory(self.data_dir, self.settings["log_dir"])),
                 "cache_dir": str(resolve_directory(self.data_dir, self.settings["cache_dir"])),
                 "active_log_dir": str(self.log_dir), "active_cache_dir": str(self.cache_dir),
                 "storage_paths_pending": (resolve_directory(self.data_dir, self.settings["log_dir"]) != self.log_dir
-                                          or resolve_directory(self.data_dir, self.settings["cache_dir"]) != self.cache_dir),
+                                          or resolve_directory(self.data_dir, self.settings["cache_dir"]) != self.cache_dir
+                                          or resolve_image_directory(self.data_dir, self.settings["image_save_dir"])
+                                          != self.image_isolation.directory),
                 "image_isolation_enabled": self.settings["image_isolation_enabled"],
                 "image_analysis_mode": self.settings["image_analysis_mode"],
                 "image_isolation_supported": True, "image_tool": self.image_config.status(),
@@ -1108,6 +1117,7 @@ class Handler(BaseHTTPRequestHandler):
                     directory = resolve_image_directory(self.server.data_dir, data["image_save_dir"])
                     check_image_directory(directory)
                     candidate["image_save_dir"] = "" if directory == self.server.default_image_save_dir else str(directory)
+                    candidate["storage_dir"] = None
                     image_isolation = ImageIsolation(self.server.data_dir, candidate["image_save_dir"])
                 if "request_compression" in data:
                     raise ValueError("仅支持接入和断开；接入后由本软件管理 zstd 压缩。")

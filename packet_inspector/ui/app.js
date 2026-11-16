@@ -23,7 +23,7 @@ globalThis.InspectorRestartNotice = {
   create({status, request, openSettings, busy=()=>false, openLogs=()=>{}}) {
     const $=id=>document.getElementById(id), labels={connection:"Codex 接入",context_tokens:"有效上下文",
       compact_tokens:"自动压缩阈值",capacity_retry:"容量不足重试",image_analysis_mode:"图片解析",
-      entry_port:"入口端口",sharing:"共享额度来源",wsl:"WSL 配置",log_dir:"日志目录",cache_dir:"缓存目录"};
+      entry_port:"入口端口",sharing:"共享额度来源",wsl:"WSL 配置",storage_dir:"数据目录"};
     let ledger={revision:0,items:[]},storageKey="",authoritative=false,ackLegacy=false,details=null,working=false,error="",storageError="",backendError="",renderKey="";
     function save() {
       try {localStorage.setItem(storageKey,JSON.stringify({ledger,ackLegacy,details}));storageError="";}
@@ -117,8 +117,7 @@ globalThis.InspectorRestartNotice = {
     function render() {
       const card=$("restart-notice"),badge=$("restart-notice-open");if(!card||!badge)return;
       const items=[...ledger.items],s=status();
-      if(s?.storage_paths_pending)for(const key of ["log_dir","cache_dir"])
-        if(s[key]!==s["active_"+key])items.push({key,target:"optimizer",scope:""});
+      if(s?.storage_paths_pending)items.push({key:"storage_dir",target:"optimizer",scope:""});
       const chatgpt=items.some(row=>row.target==="chatgpt"),wsl=items.some(row=>row.target==="wsl"),optimizer=items.some(row=>row.target==="optimizer");
       const portPending=!!s?.entry_port?.pending,problems=InspectorRestartNotice.connectionProblems(s,details),warning=problems.length>0;
       const log=s?.active_log_dir||s?.log_dir||s?.data_dir||"";
@@ -1252,7 +1251,7 @@ function fillSettings() {
   $("runtime-settings-message").hidden=!!s.capacity_retry_supported;
   $("runtime-settings-message").textContent=s.capacity_retry_supported?"":t("当前中转暂不支持此功能。");
   renderConnectionActions();
-  renderCompressionMode();renderLanguageSelection();fillZstdLevel();fillImageDirectory();fillPacketProtection();syncContextDefaults();
+  renderCompressionMode();renderLanguageSelection();fillZstdLevel();fillStorageDirectories();fillPacketProtection();syncContextDefaults();
   updateSettingsSaveState(false);
 }
 function imageAnalysisMode(status=state.status) {
@@ -1571,32 +1570,22 @@ async function confirmServiceRestart(action) {
     uiI18n.text($("service-restart-message"),error.message);$("service-restart-message").hidden=false;
   } finally {serviceRestartSaving=false;serviceRestartAction="";serviceRestartRevision++;renderServiceRestart();}
 }
-function imageDefaultDirectory() {
-  const s=state.status,dataDir=s.data_dir||"",separator=dataDir.includes("\\")?"\\":"/";
-  return s.image_save_dir_default||(dataDir?dataDir.replace(/[\\/]+$/,"")+separator+"images":"");
-}
-function fillImageDirectory() {
-  fillStorageDirectories();
-  const s=state.status,input=$("image-save-dir"),supported=!!s.image_save_dir_supported;
-  const defaultPath=imageDefaultDirectory();
-  if(!settingsEditing)input.value=s.image_save_dir||defaultPath;
-  input.placeholder=defaultPath;
-  for(const id of ["image-save-dir","image-save-dir-reset"])$(id).disabled=settingsSaving||!supported||selectedImageAnalysisMode()!=="optimized";
-  fillDirectoryOpenButtons();
-}
 function fillStorageDirectories() {
-  const s=state.status,supported=!!s.storage_paths_supported;
-  for(const [id,key] of [["log-dir","log_dir"],["cache-dir","cache_dir"]]) {
-    if(!settingsEditing)$(id).value=s[key]||s.data_dir||"";
-    $(id).placeholder=s.data_dir||"";
-    $(id).disabled=settingsSaving||!supported;$(id+"-reset").disabled=settingsSaving||!supported;
-  }
+  const s=state.status,supported=!!s.storage_dir_supported,input=$("storage-dir");
+  if(!settingsEditing)input.value=s.storage_dir||s.data_dir||"";
+  input.placeholder=s.data_dir||"";
+  input.disabled=settingsSaving||!supported;$("storage-dir-reset").disabled=settingsSaving||!supported;
   $("storage-paths-hint").hidden=!s.storage_paths_pending;
   $("storage-paths-hint").textContent=s.storage_paths_pending?t("目录已保存，重启本软件后生效，原目录数据保留。"):"";
+  fillDirectoryOpenButtons();
+}
+function resetStorageDirectory() {
+  if(settingsSaving||!state.status.storage_dir_supported)return;
+  $("storage-dir").value=state.status.data_dir||"";
+  updateSettingsSaveState();
 }
 function fillDirectoryOpenButtons() {
-  for(const id of ["log-dir","cache-dir","image-save-dir"])
-    $(id+"-open").disabled=settingsSaving||!state.status.open_directory_supported||directoryOpening.has(id);
+  $("storage-dir-open").disabled=settingsSaving||!state.status.open_directory_supported||directoryOpening.has("storage-dir");
 }
 async function openLogDirectory() {
   const s=state.status;
@@ -1706,9 +1695,7 @@ function readSettingsDraft() {
     bad_request_retry_enabled:$("bad-request-retry").checked,
     bad_request_retry_max_retries:$("bad-request-retry").checked?$("bad-request-retry-count").value:String(state.status.bad_request_retry_max_retries??3),
     image_analysis_mode:selectedImageAnalysisMode(),
-    image_save_dir:$("image-save-dir").value,
-    log_dir:$("log-dir").value,
-    cache_dir:$("cache-dir").value,
+    storage_dir:$("storage-dir").value,
     max_storage_mb:$("storage-limit").value,
     max_packets:$("packet-limit").value,
     language:settingsLanguage??uiI18n.language
@@ -1789,9 +1776,7 @@ async function saveSettings() {
     ["image_analysis_mode","image_analysis_mode" in s?"image_analysis_mode":"image_isolation_enabled",
       "image_analysis_mode" in s?draft.image_analysis_mode:draft.image_analysis_mode==="optimized",
       s.image_isolation_supported||["native","disabled","optimized"].includes(s.image_analysis_mode)],
-    ["image_save_dir","image_save_dir",draft.image_save_dir===imageDefaultDirectory()?"":draft.image_save_dir,s.image_save_dir_supported],
-    ["log_dir","log_dir",draft.log_dir===s.data_dir?"":draft.log_dir,s.storage_paths_supported],
-    ["cache_dir","cache_dir",draft.cache_dir===s.data_dir?"":draft.cache_dir,s.storage_paths_supported],
+    ["storage_dir","storage_dir",draft.storage_dir===s.data_dir?"":draft.storage_dir,s.storage_dir_supported],
     ["max_storage_mb",storage.key,storage.toBackend(draft.max_storage_mb),true],
     ["max_packets","max_packets",Number(draft.max_packets),true]
   ].filter(([field,,,supported])=>supported&&changed.has(field));
@@ -1805,7 +1790,7 @@ async function saveSettings() {
   $("settings-dialog").setAttribute("aria-busy","true");renderSettingsSaveProgress();
   try {
     if(entries.length) {
-      const label=entries.some(([field])=>["log_dir","cache_dir","image_save_dir"].includes(field))?"存储位置":
+      const label=entries.some(([field])=>field==="storage_dir")?"存储位置":
         entries.some(([field])=>field==="image_analysis_mode")?"图片与运行设置":
         entries.some(([field])=>field==="start_on_login")?"开机启动与运行设置":"运行设置";
       await runSettingsSaveStep(label,async()=>{
@@ -2506,11 +2491,8 @@ function closeSettings() {
   $("settings-dialog").close();return discardSettingsDraft();
 }
 action("settings-close",closeSettings);action("settings-restore",restoreSettings);
-for(const id of ["log-dir","cache-dir","image-save-dir"])action(id+"-open",()=>openSettingsDirectory(id));
-for(const id of ["log-dir","cache-dir"])action(id+"-reset",()=>{
-  if(settingsSaving||!state.status.storage_paths_supported)return;
-  $(id).value=state.status.data_dir||"";updateSettingsSaveState();
-});
+action("storage-dir-open",()=>openSettingsDirectory("storage-dir"));
+action("storage-dir-reset",resetStorageDirectory);
 $("settings-dialog").addEventListener("cancel",event=>{event.preventDefault();closeSettings();});
 $("settings-dialog").addEventListener("close",()=>{
   if(!$("settings-dialog").open){closeZstdLevelPicker(false);discardSettingsDraft();}
@@ -2533,7 +2515,7 @@ $("zstd-level-dialog").addEventListener("click",event=>{
   const dialog=$("zstd-level-dialog"),rect=dialog.getBoundingClientRect();
   if(event.target===dialog&&(event.clientX<rect.left||event.clientX>rect.right||event.clientY<rect.top||event.clientY>rect.bottom))closeZstdLevelPicker();
 });
-$("image-analysis-mode").addEventListener("change",()=>{fillImageAnalysisMode();fillImageDirectory();});
+$("image-analysis-mode").addEventListener("change",()=>{fillImageAnalysisMode();});
 action("settings-save",saveSettings);
 action("ui-refresh",()=>{if(state.status?.ui_live_reload)location.reload();});
 action("updates-check",()=>performUpdate("check"));action("updates-install",()=>performUpdate("install"));
@@ -2574,10 +2556,6 @@ for(const key of ["context","compact"]) {
     syncContextDefaults();contextMessage("");
   });
 }
-action("image-save-dir-reset",()=>{
-  if(settingsSaving||!state.status.image_save_dir_supported||selectedImageAnalysisMode()!=="optimized")return;
-  $("image-save-dir").value=imageDefaultDirectory();updateSettingsSaveState();
-});
 async function applyLinkAction(which) {
   linkRevision++;
   try {
