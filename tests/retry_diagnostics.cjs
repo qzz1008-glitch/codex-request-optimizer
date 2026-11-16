@@ -67,6 +67,9 @@ assert.deepEqual(repeatedImages.map(row=>row.id),['first','repeat','new-image','
 assert.equal(context.packetProtection(repeatedImages[1]).optimization,true,'Request details must retain the actual processing flag');
 assert.deepEqual(uniqueImageRows([imagePacket('first',1,[pictureA,pictureA]),imagePacket('alias',2,['c:/SAVED-images/a.png','file:///C:/saved-images/a.png'])]),['first']);
 assert.deepEqual(uniqueImageRows([imagePacket('source',1,['C:\\clipboard.png'],{image_path_rewrites:{'C:\\clipboard.png':pictureA}}),imagePacket('retained',2,[pictureA])]),['source']);
+const retiredImage='C:\\Temp\\CodexRequestOptimizer\\'+'a'.repeat(32)+'.png';
+assert.deepEqual(uniqueImageRows([imagePacket('permanent',1,[pictureA]),imagePacket('old-duplicate',2,[pictureA,retiredImage])]),
+  ['permanent'],'Removed temporary copies must not create extra image markers');
 assert.deepEqual(uniqueImageRows([imagePacket('first',1,[pictureA]),imagePacket('other-session',2,[pictureA],{thread_id:'session-b'})]),['first','other-session']);
 assert.deepEqual(uniqueImageRows([imagePacket('upper',1,['/home/user/A.png']),imagePacket('lower',2,['/home/user/a.png'])]),['upper','lower'],'Linux paths are case sensitive');
 assert.deepEqual(uniqueImageRows([imagePacket('tie-b',1,[pictureA]),imagePacket('tie-a',1,[pictureA])]),['tie-a']);
