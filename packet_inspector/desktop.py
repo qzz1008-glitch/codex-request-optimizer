@@ -18,7 +18,7 @@ from .server import argument_parser, default_data_dir
 from .desktop_ui import DesktopUI, window_geometry
 from .app_icon import APP_ICON
 from .frontend_dev import load_profile, validate_ui_dir, resolve_profile, remember_profile, installed_profile
-from .window_lifecycle import WindowLifecycle, window_control_prefix
+from .window_lifecycle import WindowLifecycle, allow_window_activation, window_control_prefix
 from .window_chrome import WindowChrome
 from .startup_diagnostics import StartupTrace, startup_environment, startup_wait_seconds, wait_for_startup
 
@@ -147,6 +147,7 @@ class SingleWindow:
         self.stop = threading.Event()
 
     def signal(self):
+        allow_window_activation()
         self.kernel.SetEvent(self.event)
 
     def signal_panel(self):

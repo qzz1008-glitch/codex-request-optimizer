@@ -222,6 +222,24 @@ class NativeTray:
         if self.hwnd:
             self.user.PostMessageW(self.hwnd, NATIVE_MENU_MESSAGE, 0, 0)
 
+    def _invoke_window_action(self, callback):
+        # Claim the explicit tray interaction before handing it to a worker;
+        # the desktop may live in another process and needs the grant first.
+        self.user.SetForegroundWindow(self.hwnd)
+        self.user.AllowSetForegroundWindow(0xFFFFFFFF)
+        threading.Thread(target=callback, daemon=True).start()
+
+    def _on_icon_message(self, message):
+        if message == 0x203:  # WM_LBUTTONDBLCLK; ignore single left clicks.
+            self._invoke_window_action(self.open_window)
+        elif message == 0x205:  # right button up
+            if self.show_panel is not None:
+                # Activating the invisible owner here closes Explorer's flyout.
+                self.user.AllowSetForegroundWindow(0xFFFFFFFF)
+                threading.Thread(target=self._launch_panel, daemon=True).start()
+            else:
+                self._show_native_menu()
+
     def _show_native_menu(self):
         user, hwnd, point = self.user, self.hwnd, wintypes.POINT()
         user.GetCursorPos(ctypes.byref(point))
@@ -243,7 +261,7 @@ class NativeTray:
         user.PostMessageW(hwnd, 0, 0, 0)
         callback = {1: self.open_window, 2: self.exit_app, 3: self.restart_service}.get(selection)
         if callback is not None:
-            threading.Thread(target=callback, daemon=True).start()
+            self._invoke_window_action(callback)
 
     def _run(self):
         try:
@@ -355,21 +373,9 @@ class NativeTray:
         callback_message = 0x8001
         taskbar_created = user.RegisterWindowMessageW("TaskbarCreated")
 
-        def invoke(callback):
-            threading.Thread(target=callback, daemon=True).start()
-
         def window_proc(hwnd, message, wparam, lparam):
             if message == callback_message:
-                if lparam == 0x203:  # WM_LBUTTONDBLCLK; ignore single left clicks.
-                    invoke(self.open_window)
-                elif lparam == 0x205:  # right button up
-                    if self.show_panel is not None:
-                        # A WebView popup opened from overflow must leave Explorer
-                        # active; activating this invisible owner closes its flyout.
-                        user.AllowSetForegroundWindow(0xFFFFFFFF)
-                        invoke(self._launch_panel)
-                    else:
-                        self._show_native_menu()
+                self._on_icon_message(lparam)
                 return 0
             if message == STATUS_MESSAGE:
                 self._refresh_menu()

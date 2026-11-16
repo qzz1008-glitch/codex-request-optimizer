@@ -10,7 +10,7 @@ import threading
 import unittest
 
 from packet_inspector.desktop import SingleWindow
-from packet_inspector.window_lifecycle import request_window_exit, request_tray_panel, tray_panel_host_running, tray_panel_ready
+from packet_inspector.window_lifecycle import request_window_exit, request_main_window, request_tray_panel, tray_panel_host_running, tray_panel_ready
 
 
 @unittest.skipUnless(os.name == "nt", "Windows named window handles")
@@ -57,6 +57,17 @@ raise SystemExit(desktop.run(sys.argv[2:]))
         reopened = SingleWindow(self.folder)
         self.addCleanup(reopened.close)
         self.assertFalse(reopened.existing)
+
+    def test_direct_main_window_signal_reaches_only_its_existing_profile(self):
+        owner = SingleWindow(self.folder)
+        other = SingleWindow(self.folder / "isolated")
+        self.addCleanup(owner.close)
+        self.addCleanup(other.close)
+        self.assertTrue(request_main_window(self.folder))
+        self.assertEqual(owner.kernel.WaitForSingleObject(owner.event, 1000), 0)
+        for handle in (owner.panel_event, owner.exit_event, other.event):
+            self.assertNotEqual(owner.kernel.WaitForSingleObject(handle, 0), 0)
+        self.assertFalse(request_main_window(self.folder / "missing"))
 
     def test_tray_panel_signal_does_not_show_main_window_or_start_another_service(self):
         owner = SingleWindow(self.folder)
