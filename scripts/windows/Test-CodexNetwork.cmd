@@ -2,6 +2,7 @@
 setlocal
 chcp 65001 >nul
 set "CODEX_NETWORK_TEST_SCRIPT=%~f0"
+if /i "%~1"=="--upload-limit" set "CODEX_NETWORK_TEST_UPLOAD_LIMIT=1"
 powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "$raw=Get-Content -LiteralPath $env:CODEX_NETWORK_TEST_SCRIPT -Raw -Encoding UTF8; $marker=':__POWERSHELL__'; & ([scriptblock]::Create($raw.Substring($raw.LastIndexOf($marker)+$marker.Length)))"
 set "probe_exit=%errorlevel%"
 echo.
@@ -13,6 +14,10 @@ param(
     [int]$RelayPort = 47844,
     [string]$OutputDirectory = '',
     [int]$TimeoutSeconds = 20,
+    [switch]$FindUploadLimit = ($env:CODEX_NETWORK_TEST_UPLOAD_LIMIT -eq '1'),
+    [int]$MaxUploadBytes = 20000000,
+    [int]$PrecisionBytes = 1000,
+    [switch]$NoPrompt = ($env:CODEX_NETWORK_TEST_NO_PAUSE -eq '1'),
     [switch]$LoadOnly
 )
 
@@ -205,8 +210,18 @@ function Invoke-Probe([string]$Key, [uri]$Uri, [hashtable]$Route, [int]$Bytes, [
             # Malformed JSON cannot start inference, even if an upstream
             # injects authentication or supplies a default model.
             $padding = '{"connection_test":"synthetic-no-inference","padding":"'
-            $body = [Text.Encoding]::ASCII.GetBytes($padding + ('0' * ($Bytes - $padding.Length)))
-            [IO.File]::WriteAllBytes($requestPath, $body)
+            $prefixBytes = [Text.Encoding]::ASCII.GetBytes($padding)
+            if ($Bytes -lt $prefixBytes.Length) { throw 'Test body is too small' }
+            $stream = [IO.File]::Create($requestPath)
+            try {
+                $stream.Write($prefixBytes, 0, $prefixBytes.Length)
+                $chunk = [Text.Encoding]::ASCII.GetBytes(('0' * 65536))
+                $remaining = $Bytes - $prefixBytes.Length
+                while ($remaining -gt 0) {
+                    $count = [Math]::Min($remaining, $chunk.Length)
+                    $stream.Write($chunk, 0, $count); $remaining -= $count
+                }
+            } finally { $stream.Dispose() }
             $arguments += @('--header', 'Content-Type: application/json', '--header', 'Content-Encoding: identity',
                 '--data-binary', ('@' + $requestPath))
         }
@@ -370,7 +385,55 @@ function Get-NetworkConclusions([object[]]$Results, [hashtable]$Route, [hashtabl
     }
 }
 
+function Format-UploadBytes([long]$Bytes) {
+    return [string]::Format([Globalization.CultureInfo]::InvariantCulture, '{0:N0} B ({1:0.###} MB)', $Bytes, ($Bytes / 1000000))
+}
+
+function Get-UploadSearchState([object[]]$Results, [int]$Maximum, [int]$Precision) {
+    if ($Maximum -lt 1000 -or $Maximum -gt 100000000 -or $Precision -lt 1 -or $Precision -gt $Maximum) { throw 'Invalid upload search range' }
+    $samples = @($Results | Where-Object { $_.key -like 'upload_*' })
+    $passed = @($samples | Where-Object { $_.verdict -eq 'api_response' -and $_.written_bytes -eq $_.bytes })
+    $blocked = @($samples | Where-Object { $_.verdict -in @('upload_blocked', 'size_blocked') })
+    $low = 0; $high = $null
+    if ($passed.Count) { $low = [int]($passed | ForEach-Object { $_.bytes } | Measure-Object -Maximum).Maximum }
+    if ($blocked.Count) { $high = [int]($blocked | ForEach-Object { $_.bytes } | Measure-Object -Minimum).Minimum }
+    $state = @{ status = 'probing'; largest_unblocked_bytes = $(if ($passed.Count) { $low } else { $null })
+        smallest_blocked_bytes = $high; max_test_bytes = $Maximum; precision_bytes = $Precision
+        samples = $samples.Count; next_bytes = $null; message = '' }
+    $unknown = @($samples | Where-Object { $_ -notin $passed -and $_ -notin $blocked })
+    if ($unknown.Count) {
+        $state.status = 'inconclusive'; $state.message = '无法确定上限：' + $unknown[0].message + '；详见对应响应文件。'
+    } elseif ($null -ne $high -and $low -ge $high) {
+        $state.status = 'inconclusive'; $state.message = '大小判定不一致：较大包通过、较小包受限，无法确定统一上限。'
+    } elseif ($null -ne $high -and $low -eq 0 -and $high -le 1000) {
+        $state.status = 'no_passing_sample'; $state.message = '最小测试包 ' + (Format-UploadBytes $high) + ' 仍受限，未找到可通过的大小。'
+    } elseif ($null -ne $high -and $low -gt 0 -and ($high - $low) -le $Precision) {
+        $state.status = 'bounded'; $state.message = '最大未拦截样本 ' + (Format-UploadBytes $low) + '；最小被拦截样本 ' + (Format-UploadBytes $high) + '。'
+    } elseif ($null -eq $high -and $low -ge $Maximum) {
+        $state.status = 'at_least'; $state.message = '至少 ' + (Format-UploadBytes $low) + ' 本次未见拦截；已到探测范围，尚未测到上限。'
+    } elseif ($null -ne $high) {
+        $state.next_bytes = [int][Math]::Max(1000, [Math]::Floor(($low + $high) / 2))
+    } else {
+        $state.next_bytes = [int][Math]::Min($Maximum, [Math]::Max(64000, $low * 2))
+    }
+    return $state
+}
+
 function Start-NetworkTest {
+    $title = $(if ($FindUploadLimit) { '上传大小上限测试' } else { 'Codex 代理与上传测试' })
+    Write-Host $title -ForegroundColor Cyan
+    if ($FindUploadLimit) {
+        if (-not $NoPrompt) {
+            $answer = Read-Host ('最大探测范围（MB，直接回车 ' + ($MaxUploadBytes / 1000000) + '；最大 100）')
+            if ($answer.Trim()) {
+                $megabytes = 0D
+                if (-not [decimal]::TryParse($answer.Trim(), [Globalization.NumberStyles]::AllowDecimalPoint, [Globalization.CultureInfo]::InvariantCulture, [ref]$megabytes) -or $megabytes -lt 0.001 -or $megabytes -gt 100) { throw '请输入 0.001 到 100 的 MB 数值，小数使用英文点。' }
+                $MaxUploadBytes = [int][Math]::Floor($megabytes * 1000000)
+            }
+        }
+        $null = Get-UploadSearchState @() $MaxUploadBytes ([Math]::Min($PrecisionBytes, $MaxUploadBytes))
+        $PrecisionBytes = [Math]::Min($PrecisionBytes, $MaxUploadBytes)
+    }
     if ($RelayPort -lt 1 -or $RelayPort -gt 65535 -or $TimeoutSeconds -lt 1 -or $TimeoutSeconds -gt 60) { throw 'Invalid port or timeout' }
     $scriptPath = $env:CODEX_NETWORK_TEST_SCRIPT
     if (-not $OutputDirectory) {
@@ -382,8 +445,8 @@ function Start-NetworkTest {
     $script:ReportDirectory = $OutputDirectory
     $curlPath = (Get-Command curl.exe -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
     $curlVersion = (& $curlPath --disable --version | Select-Object -First 1)
-    Write-Host 'Codex 代理与上传测试' -ForegroundColor Cyan
     Write-Host '不修改配置；不发送 Codex 登录凭据；不调用模型。1 MB = 1,000,000 字节。'
+    if ($FindUploadLimit) { Write-Host ('上传上限探测：范围 ' + (Format-UploadBytes $MaxUploadBytes) + '；边界精度 ' + $PrecisionBytes + ' B。') }
     Write-Host ('结果目录：' + $OutputDirectory)
     $context = Get-ProxyContext
     $local = [uri]('http://127.0.0.1:' + $RelayPort + '/health')
@@ -425,21 +488,40 @@ function Start-NetworkTest {
         Write-Host '  DNS / TCP 正常；HTTPS 通路将在上传测试中验证。'
     } else { Write-Host '  DNS / TCP 检测失败，详情已写入报告。' }
     $sizes = @(64000, 950000, 1100000)
+    if ($FindUploadLimit) {
+        $sizes = @($sizes | Where-Object { $_ -le $MaxUploadBytes })
+        if (-not $sizes.Count) { $sizes = @($MaxUploadBytes) }
+    }
     $stopUploads = $false
     for ($index = 0; $index -lt $sizes.Count; $index++) {
         $size = $sizes[$index]
-        Write-Host ('[' + ($index + 4) + '/6] 测试上传 ' + ($size / 1000) + ' kB…')
+        if ($FindUploadLimit) { Write-Host ('[基线 ' + ($index + 1) + '/' + $sizes.Count + '] 测试上传 ' + (Format-UploadBytes $size) + '…') }
+        else { Write-Host ('[' + ($index + 4) + '/6] 测试上传 ' + ($size / 1000) + ' kB…') }
         if ($stopUploads) {
-            $results += @{ key = 'upload_' + $size; bytes = $size; status = 0; verdict = 'skipped'; message = '上一项连接失败，已跳过'; body = ''; headers = @{} }
+            $results += @{ key = 'upload_' + $size; bytes = $size; status = 0; verdict = 'skipped'; message = '上一项未完成有效验证，已跳过'; body = ''; headers = @{} }
         } else {
             $probe = Invoke-Probe ('upload_' + $size) $destination $route $size $TimeoutSeconds
             $results += $probe
             $stopUploads = $probe.verdict -in @('network_error', 'tls_revocation_error', 'tls_error', 'dns_error', 'timeout', 'proxy_auth', 'gateway_error')
+            if ($FindUploadLimit -and $probe.verdict -notin @('api_response', 'upload_blocked', 'size_blocked')) { $stopUploads = $true }
         }
         Write-ProbeResult $results[-1]
         $report.results = $results; Write-Utf8 (Join-Path $OutputDirectory 'report.json') ($report | ConvertTo-Json -Depth 14)
     }
-    $lines = @('Codex 代理与上传测试', ('时间：' + $report.started), ('电脑：' + $report.hostname), ('上游：' + $report.target), ('代理来源：' + $route.source), ('本次代理：' + $route.endpoint), '')
+    if ($FindUploadLimit) {
+        while ($true) {
+            $search = Get-UploadSearchState $results $MaxUploadBytes $PrecisionBytes
+            $report['upload_limit'] = $search
+            Write-Utf8 (Join-Path $OutputDirectory 'report.json') ($report | ConvertTo-Json -Depth 14)
+            if ($null -eq $search.next_bytes) { break }
+            $size = $search.next_bytes
+            Write-Host ('[上限探测 ' + ($search.samples + 1) + '] 测试上传 ' + (Format-UploadBytes $size) + '…')
+            $results += Invoke-Probe ('upload_' + $size) $destination $route $size $TimeoutSeconds
+            Write-ProbeResult $results[-1]
+            $report.results = $results
+        }
+    }
+    $lines = @($title, ('时间：' + $report.started), ('电脑：' + $report.hostname), ('上游：' + $report.target), ('代理来源：' + $route.source), ('本次代理：' + $route.endpoint), '')
     foreach ($result in $results) {
         $http = $(if ($result.status) { 'HTTP ' + $result.status } else { '无 HTTP 响应' })
         $lines += $result.key + ' | ' + $http + ' | ' + $result.message
@@ -455,6 +537,7 @@ function Start-NetworkTest {
     foreach ($conclusion in $report.conclusions) {
         $lines += $conclusion.label + '：' + $conclusion.result + '（' + $conclusion.detail + '）'
     }
+    if ($FindUploadLimit) { $lines += ''; $lines += '上传大小上限（本次目标及代理路径）：' + $report.upload_limit.message; $lines += '探测范围 ' + (Format-UploadBytes $MaxUploadBytes) + '；边界精度 ' + $PrecisionBytes + ' B。' }
     $lines += '上传权限为本次目标、路径及样本的实测判断；未携带登录凭据导致的 401 属于预期响应，不代表企业审批记录。'
     $lines += '本机探测使用本脚本的网络栈；ChatGPT 实际接入以中转收到请求为准。'
     $report['finished'] = (Get-Date).ToUniversalTime().ToString('o'); $report.results = $results
