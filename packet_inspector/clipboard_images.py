@@ -109,6 +109,19 @@ class ClipboardImageCache:
                 continue
         return retained
 
+    def prune(self):
+        if not self.aliases_path.is_file() or not self.lock.acquire(blocking=False):
+            return
+        try:
+            with file_lock(self.directory / ".clipboard-paths.lock", blocking=False):
+                aliases = {key: value for key, value in self._load().items()
+                           if (path := self._cached(value)) is not None and self._regular(path)}
+                self._save(aliases)
+        except OSError:
+            pass
+        finally:
+            self.lock.release()
+
     def prepare(self, paths, *, protected=None, bindings=None):
         candidates = {}
         for value in paths[:32]:

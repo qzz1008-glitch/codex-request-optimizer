@@ -192,7 +192,7 @@ class ClipboardImageTests(unittest.TestCase):
             self.assertEqual(list(self.isolation.directory.glob("*.png")), [])
         os.utime(saved, (1, 1))
         self.cache.prepare([str(self.source(2, b"new attachment"))])
-        self.assertEqual(saved.read_bytes(), payload)
+        self.assertFalse(saved.exists(), "Unreferenced expired files in the old permanent directory are reclaimed too")
         self.assertFalse((self.temp / "CodexRequestOptimizer").exists())
 
     def test_concurrent_isolation_instances_reuse_the_same_cache(self):
