@@ -104,7 +104,7 @@ async function run() {
   assert.equal(await page.locator('#restart-notice-open').textContent(),'本软件待重启');
   assert.equal(await page.locator('#restart-notice-title').textContent(),'重启本软件后生效');
   assert.equal(await page.locator('#restart-notice-chatgpt').evaluate(node=>node.hidden),true);
-  assert.equal(await page.locator('[data-settings-field="log_dir"]').getAttribute('data-restart-label'),'本软件待重启');
+  assert.equal(await page.locator('[data-settings-field="storage_dir"]').getAttribute('data-restart-label'),'本软件待重启');
   await page.evaluate(()=>notice.change('compact_tokens',null,250000));
   assert.equal(await page.locator('#restart-notice-open').textContent(),'ChatGPT 与本软件待重启');
   assert.equal(await page.locator('#restart-notice-title').textContent(),'重启本软件与 ChatGPT App 后生效');

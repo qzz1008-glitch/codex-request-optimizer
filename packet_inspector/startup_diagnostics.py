@@ -70,13 +70,18 @@ def log_directory(data_dir):
     try:
         settings = root / "settings.json"
         if settings.stat().st_size <= 1024 * 1024:
-            value = json.loads(settings.read_text(encoding="utf8")).get("log_dir", "")
+            saved = json.loads(settings.read_text(encoding="utf8"))
+            if isinstance(saved.get("storage_dir"), str):
+                from .storage_paths import grouped_paths
+                return Path(grouped_paths(root, saved["storage_dir"])["log_dir"])
+            value = saved.get("log_dir", "")
             if isinstance(value, str) and value.strip():
                 path = Path(value).expanduser()
                 return path if path.is_absolute() else root / path
+            return root  # Existing installations keep their diagnostic history in place.
     except (OSError, ValueError, AttributeError):
         pass
-    return root
+    return root / "logs"
 
 
 class StartupTrace:

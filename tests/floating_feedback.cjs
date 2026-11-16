@@ -110,7 +110,7 @@ async function run(){
  assert.equal(await page.locator('#settings-save-log li').count(),0);
  assert.equal(await page.locator('#settings-save-log').evaluate(node=>node.hidden),true);
  assert.deepEqual(await geometry(page,settingsIds),beforeSave);cases++;
- for(const id of ['entry-port-message','context-message','packet-size-message','runtime-settings-message','image-isolation-message','image-save-dir-message']){
+ for(const id of ['entry-port-message','context-message','packet-size-message','runtime-settings-message','image-isolation-message','storage-dir-message']){
   await page.evaluate(id=>{setSettingsMessage('');feedbackText(id,'Synthetic field error: '+id,true);},id);await noPopup(page);
   assert((await page.locator('#settings-inline-feedback').textContent()).includes(id));
   assert.deepEqual(await geometry(page,settingsIds),beforeSave);await page.evaluate(id=>feedbackText(id,''),id);cases++;
