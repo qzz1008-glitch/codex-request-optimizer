@@ -4,7 +4,7 @@ from .entry_port import DEFAULT_PORT
 RESULT_PREFIX = "INSPECTOR_CONNECTION_RESULT:"
 
 SCRIPT = r'''
-import json, os, pathlib, re
+import hashlib, json, os, pathlib, re, shutil, subprocess
 from urllib.parse import urlsplit
 from urllib.request import build_opener, ProxyHandler, HTTPRedirectHandler, Request
 from urllib.error import HTTPError
@@ -12,6 +12,56 @@ from urllib.error import HTTPError
 class NoRedirect(HTTPRedirectHandler):
     def redirect_request(self, *args, **kwargs):
         return None
+
+def native_codex(home):
+    unsupported = {"supported": False, "reason": "远程 Codex 不支持原生后台重载，请在 ChatGPT 中重新连接此服务器。"}
+    search = str(pathlib.Path(os.environ.get("CODEX_INSTALL_DIR") or pathlib.Path.home() / ".local/bin")) + os.pathsep + os.environ.get("PATH", "")
+    cli = shutil.which("codex", path=search)
+    if not cli:
+        return unsupported, None
+    env = dict(os.environ, CODEX_HOME=str(home))
+    try:
+        value = native_command(cli, "version", env, 8)
+        managed = pathlib.Path(value.get("managedCodexPath", ""))
+        socket = pathlib.Path(value.get("socketPath", ""))
+        if value.get("status") != "running" or not managed.is_absolute() or not managed.is_file():
+            return unsupported, None
+        if not socket.is_absolute() or home.resolve() not in socket.resolve().parents or not socket.is_socket():
+            return unsupported, None
+        return {"supported": True, "reason": ""}, (str(managed), env, str(socket))
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return unsupported, None
+
+def native_command(cli, action, env, timeout):
+    result = subprocess.run([cli, "app-server", "daemon", action], env=env, cwd="/",
+                            capture_output=True, timeout=timeout)
+    if result.returncode:
+        detail = result.stderr[-1500:].decode("utf-8", errors="replace").strip()
+        raise ValueError("Codex 原生后台命令失败：" + (detail or str(result.returncode)))
+    if len(result.stdout) > 65536:
+        raise ValueError("Codex 原生后台返回内容过大，未确认重连结果。")
+    value = json.loads(result.stdout)
+    if not isinstance(value, dict):
+        raise ValueError("Codex 原生后台未返回有效状态。")
+    return value
+
+def restart_native(context):
+    if context is None:
+        raise ValueError("远程 Codex 不支持原生后台重载，请在 ChatGPT 中重新连接此服务器。")
+    cli, env, socket = context
+    result = native_command(cli, "restart", env, 120)
+    if result.get("status") != "restarted" or result.get("socketPath") != socket:
+        raise ValueError("Codex 原生后台未确认重载完成，请刷新状态后检查。")
+    ready = native_command(cli, "version", env, 8)
+    if ready.get("status") != "running" or ready.get("socketPath") != socket:
+        raise ValueError("Codex 原生后台尚未就绪，请刷新状态后检查。")
+
+def config_digest(config):
+    with config.open("rb") as source:
+        value = source.read(2 * 1024 * 1024 + 1)
+    if len(value) > 2 * 1024 * 1024:
+        raise ValueError("Codex 配置过大，无法确认重连范围。")
+    return hashlib.sha256(value).digest()
 
 def control():
     options = json.loads(INPUT)
@@ -77,8 +127,31 @@ def control():
         return {"state": "error", "can_connect": False, "can_disconnect": False,
                 "error": "未找到对应的远程中转服务，请确认服务已运行且使用当前 SSH 用户的 Codex 配置。"}
     profile, result = status["profile"], {}
+    capability, native_context = native_codex(home)
     action = options.get("action")
-    if action:
+    reconnect = None
+    if action == "reconnect":
+        try:
+            digest = config_digest(config)
+            notice = status.get("restart_notice", {})
+            restart_native(native_context)
+            reconnect = {"state": "reloaded", "error": "", "warning": ""}
+            status = request(selected, "/api/status")
+            if config_digest(config) != digest or status.get("restart_notice", {}).get("revision") != notice.get("revision"):
+                reconnect["warning"] = "Codex 已重载，但配置又有变化，请再次重新连接。"
+            elif not notice.get("error") and type(notice.get("revision")) is int and any(
+                    item.get("target") == "chatgpt" for item in notice.get("items", []) if isinstance(item, dict)):
+                try:
+                    request(selected, "/api/restart-notice", {"target": "chatgpt", "revision": notice["revision"]})
+                except Exception:
+                    reconnect["warning"] = "Codex 已重载，待生效提醒尚未确认，请刷新状态后检查。"
+            status = request(selected, "/api/status")
+            profile = status["profile"]
+        except subprocess.TimeoutExpired:
+            reconnect = {"state": "unconfirmed", "error": "重连结果未确认，请刷新状态后检查；待生效提醒已保留。"}
+        except Exception as exc:
+            reconnect = {"state": "unconfirmed", "error": str(exc)[:1500]}
+    elif action in {"activate", "restore"}:
         try:
             result = request(selected, "/api/link", {"action": action})
         except HTTPError as exc:
@@ -93,12 +166,16 @@ def control():
         profile = status["profile"]
     error = profile.get("config_error") or status.get("provider_sync_error") or ""
     warnings = result.get("warnings", [])
-    return {"state": "error" if error else "connected" if profile.get("active") else "disconnected",
+    value = {"state": "error" if error else "connected" if profile.get("active") else "disconnected",
             "can_connect": not bool(error), "can_disconnect": bool(profile.get("can_restore") or profile.get("active")),
             "error": str(error)[:1000], "origin": selected,
             "reload_required": bool(result.get("reload_required") or any(
                 item.get("key") == "connection" for item in status.get("restart_notice", {}).get("items", []) if isinstance(item, dict))),
-            "warning_count": len(warnings) if isinstance(warnings, list) else 0}
+            "warning_count": len(warnings) if isinstance(warnings, list) else 0,
+            "codex_restart": capability}
+    if reconnect is not None:
+        value["codex_reconnect"] = reconnect
+    return value
 
 try:
     result = control()

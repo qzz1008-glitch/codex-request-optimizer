@@ -20,7 +20,7 @@ assert(connections.includes('globalThis.InspectorConnections ='),'Connection con
       await page.addScriptTag({content:connections});
       await page.evaluate(()=>{
         window.fixture={rows:[{id:'local',name:'本机',kind:'local',state:'disconnected'},
-          {id:'remote-a',name:'Server 176',kind:'ssh',state:'disconnected'}],calls:[],local:{profile:{active:false}},failRemote:false};
+          {id:'remote-a',name:'Server 176',kind:'ssh',state:'disconnected',codex_restart:{supported:true}}],calls:[],local:{profile:{active:false}},failRemote:false,failReconnect:false};
         window.controller=InspectorConnections.create({
           status:()=>fixture.local,localBusy:()=>false,refreshLocal:async()=>{},
           request:async(path,data)=>{
@@ -32,7 +32,14 @@ assert(connections.includes('globalThis.InspectorConnections ='),'Connection con
             for(const id of data.targets){
               const row=fixture.rows.find(row=>row.id===id),operation=String(Math.random());accepted[id]=operation;
               Object.assign(row,{busy:true,action:data.action,operation_id:operation,error:''});
+              if(data.action==='reconnect')delete row.codex_reconnect;
               setTimeout(()=>{
+                if(data.action==='reconnect'){
+                  Object.assign(row,{busy:false,codex_reconnect:fixture.failReconnect?
+                    {state:'unconfirmed',error:'Native restart timed out; reminder retained'}:{state:'reloaded',error:''}});
+                  if(!fixture.failReconnect)row.reload_required=false;
+                  return;
+                }
                 const fail=id==='remote-a'&&fixture.failRemote;
                 Object.assign(row,{busy:false,state:fail?'error':data.action==='activate'?'connected':'disconnected',error:fail?'Synthetic SSH failure':'',reload_required:!fail});
                 if(id==='local')fixture.local.profile.active=row.state==='connected';
@@ -103,9 +110,55 @@ assert(connections.includes('globalThis.InspectorConnections ='),'Connection con
       await page.locator('#connection-devices-refresh').click();
       await page.waitForFunction(()=>document.querySelectorAll('.connection-device').length===2);
       assert.equal(await page.locator('#connection-devices-error').isHidden(),true);
+      const reconnect=page.getByRole('button',{name:'重新连接 Codex · Server 176',exact:true});
+      assert.equal(await page.locator('.connection-device-reconnect:visible').count(),1,'Only SSH devices offer daemon reconnect');
+      const beforeReconnect=await page.evaluate(()=>({calls:fixture.calls.length,states:fixture.rows.map(row=>row.state)}));
+      await reconnect.click();
+      await page.locator('#devices-confirm-dialog').waitFor({state:'visible'});
+      assert.equal(await page.evaluate(()=>document.activeElement.id),'devices-confirm-cancel','The safe action receives initial focus');
+      assert.match(await page.locator('#devices-confirm-description').textContent(),/当前账号.*正在执行或排队的任务可能中断/);
+      assert.match(await page.locator('#devices-confirm-hint').textContent(),/中转服务保持运行/);
+      assert.equal(await page.locator('#devices-confirm-targets li').count(),1);
+      assert.equal(await page.evaluate(()=>fixture.calls.length),beforeReconnect.calls,'Opening a restart dialog does not execute it');
+      await page.keyboard.press('Escape');
+      await page.locator('#devices-confirm-dialog').waitFor({state:'hidden'});
+      await page.locator('#compression-connect').hover();await panel.waitFor({state:'visible'});
+      await reconnect.click();await page.locator('#devices-confirm-apply').click();
+      assert.equal(await page.locator('#devices-confirm-apply').isDisabled(),true);
+      await page.waitForFunction(()=>document.querySelector('#devices-confirm-apply').hidden);
+      assert.deepEqual(await page.evaluate(()=>fixture.calls.at(-1)),{targets:['remote-a'],action:'reconnect',revision:'fixture-revision'});
+      assert.match(await page.locator('#devices-confirm-targets').textContent(),/后台已重载，等待 ChatGPT 恢复连接/);
+      assert.deepEqual(await page.evaluate(()=>fixture.rows.map(row=>row.state)),beforeReconnect.states,'Daemon restart does not alter provider connection states');
+      assert.equal(await page.evaluate(()=>fixture.local.profile.active),false);
+      await page.locator('#devices-confirm-cancel').click();
+      await page.evaluate(()=>{fixture.failReconnect=true;fixture.rows[1].reload_required=true;});
+      await page.locator('#compression-connect').hover();await panel.waitFor({state:'visible'});
+      await reconnect.click();await page.locator('#devices-confirm-apply').click();
+      await page.waitForFunction(()=>document.querySelector('#devices-confirm-apply').textContent==='重试失败设备');
+      assert.match(await page.locator('#devices-confirm-targets').textContent(),/Native restart timed out/);
+      assert.equal(await page.evaluate(()=>fixture.rows[1].reload_required),true,'Unconfirmed restart preserves the reload reminder');
+      const failedCalls=await page.evaluate(()=>fixture.calls.length);
+      await page.evaluate(()=>fixture.failReconnect=false);
+      assert.equal(await page.evaluate(()=>fixture.calls.length),failedCalls,'Retry requires another explicit click');
+      await page.locator('#devices-confirm-apply').click();
+      await page.waitForFunction(()=>document.querySelector('#devices-confirm-apply').hidden);
+      assert.deepEqual(await page.evaluate(()=>fixture.calls.at(-1).targets),['remote-a']);
+      assert.equal(await page.evaluate(()=>fixture.rows[1].reload_required),false);
+      await page.locator('#devices-confirm-cancel').click();
+      await page.evaluate(()=>fixture.rows[1].codex_restart={supported:false,reason:'该服务器没有可重载的原生后台'});
+      await page.locator('#compression-connect').hover();await panel.waitFor({state:'visible'});
+      await page.locator('#connection-devices-refresh').click();
+      await page.waitForFunction(()=>document.querySelector('.connection-device-reconnect:not([hidden])').getAttribute('aria-disabled')==='true');
+      assert.equal(await reconnect.evaluate(node=>node.disabled),false,'Unsupported action remains keyboard discoverable');
+      await reconnect.focus();assert.equal(await reconnect.evaluate(node=>node===document.activeElement),true);
+      const description=await reconnect.getAttribute('aria-describedby');
+      assert.equal(await page.locator('#'+description).textContent(),'该服务器没有可重载的原生后台');
+      const unsupportedCalls=await page.evaluate(()=>fixture.calls.length);
+      await reconnect.click({force:true});assert.equal(await page.evaluate(()=>fixture.calls.length),unsupportedCalls);
+      assert.equal(await page.locator('#devices-confirm-dialog').isVisible(),false);
       assert.deepEqual(errors,[]);
       await page.close();
     }
-    console.log('Remote connection UI: existing asset entry, native/fallback hover, keyboard, scoped actions, unsupported backend and recovery passed.');
+    console.log('Remote connection UI: native/fallback hover, keyboard, scoped actions, daemon restart confirmation/failure, unsupported backend and recovery passed.');
   } finally {await browser.close();}
 })().catch(error=>{console.error(error);process.exitCode=1;});
