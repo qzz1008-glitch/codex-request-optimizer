@@ -209,6 +209,16 @@ provider 配置变更由同一中转服务检测并热加载，无需重启中�
 
 认证头值不保存，已识别的凭据与媒体在浏览副本中脱敏。普通聊天、工具输出仍保存在本机，应按敏感数据管理。转发正文不使用脱敏副本。
 
+## 出口代理
+
+Windows 和 Linux 共用设置中的“出口代理”，默认自动检测：优先读取优化器进程的 `http_proxy`/`https_proxy` 等环境变量，Windows 没有对应环境变量时读取系统手动代理。界面显示实际来源、HTTP/HTTPS 地址及例外；“重新检测”只刷新检测结果，不发送上游请求。Linux 服务不会自动继承另一个 Codex 进程的环境变量，未检测到代理时可使用手动配置。PAC/自动发现与 `ALL_PROXY` 暂不用于转发，检测到时会明确提示。
+
+手动模式分别填写 HTTP/HTTPS 代理地址、账号、密码和代理例外；地址中不填写账号密码。例外支持逗号或分号分隔、域名、通配符及 `<local>`；本机回环地址始终直连。手动模式使用自己的例外列表，不受进程的 `NO_PROXY` 额外影响。切换模式或修改字段后点击“保存”才生效，“恢复”放弃未保存的修改；新请求使用已保存的代理，进行中的请求保持原出口，无需重启优化器或 Codex。共享出口提供方也使用此设置，已经选择的借入共享出口仍沿用其独立路由。
+
+账号可明文显示和保存，密码加密保存且不写入日志。Windows 使用当前用户的系统保护；Linux 加密保存，并单独保留权限为 `600` 的本机密钥文件 `proxy-settings.key`，备份或迁移 Linux 数据目录时需一并保留。页面不回显已保存的密码，留空保留原密码，勾选“清除已存密码”后保存可删除；清空账号后保存则移除代理认证。代理连接仍按所选协议进行，填写框分离不改变传输协议。
+
+“测试代理”使用当前检测到或填写的配置，无需先保存，也不会保存测试配置。测试仅向当前上游发送 HEAD 请求，不发送对话、Codex 登录凭据或推理请求；最多等待 10 秒，显示是否使用代理、耗时、HTTP 状态或脱敏后的连接错误。HTTP 401 等响应表明网络已连通，不代表账户权限验证通过。测试期间修改配置后需重新测试。
+
 ## Linux 服务器版
 
 当前 Linux 包面向 EulerOS 3.0 x86_64 验证，在 Linux 主机上从干净的 `main` 使用 `python -m scripts.build_inspector --release-only` 构建。构建检查、冻结源码、内嵌指纹和包校验与 Windows 共用；`BUILD-SOURCE.json` 还记录架构与 glibc 版本。此包不进入 Windows 自动更新渠道，不承诺兼容更旧的 glibc。
@@ -216,7 +226,7 @@ provider 配置变更由同一中转服务检测并热加载，无需重启中�
 1. 解压 `CodexPacketInspector-linux-x86_64.tar.gz`，进入 `codex-packet-inspector` 目录，运行 `./CodexPacketInspector --background --ui-forward-port 47848`。包内已带 Python 运行环境与依赖；源码运行则需要 Python 3.11 及以上和 `packet_inspector/requirements.txt` 中适用于 Linux 的依赖。
 2. 默认读取当前账户的 `~/.codex/config.toml`，数据写入 `~/.codex-packet-inspector`；可用 `--config`、`--data-dir`、`--port` 指定其他位置。服务和管理界面共用回环地址 `127.0.0.1:47844`，不会额外启动预览服务。
 3. 从本机建立 SSH 隧道：`ssh -N -L 47848:127.0.0.1:47844 user@server`，然后在本机浏览器打开 `http://127.0.0.1:47848/`。隧道端口须与 `--ui-forward-port` 一致；该选项只允许对应的本机浏览器来源，不改变监听端口或 Codex 中转地址。在界面点击接入，程序会先备份并修改该 Linux 账户的 Codex 标准 provider 配置。现有 Codex 进程需重新加载配置，随后发送一条消息确认出现请求记录。
-4. 如果 Codex 依赖代理，服务也应沿用同一环境中的 `http_proxy`、`https_proxy` 或其他已验证配置；保留原有 `NO_PROXY`/`no_proxy` 内容并追加 `localhost,127.0.0.1,::1`。SSH 非交互进程不一定继承远程 Codex 的代理环境，不能据此判断服务器无需代理。本软件不内置任何代理主机名。
+4. 如果 Codex 依赖代理，在设置的“出口代理”检查检测结果，可直接手动填写并保存，也可将相同的 `http_proxy`、`https_proxy` 传入服务环境供自动模式使用。保留原有 `NO_PROXY`/`no_proxy` 内容并追加 `localhost,127.0.0.1,::1`。SSH 非交互进程不一定继承远程 Codex 的代理环境，不能据此判断服务器无需代理。本软件不内置任何代理主机名。
 5. 需要常驻运行时，将程序复制到 `~/.local/bin/CodexPacketInspector`，将包内 `codex-packet-inspector.service` 复制到 `~/.config/systemd/user/`，然后运行 `systemctl --user daemon-reload` 和 `systemctl --user enable --now codex-packet-inspector`。代理可通过 systemd drop-in 的 `EnvironmentFile` 配置；SSH 退出后持续运行需要系统启用该账户的用户服务保留。也可由管理员为实际安装路径建立系统服务。
 
 Linux 版沿用 HTTP/zstd、自动选档、包大小保护、重试、记录与趋势等中转逻辑；默认仅启用 zstd，其他开关仍由用户保存的配置控制。服务器版保留原生图片解析及禁用模式，暂不安装依赖 Windows PowerShell 的独立图片优化工具；界面会禁用不支持的选项。无 Windows 托盘或桌面窗口，更新时替换 Linux 安装包并重启该服务。停止中转前先在界面断开并重新加载 Codex 配置；SIGTERM 会停止接收新请求并等待正在进行的请求结束。

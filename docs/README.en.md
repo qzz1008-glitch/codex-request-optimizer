@@ -54,6 +54,8 @@ These previews use the real frontend with fictional sample data.
 
 Includes Chinese/English language switching, tray operation, and start on login. Upgrades preserve records and settings, automatically synchronize existing connections, and clearly prompt when a restart or attention is needed.
 
+On Windows and Linux, choose automatic detection or manual configuration under Outbound proxy in Settings. Automatic mode shows the detected source, HTTP/HTTPS addresses, and bypass list. Manual mode has separate address, username, password, and bypass fields. Saved changes apply to new requests without a restart. Usernames may be stored in plaintext; passwords are encrypted and never shown. Test proxy checks unsaved settings without sending conversations or Codex account credentials.
+
 Existing Codex configurations in WSL can also be connected as a validation feature. See the [usage guide](https://github.com/qzz1008-glitch/codex-request-optimizer/blob/main/docs/usage.md) for sharing, WSL, and other detailed instructions.
 
 ## 🐧 Linux server build (under validation)
@@ -62,7 +64,7 @@ Build the Linux package on its target Linux environment using the same entry poi
 
 Extract `CodexPacketInspector-linux-x86_64.tar.gz` and run `./CodexPacketInspector --background --ui-forward-port 47848`; no Python installation is needed. The relay and management interface listen only on `127.0.0.1:47844` by default. Access the browser interface through an SSH tunnel, for example `ssh -N -L 47848:127.0.0.1:47844 user@server`, then open `http://127.0.0.1:47848/` locally and click Connect. The tunnel port must match `--ui-forward-port`; this option does not change the Codex relay address. Connecting backs up the server's Codex configuration; reload or restart existing Codex processes when prompted.
 
-The Linux build supports HTTP forwarding, zstd, request size protection, request records, and trends. Native image analysis remains available, and image tools can also be disabled. Windows tray integration, desktop windows, EXE automatic updates, and the PowerShell isolated image optimization tool are not enabled in the Linux package. Environments requiring a proxy must pass their actual proxy and loopback exclusions to the service; no proxy address is built in. A sample systemd user service is included; see the [usage guide](https://github.com/qzz1008-glitch/codex-request-optimizer/blob/main/docs/usage.md#linux-服务器版) for details.
+The Linux build supports HTTP forwarding, zstd, request size protection, request records, and trends. Native image analysis remains available, and image tools can also be disabled. Windows tray integration, desktop windows, EXE automatic updates, and the PowerShell isolated image optimization tool are not enabled in the Linux package. Automatic proxy detection reads the service process's environment variables; manual configuration is also available in settings. No proxy address is built in. A sample systemd user service is included; see the [usage guide](https://github.com/qzz1008-glitch/codex-request-optimizer/blob/main/docs/usage.md#linux-服务器版) for details.
 
 ## ⚙️ Implementation overview
 

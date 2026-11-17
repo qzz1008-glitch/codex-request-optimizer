@@ -1244,6 +1244,7 @@ function fillSettings() {
   $("capacity-retry-count").disabled=settingsSaving||s.capacity_retry_mode!=="native"||!Number.isInteger(s.capacity_retry_max_retries);
   $("capacity-retry-delay").disabled=settingsSaving||s.capacity_retry_mode!=="native"||!Number.isInteger(s.capacity_retry_delay_seconds);
   fillBadRequestRetry();
+  fillProxySettings();
   fillImageAnalysisMode();
   $("startup-hint").textContent=t(s.start_on_login_supported?(s.startup_state_known===false?"无法读取开机启动状态，请重新保存设置。":"登录 Windows 后自动启动。"):"开机启动仅支持已安装的 Windows 版本。");
   $("runtime-settings-message").hidden=!!s.capacity_retry_supported;
@@ -1251,6 +1252,80 @@ function fillSettings() {
   renderConnectionActions();
   renderCompressionMode();renderLanguageSelection();fillZstdLevel();fillStorageDirectories();fillPacketProtection();syncContextDefaults();
   updateSettingsSaveState(false);
+}
+function selectedProxyMode() {
+  return $("proxy-mode").querySelector("input:checked")?.value??"auto";
+}
+function proxySettingsDraft() {
+  if(!state.status.proxy_settings_supported)return "";
+  const mode=selectedProxyMode();
+  return JSON.stringify(mode==="auto"?{mode}:{mode,address:$("proxy-address").value,username:$("proxy-username").value,
+    password:$("proxy-clear-password").checked?"":$("proxy-password").value||null,bypass:$("proxy-bypass").value});
+}
+function fillProxySettings(force=false) {
+  const s=state.status,proxy=s.proxy_settings,supported=!!s.proxy_settings_supported&&!!proxy;
+  $("proxy-settings").hidden=!supported;
+  if(!supported)return;
+  if(!settingsEditing||force) {
+    for(const input of $("proxy-mode").querySelectorAll("input"))input.checked=input.value===proxy.mode;
+    for(const field of ["address","username","bypass"])$("proxy-"+field).value=proxy.manual[field];
+    $("proxy-password").value="";$("proxy-clear-password").checked=false;
+  }
+  const manual=selectedProxyMode()==="manual",detected=proxy.detected;
+  $("proxy-manual").hidden=!manual;$("proxy-detected").hidden=manual;
+  for(const input of $("proxy-mode").querySelectorAll("input"))input.disabled=settingsSaving;
+  for(const input of $("proxy-manual").querySelectorAll("input"))input.disabled=settingsSaving||!manual;
+  $("proxy-password").disabled=settingsSaving||!manual||$("proxy-clear-password").checked;
+  $("proxy-detect").hidden=manual;
+  $("proxy-detect").disabled=settingsSaving||$("proxy-detect").getAttribute("aria-busy")==="true";
+  const testing=$("proxy-test").getAttribute("aria-busy")==="true";
+  $("proxy-test").disabled=settingsSaving||testing;$("proxy-test").textContent=t(testing?"测试中…":"测试代理");
+  $("proxy-saved-password").hidden=!proxy.password_saved;
+  $("proxy-clear-password").disabled=settingsSaving||!manual||!proxy.password_saved;
+  $("proxy-password").placeholder=proxy.password_saved?t("已保存，留空保留"):t("无需认证可留空");
+  const sources={environment:"进程环境变量",windows_registry:"Windows 系统代理",direct:"未检测到代理，直接连接"};
+  $("proxy-source").textContent=t(sources[detected.source]??"—");
+  for(const scheme of ["http","https"]) {
+    const value=detected[scheme],parts=[value?.invalid?t("代理地址无效"):value?.address||t("直接连接")];
+    if(value?.username)parts.push(t("账号：{name}").replace("{name}",value.username));
+    if(value?.password_saved)parts.push(t("密码已配置"));
+    $("proxy-"+scheme).textContent=parts.join(" · ");
+  }
+  $("proxy-detected-bypass").textContent=detected.bypass||"—";
+  const warnings=[];
+  if(detected.pac_url||detected.auto_discovery)warnings.push(t("检测到 PAC/自动发现；当前仅使用上方的 HTTP/HTTPS 代理。")+(detected.pac_url?" "+detected.pac_url:""));
+  if(detected.unsupported_all_proxy)warnings.push(t("ALL_PROXY 未用于转发，请配置 HTTP/HTTPS 代理。"));
+  $("proxy-detection-warning").textContent=warnings.join(" ");$("proxy-detection-warning").hidden=!warnings.length;
+}
+async function detectProxySettings() {
+  const button=$("proxy-detect"),message=$("proxy-message");
+  if(settingsSaving||button.getAttribute("aria-busy")==="true")return;
+  button.disabled=true;button.setAttribute("aria-busy","true");
+  message.hidden=true;
+  try {state.status.proxy_settings=await api("/api/proxy-settings");fillProxySettings();}
+  catch(error){message.textContent=t("代理检测失败：")+t(error.message);message.hidden=false;}
+  finally{button.disabled=settingsSaving;button.setAttribute("aria-busy","false");}
+}
+async function testProxySettings() {
+  const button=$("proxy-test"),output=$("proxy-test-result");
+  if(settingsSaving||button.getAttribute("aria-busy")==="true")return;
+  for(const input of $("proxy-manual").querySelectorAll("input:not(:disabled)"))if(!input.reportValidity())return;
+  const draft=proxySettingsDraft();
+  button.setAttribute("aria-busy","true");fillProxySettings();output.hidden=true;
+  try {
+    const result=await api("/api/proxy-test",JSON.parse(draft),AbortSignal.timeout(15000));
+    if(draft!==proxySettingsDraft()) {output.textContent=t("配置已更改，请重新测试。");output.className="proxy-test-result muted";return;}
+    const states={ok:"连接已建立",rejected:"收到拒绝或异常响应",failed:"连接失败",timeout:"测试超时"};
+    const summary=[t(states[result.state]??"连接失败")];
+    if(result.status)summary.push("HTTP "+result.status);
+    summary.push(t("耗时 {ms} ms").replace("{ms}",Number(result.elapsed_ms).toLocaleString()));
+    const lines=[summary.join(" · "),t("测试目标：{url}").replace("{url}",result.target),
+      result.proxy_used?t("使用代理：{address}").replace("{address}",result.proxy):t(result.bypassed?"直连（匹配代理例外）":"直连（未配置代理）")];
+    if(result.error)lines.push(result.error);
+    lines.push(t("仅检查网络连通性，不验证 Codex 账户权限。"));
+    output.textContent=lines.join("\n");output.className="proxy-test-result "+(result.state==="ok"?"muted":"error");
+  } catch(error) {output.textContent=t("代理测试失败：")+t(error.message);output.className="proxy-test-result error";}
+  finally {output.hidden=false;button.setAttribute("aria-busy","false");fillProxySettings();}
 }
 function imageAnalysisMode(status=state.status) {
   return ["native","disabled","optimized"].includes(status?.image_analysis_mode)?status.image_analysis_mode:
@@ -1680,6 +1755,7 @@ let updateRevision=0,updateStatusLoading=false;
 function readSettingsDraft() {
   const draft={
     entry_port:$("entry-port").value,
+    proxy_settings:state.status.proxy_settings_supported?proxySettingsDraft():"",
     sharing_port:$("sharing-port").value,
     egress_port:$("exit-port").value,
     zstd_level:$("zstd-level").value,
@@ -1781,13 +1857,21 @@ async function saveSettings() {
   ].filter(([field,,,supported])=>supported&&changed.has(field));
   const contextChanged=contextSettings&&["context_tokens","compact_tokens"].some(key=>changed.has(key));
   const portChanged=s.entry_port_supported&&s.entry_port&&changed.has("entry_port");
+  const proxyChanged=s.proxy_settings_supported&&changed.has("proxy_settings");
   const controls=new Map([...$("settings-dialog").querySelectorAll("input,select,button")].map(node=>[node,node.disabled]));
   let saved=0,error=null;
-  settingsSaveProgress={total:Number(!!entries.length)+Number(!!contextChanged)+Number(!!portChanged)+Number(changed.has("language")),steps:[]};
+  settingsSaveProgress={total:Number(!!entries.length)+Number(!!contextChanged)+Number(!!portChanged)+Number(!!proxyChanged)+Number(changed.has("language")),steps:[]};
   settingsSaving=true;settingsRevision++;
   for(const node of controls.keys())node.disabled=true;
   $("settings-dialog").setAttribute("aria-busy","true");renderSettingsSaveProgress();
   try {
+    if(proxyChanged) {
+      await runSettingsSaveStep("出口代理",async()=>{
+        state.status.proxy_settings=await api("/api/proxy-settings",JSON.parse(draft.proxy_settings));
+        fillProxySettings(true);
+        settingsBaseline.proxy_settings=proxySettingsDraft();saved++;
+      });
+    }
     if(entries.length) {
       const label=entries.some(([field])=>field==="storage_dir")?"存储位置":
         entries.some(([field])=>field==="image_analysis_mode")?"图片与运行设置":
@@ -2499,6 +2583,11 @@ function closeSettings() {
   $("settings-dialog").close();return discardSettingsDraft();
 }
 action("settings-close",closeSettings);action("settings-restore",restoreSettings);
+action("proxy-detect",detectProxySettings);
+action("proxy-test",testProxySettings);
+$("proxy-mode").addEventListener("change",()=>{fillProxySettings();updateSettingsSaveState();});
+$("proxy-clear-password").addEventListener("change",()=>{fillProxySettings();updateSettingsSaveState();});
+$("proxy-settings").addEventListener("input",()=>{$("proxy-test-result").hidden=true;});
 action("storage-dir-open",()=>openSettingsDirectory("storage-dir"));
 action("storage-dir-reset",resetStorageDirectory);
 $("settings-dialog").addEventListener("cancel",event=>{event.preventDefault();closeSettings();});

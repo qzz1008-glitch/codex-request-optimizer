@@ -11,19 +11,20 @@ import ssl
 import threading
 import time
 from urllib.parse import unquote, urlsplit
-from urllib.request import ProxyHandler, proxy_bypass
+from urllib.request import ProxyHandler
 
 from .egress_transport import EGRESS_PROTOCOL, MISSING_EXIT_ROUTE_MESSAGE, ExitOpener, UPSTREAM_HOSTS, parse_egress_link
 from .http_io import UPSTREAM_READ_TIMEOUT_SECONDS
 from .sharing import LANServer, SharingError, automatic_address, lan_address, tls_context
 from .sharing_credentials import CLIENT_HEADER, ExitMachineMismatch
+from .proxy_settings import bypass_proxy
 
 
 def physical_tunnel(server, host, port):
-    """Use OS/environment proxy settings, never another shared exit selection."""
+    """Use the selected physical proxy, never another shared exit selection."""
     opener = server.outgoing_opener()
     proxies = next((handler.proxies for handler in opener.handlers if isinstance(handler, ProxyHandler)), {})
-    value = None if proxy_bypass(host) else proxies.get("https")
+    value = None if bypass_proxy(host + ":" + str(port), proxies) else proxies.get("https")
     if not value:
         return socket.create_connection((host, port), timeout=8)
     proxy = urlsplit(value if "://" in value else "http://" + value)

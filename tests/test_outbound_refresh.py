@@ -105,10 +105,9 @@ class OutboundRefreshTests(unittest.TestCase):
         self.assertEqual([(r[0], r[2]) for r in self.calls], [("a", b"old"), ("b", b"new")])
 
     def test_new_shared_exit_tunnels_follow_the_current_system_proxy(self):
-        with patch("packet_inspector.shared_egress.proxy_bypass", return_value=False):
-            for index in (0, 1):
-                self.select(index)
-                physical_tunnel(self.relay, "api.openai.com", 443).close()
+        for index in (0, 1):
+            self.select(index)
+            physical_tunnel(self.relay, "api.openai.com", 443).close()
         self.assertEqual(self.calls, [("a", "CONNECT", "api.openai.com:443"), ("b", "CONNECT", "api.openai.com:443")])
 
     def test_failure_logs_the_opener_used_even_after_a_later_proxy_change(self):
