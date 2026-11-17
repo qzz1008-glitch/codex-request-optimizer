@@ -3,13 +3,14 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import re
 import tempfile
 import unittest
 from unittest.mock import patch
 
 from scripts import build_inspector
 from tests import test_desktop_ui as desktop_tests
-from packet_inspector.desktop_ui import DesktopUI
+from packet_inspector.desktop_ui import DesktopUI, UI_DIR, UI_FILES
 from packet_inspector.frontend_dev import BuildProfile, RESOURCES, load_profile, resolve_profile, DESKTOP_PROFILE
 
 
@@ -137,6 +138,22 @@ class FixedFrontendHTTPTests(unittest.TestCase):
     def test_developer_route_keeps_local_origin_guard(self):
         self.developer_ui()
         self.assertEqual(self.request("/__dev__/state", headers={"Origin": "https://example.com"})[0], 403)
+        self.assertEqual(self.fixture.backend.requests, [])
+
+    def test_current_page_scripts_load_through_existing_exe_routes(self):
+        folder = self.developer_ui()
+        for name in RESOURCES:
+            (folder / name).write_bytes((UI_DIR / name).read_bytes())
+        legacy_files = {path: UI_FILES[path] for path in
+                        ("/", "/i18n.js", "/app.js", "/style.css", "/sharing.js", "/sharing.css")}
+        with patch.dict(UI_FILES, legacy_files, clear=True):
+            status, html, _ = self.request("/")
+            self.assertEqual(status, 200)
+            scripts = re.findall(rb'<script\b[^>]*\bsrc="([^"]+)"', html)
+            self.assertTrue(scripts)
+            for script in scripts:
+                with self.subTest(script=script):
+                    self.assertEqual(self.request(script.decode("ascii"))[0], 200)
         self.assertEqual(self.fixture.backend.requests, [])
 
     def test_tray_resources_hot_reload_independently_of_main_window(self):
