@@ -506,6 +506,30 @@ pre{max-height:55cqh}
 dialog{width:min(760px,calc(var(--desktop-width) - 80px));max-height:calc(var(--desktop-height) - 80px)}
 
 .header-compression{display:flex;align-items:center;flex-shrink:0}.compression-toggle{flex-shrink:0;padding:2px}.compression-toggle button{min-width:64px;padding:3px 14px}
+.header-compression{anchor-name:--connection-controls}
+.header-compression:focus-visible{outline:2px solid #a3baff;outline-offset:2px;border-radius:9px}
+.connection-panel{box-sizing:border-box;width:min(430px,calc(100vw - 24px));max-height:calc(100dvh - 80px);overflow:auto;padding:14px;border:1px solid var(--line);border-radius:12px;background:var(--panel);color:var(--ink);box-shadow:0 10px 32px #0003;text-align:start;scrollbar-gutter:stable}
+.connection-panel-heading{display:flex;align-items:center;justify-content:space-between;gap:14px}
+.connection-panel-heading button{font-size:12px;padding:4px 8px}
+.connection-panel>.hint{font-size:12px;margin:8px 0 10px}
+.connection-device{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 0;border-top:1px solid var(--line)}
+.connection-device-info{display:flex;flex-direction:column;gap:4px;min-width:0}
+.connection-device-info strong{font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.connection-device-state{font-size:12px;color:var(--muted)}
+.connection-device-actions{flex-shrink:0;padding:2px}.connection-device-actions button{padding:3px 9px;min-width:46px}
+.connection-error{font-size:12px;color:var(--danger);overflow-wrap:anywhere;white-space:pre-wrap}
+#devices-confirm-dialog{width:min(540px,calc(100vw - 48px))}#devices-confirm-dialog h2{font-size:20px}#devices-confirm-dialog .button-row{justify-content:flex-end}
+.connection-confirm-targets{list-style:none;padding:0;margin:14px 0;max-height:32vh;overflow:auto;scrollbar-gutter:stable}
+.connection-confirm-targets li{padding:9px 0;display:flex;flex-direction:column;gap:3px;border-bottom:1px solid var(--line);font-size:13px}
+.connection-confirm-targets span{font-size:12px;color:var(--muted);white-space:pre-wrap;overflow-wrap:anywhere}
+.connection-confirm-targets [data-state=error] span{color:var(--danger)}
+@supports(position-area:block-end span-inline-start){
+  .connection-panel{position-anchor:--connection-controls;position-area:block-end span-inline-start;position-try-fallbacks:flip-block,flip-inline,flip-block flip-inline;inset:auto;margin:6px 0 0}
+}
+@supports not (position-area:block-end span-inline-start){
+  .connection-panel{position:fixed;inset:auto;margin:0;z-index:40}
+}
+.connection-panel-fallback[hidden]{display:none}.connection-panel-fallback:not([hidden]){display:block;position:fixed;inset:auto;margin:0;z-index:40}
 #compression-confirm-dialog{width:min(440px,calc(100vw - 48px))}#compression-confirm-dialog h2{font-size:20px}#compression-confirm-dialog .button-row{justify-content:flex-end}#compression-confirm-message{color:var(--danger)}
 #exit-confirm-dialog{width:min(540px,calc(100vw - 48px))}#exit-confirm-dialog h2{font-size:20px}#exit-confirm-dialog .button-row{justify-content:flex-end;flex-wrap:wrap}#exit-confirm-message{color:var(--danger)}
 #connect-confirm-dialog{width:min(460px,calc(100vw - 48px))}#connect-confirm-dialog h2{font-size:20px}#connect-confirm-dialog .button-row{justify-content:flex-end}#connect-confirm-message{color:var(--danger)}

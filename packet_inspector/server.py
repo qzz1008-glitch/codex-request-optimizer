@@ -29,6 +29,7 @@ from .config_link import ConfigLink, validate_upstream
 from .providers import ProviderManager, config_paths
 from .wsl_connection import WslConnection
 from .connection_resume import ConnectionResume
+from .remote_connections import Connections
 from .entry_port import ConfiguredPortParser, port_status, save_port, validate_port
 from .restart_notice import RestartNotices
 from .updates import Updates
@@ -75,6 +76,7 @@ HOP = {"connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
 UI_FILES = {"/": ("index.html", "text/html; charset=utf-8"),
             "/i18n.js": ("i18n.js", "text/javascript; charset=utf-8"),
             "/app.js": ("app.js", "text/javascript; charset=utf-8"),
+            "/connections.js": ("connections.js", "text/javascript; charset=utf-8"),
             "/style.css": ("style.css", "text/css; charset=utf-8"),
             "/sharing.js": ("sharing.js", "text/javascript; charset=utf-8"),
             "/sharing.css": ("sharing.css", "text/css; charset=utf-8")}
@@ -285,6 +287,8 @@ class InspectorServer(ThreadingHTTPServer):
         self._startup_step("background.initialize")
         self.analysis_stop = threading.Event()
         self.connection_resume = ConnectionResume(self)
+        self.connections = Connections(self.link.config.parent, self.connection_profile, self.set_connection,
+                                       cache_path=self.cache_dir / "remote-connections.json")
         self.analysis_thread = threading.Thread(target=self._classify_pending, daemon=True)
         self.analysis_thread.start()
 
@@ -595,6 +599,9 @@ class InspectorServer(ThreadingHTTPServer):
             return {"read_error": type(exc).__name__}
 
     def server_close(self):
+        connections = getattr(self, "connections", None)
+        if connections is not None:
+            connections.close()
         # TCPServer also calls this when binding fails, before worker setup.
         sharing = getattr(self, "sharing", None)
         if sharing is not None:
@@ -916,6 +923,13 @@ class Handler(BaseHTTPRequestHandler):
         one = lambda k, default="": query.get(k, [default])[0]
         if path == "/api/status" and self.command == "GET":
             self._json(200, self.server.status())
+        elif path == "/api/connections" and self.command == "GET":
+            self._json(200, self.server.connections.snapshot(refresh=one("refresh") == "1"))
+        elif path == "/api/connections" and self.command == "POST":
+            data = json.loads(self._body(16384))
+            if not isinstance(data, dict) or not isinstance(data.get("revision"), str):
+                raise ValueError("接入操作无效。")
+            self._json(202, self.server.connections.apply(data.get("targets"), data.get("action"), revision=data["revision"]))
         elif path == "/api/restart-notice" and self.command == "GET":
             entry_port = port_status(self.server.data_dir, self.server.public_port)
             self._json(200, self.server.restart_notices.snapshot(port_pending=bool(entry_port["pending"] or entry_port.get("error"))))
