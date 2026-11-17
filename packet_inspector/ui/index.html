@@ -7,6 +7,7 @@
   <link rel="stylesheet" href="/style.css">
   <link rel="stylesheet" href="/sharing.css">
   <script src="/i18n.js" defer></script>
+  <script src="/connections.js" defer></script>
   <script src="/app.js" defer></script>
   <script src="/sharing.js" defer></script>
 </head>
@@ -21,7 +22,12 @@
     </div>
     <div class="header-actions">
       <button id="restart-notice-open" class="restart-notice-badge" type="button" data-visible="false" tabindex="-1" aria-label="查看待生效配置或接入错误">ChatGPT 待重启</button>
-      <div class="header-compression"><div id="request-compression" class="language-toggle compression-toggle" role="group" aria-label="Codex 接入" aria-describedby="compression-hint"><button id="compression-disconnect" type="button" data-compression="disconnected" aria-pressed="false" disabled>断开</button><button id="compression-connect" type="button" data-compression="connected" aria-pressed="false" disabled>接入</button></div><span id="compression-hint" hidden></span></div>
+      <div id="connection-controls" class="header-compression"><div id="request-compression" class="language-toggle compression-toggle" role="group" aria-label="全部设备接入" aria-describedby="compression-hint"><button id="compression-disconnect" type="button" data-compression="disconnected" aria-pressed="false" disabled>断开</button><button id="compression-connect" type="button" data-compression="connected" aria-pressed="false" disabled>接入</button></div><button id="connection-devices-open" class="connection-devices-open" type="button" popovertarget="connection-panel" popovertargetaction="show" aria-controls="connection-panel" aria-expanded="false" aria-label="按设备管理接入">⌄</button><span id="compression-hint" hidden></span></div>
+      <section id="connection-panel" class="connection-panel" popover="auto" aria-labelledby="connection-panel-title">
+        <div class="connection-panel-heading"><strong id="connection-panel-title">设备接入</strong><button id="connection-devices-refresh" type="button">刷新状态</button></div>
+        <p class="hint">顶部按钮控制全部设备，下方可单独切换。</p>
+        <div id="connection-devices-list"></div><p id="connection-devices-error" class="connection-error" role="status" hidden></p>
+      </section>
       <button id="settings-open" class="settings-button" type="button" title="设置" aria-label="设置"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9.5 3-.6 2.3-1.7 1-2.3-.6-2.5 4.3 1.7 1.7v2l-1.7 1.7 2.5 4.3 2.3-.6 1.7 1 .6 2.3h5l.6-2.3 1.7-1 2.3.6 2.5-4.3-1.7-1.7v-2l1.7-1.7-2.5-4.3-2.3.6-1.7-1L14.5 3z"/><circle cx="12" cy="12.7" r="3"/></svg></button>
     </div>
     <div id="window-controls" class="window-controls" role="group" aria-label="窗口操作" hidden>
@@ -151,6 +157,12 @@
     <p id="sharing-delete-message" data-feedback-inline class="sharing-edit-message" role="alert" hidden></p>
     <div class="button-row"><button id="sharing-delete-cancel" type="button" autofocus>取消</button><button id="sharing-delete-confirm" class="sharing-delete-button" type="button">确认删除</button></div>
   </dialog>
+  <dialog id="devices-confirm-dialog" aria-labelledby="devices-confirm-title" aria-describedby="devices-confirm-description devices-confirm-hint">
+    <h2 id="devices-confirm-title">确认接入范围</h2><p id="devices-confirm-description"></p>
+    <ul id="devices-confirm-targets" class="connection-confirm-targets"></ul>
+    <p id="devices-confirm-hint" class="hint"></p><p id="devices-confirm-error" class="connection-error" role="status" hidden></p>
+    <div class="button-row"><button id="devices-confirm-cancel" type="button">取消</button><button id="devices-confirm-apply" class="primary" type="button">确认接入</button></div>
+  </dialog>
   <dialog id="compression-confirm-dialog" aria-labelledby="compression-confirm-title" aria-describedby="compression-confirm-description compression-confirm-hint">
     <h2 id="compression-confirm-title">取消接入</h2>
     <p id="compression-confirm-description"></p>
@@ -160,7 +172,7 @@
   </dialog>
   <dialog id="connect-confirm-dialog" aria-labelledby="connect-confirm-title" aria-describedby="connect-confirm-description connect-confirm-hint">
     <h2 id="connect-confirm-title">接入 Codex</h2>
-    <p id="connect-confirm-description">当前尚未接入 Codex。是否接入并启用请求中转？</p>
+    <p id="connect-confirm-description">将接入本机的 Codex，包括检测到的 WSL 配置。服务器可通过顶栏单独管理。</p>
     <p id="connect-confirm-hint" class="muted help">接入后关闭原生压缩，由本软件管理 zstd。配置变更后需重启 ChatGPT App。</p>
     <p id="connect-confirm-message" data-feedback-inline class="help error confirmation-feedback" role="alert" hidden></p>
     <div class="button-row"><button id="connect-confirm-cancel" type="button" autofocus>暂不接入</button><button id="connect-confirm-apply" class="primary" type="button">确认接入</button></div>

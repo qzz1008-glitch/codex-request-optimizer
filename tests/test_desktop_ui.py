@@ -69,6 +69,7 @@ class DesktopUITests(unittest.TestCase):
         for name, text in {"index.html": "<html><head></head><body>new UI</body></html>",
                            "app.js": "'use strict';", "i18n.js": "'use strict';", "style.css": "body { color: black; }",
                            "sharing.js": "'use strict';", "sharing.css": ".sharing-workspace { display: block; }",
+                           "connections.js": "'use strict';",
                            "tray.html": "<html><head></head><body>tray</body></html>",
                            "tray.js": "'use strict';", "tray.css": "body { background: white; }"}.items():
             (self.folder / name).write_text(text, encoding="utf8")
@@ -115,6 +116,7 @@ class DesktopUITests(unittest.TestCase):
         before = json.loads(self.request('/__dev__/state')[1])['build']
         self.assertEqual(self.request('/sharing.js')[0], 200)
         self.assertEqual(self.request('/sharing.css')[0], 200)
+        self.assertEqual(self.request('/connections.js')[0], 200)
         (self.folder / 'sharing.js').write_text('/* changed sharing UI */', encoding='utf8')
         self.assertNotEqual(json.loads(self.request('/__dev__/state')[1])['build'], before)
         origin = {'Origin': f'http://127.0.0.1:{self.ui.port}'}
@@ -123,6 +125,11 @@ class DesktopUITests(unittest.TestCase):
         self.assertEqual(self.request('/api/sharing', 'POST', body, origin)[0], 200)
         count = len(self.backend.requests)
         self.assertEqual(self.request('/api/sharing', 'POST', body, {'Origin': 'https://example.invalid'})[0], 403)
+        self.assertEqual(len(self.backend.requests), count)
+        self.assertEqual(self.request('/api/connections', headers=origin)[0], 200)
+        self.assertEqual(self.request('/api/connections', 'POST', b'{}', origin)[0], 200)
+        count = len(self.backend.requests)
+        self.assertEqual(self.request('/api/connections', 'POST', b'{}', {'Origin': 'https://example.invalid'})[0], 403)
         self.assertEqual(len(self.backend.requests), count)
 
     def test_token_window_is_read_locally_without_new_backend_or_writes(self):
