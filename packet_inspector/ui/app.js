@@ -1457,6 +1457,7 @@ function renderCompressionMode() {
   for(const id of ["compression-confirm-cancel","compression-confirm-apply"])$(id).disabled=compressionSaving;
   setText($("compression-confirm-apply"),t(compressionTarget==="disconnected"?(compressionSaving?"正在取消接入…":"确认断开"):(compressionSaving?"正在切换…":"确认断开")));
   if(!connected&&!compressionSaving&&$("compression-confirm-dialog").open)cancelCompressionChange();
+  globalThis.InspectorConnectionControls?.sync();
 }
 function showConnectionFeedback(which,result={}) {
   restartNotices.connection(which,result);
@@ -2617,7 +2618,6 @@ action("settings-save",saveSettings);
 action("ui-refresh",()=>{if(state.status?.ui_live_reload)location.reload();});
 action("updates-check",()=>performUpdate("check"));action("updates-install",()=>performUpdate("install"));
 setInterval(()=>{if($("settings-dialog").open&&!settingsSaving&&!updateBusy&&["checking","downloading","upgrading"].includes(updateStatus?.state))loadUpdates();},2000);
-for(const button of document.querySelectorAll("#request-compression button"))action(button.id,()=>requestCompressionChange(button.dataset.compression));
 action("compression-confirm-cancel",cancelCompressionChange);action("compression-confirm-apply",confirmCompressionChange);
 $("compression-confirm-dialog").addEventListener("cancel",event=>{event.preventDefault();cancelCompressionChange();});
 $("compression-confirm-dialog").addEventListener("close",()=>{if(!$("compression-confirm-dialog").open)compressionTarget=null;});
@@ -3308,4 +3308,8 @@ async function poll() {
 }
 const pollTimer=setInterval(poll,2000);
 document.addEventListener("visibilitychange",()=>{if(document.hidden){tokenTrendView.cancelPending();return;}if(workspaceView==="trends")tokenTrendView.refresh();else if(workspaceView==="records"){loadTokenWindow();loadMorePackets();loadListTokens();}});
+globalThis.InspectorConnectionControls=InspectorConnections.create({request:api,status:()=>state.status,
+  localBusy:()=>settingsSaving||settingsOpening||settingsEditing||compressionSaving||linkSaving||exitSaving||connectSaving||connectChecking||connectionResumeBusy(),
+  localActivity:busy=>{if(compressionSaving!==busy){compressionSaving=busy;compressionRevision++;}},
+  refreshLocal:()=>refreshStatus()});
 (async()=>{state.polling=true;try{await Promise.all([refreshStatus(true),refreshFilters()]);await refreshSessionSummaries();}finally{state.polling=false;}})().catch(fail);

@@ -31,14 +31,15 @@ UI_DIR = Path(__file__).with_name("ui")
 UI_FILES = {"/": ("index.html", "text/html; charset=utf-8"),
             "/i18n.js": ("i18n.js", "text/javascript; charset=utf-8"),
             "/app.js": ("app.js", "text/javascript; charset=utf-8"),
+            "/connections.js": ("connections.js", "text/javascript; charset=utf-8"),
             "/style.css": ("style.css", "text/css; charset=utf-8"),
             "/sharing.js": ("sharing.js", "text/javascript; charset=utf-8"),
             "/sharing.css": ("sharing.css", "text/css; charset=utf-8"),
             "/tray.html": ("tray.html", "text/html; charset=utf-8"),
             "/tray.js": ("tray.js", "text/javascript; charset=utf-8"),
             "/tray.css": ("tray.css", "text/css; charset=utf-8")}
-POST_PATHS = {"/api/settings", "/api/proxy-settings", "/api/proxy-test", "/api/context-settings", "/api/link", "/api/sharing", "/api/restart-notice", "/api/connection/resume"}
-GET_PATHS = {"/api/status", "/api/proxy-settings", "/api/tray-status", "/api/context-settings", "/api/packet-filters", "/api/packets", "/api/sharing", "/api/restart-notice"}
+POST_PATHS = {"/api/settings", "/api/proxy-settings", "/api/proxy-test", "/api/context-settings", "/api/link", "/api/sharing", "/api/restart-notice", "/api/connection/resume", "/api/connections"}
+GET_PATHS = {"/api/status", "/api/proxy-settings", "/api/tray-status", "/api/context-settings", "/api/packet-filters", "/api/packets", "/api/sharing", "/api/restart-notice", "/api/connections"}
 
 
 def open_directory(value):
@@ -140,7 +141,7 @@ def window_geometry(ui_dir=None):
 
 def ui_build_id(ui_dir=None, *, tray=False):
     digest = hashlib.sha256(VERSION.encode())
-    names = ("tray.html", "tray.js", "tray.css", "i18n.js") if tray else ("index.html", "app.js", "style.css", "i18n.js", "sharing.js", "sharing.css")
+    names = ("tray.html", "tray.js", "tray.css", "i18n.js") if tray else ("index.html", "app.js", "style.css", "i18n.js", "connections.js", "sharing.js", "sharing.css")
     for name in names:
         digest.update((Path(ui_dir or UI_DIR) / name).read_bytes())
     return digest.hexdigest()[:20]
@@ -550,7 +551,8 @@ class UIHandler(BaseHTTPRequestHandler):
         if self.command == "POST":
             try:
                 length = int(self.headers.get("Content-Length", "0"))
-                limit = MAX_PROXY_SETTINGS_BYTES if path in {"/api/proxy-settings", "/api/proxy-test"} else 8192
+                limit = {"/api/proxy-settings": MAX_PROXY_SETTINGS_BYTES,
+                         "/api/proxy-test": MAX_PROXY_SETTINGS_BYTES, "/api/connections": 16384}.get(path, 8192)
                 if self.headers.get("Transfer-Encoding") or not 0 <= length <= limit:
                     raise ValueError()
                 body = self.rfile.read(length)
