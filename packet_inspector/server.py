@@ -53,7 +53,9 @@ from .bad_request_retry import (DEFAULT_RETRIES as DEFAULT_BAD_REQUEST_RETRIES,
 from .response_events import notify
 from .http_io import UPSTREAM_READ_TIMEOUT_SECONDS
 from .retry_diagnostics import RetryJournal, ResponseObservation
-from .network_diagnostics import NetworkDiagnostics, DiagnosticHTTPHandler, DiagnosticHTTPSHandler
+from .network_diagnostics import NetworkDiagnostics, DiagnosticHTTPHandler, DiagnosticHTTPSHandler, windows_proxy_settings
+from .proxy_settings import MAX_PROXY_SETTINGS_BYTES, ProxySettings, SelectedProxyHandler, system_proxies
+from .proxy_test import ProxyTester
 from .loopback_proxy import repair_loopback_proxy
 from .usage_trigger import (raw_chunks, request_size as usage_trigger_size,
                             trigger_threshold, DEFAULT_BUDGET_BYTES, MIN_BUDGET_BYTES)
@@ -84,13 +86,7 @@ class NoRedirect(HTTPRedirectHandler):
 
 
 def outbound_proxies():
-    proxies = urllib_request.getproxies()
-    # NO_PROXY alone makes urllib skip the Windows system proxy settings.
-    if not (set(proxies) - {"no"}):
-        registry = getattr(urllib_request, "getproxies_registry", None)
-        if registry is not None:
-            proxies = {**registry(), **proxies}
-    return proxies
+    return system_proxies()
 
 
 STORAGE_LEGACY_BYTES = 1024 * 1024
@@ -249,15 +245,19 @@ class InspectorServer(ThreadingHTTPServer):
             self.save_settings()
         self._startup_step("tls.initialize")
         ssl_context = ssl.create_default_context()
-        proxies = outbound_proxies()
+        self.proxy_config = ProxySettings(self.sharing.vault, lambda: outbound_proxies(), windows_proxy_settings)
+        proxies, self.transport_proxy_mode = self.proxy_config.selection()
         self.transport_guard = threading.Lock()
         self.transport_proxies = dict(proxies)
         self.transport_generation = 0
         self.transport_context = ssl_context
         self.network_diagnostics = NetworkDiagnostics(self.log_dir, proxies)
-        self.opener = build_opener(ProxyHandler(proxies), DiagnosticHTTPHandler(),
+        self.network_diagnostics.proxy_mode = self.transport_proxy_mode
+        self.opener = build_opener(SelectedProxyHandler(proxies, ssl_context), DiagnosticHTTPHandler(),
                                   DiagnosticHTTPSHandler(context=ssl_context), NoRedirect())
         self._describe_transport(self.opener)
+        self.proxy_tester = ProxyTester(lambda values: build_opener(SelectedProxyHandler(values, self.transport_context),
+            DiagnosticHTTPHandler(), DiagnosticHTTPSHandler(context=self.transport_context), NoRedirect()))
         self.local_opener = build_opener(ProxyHandler({}), DiagnosticHTTPHandler(), DiagnosticHTTPSHandler(), NoRedirect())
         self.overflow = OverflowCompactor(self.cache_dir)
         self.compression_policy = CompressionPolicy(self.store)
@@ -294,6 +294,7 @@ class InspectorServer(ThreadingHTTPServer):
 
     def _describe_transport(self, opener):
         opener.inspector_proxies = dict(self.transport_proxies)
+        opener.inspector_proxy_mode = self.transport_proxy_mode
         opener.inspector_transport_generation = self.transport_generation
         opener.inspector_transport_created = time.time()
 
@@ -301,15 +302,17 @@ class InspectorServer(ThreadingHTTPServer):
         # Re-read local configuration for each new route, never probe or retry
         # upstream. Requests already holding an opener keep their own snapshot.
         with self.transport_guard:
-            proxies = outbound_proxies()
-            if proxies != self.transport_proxies:
-                opener = build_opener(ProxyHandler(proxies), DiagnosticHTTPHandler(),
+            proxies, mode = self.proxy_config.selection()
+            if proxies != self.transport_proxies or mode != self.transport_proxy_mode:
+                opener = build_opener(SelectedProxyHandler(proxies, self.transport_context), DiagnosticHTTPHandler(),
                     DiagnosticHTTPSHandler(context=self.transport_context), NoRedirect())
                 self.transport_proxies = dict(proxies)
+                self.transport_proxy_mode = mode
                 self.transport_generation += 1
                 self._describe_transport(opener)
                 self.opener = opener
                 self.network_diagnostics.proxies = dict(proxies)
+                self.network_diagnostics.proxy_mode = mode
             return self.opener
 
     def _classify_pending(self):
@@ -700,6 +703,7 @@ class InspectorServer(ThreadingHTTPServer):
                 "capacity_retry_diagnostics_errors": self.retry_journal.errors,
                 "capacity_retry_diagnostics_last_error": self.retry_journal.last_error,
                 "network_diagnostics_supported": True,
+                "proxy_settings_supported": True, "proxy_settings": self.proxy_config.status(),
                 "loopback_proxy_repair_supported": os.name == "nt",
                 "network_diagnostics_errors": self.network_diagnostics.errors,
                 "storage_paths_supported": True,
@@ -1112,6 +1116,18 @@ class Handler(BaseHTTPRequestHandler):
                 self.server.restart_notices.change("entry_port", previous["configured_port"], result["configured_port"])
                 result["restart_notice"] = self.server.restart_notices.snapshot()
             self._json(200, result)
+        elif path == "/api/proxy-settings" and self.command == "GET":
+            self._json(200, self.server.proxy_config.status())
+        elif path == "/api/proxy-settings" and self.command == "POST":
+            data = json.loads(self._body(MAX_PROXY_SETTINGS_BYTES))
+            with self.server.transport_guard:
+                result = self.server.proxy_config.configure(data)
+            self.server.outgoing_opener()
+            self._json(200, result)
+        elif path == "/api/proxy-test" and self.command == "POST":
+            data = json.loads(self._body(MAX_PROXY_SETTINGS_BYTES))
+            proxies, mode = self.server.proxy_config.preview(data)
+            self._json(200, self.server.proxy_tester.test(proxies, mode, self.server.connection_profile()["upstream"]))
         elif path == "/api/settings" and self.command == "POST":
             data = json.loads(self._body(8192))
             checked_paths = path_settings(self.server.data_dir, data)
@@ -1509,7 +1525,7 @@ class Handler(BaseHTTPRequestHandler):
         request_opener = (remote["opener"] if shared_client else self.server.local_opener
                           if local_upstream else self.server.egress.outgoing(own_request=True))
         # urllib preserves content bytes, does not decompress responses, and
-        # uses the OS/environment proxy. Redirects and inference retries are disabled.
+        # uses the selected outbound proxy. Redirects and inference retries are disabled.
         trigger_size = None
         applied_zstd_level = None
         compression_scope = hashlib.sha256(upstream.encode()).hexdigest()

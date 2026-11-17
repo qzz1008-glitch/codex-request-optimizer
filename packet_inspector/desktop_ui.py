@@ -25,6 +25,7 @@ from .exit_flow import ExitError, ExitRequests, perform_exit
 from .service_restart import RestartRequests, perform_restart
 from .storage_paths import resolve_directory
 from .request_context import local_image_path
+from .proxy_settings import MAX_PROXY_SETTINGS_BYTES
 
 UI_DIR = Path(__file__).with_name("ui")
 UI_FILES = {"/": ("index.html", "text/html; charset=utf-8"),
@@ -36,8 +37,8 @@ UI_FILES = {"/": ("index.html", "text/html; charset=utf-8"),
             "/tray.html": ("tray.html", "text/html; charset=utf-8"),
             "/tray.js": ("tray.js", "text/javascript; charset=utf-8"),
             "/tray.css": ("tray.css", "text/css; charset=utf-8")}
-POST_PATHS = {"/api/settings", "/api/context-settings", "/api/link", "/api/sharing", "/api/restart-notice", "/api/connection/resume"}
-GET_PATHS = {"/api/status", "/api/tray-status", "/api/context-settings", "/api/packet-filters", "/api/packets", "/api/sharing", "/api/restart-notice"}
+POST_PATHS = {"/api/settings", "/api/proxy-settings", "/api/proxy-test", "/api/context-settings", "/api/link", "/api/sharing", "/api/restart-notice", "/api/connection/resume"}
+GET_PATHS = {"/api/status", "/api/proxy-settings", "/api/tray-status", "/api/context-settings", "/api/packet-filters", "/api/packets", "/api/sharing", "/api/restart-notice"}
 
 
 def open_directory(value):
@@ -549,7 +550,8 @@ class UIHandler(BaseHTTPRequestHandler):
         if self.command == "POST":
             try:
                 length = int(self.headers.get("Content-Length", "0"))
-                if self.headers.get("Transfer-Encoding") or not 0 <= length <= 8192:
+                limit = MAX_PROXY_SETTINGS_BYTES if path in {"/api/proxy-settings", "/api/proxy-test"} else 8192
+                if self.headers.get("Transfer-Encoding") or not 0 <= length <= limit:
                     raise ValueError()
                 body = self.rfile.read(length)
                 if len(body) != length:

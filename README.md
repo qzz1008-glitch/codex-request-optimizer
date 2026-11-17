@@ -54,6 +54,8 @@ Codex 的本地请求分析与优化工具，运行于 Windows x64（64 位）�
 
 支持中英文切换、托盘驻留和登录后启动，升级保留已有记录与设置。已接入的配置会自动同步，需要重启或处理问题时明确提示。
 
+Windows 和 Linux 均可在设置的“出口代理”中选择自动检测或手动配置。自动模式显示检测来源、HTTP/HTTPS 地址及代理例外；手动模式分别填写地址、账号、密码及例外，保存后用于新请求，无需重启。账号可明文保存，密码加密保存且不回显。“测试代理”可验证未保存的配置，不发送对话或 Codex 登录凭据。
+
 也可接入已有 WSL Codex 配置（验证功能）。共享、WSL 及其他详细操作见[使用指南](https://github.com/qzz1008-glitch/codex-request-optimizer/blob/main/docs/usage.md)。
 
 ## 🐧 Linux 服务器版（验证中）
@@ -62,7 +64,7 @@ Linux 包在目标 Linux 环境中使用同一构建入口生成：`python -m sc
 
 解压 `CodexPacketInspector-linux-x86_64.tar.gz` 后运行 `./CodexPacketInspector --background --ui-forward-port 47848`，无需安装 Python。中转及管理界面默认只监听 `127.0.0.1:47844`；通过 SSH 隧道访问浏览器界面，例如 `ssh -N -L 47848:127.0.0.1:47844 user@server`，然后在本机打开 `http://127.0.0.1:47848/`，点击接入。隧道端口须与 `--ui-forward-port` 一致，该选项不改变 Codex 中转地址。接入会备份服务器上的 Codex 配置；已有 Codex 进程按提示重新加载或重启。
 
-Linux 版支持 HTTP 转发、zstd、包大小保护、请求记录及趋势，保留原生图片解析，也可禁用图片工具。Windows 托盘、桌面窗口、EXE 自动升级及 PowerShell 独立图片优化工具不在 Linux 包内启用。需要代理的环境，应将实际使用的代理及本机地址例外传入服务环境，不内置代理地址。可使用包内 systemd 用户服务示例；详细步骤见 [使用说明](https://github.com/qzz1008-glitch/codex-request-optimizer/blob/main/docs/usage.md#linux-服务器版)。
+Linux 版支持 HTTP 转发、zstd、包大小保护、请求记录及趋势，保留原生图片解析，也可禁用图片工具。Windows 托盘、桌面窗口、EXE 自动升级及 PowerShell 独立图片优化工具不在 Linux 包内启用。自动代理读取服务进程的环境变量，也可在设置中手动配置，不内置代理地址。可使用包内 systemd 用户服务示例；详细步骤见 [使用说明](https://github.com/qzz1008-glitch/codex-request-optimizer/blob/main/docs/usage.md#linux-服务器版)。
 
 ## ⚙️ 实现概览
 

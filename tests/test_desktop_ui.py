@@ -110,6 +110,21 @@ class DesktopUITests(unittest.TestCase):
         self.assertEqual((status, data["version"], data["ui_version"]), (200, "0.2.0", VERSION))
         self.assertEqual(data["active_requests"], 1)
 
+    def test_proxy_settings_forward_auth_fields_and_preserve_the_other_body_limits(self):
+        body = json.dumps({"mode": "manual", "address": "http://proxy.invalid:8080",
+                           "username": "user", "password": "测试" * 2000}, ensure_ascii=False).encode()
+        self.assertGreater(len(body), 8192)
+        self.assertEqual(self.request("/api/proxy-settings")[0], 200)
+        for path in ("/api/proxy-settings", "/api/proxy-test"):
+            self.assertEqual(self.request(path, "POST", body)[0], 200)
+            self.assertEqual(self.backend.requests[-1][3], body)
+        forwarded = len(self.backend.requests)
+        self.assertEqual(self.request("/api/settings", "POST", body)[0], 400)
+        for path in ("/api/proxy-settings", "/api/proxy-test"):
+            self.assertEqual(self.request(path, "POST", b"", {"Content-Length": "65537"})[0], 400)
+            self.assertEqual(self.request(path, "POST", b"{}", {"Origin": "https://example.com"})[0], 403)
+        self.assertEqual(len(self.backend.requests), forwarded)
+
     def test_sharing_assets_reload_and_control_api_keeps_origin_validation(self):
         self.ui.live_reload = True
         before = json.loads(self.request('/__dev__/state')[1])['build']

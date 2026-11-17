@@ -28,6 +28,7 @@ from . import VERSION
 from .analyzer import clean_text, redact
 from .build_info import build_info
 from .process_identity import process_identity
+from .proxy_settings import bypass_proxy, system_proxies
 
 RETENTION_SECONDS = 14 * 86400
 MAX_RECORDS = 500
@@ -172,9 +173,7 @@ def windows_proxy_settings():
 def environment_snapshot(proxies):
     environment = urllib_request.getproxies_environment()
     registry = getattr(urllib_request, "getproxies_registry", lambda: {})()
-    current = urllib_request.getproxies()
-    if not (set(current) - {"no"}):
-        current = {**registry, **current}
+    current = system_proxies()
     source = "environment" if set(environment) - {"no"} else "windows_registry" if set(registry) - {"no"} else "direct"
     def describe(values):
         return {key: safe_text(value, limit=2000) if key == "no" else safe_proxy(value)
@@ -191,7 +190,16 @@ def environment_snapshot(proxies):
             "opener_proxies": describe(proxies), "proxy_settings_changed_since_opener_created": current != proxies,
             "pac_supported_by_transport": False, "all_proxy_supported_by_transport": False,
             "certificate_environment": certificates,
-            "transport": "urllib HTTP/1.1; redirects disabled; operating-system/environment proxy selection"}
+            "transport": "urllib HTTP/1.1; HTTPS proxies via urllib3 TLS; redirects disabled; selected outbound proxy"}
+
+
+def selected_environment(proxies, mode):
+    result = environment_snapshot(proxies)
+    result["proxy_mode"] = mode
+    if mode == "manual":
+        result["proxy_configuration_source_now"] = "manual"
+        result.pop("proxy_settings_changed_since_opener_created", None)
+    return result
 
 
 class _ErrorHTML(HTMLParser):
@@ -257,6 +265,7 @@ class NetworkDiagnostics:
     def __init__(self, directory, proxies):
         self.path = Path(directory) / "network-diagnostics.sqlite"
         self.proxies = dict(proxies)
+        self.proxy_mode = "auto"
         self.lock = threading.RLock()
         self.connection_id = ""
         self.errors = 0
@@ -326,7 +335,7 @@ class NetworkDiagnostics:
             record = {"id": identifier, "created": time.time(), "kind": "connection", "trigger": "user_connect",
                       "process_id": os.getpid(),
                       "outcome": "failed" if error else "connected", "before": profile(before), "after": profile(after),
-                      "routes": destinations, "environment": environment_snapshot(self.proxies),
+                      "routes": destinations, "environment": selected_environment(self.proxies, self.proxy_mode),
                       "route_count": len(routes), "routes_truncated": len(routes) > len(destinations),
                       "settings": {k: settings.get(k) for k in ("zstd_level", "packet_size_protection_enabled", "budget_bytes",
                                     "capacity_retry_enabled", "image_analysis_mode")},
@@ -347,19 +356,22 @@ class NetworkDiagnostics:
                         self._save(record)
                         return
                     self.probing = True
-                threading.Thread(target=self._probe, args=(record,), daemon=True, name="connection-diagnostics").start()
+                threading.Thread(target=self._probe, args=(record, dict(self.proxies)), daemon=True, name="connection-diagnostics").start()
         except Exception:
             self.errors += 1
 
-    def _probe(self, record):
+    def _probe(self, record, proxies=None):
+        proxies = dict(self.proxies) if proxies is None else proxies
         results = []
         deadline = time.monotonic() + 8
         seen = set()
         try:
             for route in record["routes"]:
                 destination = urlsplit(route["upstream"])
-                proxy = self.proxies.get(destination.scheme)
-                bypass = destination.hostname in {"localhost", "127.0.0.1", "::1"} or urllib_request.proxy_bypass(destination.netloc)
+                proxy = proxies.get(destination.scheme)
+                authority = destination.netloc + (":" + str(443 if destination.scheme == "https" else 80)
+                                                   if destination.port is None else "")
+                bypass = bypass_proxy(authority, proxies)
                 endpoint = urlsplit(safe_proxy(proxy)) if proxy and not bypass else destination
                 host, port = endpoint.hostname, endpoint.port or (443 if endpoint.scheme == "https" else 80)
                 if not host or (host, port) in seen or len(seen) >= 3 or time.monotonic() >= deadline:
@@ -423,6 +435,7 @@ class RequestTrace:
         if proxies is None:
             proxies = next((h.proxies for h in getattr(opener, "handlers", ()) if isinstance(h, ProxyHandler)), {})
         self.proxies = dict(proxies)
+        self.proxy_mode = getattr(opener, "inspector_proxy_mode", getattr(journal, "proxy_mode", "auto"))
         self.start = time.monotonic()
         self.secrets = [str(v) for k, v in headers.items() if k.lower() in {
             "authorization", "proxy-authorization", "cookie", "x-api-key", "api-key", "x-inspector-shared-egress", "x-inspector-client"} and v]
@@ -547,7 +560,7 @@ class RequestTrace:
             if self.captured:
                 self.record["error_body"] = error_body(bytes(self.captured), self.record["response_headers"],
                                                          self.secrets, self.response_bytes > len(self.captured))
-            self.record["environment"] = environment_snapshot(self.proxies)
+            self.record["environment"] = selected_environment(self.proxies, self.proxy_mode)
             self.record["process"] = process_identity()
             destination = urlsplit(self.record["upstream"])
             self.record["configured_proxy_for_scheme"] = (safe_proxy(self.proxies[destination.scheme])
@@ -583,6 +596,8 @@ class _ObservedConnection:
         if not self.trace:
             return super()._tunnel()
         trace, response_class = self.trace, self.response_class
+        get_headers = getattr(self, "get_proxy_response_headers", None)
+        observed_headers = None
         trace.record["phase"] = "proxy_connect"
         trace.record["proxy_authorization_sent"] = any(key.lower() == "proxy-authorization" for key in self._tunnel_headers)
         for key, value in self._tunnel_headers.items():
@@ -590,11 +605,33 @@ class _ObservedConnection:
                 trace.secrets.append(str(value))
                 if " " in str(value):
                     trace.secrets.append(str(value).split(" ", 1)[1])
-        # Keep stdlib CONNECT behavior; only observe the structured status line.
+        # Keep the stdlib status and failure behavior. Older implementations
+        # close rejected tunnels without reading headers or exposing an API.
         class ProxyResponse(response_class):
             def _read_status(response):
+                nonlocal observed_headers
                 version, status, reason = super()._read_status()
                 trace.record["proxy_connect_response"] = {"status": status, "reason": safe_text(reason.strip(), trace.secrets, 500)}
+                if status != 200 and not callable(get_headers):
+                    timeout, captured = self.sock.gettimeout(), bytearray()
+                    deadline = time.monotonic() + .25
+                    try:
+                        while len(captured) < 16384:
+                            remaining = deadline - time.monotonic()
+                            if remaining <= 0:
+                                break
+                            self.sock.settimeout(remaining)
+                            chunk = response.fp.read1(min(4096, 16384 - len(captured)))
+                            if not chunk:
+                                break
+                            captured.extend(chunk)
+                            if b"\r\n\r\n" in captured or b"\n\n" in captured:
+                                break
+                        observed_headers = http.client.parse_headers(io.BytesIO(captured))
+                    except Exception as exc:
+                        trace.record["proxy_headers_observation_error"] = type(exc).__name__
+                    finally:
+                        self.sock.settimeout(timeout)
                 return version, status, reason
         self.response_class = ProxyResponse
         started = time.monotonic()
@@ -605,8 +642,7 @@ class _ObservedConnection:
         finally:
             self.response_class = response_class
             try:
-                get_headers = getattr(self, "get_proxy_response_headers", None)
-                headers = get_headers() if get_headers else None
+                headers = get_headers() if callable(get_headers) else observed_headers
                 if headers is not None and "proxy_connect_response" in trace.record:
                     proxy_response = trace.record["proxy_connect_response"]
                     proxy_response["headers"] = {key.lower(): safe_text(value, trace.secrets, 1000)

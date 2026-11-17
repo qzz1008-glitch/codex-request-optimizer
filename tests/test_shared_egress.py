@@ -288,8 +288,7 @@ class SharedEgressTests(unittest.TestCase):
             {'https': f'http://dummy-user:dummy-pass@127.0.0.1:{proxy.server_port}'})))
         server.outgoing_opener = lambda: server.opener
         try:
-            with patch('packet_inspector.shared_egress.proxy_bypass', return_value=False):
-                physical_tunnel(server, 'api.openai.com', 443).close()
+            physical_tunnel(server, 'api.openai.com', 443).close()
             self.assertEqual(seen, [('api.openai.com:443', 'Basic ZHVtbXktdXNlcjpkdW1teS1wYXNz')])
         finally:
             proxy.shutdown()

@@ -192,6 +192,35 @@
       <div class="entry-port-row" data-settings-field="entry_port"><label for="entry-port">入口端口</label><input id="entry-port" type="number" min="1024" max="65535" step="1" value="47844" required aria-describedby="link-status"><span id="link-status" class="entry-port-status" role="status" aria-live="polite" hidden></span></div>
       <p id="entry-port-message" data-feedback-source data-feedback-target="settings-inline-feedback" class="help" role="status" hidden></p>
     </section>
+    <section id="proxy-settings" data-settings-field="proxy_settings" aria-labelledby="proxy-settings-title" hidden>
+      <h3 id="proxy-settings-title">出口代理</h3>
+      <div class="runtime-setting-row proxy-mode-row"><span id="proxy-mode-label">代理模式</span><div class="proxy-mode-actions">
+        <fieldset id="proxy-mode" class="image-mode-pills" aria-labelledby="proxy-mode-label">
+          <legend class="sr-only">代理模式</legend>
+          <label><input type="radio" name="proxy-mode" value="auto" checked><span>自动检测</span></label>
+          <label><input type="radio" name="proxy-mode" value="manual"><span>手动配置</span></label>
+        </fieldset><button id="proxy-detect" type="button">重新检测</button>
+        <button id="proxy-test" type="button" title="测试当前配置，不保存；不发送对话或 Codex 登录凭据。">测试代理</button>
+      </div></div>
+      <div id="proxy-detected" class="proxy-fields">
+        <div class="runtime-setting-row"><span>检测来源</span><output id="proxy-source">—</output></div>
+        <div class="runtime-setting-row"><span>HTTP</span><output id="proxy-http">—</output></div>
+        <div class="runtime-setting-row"><span>HTTPS</span><output id="proxy-https">—</output></div>
+        <div class="runtime-setting-row"><span>代理例外</span><output id="proxy-detected-bypass">—</output></div>
+        <p id="proxy-detection-warning" class="help" role="status" hidden></p>
+      </div>
+      <div id="proxy-manual" class="proxy-fields" hidden>
+        <div class="runtime-setting-row"><label for="proxy-address">代理地址</label><input id="proxy-address" name="proxy-address" type="text" inputmode="url" maxlength="2048" placeholder="http://proxy.example.com:8080" autocomplete="off" spellcheck="false" required disabled></div>
+        <div class="runtime-setting-row"><label for="proxy-username">代理账号</label><input id="proxy-username" name="proxy-username" type="text" maxlength="512" autocomplete="off" spellcheck="false" disabled></div>
+        <div class="runtime-setting-row"><label for="proxy-password">代理密码</label><input id="proxy-password" name="proxy-password" type="password" maxlength="4096" autocomplete="new-password" aria-describedby="proxy-password-hint" disabled></div>
+        <div id="proxy-saved-password" class="runtime-setting-row" hidden><span></span><label class="proxy-clear-password"><input id="proxy-clear-password" name="proxy-clear-password" type="checkbox" disabled><span>清除已存密码</span></label></div>
+        <p id="proxy-password-hint" class="help muted">密码不回显；已保存时留空保留。</p>
+        <div class="runtime-setting-row"><label for="proxy-bypass">代理例外</label><input id="proxy-bypass" name="proxy-bypass" type="text" maxlength="4096" placeholder="localhost,127.0.0.1,::1" autocomplete="off" spellcheck="false" disabled></div>
+      </div>
+      <p class="help muted">保存后用于新请求；进行中的请求不受影响。</p>
+      <p id="proxy-message" data-feedback-source data-feedback-target="settings-inline-feedback" class="help" role="status" hidden></p>
+      <output id="proxy-test-result" class="proxy-test-result" role="status" aria-live="polite" hidden></output>
+    </section>
     <section id="sharing-settings"><h3>局域网共享</h3>
       <div class="entry-port-row" data-settings-field="sharing_port"><label for="sharing-port">额度端口</label><input id="sharing-port" type="number" min="1" max="65535" step="1" value="47846" required></div>
       <div class="entry-port-row" data-settings-field="egress_port"><label for="exit-port">出口端口</label><input id="exit-port" type="number" min="1" max="65535" step="1" value="47847" required></div>

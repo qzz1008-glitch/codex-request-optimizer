@@ -182,7 +182,7 @@ class NetworkRelayTests(unittest.TestCase):
 
     def test_connect_button_is_the_only_probe_trigger(self):
         ready = threading.Event()
-        with patch.object(NetworkDiagnostics, "_probe", side_effect=lambda record: ready.set()) as probe:
+        with patch.object(NetworkDiagnostics, "_probe", side_effect=lambda record, proxies: ready.set()) as probe:
             self.server.set_connection(True)
             self.assertTrue(ready.wait(1))
             records = self.records()
