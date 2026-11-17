@@ -77,6 +77,7 @@ def github_opener():
 
 class Updates:
     def __init__(self, directory, config, port, current_version=VERSION, *, opener=None):
+        self.supported = os.name == "nt"
         self.directory, self.config = Path(directory), Path(config)
         self.port, self.current_version = port, current_version
         self.directory.mkdir(parents=True, exist_ok=True)
@@ -117,9 +118,11 @@ class Updates:
             # it as busy so the UI cannot drop feedback or submit it twice.
             cached = {**cached, "state": "checking" if self.action == "check" else "downloading", "error": ""}
         return {**self.settings(), **{key: value for key, value in cached.items() if key != "asset"},
-                "current_version": self.current_version, "supported": True}
+                "current_version": self.current_version, "supported": self.supported}
 
     def configure(self, data):
+        if not self.supported:
+            raise ValueError("Linux 服务器版请通过替换 Linux 安装包更新。")
         current = self.settings()
         repository = data.get("repository", current["repository"])
         if not isinstance(repository, str):
@@ -147,6 +150,8 @@ class Updates:
         return self.opener.open(Request(url, headers=headers), timeout=30)
 
     def check(self):
+        if not self.supported:
+            raise ValueError("Linux 服务器版不使用 Windows EXE 更新源。")
         repository = self.settings()["repository"]
         token = ""
         api = "https://api.github.com/repos/" + repository + "/releases/latest"
@@ -184,6 +189,8 @@ class Updates:
         return result
 
     def install(self):
+        if not self.supported:
+            raise ValueError("Linux 服务器版请通过替换 Linux 安装包更新。")
         cached = self.cached()
         if cached.get("repository") != self.settings()["repository"] or cached.get("state") not in {"available", "downloading"}:
             raise ValueError("请先检查更新。")
@@ -229,6 +236,8 @@ class Updates:
             return hashlib.file_digest(stream, "sha256").hexdigest()
 
     def start(self, action):
+        if not self.supported:
+            raise ValueError("Linux 服务器版请通过替换 Linux 安装包更新。")
         if action not in {"check", "install"}:
             raise ValueError("无效的更新操作。")
         with self.guard:
@@ -256,6 +265,8 @@ class Updates:
         return self.status()
 
     def poll(self):
+        if not self.supported:
+            return
         if time.monotonic() < self.next_poll:
             return
         self.next_poll = time.monotonic() + 60

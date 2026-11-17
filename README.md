@@ -56,6 +56,14 @@ Codex 的本地请求分析与优化工具，运行于 Windows x64（64 位）�
 
 也可接入已有 WSL Codex 配置（验证功能）。共享、WSL 及其他详细操作见[使用指南](https://github.com/qzz1008-glitch/codex-request-optimizer/blob/main/docs/usage.md)。
 
+## 🐧 Linux 服务器版（验证中）
+
+Linux 包在目标 Linux 环境中使用同一构建入口生成：`python -m scripts.build_inspector --release-only`。当前面向 EulerOS 3.0 x86_64 验证；构建来源记录包含架构和 glibc 版本，不能将 Windows EXE 用作 Linux 程序。
+
+解压 `CodexPacketInspector-linux-x86_64.tar.gz` 后运行 `./CodexPacketInspector --background --ui-forward-port 47848`，无需安装 Python。中转及管理界面默认只监听 `127.0.0.1:47844`；通过 SSH 隧道访问浏览器界面，例如 `ssh -N -L 47848:127.0.0.1:47844 user@server`，然后在本机打开 `http://127.0.0.1:47848/`，点击接入。隧道端口须与 `--ui-forward-port` 一致，该选项不改变 Codex 中转地址。接入会备份服务器上的 Codex 配置；已有 Codex 进程按提示重新加载或重启。
+
+Linux 版支持 HTTP 转发、zstd、包大小保护、请求记录及趋势，保留原生图片解析，也可禁用图片工具。Windows 托盘、桌面窗口、EXE 自动升级及 PowerShell 独立图片优化工具不在 Linux 包内启用。需要代理的环境，应将实际使用的代理及本机地址例外传入服务环境，不内置代理地址。可使用包内 systemd 用户服务示例；详细步骤见 [使用说明](https://github.com/qzz1008-glitch/codex-request-optimizer/blob/main/docs/usage.md#linux-服务器版)。
+
 ## ⚙️ 实现概览
 
 - **接入与转发**：通过 Codex 标准 provider 配置接入本地 Python 中转，处理后的请求继续发往原有上游。接入及升级时检查并统一兼容的旧会话 provider 配置，保留会话内容。

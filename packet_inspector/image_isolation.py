@@ -85,7 +85,7 @@ class ImageIsolation:
         result = {"state": "checked", "expired": 0, "reclaimed_bytes": 0, "bytes": 0, "errors": 0}
         now = time.time()
         for directory in dict.fromkeys((self.directory, self.previous_directory)):
-            if directory.is_symlink() or directory.is_junction() or not directory.is_dir():
+            if directory.is_symlink() or getattr(directory, "is_junction", lambda: False)() or not directory.is_dir():
                 continue
             try:
                 entries = os.scandir(directory)
@@ -228,7 +228,8 @@ class ImageIsolation:
             while True:
                 suffix = "-" + str(sequence) if sequence else ""
                 target = self.directory / (stem[:32 - len(suffix)] + suffix + extension)
-                if target.is_symlink() or target.is_junction() or target.exists() and not target.is_file():
+                if (target.is_symlink() or getattr(target, "is_junction", lambda: False)()
+                        or target.exists() and not target.is_file()):
                     raise ImageIsolationFailure("image_attachment_conflict", "本地附件路径异常。")
                 if not target.exists():
                     break

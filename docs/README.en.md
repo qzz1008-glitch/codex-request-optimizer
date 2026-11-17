@@ -56,6 +56,14 @@ Includes Chinese/English language switching, tray operation, and start on login.
 
 Existing Codex configurations in WSL can also be connected as a validation feature. See the [usage guide](https://github.com/qzz1008-glitch/codex-request-optimizer/blob/main/docs/usage.md) for sharing, WSL, and other detailed instructions.
 
+## 🐧 Linux server build (under validation)
+
+Build the Linux package on its target Linux environment using the same entry point: `python -m scripts.build_inspector --release-only`. Validation currently targets EulerOS 3.0 x86_64; provenance records include the architecture and glibc version. A Windows EXE cannot run as a Linux application.
+
+Extract `CodexPacketInspector-linux-x86_64.tar.gz` and run `./CodexPacketInspector --background --ui-forward-port 47848`; no Python installation is needed. The relay and management interface listen only on `127.0.0.1:47844` by default. Access the browser interface through an SSH tunnel, for example `ssh -N -L 47848:127.0.0.1:47844 user@server`, then open `http://127.0.0.1:47848/` locally and click Connect. The tunnel port must match `--ui-forward-port`; this option does not change the Codex relay address. Connecting backs up the server's Codex configuration; reload or restart existing Codex processes when prompted.
+
+The Linux build supports HTTP forwarding, zstd, request size protection, request records, and trends. Native image analysis remains available, and image tools can also be disabled. Windows tray integration, desktop windows, EXE automatic updates, and the PowerShell isolated image optimization tool are not enabled in the Linux package. Environments requiring a proxy must pass their actual proxy and loopback exclusions to the service; no proxy address is built in. A sample systemd user service is included; see the [usage guide](https://github.com/qzz1008-glitch/codex-request-optimizer/blob/main/docs/usage.md#linux-服务器版) for details.
+
 ## ⚙️ Implementation overview
 
 - **Connection and forwarding**: Codex's standard provider configuration routes requests through a local Python relay. Processed requests continue to the original upstream service. Connecting or upgrading checks and unifies compatible legacy chat provider settings while preserving conversation content.

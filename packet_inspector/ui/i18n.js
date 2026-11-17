@@ -2,6 +2,7 @@
 
 const uiI18n = (() => {
   const english = {
+    "Linux 版请通过替换安装包更新。":"Update the Linux version by replacing its application package.",
     "重启期间将短暂中断请求转发，正在进行的请求可能失败。":"Request forwarding will briefly stop. Requests in progress may fail.",
     "服务恢复后可继续对话，未完成的请求可重新发送。":"Continue chatting once the service recovers. You can resend unfinished requests.",
     "正在重启…":"Restarting…",
