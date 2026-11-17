@@ -1,6 +1,9 @@
 const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const {chromium}=require('playwright');
+const app=fs.readFileSync('packet_inspector/ui/app.js','utf8');
+const connections=app.slice(0,app.indexOf('\n// Saved configuration'));
+assert(connections.includes('globalThis.InspectorConnections ='),'Connection controls load through the existing app.js route');
 
 (async()=>{
   const browser=await chromium.launch({channel:'msedge',headless:true});
@@ -9,17 +12,20 @@ const {chromium}=require('playwright');
       const page=await browser.newPage({viewport:{width:1200,height:800}});
       const errors=[];page.on('pageerror',error=>errors.push(error.message));
       const html=fs.readFileSync('packet_inspector/ui/index.html','utf8').replace(/<script[^>]*>[\s\S]*?<\/script>/g,'').replace(/<link[^>]*>/g,'');
+      assert(!fs.readFileSync('packet_inspector/ui/index.html','utf8').includes('/connections.js'),'No new asset route is required for live reload');
       await page.setContent(html);
       await page.addStyleTag({path:'packet_inspector/ui/style.css'});
       await page.addScriptTag({path:'packet_inspector/ui/i18n.js'});
       if(fallback)await page.evaluate(()=>{delete HTMLElement.prototype.popover;});
-      await page.addScriptTag({path:'packet_inspector/ui/connections.js'});
+      await page.addScriptTag({content:connections});
       await page.evaluate(()=>{
         window.fixture={rows:[{id:'local',name:'本机',kind:'local',state:'disconnected'},
           {id:'remote-a',name:'Server 176',kind:'ssh',state:'disconnected'}],calls:[],local:{profile:{active:false}},failRemote:false};
         window.controller=InspectorConnections.create({
           status:()=>fixture.local,localBusy:()=>false,refreshLocal:async()=>{},
           request:async(path,data)=>{
+            if(fixture.unavailable)throw Object.assign(Error('ui_route_not_found'),{status:404});
+            if(fixture.networkError)throw Object.assign(Error('forwarding_service_unavailable'),{status:502});
             if(!data)return {targets:structuredClone(fixture.rows),error:'',revision:'fixture-revision'};
             fixture.calls.push(structuredClone(data));
             const accepted={};
@@ -84,9 +90,22 @@ const {chromium}=require('playwright');
       assert.equal(await page.evaluate(()=>document.getElementById('connection-panel').contains(document.activeElement)),true,'ArrowDown enters the device controls');
       const narrow=await panel.boundingBox();assert(narrow.x>=0&&narrow.x+narrow.width<=701&&narrow.y>=0&&narrow.y+narrow.height<=701);
       await page.keyboard.press('Escape');await panel.waitFor({state:'hidden'});
+      await page.evaluate(()=>fixture.unavailable=true);
+      await page.locator('#compression-connect').hover();await panel.waitFor({state:'visible'});
+      await page.waitForFunction(()=>document.getElementById('connection-devices-error').textContent.includes('请更新 EXE'));
+      assert.equal(await page.locator('#request-compression').getAttribute('aria-busy'),'false','A missing backend feature must not appear to be loading');
+      assert.equal(await page.locator('.connection-device').count(),0,'Unavailable device states must not remain actionable');
+      assert.equal(await page.locator('#compression-connect').isDisabled(),true);
+      await page.evaluate(()=>{fixture.unavailable=false;fixture.networkError=true;});
+      await page.locator('#connection-devices-refresh').click();
+      await page.waitForFunction(()=>document.getElementById('connection-devices-error').textContent==='forwarding_service_unavailable');
+      await page.evaluate(()=>fixture.networkError=false);
+      await page.locator('#connection-devices-refresh').click();
+      await page.waitForFunction(()=>document.querySelectorAll('.connection-device').length===2);
+      assert.equal(await page.locator('#connection-devices-error').isHidden(),true);
       assert.deepEqual(errors,[]);
       await page.close();
     }
-    console.log('Remote connection UI: native/fallback hover, keyboard, bounds, independent/bulk confirmation and partial failure retry passed.');
+    console.log('Remote connection UI: existing asset entry, native/fallback hover, keyboard, scoped actions, unsupported backend and recovery passed.');
   } finally {await browser.close();}
 })().catch(error=>{console.error(error);process.exitCode=1;});

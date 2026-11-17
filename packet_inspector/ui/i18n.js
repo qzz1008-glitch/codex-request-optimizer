@@ -6,6 +6,7 @@ const uiI18n = (() => {
     "将接入本机的 Codex，包括检测到的 WSL 配置。服务器可通过顶栏单独管理。":"Connect Codex on this computer, including detected WSL configurations. Manage servers separately from the top bar.",
     "按设备管理接入":"Manage connections by device",
     "设备接入":"Device connections",
+    "当前运行版本不支持设备接入管理，请更新 EXE 后使用。":"Update the EXE to use device connection management with the running version.",
     "刷新状态":"Refresh status",
     "顶部按钮控制全部设备，下方可单独切换。":"The top buttons control all devices. Switch individual devices below.",
     "确认接入范围":"Confirm connection scope",

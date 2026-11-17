@@ -76,7 +76,6 @@ HOP = {"connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
 UI_FILES = {"/": ("index.html", "text/html; charset=utf-8"),
             "/i18n.js": ("i18n.js", "text/javascript; charset=utf-8"),
             "/app.js": ("app.js", "text/javascript; charset=utf-8"),
-            "/connections.js": ("connections.js", "text/javascript; charset=utf-8"),
             "/style.css": ("style.css", "text/css; charset=utf-8"),
             "/sharing.js": ("sharing.js", "text/javascript; charset=utf-8"),
             "/sharing.css": ("sharing.css", "text/css; charset=utf-8")}
