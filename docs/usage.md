@@ -209,6 +209,18 @@ provider 配置变更由同一中转服务检测并热加载，无需重启中�
 
 认证头值不保存，已识别的凭据与媒体在浏览副本中脱敏。普通聊天、工具输出仍保存在本机，应按敏感数据管理。转发正文不使用脱敏副本。
 
+## Linux 服务器版
+
+当前 Linux 包面向 EulerOS 3.0 x86_64 验证，在 Linux 主机上从干净的 `main` 使用 `python -m scripts.build_inspector --release-only` 构建。构建检查、冻结源码、内嵌指纹和包校验与 Windows 共用；`BUILD-SOURCE.json` 还记录架构与 glibc 版本。此包不进入 Windows 自动更新渠道，不承诺兼容更旧的 glibc。
+
+1. 解压 `CodexPacketInspector-linux-x86_64.tar.gz`，进入 `codex-packet-inspector` 目录，运行 `./CodexPacketInspector --background --ui-forward-port 47848`。包内已带 Python 运行环境与依赖；源码运行则需要 Python 3.11 及以上和 `packet_inspector/requirements.txt` 中适用于 Linux 的依赖。
+2. 默认读取当前账户的 `~/.codex/config.toml`，数据写入 `~/.codex-packet-inspector`；可用 `--config`、`--data-dir`、`--port` 指定其他位置。服务和管理界面共用回环地址 `127.0.0.1:47844`，不会额外启动预览服务。
+3. 从本机建立 SSH 隧道：`ssh -N -L 47848:127.0.0.1:47844 user@server`，然后在本机浏览器打开 `http://127.0.0.1:47848/`。隧道端口须与 `--ui-forward-port` 一致；该选项只允许对应的本机浏览器来源，不改变监听端口或 Codex 中转地址。在界面点击接入，程序会先备份并修改该 Linux 账户的 Codex 标准 provider 配置。现有 Codex 进程需重新加载配置，随后发送一条消息确认出现请求记录。
+4. 如果 Codex 依赖代理，服务也应沿用同一环境中的 `http_proxy`、`https_proxy` 或其他已验证配置；保留原有 `NO_PROXY`/`no_proxy` 内容并追加 `localhost,127.0.0.1,::1`。SSH 非交互进程不一定继承远程 Codex 的代理环境，不能据此判断服务器无需代理。本软件不内置任何代理主机名。
+5. 需要常驻运行时，将程序复制到 `~/.local/bin/CodexPacketInspector`，将包内 `codex-packet-inspector.service` 复制到 `~/.config/systemd/user/`，然后运行 `systemctl --user daemon-reload` 和 `systemctl --user enable --now codex-packet-inspector`。代理可通过 systemd drop-in 的 `EnvironmentFile` 配置；SSH 退出后持续运行需要系统启用该账户的用户服务保留。也可由管理员为实际安装路径建立系统服务。
+
+Linux 版沿用 HTTP/zstd、自动选档、包大小保护、重试、记录与趋势等中转逻辑；默认仅启用 zstd，其他开关仍由用户保存的配置控制。服务器版保留原生图片解析及禁用模式，暂不安装依赖 Windows PowerShell 的独立图片优化工具；界面会禁用不支持的选项。无 Windows 托盘或桌面窗口，更新时替换 Linux 安装包并重启该服务。停止中转前先在界面断开并重新加载 Codex 配置；SIGTERM 会停止接收新请求并等待正在进行的请求结束。
+
 ## 记录与存储
 
 “请求与响应”框默认只显示模型、结果和总耗时。结果合并已记录的响应结束状态和 HTTP 状态，例如“完成 · HTTP 200”；旧记录没有结束状态时只标记已结束。总耗时使用整条请求的时长，缺失时显示“—”。异常时显示已记录的错误原因，历史重建和详情已回收按适用情况标明。回复文字、进度说明、响应 ID、工具名称、响应头耗时和采集入口正文大小均不展示。响应信息直接从上游事件采集，不额外调用模型；工具参数、工具结果和推理内容不进入概要。整个响应概要最多 4,096 字节，是请求基本信息的一部分，正文详情回收后仍保留，随请求删除，不单独设置保留数量。旧请求没有保存的信息不补造。保存用量时移除逐条 Token 归因明细，保留真实 Token 汇总及缓存统计；已有记录在启动和后台分批精简。

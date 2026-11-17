@@ -23,6 +23,7 @@ def find_powershell():
 
 class ImageToolInstallation:
     def __init__(self, codex_home):
+        self.supported = os.name == "nt"
         self.codex_home = Path(codex_home).resolve()
         self.directory = self.codex_home / "tools" / "codex-inspector-image-tool"
         self.manifest = self.directory / "installation.json"
@@ -38,7 +39,8 @@ class ImageToolInstallation:
             stage.unlink(missing_ok=True)
 
     def _owned(self):
-        if self.directory.is_symlink() or self.directory.is_junction() or self.manifest.is_symlink():
+        if (self.directory.is_symlink() or getattr(self.directory, "is_junction", lambda: False)()
+                or self.manifest.is_symlink()):
             raise ValueError("独立图片工具目录不能是链接。")
         if not self.manifest.exists():
             if any((self.directory / name).exists() for name in ASSETS):

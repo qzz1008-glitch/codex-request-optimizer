@@ -21,7 +21,8 @@ def build_info(path=None):
                 or not re.fullmatch(r"\d+\.\d+\.\d+", str(value.get("version", "")))
                 or value.get("mode") not in ("dev", "release")):
             return {}
-        return {key: value[key] for key in ("git_commit", "source_sha256", "version", "mode", "dirty")
+        return {key: value[key] for key in ("git_commit", "source_sha256", "version", "mode", "dirty",
+                                          "platform", "architecture", "libc")
                 if key in value}
     except (OSError, ValueError):
         return {}

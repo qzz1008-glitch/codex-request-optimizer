@@ -5,9 +5,11 @@ import hashlib
 import importlib.metadata
 import json
 import os
+import platform
 import shutil
 import subprocess
 import sys
+import tarfile
 import uuid
 from datetime import datetime, timezone
 from scripts.build_source import Workspace, Snapshot, SourceError, local_development_path
@@ -18,6 +20,8 @@ from packet_inspector.frontend_dev import PROFILE_NAME, PORTABLE_UI
 
 ROOT=Path(__file__).resolve().parents[1]
 PUBLIC_FILES = ("CodexPacketInspector.exe", "README.md", "LICENSE", "THIRD_PARTY_NOTICES.txt")
+LINUX_FILES = ("CodexPacketInspector", "README.md", "README.en.md", "LICENSE", "THIRD_PARTY_NOTICES.txt",
+               "codex-packet-inspector.service")
 
 
 def source_files(root=None):
@@ -28,7 +32,7 @@ def source_files(root=None):
              if (root / name).is_file()]
     suffixes = {".py", ".txt", ".md", ".html", ".js", ".cjs", ".css", ".ps1", ".json", ".ico", ".png", ".svg",
                 ".toml", ".yaml", ".yml", ".sh", ".bat", ".cmd", ".woff", ".woff2", ".ttf", ".otf",
-                ".webp", ".gif", ".jpeg", ".jpg"}
+                ".webp", ".gif", ".jpeg", ".jpg", ".service"}
     excluded = {"__pycache__", "data", ".local", ".venv", "build", "release", "node_modules"}
     for folder in ("packet_inspector", "scripts", "tests", "docs", ".github"):
         for path in (root / folder).rglob("*"):
@@ -66,8 +70,13 @@ def collect_licenses(source, work):
     licenses=work/"THIRD_PARTY_LICENSES"
     licenses.mkdir(parents=True)
     shutil.copyfile(source/"packet_inspector"/"Codex-LICENSE.txt",licenses/"Codex-LICENSE.txt")
-    python_license=Path(sys.base_prefix)/"LICENSE.txt"
-    if python_license.is_file():shutil.copyfile(python_license,licenses/"Python-LICENSE.txt")
+    import sysconfig
+    python_names = ("python"+str(sys.version_info.major), "python"+str(sys.version_info.major)+"."+str(sys.version_info.minor))
+    for python_license in (Path(sys.base_prefix)/"LICENSE.txt", Path(sysconfig.get_path("stdlib"))/"LICENSE.txt",
+                           *(Path(sys.base_prefix)/"share"/"licenses"/name/"LICENSE" for name in python_names)):
+        if python_license.is_file():
+            shutil.copyfile(python_license,licenses/"Python-LICENSE.txt")
+            break
     deps=ROOT/".local"/"builddeps"
     distributions=list(importlib.metadata.distributions())
     if deps.is_dir():distributions.extend(importlib.metadata.distributions(path=[str(deps)]))
@@ -98,8 +107,12 @@ def compile_executable(snapshot, mode, portable_dev, work, stage, licenses):
     name="CodexPacketInspector-Dev" if mode=="dev" else "CodexPacketInspector"
     icon=source/APP_ICON.relative_to(ROOT)
     log=build/"build.log"
-    command=[sys.executable,"-m","PyInstaller","--noconfirm","--clean","--onefile","--windowed",
-             "--name",name,"--icon",str(icon),"--distpath",str(stage),
+    windows=sys.platform=="win32"
+    command=[sys.executable,"-m","PyInstaller","--noconfirm","--clean","--onefile",
+             *(["--windowed","--icon",str(icon)] if windows else ["--console", "--exclude-module", "webview",
+                 "--exclude-module", "packet_inspector.desktop", "--exclude-module", "packet_inspector.upgrade",
+                 "--exclude-module", "packet_inspector.router", "--exclude-module", "packet_inspector.tray"]),
+             "--name",name,"--distpath",str(stage),
              "--workpath",str(build/"app"),"--specpath",str(build/"spec"),
              "--paths",str(source),"--collect-submodules","zstandard","--hidden-import","zstandard.backend_c",
              "--add-data",str(source/"packet_inspector"/"ui")+os.pathsep+"packet_inspector/ui",
@@ -117,7 +130,7 @@ def compile_executable(snapshot, mode, portable_dev, work, stage, licenses):
         result=subprocess.run(command,cwd=source,env=env,stdout=output,stderr=subprocess.STDOUT)
     if result.returncode:
         raise SourceError(f"{mode} compilation failed; diagnostics: {log}")
-    executable=stage/(name+".exe")
+    executable=stage/(name+(".exe" if windows else ""))
     # An EXE copied from an older build cannot pass this comparison.
     if deps.is_dir() and str(deps) not in sys.path:sys.path.insert(0,str(deps))
     from PyInstaller.archive.readers import CArchiveReader
@@ -132,15 +145,18 @@ def compile_executable(snapshot, mode, portable_dev, work, stage, licenses):
         if hashlib.sha256(archive.extract(entries[key])).hexdigest()!=snapshot.files[key]:
             raise SourceError("EXE contains an older frontend: "+asset)
     pyz=archive.open_embedded_archive(next(name for name in archive.toc if name.startswith('PYZ')))
-    if 'packet_inspector.window_chrome' not in pyz.toc:
-        raise SourceError("EXE is missing the current native title bar")
+    required=('packet_inspector.window_chrome',) if windows else ('packet_inspector.server','packet_inspector.transport')
+    if any(module not in pyz.toc for module in required):
+        raise SourceError("Executable is missing required platform modules")
     return executable
 
 
 def package_release(source, stage, licenses):
-    public = stage / "publish"
+    linux=sys.platform.startswith("linux")
+    public = stage / ("linux-package" if linux else "publish")
     public.mkdir()
-    shutil.copyfile(stage / PUBLIC_FILES[0], public / PUBLIC_FILES[0])
+    executable="CodexPacketInspector" if linux else PUBLIC_FILES[0]
+    shutil.copyfile(stage / executable, public / executable)
     for name in ("README.md", "LICENSE"):
         shutil.copyfile(source / name, public / name)
     notices = (source / "docs" / "THIRD_PARTY_NOTICES.txt").read_text(encoding="utf8")
@@ -149,6 +165,19 @@ def package_release(source, stage, licenses):
             notices += "\n\n" + "=" * 72 + "\n" + path.name + "\n" + "=" * 72 + "\n"
             notices += path.read_text(encoding="utf8", errors="replace")
     (public / "THIRD_PARTY_NOTICES.txt").write_text(notices, encoding="utf8")
+    if linux:
+        (public / executable).chmod(0o755)
+        shutil.copyfile(source / "docs" / "README.en.md", public / "README.en.md")
+        shutil.copyfile(source / "scripts" / "linux" / "codex-packet-inspector.service",
+                        public / "codex-packet-inspector.service")
+        def permissions(info):
+            info.mode=0o755 if info.name.endswith("/"+executable) else 0o644
+            info.uid=info.gid=0
+            info.uname=info.gname=""
+            return info
+        with tarfile.open(stage / ("CodexPacketInspector-linux-"+platform.machine()+".tar.gz"), "w:gz") as archive:
+            for path in sorted(public.iterdir()):
+                archive.add(path, arcname="codex-packet-inspector/"+path.name, filter=permissions)
 
 
 def main(argv=None):
@@ -156,7 +185,7 @@ def main(argv=None):
     parser.add_argument("--output-dir",type=Path)
     parser.add_argument("--mode",choices=("dev","release"),default="release")
     parser.add_argument("--portable-dev",action="store_true")
-    parser.add_argument("--release-only",action="store_true",help="omit the companion development EXE from a release build")
+    parser.add_argument("--release-only",action="store_true",help="omit the companion Windows development EXE from a release build")
     parser.add_argument("--local",action="store_true",help="use local Git refs without fetching; retain all source and artifact checks")
     parser.add_argument("--check-source",action="store_true",help="validate the shared source without building")
     args=parser.parse_args(argv)
@@ -164,10 +193,13 @@ def main(argv=None):
         parser.error("--release-only requires --mode release")
     refresh=args.mode=="release" and not args.local
     try:
+        if sys.platform!="win32" and not sys.platform.startswith("linux"):
+            raise SourceError("Builds currently support Windows and Linux hosts")
         workspace=Workspace(ROOT)
         with workspace.lock():
             metadata=workspace.validate(args.mode,refresh=refresh)
             metadata["remote_refreshed"]=refresh
+            metadata.update(platform=sys.platform,architecture=platform.machine(),libc=list(platform.libc_ver()))
             if metadata['version']!=VERSION:raise SourceError("Imported version differs from the source version")
             if args.check_source:
                 print(json.dumps({"source":"ok",**metadata,"canonical_root":str(workspace.canonical)},ensure_ascii=False))
@@ -181,7 +213,7 @@ def main(argv=None):
             licenses=collect_licenses(snapshot.source,work)
             executable=compile_executable(snapshot,args.mode,args.portable_dev,work,stage,licenses)
             if args.mode=="release":
-                if not args.release_only:
+                if sys.platform=="win32" and not args.release_only:
                     compile_executable(snapshot,"dev",True,work,stage,licenses)
                 package_release(snapshot.source,stage,licenses)
             snapshot.write_manifest(stage/"BUILD-SOURCE.json",args.mode)

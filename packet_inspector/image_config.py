@@ -84,6 +84,9 @@ class ImageToolConfig:
     def mode(self):
         return self.state.get("mode", "optimized" if self.state.get("enabled") else "native")
 
+    def available_modes(self):
+        return IMAGE_MODES if self.installation.supported else ("native", "disabled")
+
     def native_configuration_stamp(self):
         return {"build": build_info().get("source_sha256", "source-image-config-1"),
                 "runtime": image_runtime_identity()}
@@ -288,6 +291,8 @@ class ImageToolConfig:
             mode = "optimized" if mode else "native"
         if not isinstance(mode, str) or mode not in IMAGE_MODES:
             raise ValueError("invalid image analysis mode")
+        if mode not in self.available_modes():
+            raise ValueError("Linux 服务器版暂不支持独立图片优化工具，请使用原生图片解析。")
         capability = self.native_configuration_stamp() if mode != "native" else None
         if capability is not None and self.state.get("native_capability") != capability:
             verify_view_image_feature()

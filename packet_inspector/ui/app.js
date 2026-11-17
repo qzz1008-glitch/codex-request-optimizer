@@ -1261,11 +1261,12 @@ function selectedImageAnalysisMode() {
 }
 function fillImageAnalysisMode() {
   const s=state.status,hasModes=["native","disabled","optimized"].includes(s.image_analysis_mode);
+  const supportedModes=Array.isArray(s.image_analysis_modes)?s.image_analysis_modes:null;
   for(const input of $("image-analysis-mode").querySelectorAll("input")) {
     if(!settingsEditing)input.checked=input.value===imageAnalysisMode(s);
-    const unavailable=input.value==="disabled"&&!hasModes;
+    const unavailable=supportedModes?!supportedModes.includes(input.value):input.value==="disabled"&&!hasModes;
     input.disabled=settingsSaving||!(s.image_isolation_supported||hasModes)||unavailable;
-    input.closest("label").title=unavailable?t("当前后台暂不支持禁用模式，升级后可用。"):"";
+    input.closest("label").title=unavailable?t(supportedModes?"当前中转暂不支持此功能。":"当前后台暂不支持禁用模式，升级后可用。"):"";
   }
   const descriptions={native:"卸载优化工具，恢复原生图片解析",disabled:"关闭原生与优化图片工具",
     optimized:"主请求仅保留图片路径"};
@@ -1855,9 +1856,10 @@ async function saveSettings() {
 }
 function renderUpdates() {
   const u=updateStatus, busy=settingsSaving||updateBusy||["checking","downloading","upgrading"].includes(u?.state);
+  const supported=u?.supported!==false&&state.status?.updates_supported!==false;
   const currentVersion=u?.current_version||state.status?.version;
   $("updates-versions").textContent=currentVersion?t("当前版本：{version}").replace("{version}",currentVersion):"";
-  $("updates-check").disabled=busy;$("updates-install").disabled=busy||u?.state!=="available";
+  $("updates-check").disabled=busy||!supported;$("updates-install").disabled=busy||!supported||u?.state!=="available";
   const labels={idle:"可检查 GitHub 上的最新版本。",checking:"正在检查更新…",current:"已是最新版本。",available:"发现新版本，可以升级。",downloading:"正在下载并校验升级包…",upgrading:"正在升级，旧请求继续完成…",complete:"升级已完成。"};
   const displayedState=updateBusy?(updateAction==="check"?"checking":"downloading"):u?.state;
   const checking=displayedState==="checking",installing=["downloading","upgrading"].includes(displayedState);
@@ -1867,10 +1869,10 @@ function renderUpdates() {
   $("updates-check-label").textContent=t(checking?"检查中":"检查更新");
   $("updates-install-label").textContent=t(installing?"升级中":"立即升级");
   const message=$("updates-message");
-  message.hidden=!updateFeedbackVisible;
-  message.textContent=displayedState==="error"?t(u.error):displayedState==="available"&&u.latest_version?t("最新版本：{version}").replace("{version}",u.latest_version):t(labels[displayedState]||labels.idle);
+  message.hidden=!updateFeedbackVisible&&supported;
+  message.textContent=!supported?t("Linux 版请通过替换安装包更新。"):displayedState==="error"?t(u.error):displayedState==="available"&&u.latest_version?t("最新版本：{version}").replace("{version}",u.latest_version):t(labels[displayedState]||labels.idle);
   message.title=message.textContent;
-  message.classList.toggle("error",displayedState==="error");
+  message.classList.toggle("error",supported&&displayedState==="error");
 }
 async function loadUpdates() {
   if(updateStatusLoading||updateBusy)return;
@@ -1880,6 +1882,7 @@ async function loadUpdates() {
   finally {updateStatusLoading=false;renderUpdates();}
 }
 async function performUpdate(which) {
+  if(updateStatus?.supported===false||state.status?.updates_supported===false)return;
   if(settingsSaving||updateBusy||["checking","downloading","upgrading"].includes(updateStatus?.state))return;
   updateRevision++;updateBusy=true;updateAction=which;updateFeedbackVisible=true;renderUpdates();
   try {

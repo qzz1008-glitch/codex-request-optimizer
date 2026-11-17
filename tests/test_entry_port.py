@@ -4,6 +4,7 @@ from __future__ import annotations
 import http.client
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+import os
 from pathlib import Path
 import tempfile
 import threading
@@ -51,11 +52,12 @@ class EntryPortTests(unittest.TestCase):
         before_config = self.config.read_bytes()
         code, updates = self.api("/api/updates", port=self.ui.port)
         self.assertEqual(code, 200)
-        self.assertTrue(updates["supported"])
+        self.assertEqual(updates["supported"], os.name == "nt")
         self.assertFalse(updates["automatic"])
         code, updates = self.api("/api/updates", {"action": "configure", "automatic": False}, port=self.ui.port)
-        self.assertEqual(code, 200)
-        self.assertFalse(updates["automatic"])
+        self.assertEqual(code, 200 if os.name == "nt" else 400)
+        if os.name == "nt":
+            self.assertFalse(updates["automatic"])
         self.assertEqual(self.server.settings_path.read_bytes(), before_settings)
         self.assertEqual(self.config.read_bytes(), before_config)
         self.assertEqual(self.api("/api/updates", {"action": "install"}, port=self.ui.port,

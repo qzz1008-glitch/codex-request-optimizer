@@ -2,10 +2,46 @@
 import ctypes
 import json
 from pathlib import Path
+import signal
 import sys
 import threading
 
 from packet_inspector.server import main as service_main, default_data_dir, argument_parser
+
+
+def console_service(arguments):
+    """Run the local relay without importing the Windows desktop runtime."""
+    previous = None
+    stopping = threading.Event()
+
+    def started(server):
+        nonlocal previous
+        if threading.current_thread() is threading.main_thread():
+            previous = signal.getsignal(signal.SIGTERM)
+
+            def stop(_signum, _frame):
+                if stopping.is_set():
+                    return
+                stopping.set()
+                def drain():
+                    with server.guard:
+                        server.upgrade_draining = True
+                    while True:
+                        with server.guard:
+                            if not server.active_requests:
+                                break
+                        threading.Event().wait(.1)
+                    server.shutdown()
+                # shutdown must run outside the thread executing serve_forever.
+                threading.Thread(target=drain, name="service-stop", daemon=True).start()
+
+            signal.signal(signal.SIGTERM, stop)
+
+    try:
+        return service_main(arguments, on_started=started)
+    finally:
+        if previous is not None:
+            signal.signal(signal.SIGTERM, previous)
 
 
 def installed_entry(arguments):
@@ -29,6 +65,10 @@ def main(argv=None):
     arguments = [arg for arg in provided if arg not in {"--background", "--tray"}]
     tray, preload = None, None
     try:
+        if sys.platform.startswith("linux"):
+            if upgrade_requested or router_requested or use_tray:
+                raise ValueError("Linux 服务器版不支持 Windows 升级器、入口角色或托盘；请直接启动服务。")
+            return console_service(arguments)
         if upgrade_requested:
             from packet_inspector.upgrade import run_integrated
             return run_integrated(arguments, quiet=quiet, force=True)

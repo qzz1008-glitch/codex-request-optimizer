@@ -34,7 +34,7 @@ class ClipboardImageCache:
 
     @staticmethod
     def _regular(path):
-        return not path.is_symlink() and not path.is_junction() and path.is_file()
+        return not path.is_symlink() and not getattr(path, "is_junction", lambda: False)() and path.is_file()
 
     def _eligible(self, path):
         parent = path.parent.resolve()
@@ -128,7 +128,8 @@ class ClipboardImageCache:
             value = local_image_path(value)
             if value and self._eligible(Path(value)):
                 candidates[value] = Path(value)
-        if not candidates or self.directory.is_symlink() or self.directory.is_junction():
+        if (not candidates or self.directory.is_symlink()
+                or getattr(self.directory, "is_junction", lambda: False)()):
             return {}
         protected = protected if protected is not None else set()
         pinned = set(protected)

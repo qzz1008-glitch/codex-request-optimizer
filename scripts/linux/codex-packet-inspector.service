@@ -1,0 +1,16 @@
+[Unit]
+Description=Codex Request Optimizer
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/CodexPacketInspector --background --ui-forward-port 47848
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=660
+Environment=NO_PROXY=localhost,127.0.0.1,::1
+Environment=no_proxy=localhost,127.0.0.1,::1
+
+[Install]
+WantedBy=default.target

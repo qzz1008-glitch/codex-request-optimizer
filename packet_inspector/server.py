@@ -28,7 +28,7 @@ from .config_link import ConfigLink, validate_upstream
 from .providers import ProviderManager, config_paths
 from .wsl_connection import WslConnection
 from .connection_resume import ConnectionResume
-from .entry_port import ConfiguredPortParser, port_status, save_port
+from .entry_port import ConfiguredPortParser, port_status, save_port, validate_port
 from .restart_notice import RestartNotices
 from .updates import Updates
 from .token_window import TokenWindows
@@ -150,7 +150,9 @@ class InspectorServer(ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = True
 
-    def __init__(self, address, data_dir, config_path, upstream=None, *, worker_id="", public_port=None, worker_token="", startup=None):
+    def __init__(self, address, data_dir, config_path, upstream=None, *, worker_id="", public_port=None, worker_token="", startup=None,
+                 ui_forward_port=None):
+        self.ui_forward_port = validate_port(ui_forward_port) if ui_forward_port is not None else None
         self.startup = startup
         self._startup_step("settings.read")
         self.data_dir = Path(data_dir)
@@ -711,6 +713,7 @@ class InspectorServer(ThreadingHTTPServer):
                                           != self.image_isolation.directory),
                 "image_isolation_enabled": self.settings["image_isolation_enabled"],
                 "image_analysis_mode": self.settings["image_analysis_mode"],
+                "image_analysis_modes": list(self.image_config.available_modes()),
                 "image_isolation_supported": True, "image_tool": self.image_config.status(),
                 "image_save_dir": str(self.image_isolation.directory),
                 "image_save_dir_default": str(self.default_image_save_dir), "image_save_dir_supported": True,
@@ -728,10 +731,10 @@ class InspectorServer(ThreadingHTTPServer):
                 "relay_active_requests": self.active_requests,
                 "auto_detect_providers": self.settings["auto_detect_providers"],
                 "provider_routing_supported": True, "upgrade_drain_supported": True,
-                "updates_supported": True,
+                "updates_supported": self.updates.supported,
                 "entry_port_supported": True, "entry_port": entry_port,
                 "worker_id": self.worker_id, "worker_state": self.worker_state,
-                "public_port": self.public_port,
+                "public_port": self.public_port, "ui_forward_port": self.ui_forward_port,
                 "provider_count": self.provider_sync_result.get("provider_count", len({r["provider"] for r in self.settings["provider_routes"].values()})),
                 "provider_sync_error": self.provider_sync_error,
                 "provider_warnings": self.provider_sync_result.get("warnings", []),
@@ -755,13 +758,15 @@ class Handler(BaseHTTPRequestHandler):
 
     def _valid_host(self):
         allowed = {f"{host}:{port}" for host in ("127.0.0.1", "localhost")
-                   for port in (self.server.port, self.server.public_port)}
+                   for port in (self.server.port, self.server.public_port, getattr(self.server, "ui_forward_port", None))
+                   if port is not None}
         return self.headers.get("Host", "") in allowed
 
     def _valid_origin(self):
         origin = self.headers.get("Origin")
         return not origin or origin in {f"http://{host}:{port}" for host in ("127.0.0.1", "localhost")
-                                       for port in (self.server.port, self.server.public_port)}
+                                       for port in (self.server.port, self.server.public_port,
+                                                    getattr(self.server, "ui_forward_port", None)) if port is not None}
 
     def _json(self, status, payload, headers=None):
         self._bytes(status, encode(payload), "application/json; charset=utf-8", headers)
@@ -1801,9 +1806,11 @@ def default_data_dir():
 
 def argument_parser():
     parser = ConfiguredPortParser(description="Local Codex packet inspector")
+    parser.add_argument("--version", action="version", version="Codex Request Optimizer " + VERSION)
     parser.add_argument("--port", type=int, default=None, help="override the configured entry port")
     parser.add_argument("--data-dir", type=Path, default=default_data_dir())
     parser.add_argument("--config", type=Path, default=Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))) / "config.toml")
+    parser.add_argument("--ui-forward-port", type=int, help="allow this local SSH forwarding port for the browser interface")
     parser.add_argument("--upstream")
     parser.add_argument("--worker-id", default="", help=argparse.SUPPRESS)
     parser.add_argument("--public-port", type=int, help=argparse.SUPPRESS)
@@ -1830,7 +1837,8 @@ def run_server(args, on_started, trace):
         worker_token = control["token"]
     try:
         server = InspectorServer(("127.0.0.1", args.port), args.data_dir, args.config, args.upstream,
-                                 worker_id=args.worker_id, public_port=args.public_port, worker_token=worker_token, startup=trace)
+                                 worker_id=args.worker_id, public_port=args.public_port, worker_token=worker_token, startup=trace,
+                                 ui_forward_port=args.ui_forward_port)
     except OSError as exc:
         if args.worker_id:
             raise RuntimeError("worker port is occupied") from None
