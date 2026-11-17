@@ -22,6 +22,7 @@ from urllib.request import Request, build_opener, HTTPRedirectHandler, ProxyHand
 import webbrowser
 
 from . import VERSION
+from .build_info import build_info
 from .analyzer import (MAX_BODY, clean_text, describe_node, encode, inspect_request,
                        classify_request, decode_body, thread_identity, resolve, safe_path, search_body)
 from .config_link import ConfigLink, validate_upstream
@@ -662,7 +663,8 @@ class InspectorServer(ThreadingHTTPServer):
             profile = {"active": False, "config_error": type(exc).__name__}
         storage = self.store.stats()
         entry_port = port_status(self.data_dir, self.public_port)
-        return {"version": VERSION, "ui_version": VERSION, "capture_enabled": self.settings["capture_enabled"],
+        return {"version": VERSION, "ui_version": VERSION, "ui_build": build_info(),
+                "capture_enabled": self.settings["capture_enabled"],
                 "connection_state": "connected" if profile.get("active") else "disconnected",
                 "connection_policy": 1, "connection_reload_required": self.connection_reload_required,
                 "restart_notice": self.restart_notices.snapshot(port_pending=bool(entry_port["pending"] or entry_port.get("error"))),
@@ -698,7 +700,7 @@ class InspectorServer(ThreadingHTTPServer):
                 "capacity_retry_diagnostics_errors": self.retry_journal.errors,
                 "capacity_retry_diagnostics_last_error": self.retry_journal.last_error,
                 "network_diagnostics_supported": True,
-                "loopback_proxy_repair_supported": True,
+                "loopback_proxy_repair_supported": os.name == "nt",
                 "network_diagnostics_errors": self.network_diagnostics.errors,
                 "storage_paths_supported": True,
                 "storage_dir_supported": True,
