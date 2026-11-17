@@ -3,7 +3,7 @@
 globalThis.InspectorConnections = {
   create({request, status, localBusy, refreshLocal, localActivity=()=>{}}) {
     const get=id=>document.getElementById(id), tr=value=>uiI18n.t(value);
-    const panel=get("connection-panel"), controls=get("connection-controls"), trigger=get("connection-devices-open");
+    const panel=get("connection-panel"), controls=get("connection-controls");
     const dialog=get("devices-confirm-dialog"), list=get("connection-devices-list");
     const nativePopover="popover" in HTMLElement.prototype;
     const nodes=new Map(), confirmNodes=new Map(), pending=new Map();
@@ -93,13 +93,13 @@ globalThis.InspectorConnections = {
     }
     function hide() {
       clearTimeout(closeTimer);
-      if(nativePopover){if(isOpen())panel.hidePopover();}else{panel.hidden=true;trigger.setAttribute("aria-expanded","false");}
+      if(nativePopover){if(isOpen())panel.hidePopover();}else{panel.hidden=true;}
     }
     function show() {
       clearTimeout(closeTimer);
       if(document.querySelector("dialog[open]"))return;
       if(!isOpen()) {
-        if(nativePopover)panel.showPopover({source:trigger});else{panel.hidden=false;trigger.setAttribute("aria-expanded","true");}
+        if(nativePopover)panel.showPopover({source:controls});else{panel.hidden=false;}
       }
       place();poll();
     }
@@ -163,14 +163,16 @@ globalThis.InspectorConnections = {
       finally {submitting=false;render();schedule();}
     }
     if(!nativePopover){panel.hidden=true;panel.classList.add("connection-panel-fallback");}
-    else panel.addEventListener("toggle",()=>{trigger.setAttribute("aria-expanded",String(isOpen()));if(isOpen()){place();poll();}});
+    else panel.addEventListener("toggle",()=>{if(isOpen()){place();poll();}});
     for(const node of [controls,panel]) {
       node.addEventListener("pointerenter",event=>{if(event.pointerType==="touch")return;hover=true;show();});
       node.addEventListener("pointerleave",leave);
       node.addEventListener("focusin",show);
       node.addEventListener("focusout",leave);
     }
-    trigger.addEventListener("click",show);
+    controls.addEventListener("keydown",event=>{
+      if(event.key==="ArrowDown"){event.preventDefault();show();panel.querySelector("button:not(:disabled)")?.focus();}
+    });
     document.addEventListener("pointerdown",event=>{if(!controls.contains(event.target)&&!panel.contains(event.target))hide();});
     document.addEventListener("keydown",event=>{if(event.key==="Escape"&&isOpen()){hide();event.stopPropagation();}});
     globalThis.addEventListener("resize",place);

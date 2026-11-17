@@ -37,13 +37,18 @@ const {chromium}=require('playwright');
         });
       });
       await page.waitForFunction(()=>document.querySelectorAll('.connection-device').length===2);
-      const trigger=page.locator('#connection-devices-open'),panel=page.locator('#connection-panel');
-      await trigger.focus();await page.keyboard.press('Escape');
+      const controls=page.locator('#connection-controls'),panel=page.locator('#connection-panel');
+      assert.equal(await page.locator('#connection-devices-open').count(),0,'The extra dropdown triangle must be removed');
+      await controls.focus();await page.keyboard.press('Escape');
+      for(const id of ['compression-disconnect','compression-connect']){
+        await page.mouse.move(0,790);
+        await page.locator('#'+id).hover();await panel.waitFor({state:'visible'});
+        await page.keyboard.press('Escape');await panel.waitFor({state:'hidden'});
+      }
       await page.mouse.move(0,790);
-      await trigger.hover();await panel.waitFor({state:'visible'});
-      assert.equal(await trigger.getAttribute('aria-expanded'),'true');
+      await page.locator('#compression-connect').hover();await panel.waitFor({state:'visible'});
       const bounds=await panel.boundingBox();assert(bounds.x>=0&&bounds.x+bounds.width<=1201&&bounds.y>=0&&bounds.y+bounds.height<=801);
-      assert.equal(await page.evaluate(()=>document.activeElement.id),'connection-devices-open','Hover must not move keyboard focus');
+      assert.equal(await page.evaluate(()=>document.activeElement.id),'connection-controls','Hover must not move keyboard focus');
       await page.locator('.connection-device').last().getByRole('button',{name:'接入',exact:true}).click();
       await page.locator('#devices-confirm-dialog').waitFor({state:'visible'});
       assert.equal(await page.locator('#devices-confirm-targets li').count(),1);
@@ -75,10 +80,10 @@ const {chromium}=require('playwright');
       assert.deepEqual(await page.evaluate(()=>fixture.calls.at(-1).targets),['remote-a'],'Retry only the failed scope');
       await page.locator('#devices-confirm-cancel').click();
       await page.setViewportSize({width:700,height:700});
-      await trigger.click();await panel.waitFor({state:'visible'});
+      await controls.focus();await page.keyboard.press('ArrowDown');await panel.waitFor({state:'visible'});
+      assert.equal(await page.evaluate(()=>document.getElementById('connection-panel').contains(document.activeElement)),true,'ArrowDown enters the device controls');
       const narrow=await panel.boundingBox();assert(narrow.x>=0&&narrow.x+narrow.width<=701&&narrow.y>=0&&narrow.y+narrow.height<=701);
       await page.keyboard.press('Escape');await panel.waitFor({state:'hidden'});
-      assert.equal(await trigger.getAttribute('aria-expanded'),'false');
       assert.deepEqual(errors,[]);
       await page.close();
     }
