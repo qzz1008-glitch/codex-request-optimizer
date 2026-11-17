@@ -156,7 +156,7 @@ class SshControl:
         script = "INPUT = " + repr(payload) + "\n" + SCRIPT
         try:
             result = subprocess.run(arguments, input=script.encode(), capture_output=True,
-                timeout=90 if action else 20, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                timeout=240 if action == "reconnect" else 90 if action else 30, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         except subprocess.TimeoutExpired:
             raise ValueError("操作结果未确认，请刷新状态后检查。" if action else "SSH 状态检查超时。") from None
         except OSError:
@@ -260,6 +260,8 @@ class Connections:
         entry.update(busy=True, action=action or "check", error="")
         if action:
             entry.pop("action_error", None)
+        if action == "reconnect":
+            entry.pop("codex_reconnect", None)
         host, identity = entry["host"], entry["id"]
         origin = entry.get("origin", "")
 
@@ -279,10 +281,13 @@ class Connections:
                                   "local_result": details}
                     if result.get("state") not in {"connected", "disconnected", "error"}:
                         raise ValueError("服务器返回的接入状态无效。")
-                    if action and result["state"] != ("connected" if action == "activate" else "disconnected"):
+                    if action == "reconnect" and not isinstance(result.get("codex_reconnect"), dict):
+                        result["codex_reconnect"] = {"state": "unconfirmed", "error": "服务器未确认 Codex 重载结果，请刷新状态后检查。"}
+                    if action in {"activate", "restore"} and result["state"] != ("connected" if action == "activate" else "disconnected"):
                         result["error"] = result.get("error") or "接入配置未完全更新，请检查设备上的中转软件。"
             except Exception as exc:
-                result = {"state": "error", "error": safe_text(str(exc), (), 1500)}
+                detail = safe_text(str(exc), (), 1500)
+                result = {"codex_reconnect": {"state": "unconfirmed", "error": detail}} if action == "reconnect" else {"state": "error", "error": detail}
             finally:
                 with self.guard:
                     if host:
@@ -314,7 +319,7 @@ class Connections:
             return {"targets": rows, "error": catalog_error, "revision": self.revision}
 
     def apply(self, identities, action, *, revision=None):
-        if action not in {"activate", "restore"} or not isinstance(identities, list) or not identities or len(identities) > MAX_TARGETS + 1:
+        if action not in {"activate", "restore", "reconnect"} or not isinstance(identities, list) or not identities or len(identities) > MAX_TARGETS + 1:
             raise ValueError("接入操作或设备列表无效。")
         if any(not isinstance(identity, str) for identity in identities) or len(set(identities)) != len(identities):
             raise ValueError("接入设备列表无效。")
@@ -326,12 +331,15 @@ class Connections:
                 raise ValueError("设备列表已变化，请重新确认影响范围。")
             if any(identity not in self.entries for identity in identities):
                 raise ValueError("设备列表已变化，请重新确认影响范围。")
+            if action == "reconnect" and (len(identities) != 1 or identities[0] == "local"):
+                raise ValueError("请选择一台服务器重新连接 Codex。")
             if any(self.entries[identity].get("busy") for identity in identities):
                 raise ValueError("所选设备正在检查或修改接入配置，请稍后重试。")
             for identity in identities:
                 entry = self.entries[identity]
                 entry.pop("completed_action", None)
-                entry.pop("reload_required", None)
+                if action != "reconnect":
+                    entry.pop("reload_required", None)
                 entry["operation_id"] = secrets.token_hex(8)
                 self._launch(entry, action)
             return {"accepted": {identity: self.entries[identity]["operation_id"] for identity in identities}}

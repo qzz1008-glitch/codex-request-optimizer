@@ -8,15 +8,17 @@ globalThis.InspectorConnections = {
     const nativePopover="popover" in HTMLElement.prototype;
     const nodes=new Map(), confirmNodes=new Map(), pending=new Map();
     let rows=[],loaded=false,loading=false,submitting=false,catalogError="",revision="",timer=null,closeTimer=null,hover=false;
-    let plan=null,finished=false,disposed=false;
+    let plan=null,finished=false,disposed=false,nextNodeId=0;
     const text=(node,value)=>{if(node.textContent!==value)node.textContent=value;};
     const name=row=>row.kind==="local"?tr("本机"):row.name;
     const isOpen=()=>nativePopover?panel.matches(":popover-open"):!panel.hidden;
     const busy=row=>!!row.busy||(row.id==="local"&&localBusy());
     const anyBusy=()=>rows.some(busy)||submitting;
     const desired=action=>action==="activate"?"connected":"disconnected";
+    const operationError=(row,action)=>row.error||(action==="reconnect"?row.codex_reconnect?.error:"");
+    const completed=(row,action)=>action==="reconnect"?row.codex_reconnect?.state==="reloaded":row.state===desired(action);
     function stateText(row) {
-      if(row.busy)return tr(row.action==="activate"?"正在接入…":row.action==="restore"?"正在断开…":"正在检查…");
+      if(row.busy)return tr(row.action==="reconnect"?"正在重新连接…":row.action==="activate"?"正在接入…":row.action==="restore"?"正在断开…":"正在检查…");
       if(row.error||row.state==="error")return tr("接入异常");
       const value=tr(row.state==="connected"?"已接入":row.state==="disconnected"?"已断开":"待检查");
       if(row.reload_required)return value+" · "+tr(row.kind==="local"?"请重启 ChatGPT App":"请重新连接远程 Codex");
@@ -33,8 +35,12 @@ globalThis.InspectorConnections = {
         const button=element("button");button.type="button";
         button.addEventListener("click",()=>confirm(action,[row.id]));buttons.append(button);actions[action]=button;
       }
-      info.append(title,state,error);root.append(info,buttons);list.append(root);
-      const value={root,title,state,error,buttons,actions};nodes.set(row.id,value);return value;
+      const tools=element("div","connection-device-controls"),reconnect=element("button","connection-device-reconnect"),hint=element("span","hint");
+      reconnect.type="button";hint.id="connection-reconnect-hint-"+nextNodeId++;
+      reconnect.setAttribute("aria-describedby",hint.id);
+      reconnect.addEventListener("click",()=>{if(reconnect.getAttribute("aria-disabled")!=="true")confirm("reconnect",[row.id]);});
+      tools.append(buttons,reconnect);info.append(title,state,error,hint);root.append(info,tools);list.append(root);
+      const value={root,title,state,error,buttons,actions,reconnect,hint};nodes.set(row.id,value);return value;
     }
     function render() {
       localActivity(rows.some(row=>row.id==="local"&&row.busy)||pending.has("local"));
@@ -61,6 +67,14 @@ globalThis.InspectorConnections = {
           button.setAttribute("aria-pressed",String(row.state===desired(action)&&!row.error));
           button.disabled=busy(row)||submitting||(row.state===desired(action)&&!row.error);
         }
+        value.reconnect.hidden=row.kind!=="ssh";
+        value.reconnect.disabled=busy(row)||submitting;
+        value.reconnect.setAttribute("aria-disabled",String(!row.codex_restart?.supported));
+        text(value.reconnect,tr("重新连接 Codex"));
+        value.reconnect.setAttribute("aria-label",tr("重新连接 Codex")+" · "+name(row));
+        const nativeHint=row.codex_reconnect?.error||row.codex_reconnect?.warning||(!row.codex_restart?.supported?(row.codex_restart?.reason||tr("刷新状态后检查是否支持自动重连。")):"");
+        text(value.hint,row.kind==="ssh"?tr(nativeHint):"");value.hint.hidden=!value.hint.textContent;
+        value.reconnect.title=tr(nativeHint||"重载此服务器当前账号的 Codex 后台，使配置生效。");
       }
       const message=catalogError||(!loaded?tr("正在读取设备列表…"):"");
       text(get("connection-devices-error"),tr(message));get("connection-devices-error").hidden=!message;
@@ -74,14 +88,15 @@ globalThis.InspectorConnections = {
       for(const row of selected) {
         let node=confirmNodes.get(row.id);
         if(!node){node=element("li");const title=element("strong"),detail=element("span");node.append(title,detail);confirmNodes.set(row.id,node);get("devices-confirm-targets").append(node);}
-        text(node.firstChild,name(row));text(node.lastChild,(row.error?tr(row.error):stateText(row)));
-        node.dataset.state=row.error?"error":row.state;
+        const error=operationError(row,plan.action),reloaded=plan.action==="reconnect"&&finished&&completed(row,plan.action);
+        text(node.firstChild,name(row));text(node.lastChild,error?tr(error):reloaded?tr(row.codex_reconnect?.warning||"Codex 后台已重载，等待 ChatGPT 恢复连接。"):stateText(row));
+        node.dataset.state=error?"error":row.state;
       }
       const running=selected.some(row=>pending.has(row.id));
-      const failed=finished&&selected.some(row=>row.error||row.state!==desired(plan.action));
+      const failed=finished&&selected.some(row=>operationError(row,plan.action)||!completed(row,plan.action));
       get("devices-confirm-apply").hidden=finished&&!failed;
       get("devices-confirm-apply").disabled=submitting||running||selected.some(busy)||!!catalogError;
-      text(get("devices-confirm-apply"),tr(submitting||running?"正在执行…":failed?"重试失败设备":plan.action==="activate"?"确认接入":"确认断开"));
+      text(get("devices-confirm-apply"),tr(submitting||running?"正在执行…":failed?"重试失败设备":plan.action==="reconnect"?"确认重新连接":plan.action==="activate"?"确认接入":"确认断开"));
       text(get("devices-confirm-cancel"),tr(finished?"完成":running?"关闭":"取消"));
       dialog.setAttribute("aria-busy",String(submitting||running));
     }
@@ -143,17 +158,17 @@ globalThis.InspectorConnections = {
       hide();finished=false;plan={action,targets:targets.map(({id,name,kind})=>({id,name,kind})),revision,submitted:false};
       confirmNodes.clear();get("devices-confirm-targets").replaceChildren();
       const all=identities===null;
-      text(get("devices-confirm-title"),tr(action==="activate"?(all?"接入全部设备":"接入所选设备"):(all?"断开全部设备":"断开所选设备")));
-      text(get("devices-confirm-description"),tr(action==="activate"?
+      text(get("devices-confirm-title"),tr(action==="reconnect"?"重新连接 Codex":action==="activate"?(all?"接入全部设备":"接入所选设备"):(all?"断开全部设备":"断开所选设备")));
+      text(get("devices-confirm-description"),tr(action==="reconnect"?"将重载所选服务器当前账号的 Codex 后台，使配置生效。该账号正在执行或排队的任务可能中断。":action==="activate"?
         "将修改以下设备的 Codex 配置，请求通过各设备上运行的中转软件发送。":
         "将恢复以下设备的原始出口并开启 Codex 原生压缩，后续请求不再通过对应中转。中转服务保持运行。"));
       const scope=targets.some(row=>row.kind==="local")?tr("本机操作包含已检测到的 WSL 配置。")+" ":"";
-      text(get("devices-confirm-hint"),scope+tr("配置变化后，本机请重启 ChatGPT App，服务器请重新连接对应的远程 Codex；未变化的设备无需重新加载。"));
+      text(get("devices-confirm-hint"),action==="reconnect"?tr("ChatGPT 将短暂断开该服务器并尝试自动恢复连接。中转服务保持运行。"):scope+tr("配置变化后，本机请重启 ChatGPT App，服务器请重新连接对应的远程 Codex；未变化的设备无需重新加载。"));
       get("devices-confirm-error").hidden=true;render();dialog.showModal();schedule();
     }
     async function apply() {
       if(!plan||submitting||plan.targets.some(row=>pending.has(row.id)))return;
-      const targets=plan.targets.filter(target=>!finished||rows.find(row=>row.id===target.id)?.error||rows.find(row=>row.id===target.id)?.state!==desired(plan.action));
+      const targets=plan.targets.filter(target=>{const row=rows.find(row=>row.id===target.id);return !finished||!row||operationError(row,plan.action)||!completed(row,plan.action);});
       if(targets.some(target=>{const row=rows.find(row=>row.id===target.id);return !row||busy(row);}))return;
       submitting=true;get("devices-confirm-error").hidden=true;render();
       try {
@@ -161,7 +176,10 @@ globalThis.InspectorConnections = {
         if(!value.accepted||typeof value.accepted!=="object")throw Error(tr("未能确认操作已开始，请刷新状态后检查。"));
         for(const [id,operation] of Object.entries(value.accepted))pending.set(id,operation);
         plan.submitted=true;finished=false;
-        for(const row of rows)if(pending.has(row.id))Object.assign(row,{busy:true,action:plan.action,error:""});
+        for(const row of rows)if(pending.has(row.id)) {
+          Object.assign(row,{busy:true,action:plan.action,error:""});
+          if(plan.action==="reconnect")delete row.codex_reconnect;
+        }
       } catch(error) {text(get("devices-confirm-error"),error.message);get("devices-confirm-error").hidden=false;}
       finally {submitting=false;render();schedule();}
     }

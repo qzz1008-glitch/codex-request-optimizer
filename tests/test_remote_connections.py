@@ -48,10 +48,13 @@ class RemoteConnectionsTests(unittest.TestCase):
 
     def transport(self, host, action, origin):
         self.remote_calls.append((host.id, action))
-        if action:
+        if action in {"activate", "restore"}:
             self.remote_active[host.id] = action == "activate"
-        return {"state": "connected" if self.remote_active[host.id] else "disconnected", "error": "",
-                "origin": "http://127.0.0.1:53111", "can_connect": True, "can_disconnect": True}
+        result = {"state": "connected" if self.remote_active[host.id] else "disconnected", "error": "",
+                  "origin": "http://127.0.0.1:53111", "can_connect": True, "can_disconnect": True}
+        if action == "reconnect":
+            result["codex_reconnect"] = {"state": "reloaded", "error": ""}
+        return result
 
     def settled(self):
         deadline = time.monotonic() + 2
@@ -230,6 +233,41 @@ class RemoteConnectionsTests(unittest.TestCase):
                 SshControl()(Host("id", "name", "host"), "activate")
         self.assertEqual(run.call_count, 1)
 
+    def test_reconnect_targets_one_remote_without_changing_provider_or_local_state(self):
+        identity = self.rows[0]["hostId"]
+        self.remote_active[identity] = True
+        self.settled()
+        self.remote_calls.clear()
+        self.manager.apply([identity], "reconnect")
+        result = self.settled()[identity]
+        self.assertEqual(result["state"], "connected")
+        self.assertEqual(result["codex_reconnect"]["state"], "reloaded")
+        self.assertEqual(self.remote_calls, [(identity, "reconnect")])
+        self.assertEqual(self.local_calls, [])
+        self.assertTrue(self.remote_active[identity])
+
+    def test_reconnect_rejects_local_and_bulk_operations(self):
+        self.settled()
+        self.remote_calls.clear()
+        for identities in (["local"], [row["hostId"] for row in self.rows]):
+            with self.assertRaisesRegex(ValueError, "一台服务器"):
+                self.manager.apply(identities, "reconnect")
+        self.assertEqual(self.remote_calls, [])
+        self.assertEqual(self.local_calls, [])
+
+    def test_reconnect_transport_failure_is_unconfirmed_and_keeps_provider_state(self):
+        identity = self.rows[0]["hostId"]
+        self.remote_active[identity] = True
+        self.settled()
+        self.manager.entries[identity]["reload_required"] = True
+        self.manager.transport = lambda *_: (_ for _ in ()).throw(ValueError("SSH result unknown"))
+        self.manager.apply([identity], "reconnect")
+        result = self.settled()[identity]
+        self.assertEqual(result["state"], "connected")
+        self.assertTrue(result["reload_required"])
+        self.assertEqual(result["codex_reconnect"]["state"], "unconfirmed")
+        self.assertIn("SSH result unknown", result["codex_reconnect"]["error"])
+
 
 class RemoteScriptTests(unittest.TestCase):
     def setUp(self):
@@ -239,6 +277,12 @@ class RemoteScriptTests(unittest.TestCase):
         self.status = {"version": "test", "connection_policy": 1,
                        "profile": {"config_path": str(self.root / "config.toml"), "active": False, "can_restore": False}}
         self.calls = []
+        self.native = False
+        self.native_mode = "ready"
+        self.native_calls = []
+        self.native_cli = self.root / "native-codex"
+        self.native_cli.write_text("fixture", encoding="utf8")
+        self.socket = self.root / "app-server-control" / "control.sock"
 
     def execute(self, action=None):
         test = self
@@ -250,12 +294,38 @@ class RemoteScriptTests(unittest.TestCase):
                 test.calls.append((request.full_url, request.data))
                 if request.data:
                     body = json.loads(request.data)
+                    if request.full_url.endswith("/api/restart-notice"):
+                        test.assertEqual(body, {"target": "chatgpt", "revision": test.status["restart_notice"]["revision"]})
+                        test.status["restart_notice"]["revision"] += 1
+                        test.status["restart_notice"]["items"] = [item for item in test.status["restart_notice"]["items"] if item["target"] != "chatgpt"]
+                        return Response(json.dumps(test.status["restart_notice"]).encode())
                     test.status["profile"].update(active=body["action"] == "activate", can_restore=True)
                     return Response(json.dumps({"reload_required": True}).encode())
                 return Response(json.dumps(test.status).encode())
+        def native_run(args, **kwargs):
+            self.native_calls.append((args, kwargs))
+            action = args[-1]
+            if action == "restart":
+                if self.native_mode == "timeout":
+                    raise subprocess.TimeoutExpired(args, 120)
+                if self.native_mode == "failure":
+                    return SimpleNamespace(returncode=1, stdout=b"", stderr=b"native restart denied")
+                if self.native_mode in {"notice-changed", "changed"}:
+                    self.status["restart_notice"]["revision"] += 1
+                if self.native_mode in {"config-changed", "changed"}:
+                    with (self.root / "config.toml").open("a") as stream:
+                        stream.write('# changed while restarting\n')
+            ready = not (self.native_mode == "not-ready" and any(call[0][-1] == "restart" for call in self.native_calls))
+            socket = self.root.parent / "other-home.sock" if self.native_mode == "wrong-home" else self.socket
+            value = {"status": "restarted" if action == "restart" else "running" if ready else "notRunning",
+                     "managedCodexPath": str(self.native_cli), "socketPath": str(socket)}
+            return SimpleNamespace(returncode=0, stdout=json.dumps(value).encode(), stderr=b"")
         output = io.StringIO()
         with patch.dict("os.environ", {"CODEX_HOME": str(self.root)}), \
              patch("pathlib.Path.home", return_value=self.root), \
+             patch("pathlib.Path.is_socket", return_value=True), \
+             patch("shutil.which", return_value=str(self.native_cli) if self.native else None), \
+             patch("subprocess.run", side_effect=native_run), \
              patch("urllib.request.build_opener", return_value=Opener()) as build, redirect_stdout(output):
             exec("INPUT = " + repr(json.dumps({"action": action})) + "\n" + SCRIPT, {})
         self.assertEqual(build.call_args.args[0].proxies, {})
@@ -280,6 +350,64 @@ class RemoteScriptTests(unittest.TestCase):
         self.status["profile"]["config_path"] = str(self.root / "another.toml")
         self.assertEqual(self.execute("activate")["state"], "error")
         self.assertFalse(any(body for _, body in self.calls))
+
+    def enable_native(self):
+        self.native = True
+        self.status["profile"]["active"] = True
+        self.status["restart_notice"] = {"revision": 4, "error": "", "items": [
+            {"key": "connection", "target": "chatgpt", "scope": ""},
+            {"key": "wsl", "target": "wsl", "scope": "distribution"}]}
+
+    def test_native_reconnect_verifies_ready_then_acknowledges_only_current_account(self):
+        self.enable_native()
+        result = self.execute("reconnect")
+        self.assertEqual(result["state"], "connected")
+        self.assertEqual(result["codex_reconnect"]["state"], "reloaded")
+        self.assertFalse(result["reload_required"])
+        self.assertEqual([args[-1] for args, _ in self.native_calls], ["version", "restart", "version"])
+        for args, options in self.native_calls:
+            self.assertEqual(args[:4], [str(self.native_cli), "app-server", "daemon", args[-1]])
+            self.assertEqual(options["env"]["CODEX_HOME"], str(self.root))
+        writes = [(url, json.loads(body)) for url, body in self.calls if body]
+        self.assertEqual(writes, [("http://127.0.0.1:53111/api/restart-notice", {"target": "chatgpt", "revision": 4})])
+        self.assertEqual(self.status["restart_notice"]["items"][0]["target"], "wsl")
+
+    def test_unsupported_or_other_home_daemon_never_restarts_or_acknowledges(self):
+        for mode in ("missing", "wrong-home"):
+            with self.subTest(mode=mode):
+                self.enable_native()
+                self.native = mode != "missing"
+                self.native_mode = mode
+                self.calls.clear();self.native_calls.clear()
+                result = self.execute("reconnect")
+                self.assertFalse(result["codex_restart"]["supported"])
+                self.assertEqual(result["codex_reconnect"]["state"], "unconfirmed")
+                self.assertTrue(result["reload_required"])
+                self.assertFalse(any(args[-1] == "restart" for args, _ in self.native_calls))
+                self.assertFalse(any(body for _, body in self.calls))
+
+    def test_failure_timeout_or_not_ready_does_not_clear_pending_configuration(self):
+        for mode in ("failure", "timeout", "not-ready"):
+            with self.subTest(mode=mode):
+                self.enable_native();self.native_mode = mode
+                self.calls.clear();self.native_calls.clear()
+                result = self.execute("reconnect")
+                self.assertEqual(result["state"], "connected")
+                self.assertEqual(result["codex_reconnect"]["state"], "unconfirmed")
+                self.assertTrue(result["reload_required"])
+                self.assertEqual(sum(args[-1] == "restart" for args, _ in self.native_calls), 1)
+                self.assertFalse(any(body for _, body in self.calls))
+
+    def test_concurrent_configuration_change_retains_new_notice(self):
+        for mode in ("notice-changed", "config-changed", "changed"):
+            with self.subTest(mode=mode):
+                self.enable_native();self.native_mode = mode
+                self.calls.clear();self.native_calls.clear()
+                result = self.execute("reconnect")
+                self.assertEqual(result["codex_reconnect"]["state"], "reloaded")
+                self.assertIn("配置又有变化", result["codex_reconnect"]["warning"])
+                self.assertTrue(result["reload_required"])
+                self.assertFalse(any(body for _, body in self.calls))
 
 
 class ConnectionApiTests(unittest.TestCase):
