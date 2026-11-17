@@ -109,9 +109,7 @@ def compile_executable(snapshot, mode, portable_dev, work, stage, licenses):
     log=build/"build.log"
     windows=sys.platform=="win32"
     command=[sys.executable,"-m","PyInstaller","--noconfirm","--clean","--onefile",
-             *(["--windowed","--icon",str(icon)] if windows else ["--console", "--exclude-module", "webview",
-                 "--exclude-module", "packet_inspector.desktop", "--exclude-module", "packet_inspector.upgrade",
-                 "--exclude-module", "packet_inspector.router", "--exclude-module", "packet_inspector.tray"]),
+             *(["--windowed","--icon",str(icon)] if windows else ["--console", "--exclude-module", "webview"]),
              "--name",name,"--distpath",str(stage),
              "--workpath",str(build/"app"),"--specpath",str(build/"spec"),
              "--paths",str(source),"--collect-submodules","zstandard","--hidden-import","zstandard.backend_c",
@@ -148,6 +146,10 @@ def compile_executable(snapshot, mode, portable_dev, work, stage, licenses):
     required=('packet_inspector.window_chrome',) if windows else ('packet_inspector.server','packet_inspector.transport')
     if any(module not in pyz.toc for module in required):
         raise SourceError("Executable is missing required platform modules")
+    if not windows:
+        result=subprocess.run([str(executable),"--version"],capture_output=True,text=True,timeout=30)
+        if result.returncode or result.stdout.strip()!="Codex Request Optimizer "+VERSION:
+            raise SourceError("Linux executable startup check failed: "+(result.stderr or result.stdout)[-800:])
     return executable
 
 
