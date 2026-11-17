@@ -499,8 +499,7 @@ dialog{width:min(760px,calc(var(--desktop-width) - 80px));max-height:calc(var(--
 
 .header-compression{display:flex;align-items:center;flex-shrink:0}.compression-toggle{flex-shrink:0;padding:2px}.compression-toggle button{min-width:64px;padding:3px 14px}
 .header-compression{anchor-name:--connection-controls}
-.connection-devices-open{border:0;background:transparent;padding:4px 5px;min-width:24px;font-size:18px;color:var(--muted)}
-.connection-devices-open:hover,.connection-devices-open:focus-visible{color:var(--ink);background:var(--bg)}
+.header-compression:focus-visible{outline:2px solid #a3baff;outline-offset:2px;border-radius:9px}
 .connection-panel{box-sizing:border-box;width:min(430px,calc(100vw - 24px));max-height:calc(100dvh - 80px);overflow:auto;padding:14px;border:1px solid var(--line);border-radius:12px;background:var(--panel);color:var(--ink);box-shadow:0 10px 32px #0003;text-align:start;scrollbar-gutter:stable}
 .connection-panel-heading{display:flex;align-items:center;justify-content:space-between;gap:14px}
 .connection-panel-heading button{font-size:12px;padding:4px 8px}
