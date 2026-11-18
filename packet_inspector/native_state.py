@@ -6,6 +6,9 @@ import re
 import sqlite3
 
 
+WSL_HOST_ID = "remote-ssh-discovered:wsl-local"
+
+
 def read_global_state(home):
     limit = 16 * 1024 * 1024
     try:
