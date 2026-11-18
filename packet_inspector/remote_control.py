@@ -262,18 +262,19 @@ def write_remote_files(home, options):
             raise
     return {"changed": bool(updates)}
 
-def tunnel_control(home, config, options):
+def tunnel_control(home, options):
     home = home.resolve()
     action = options["action"]
-    if options.get("home", str(home)) != str(home):
-        raise ValueError("SSH 登录使用的 Codex 配置目录已变化。")
+    account = {"home": str(home), "uid": os.getuid()}
     if action == "tunnel_snapshot":
         files = {name: base64.b64encode(raw).decode("ascii") if raw is not None else None
                  for name, raw in remote_files(home).items()}
-        value = {"home": str(home), "files": files, **remote_settings(home)}
+        value = {**account, "files": files, **remote_settings(home)}
         if options.get("native"):
             value["codex_restart"], _ = native_codex(home)
         return value
+    if any(options.get(key) != value for key, value in account.items()):
+        raise ValueError("SSH 登录账号或 Codex 配置目录已变化，请重新确认操作。")
     if action == "tunnel_probe":
         port, token = options["port"], options["token"]
         if type(port) is not int or not 1024 <= port <= 65535 or not re.fullmatch(r"[0-9a-f]{48}", token):
@@ -294,6 +295,7 @@ def tunnel_control(home, config, options):
     if action == "tunnel_write":
         return write_remote_files(home, options)
     if action == "tunnel_reconnect":
+        config = home / "config.toml"
         capability, context = native_codex(home)
         try:
             digest = config_digest(config)
@@ -310,7 +312,7 @@ def control():
     config = home / "config.toml"
     if str(options.get("action", "")).startswith("tunnel_"):
         try:
-            return tunnel_control(home, config, options)
+            return tunnel_control(home, options)
         except ValueError as exc:
             return {"error": str(exc)[:1000]}
         except OSError as exc:

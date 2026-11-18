@@ -264,12 +264,12 @@
       <p id="storage-paths-hint" class="help muted" hidden></p>
     </section>
     <section id="connection-settings" aria-labelledby="connection-settings-title">
-      <h3><span id="connection-settings-title">连接与共享</span> <span id="connection-pending-label" class="connection-pending-label" hidden>ChatGPT 待重启</span></h3>
-      <div class="entry-port-row" data-settings-field="entry_port"><label for="entry-port">入口端口</label><input id="entry-port" type="number" min="1024" max="65535" step="1" value="47844" required aria-describedby="link-status"><span id="link-status" class="entry-port-status" role="status" aria-live="polite" hidden></span></div>
+      <h3><span id="connection-settings-title">端口设置</span> <span id="connection-pending-label" class="connection-pending-label" hidden>ChatGPT 待重启</span></h3>
+      <div class="entry-port-row" data-settings-field="entry_port"><label for="entry-port">中转入口</label><input id="entry-port" type="number" min="1024" max="65535" step="1" value="47844" required aria-describedby="link-status"><span id="link-status" class="entry-port-status" role="status" aria-live="polite" hidden></span></div>
       <p id="entry-port-message" data-feedback-source data-feedback-target="settings-inline-feedback" class="help" role="status" hidden></p>
       <div id="sharing-settings" hidden>
-        <div class="entry-port-row" data-settings-field="sharing_port"><label for="sharing-port">额度端口</label><input id="sharing-port" type="number" min="1" max="65535" step="1" value="47846" required></div>
-        <div class="entry-port-row" data-settings-field="egress_port"><label for="exit-port">出口端口</label><input id="exit-port" type="number" min="1" max="65535" step="1" value="47847" required></div>
+        <div class="entry-port-row" data-settings-field="sharing_port"><label for="sharing-port">额度共享</label><input id="sharing-port" type="number" min="1" max="65535" step="1" value="47846" required></div>
+        <div class="entry-port-row" data-settings-field="egress_port"><label for="exit-port">出口共享</label><input id="exit-port" type="number" min="1" max="65535" step="1" value="47847" required></div>
       </div>
     </section>
     <section id="proxy-settings" data-settings-field="proxy_settings" aria-labelledby="proxy-settings-title" hidden>
