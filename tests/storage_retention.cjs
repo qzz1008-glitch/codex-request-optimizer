@@ -88,7 +88,7 @@ function fixture() {
     c.state.selected=metadata.id;c.state.detail=metadata;
     c.bars=(title,rows,total)=>{if(title==='input 构成')input={rows,total};return {title};};
     Object.assign(c,{uiI18n:{language:'zh'},URL:{createObjectURL:()=>''},Blob,
-      jsonValueNode:()=>({}),renderHeaders(){},renderCompression(){}});
+      jsonValueNode:()=>({}),renderHeaders(){}});
     c.api=async path=>{assert.equal(path,'/api/packets/legacy/export');reads++;return {metadata,view};};
     c.renderOverview(metadata);
     assert.equal(input.rows[0].name,'reasoning');

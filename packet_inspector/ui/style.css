@@ -221,10 +221,15 @@ code.session-id{font-family:Consolas,"Cascadia Mono",monospace;font-size:11px;wo
 .detail-content .panel{padding:14px 16px;margin-bottom:12px}
 .detail-content .panel>h3{margin-bottom:10px}
 .detail-content .panel>.fact-row{margin:8px 0}
+.request-overview-facts{margin:0}
+.request-overview-facts .fact-row{margin:8px 0}
+.request-overview-facts .fact-row:last-child{margin-bottom:0}
+.request-overview-facts dt{color:var(--muted);flex:none;white-space:nowrap}
+.request-overview-facts dd{margin:0;min-width:0;overflow-wrap:anywhere}
 .detail-content .bar-row{margin:10px 0}
 .detail-content .panel>:last-child{margin-bottom:0}
 .detail-content .two-columns{gap:12px}
-#compression-content>:last-child,#overview>:last-child,#overview>.two-columns:last-child>.panel,#diff-content>:last-child{margin-bottom:0}
+#headers-content>:last-child,#overview>:last-child,#overview>.two-columns:last-child>.panel,#diff-content>:last-child{margin-bottom:0}
 #tab-tree:not([hidden]){display:flex;flex-direction:column;height:100%;min-height:0}
 #tab-tree>.tree-tools,#tab-tree>.search-results{flex:none}
 .json-viewer{position:relative;flex:1;min-width:0;min-height:0;border:1px solid var(--line);border-radius:8px;background:var(--panel);overflow:hidden}
@@ -268,6 +273,7 @@ code.session-id{font-family:Consolas,"Cascadia Mono",monospace;font-size:11px;wo
   --settings-number-width:128px;
   --settings-context-width:152px;
   --settings-path-width:320px;
+  --settings-path-actions-width:190px;
   --settings-padding:28px;
   --settings-section-indent:16px;
   --settings-control-height:36px;
@@ -334,7 +340,7 @@ code.session-id{font-family:Consolas,"Cascadia Mono",monospace;font-size:11px;wo
 #settings-dialog .image-mode-pills input:disabled{opacity:0;cursor:default}
 #settings-dialog .entry-port-row{display:grid;grid-template-columns:var(--settings-label-width) var(--settings-number-width) minmax(0,1fr);align-items:center;gap:16px;margin:0}
 #settings-dialog .entry-port-row input{width:100%;min-width:0}
-#sharing-settings .entry-port-row+.entry-port-row{margin-top:12px}
+#settings-dialog #sharing-settings:not([hidden]){display:grid;gap:12px;margin-block-start:12px}
 #settings-dialog .entry-port-status{min-width:0;min-height:20px;font-size:13px;line-height:20px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #settings-dialog .entry-port-status[data-state=active]{color:var(--green)}
 #settings-dialog .entry-port-status:is([data-state=pending],[data-state=unsaved]){color:var(--warn)}
@@ -402,12 +408,8 @@ code.session-id{font-family:Consolas,"Cascadia Mono",monospace;font-size:11px;wo
 #settings-dialog .runtime-setting-row+.runtime-setting-row{margin-top:12px}
 #settings-dialog #request-protection-settings .runtime-setting-row{margin-top:12px}
 #settings-dialog .runtime-inline-hint{min-width:0;margin:0}
-#settings-dialog .proxy-mode-actions{display:flex;align-items:center;flex-wrap:wrap;gap:8px;min-width:0}
-#settings-dialog .proxy-fields{margin-top:12px}
-#settings-dialog .proxy-fields input:not([type=checkbox]){width:100%;max-width:var(--settings-path-width);min-width:0;text-align:left}
-#settings-dialog .proxy-fields output{min-width:0;font-size:13px;line-height:20px;overflow-wrap:anywhere;white-space:pre-wrap}
-#settings-dialog .proxy-clear-password{display:flex;align-items:center;gap:8px;margin:0;color:var(--muted);font-size:13px}
-#settings-dialog #proxy-password-hint{margin:4px 0 12px calc(var(--settings-label-width) + 16px)}
+#settings-dialog .proxy-address-field{min-width:0}
+#settings-dialog #proxy-test{justify-self:start;width:76px;padding-inline:6px;white-space:nowrap}
 #settings-dialog #proxy-settings>.help{margin:12px 0 0}
 #settings-dialog .proxy-test-result{display:block;margin-top:12px;font-size:13px;line-height:20px;white-space:pre-wrap;overflow-wrap:anywhere}
 #settings-dialog .capacity-retry-limit{display:grid;grid-template-columns:var(--settings-inline-label-width) 68px minmax(0,1fr);align-items:center;gap:8px;min-width:0;color:var(--muted);font-size:13px;line-height:20px}
@@ -416,9 +418,10 @@ code.session-id{font-family:Consolas,"Cascadia Mono",monospace;font-size:11px;wo
 #settings-dialog .capacity-retry-limit label{white-space:nowrap}
 #settings-dialog .capacity-retry-limit input{width:68px}
 #settings-dialog .capacity-retry-limit>span{font-size:12px}
-#settings-dialog .image-directory-settings{display:grid;grid-template-columns:var(--settings-label-width) minmax(0,1fr);align-items:center;gap:8px 16px;margin:16px 0 0}
-#settings-dialog .image-directory-row{display:grid;grid-template-columns:minmax(0,var(--settings-path-width)) auto;justify-content:start;align-items:center;gap:8px;min-width:0}
-#settings-dialog .image-directory-row input{width:100%;min-width:0;text-align:left}
+#settings-dialog :is(.image-directory-settings,.proxy-inline-row){display:grid;grid-template-columns:var(--settings-label-width) minmax(0,1fr);align-items:center;gap:8px 16px}
+#settings-dialog .image-directory-settings{margin:16px 0 0}
+#settings-dialog :is(.image-directory-row,.proxy-controls){display:grid;grid-template-columns:minmax(0,var(--settings-path-width)) var(--settings-path-actions-width);justify-content:start;align-items:center;gap:8px;min-width:0}
+#settings-dialog :is(.image-directory-row,.proxy-address-field) input{width:100%;min-width:0;text-align:left}
 #settings-dialog .image-directory-actions{display:flex;align-items:center;gap:8px}
 #settings-dialog .image-directory-settings .help{grid-column:2;margin:0}
 #settings-dialog .context-heading{margin:0}
@@ -479,6 +482,8 @@ code.session-id{font-family:Consolas,"Cascadia Mono",monospace;font-size:11px;wo
 }
 @container settings-dialog (max-width:500px){
   #settings-dialog>.settings-content{--settings-section-indent:12px}
+  #settings-dialog .proxy-inline-row{grid-template-columns:max-content minmax(0,1fr);column-gap:8px}
+  #settings-dialog :is(.image-directory-row,.proxy-controls){grid-template-columns:minmax(0,var(--settings-path-width)) auto}
   #settings-dialog .settings-language-row{grid-template-columns:minmax(0,1fr) auto}
   #settings-dialog :is(.entry-port-row,.zstd-level-control,.packet-size-limit,.runtime-setting-row,.image-directory-settings,.settings-grid label){grid-template-columns:minmax(0,1fr);gap:8px}
   #settings-dialog .entry-port-row input,#settings-dialog .settings-grid input{width:var(--settings-number-width)}
@@ -491,6 +496,9 @@ code.session-id{font-family:Consolas,"Cascadia Mono",monospace;font-size:11px;wo
   #settings-dialog .context-default{justify-self:end}
   #settings-dialog .settings-feedback{grid-column:1/-1}
   #settings-dialog #settings-restore{grid-column:2}
+}
+@container settings-dialog (max-width:360px){
+  #settings-dialog .proxy-inline-row{grid-template-columns:minmax(0,1fr)}
 }
 @container settings-dialog (max-width:380px){
   #settings-dialog .image-directory-row{grid-template-columns:minmax(0,1fr);max-width:var(--settings-path-width)}
@@ -515,15 +523,15 @@ dialog{width:min(760px,calc(var(--desktop-width) - 80px));max-height:calc(var(--
   inset: auto;
   z-index: 40;
   box-sizing: border-box;
-  width: 312px;
-  max-width: calc(100vw - 24px);
+  width: max-content;
+  max-width: min(312px, calc(100vw - 24px));
   max-height: calc(100dvh - 80px);
   overflow: auto;
   scrollbar-width: thin;
   scrollbar-gutter: stable;
   margin: 0;
   padding-block: 10px;
-  padding-inline: 8px 5px;
+  padding-inline: 6px 5px;
   border: 1px solid var(--line);
   border-radius: 12px;
   background: var(--panel);
@@ -532,20 +540,19 @@ dialog{width:min(760px,calc(var(--desktop-width) - 80px));max-height:calc(var(--
   text-align: start;
 }
 .connection-panel:lang(en) {
-  width: 332px;
+  max-width: min(416px, calc(100vw - 24px));
 }
 .connection-device {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 8px;
+  gap: var(--connection-device-gap, 8px);
   padding: 7px 0;
   border-top: 1px solid var(--line);
 }
 .connection-device:first-child{border-top:0;padding-top:0}
-.connection-device-info{display:flex;align-items:center;gap:4px;min-width:0}
+.connection-device-info{display:flex;flex:1;align-items:center;justify-content:flex-end;gap:4px;min-width:0}
 .connection-device-info strong{min-width:0;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.connection-device-state{display:inline-flex;align-items:center;justify-content:center;flex:0 0 20px;width:20px;height:20px;color:var(--muted)}
+.connection-device-state{display:inline-flex;align-items:center;justify-content:center;flex:0 0 16px;width:16px;height:20px;color:var(--muted)}
 .connection-device-state::before{content:"";box-sizing:border-box;width:8px;height:8px;border:1.5px solid currentColor;border-radius:50%;background:currentColor}
 .connection-device-state[data-status=connected]{color:var(--green)}
 .connection-device-state:is([data-status=disconnected],[data-status=unknown])::before{background:transparent}
@@ -553,7 +560,6 @@ dialog{width:min(760px,calc(var(--desktop-width) - 80px));max-height:calc(var(--
 .connection-device-state[data-status=pending]::before{outline:1px solid currentColor;outline-offset:2px}
 .connection-device-state[data-status=error]{color:var(--danger)}
 .connection-device-state[data-status=error]::before{border-radius:2px;transform:rotate(45deg)}
-.compression-toggle,.connection-device-actions{border-color:var(--muted)}
 .compression-toggle button:hover{background:transparent;color:var(--muted)}
 :is(.compression-toggle,.connection-device-actions) button:enabled{color:var(--ink)}
 :is(.compression-toggle,.connection-device-actions) button[aria-pressed=true]{background:var(--accent);color:var(--panel);box-shadow:none;opacity:1}
@@ -571,13 +577,14 @@ dialog{width:min(760px,calc(var(--desktop-width) - 80px));max-height:calc(var(--
 }
 .connection-device-controls{flex-shrink:0;display:flex;align-items:center;gap:8px}
 .connection-device-reconnect {
+  --reconnect-rim: #b4c7ec;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   min-width: 36px;
   min-height: 24px;
   padding: 2px 6px;
-  border: 1px solid var(--muted);
+  border: 1px solid var(--line);
   border-radius: 999px;
   background: var(--panel);
   color: var(--ink);
@@ -586,10 +593,9 @@ dialog{width:min(760px,calc(var(--desktop-width) - 80px));max-height:calc(var(--
   line-height: 16px;
   white-space: nowrap;
 }
-.connection-device-reconnect:not(:disabled, [aria-disabled=true]):hover{border-color:var(--accent);background:var(--soft);color:var(--accent)}
+.connection-device-reconnect:not(:disabled, [aria-disabled=true]):hover{border-color:var(--reconnect-rim);background:var(--soft);color:var(--accent)}
 .connection-device-reconnect.needs-reconnect:not(:disabled, [aria-disabled=true]) {
   --reconnect-face: var(--soft);
-  --reconnect-rim: var(--accent);
   border-color: var(--reconnect-rim);
   background: var(--reconnect-face);
   color: var(--accent);
@@ -612,7 +618,7 @@ dialog{width:min(760px,calc(var(--desktop-width) - 80px));max-height:calc(var(--
       background:
         linear-gradient(var(--reconnect-face), var(--reconnect-face)) padding-box,
         repeating-conic-gradient(from var(--reconnect-sweep-angle, 0turn) in oklab,
-          var(--reconnect-rim) 0deg 65deg, #5f7fb5 112deg, #4169a7 144deg, #6f8db8 169deg,
+          var(--reconnect-rim) 0deg 65deg, #cadbf8 112deg, #9eb8e6 144deg, #e3ecfb 169deg,
           var(--reconnect-rim) 180deg) border-box;
       animation: reconnect-sweep 2.4s linear 2;
     }
@@ -672,7 +678,6 @@ dialog{width:min(760px,calc(var(--desktop-width) - 80px));max-height:calc(var(--
 .protection-details{min-width:0;margin:7px 0 0 5px;padding-left:10px;border-left:2px solid var(--line)}
 .protection-details .fact-row{gap:12px;margin:5px 0;font-size:11px}
 .protection-details .fact-row>span:last-child{text-align:right;white-space:nowrap}
-.image-compression-row>span:first-child{flex:none}
 .image-compression-details{min-width:0;white-space:pre-line;text-align:right;line-height:1.5;overflow-wrap:anywhere}
 .protection-details .image-path-group{padding:8px}
 .protection-details .image-path-item{padding:6px 0}

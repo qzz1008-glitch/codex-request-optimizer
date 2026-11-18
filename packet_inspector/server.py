@@ -61,7 +61,7 @@ from .proxy_test import ProxyTester
 from .loopback_proxy import repair_loopback_proxy
 from .usage_trigger import (raw_chunks, request_size as usage_trigger_size,
                             trigger_threshold, DEFAULT_BUDGET_BYTES, MIN_BUDGET_BYTES)
-from .overflow import CheckpointStream, OverflowCompactor, OverflowFailure
+from .overflow import CheckpointStream, OverflowCompactor, OverflowFailure, encode_changed_info
 from .image_config import IMAGE_MODES, ImageToolConfig, WORKER_HEADER, image_mode
 from .image_isolation import ImageIsolation, ImageIsolationFailure, check_image_directory, resolve_image_directory, is_analysis_request
 from .sharing import Sharing, SharingError, forwarding_headers, allowed_request as sharing_request_allowed
@@ -1560,6 +1560,16 @@ class Handler(BaseHTTPRequestHandler):
         compression_scope = hashlib.sha256(upstream.encode()).hexdigest()
         auto_key, auto_decision = None, None
         try:
+            if image_enabled and not image_configured:
+                raise ImageIsolationFailure("image_configuration_missing", "图片隔离配置不完整，请在设置中重新启用。", 503)
+            rewritten = None
+            if image_enabled and not image_worker and self.command == "POST" and urlsplit(suffix).path.rstrip("/").endswith(("/responses", "/responses/compact")):
+                try:
+                    rewritten = image_isolation.rewrite(body, headers)
+                except (ImageIsolationFailure, ImportError):
+                    raise
+                except Exception:
+                    raise ImageIsolationFailure("image_preparation_failed", "图片隔离准备失败，原请求未发送。", 503) from None
             if auto_eligible:
                 if capture_meta.get("inspection") != "json":
                     try:
@@ -1576,12 +1586,12 @@ class Handler(BaseHTTPRequestHandler):
                         capture_meta = {}
                 zstd_level = 1
                 thread = capture_meta.get("thread_id")
-                original_bytes = capture_meta.get("decoded_bytes")
-                if type(original_bytes) is int:
+                uncompressed_bytes = len(rewritten[0]) if rewritten is not None else capture_meta.get("decoded_bytes")
+                if type(uncompressed_bytes) is int:
                     auto_key = (compression_scope, thread) if thread else None
                     if auto_key and is_main_request(capture_meta):
                         auto_decision = self.server.compression_policy.begin(
-                            auto_key, auto_ticket, original_bytes, budget)
+                            auto_key, auto_ticket, uncompressed_bytes, budget)
                         zstd_level = auto_decision.level
                         update(relay_auto_zstd_phase=auto_decision.phase,
                                relay_auto_zstd_previous_phase=auto_decision.previous_phase,
@@ -1590,27 +1600,27 @@ class Handler(BaseHTTPRequestHandler):
                                relay_auto_zstd_initial_threshold_bytes=INITIAL_HIGH_BYTES,
                                relay_auto_zstd_budget_bytes=budget)
                     else:
-                        zstd_level = self.server.compression_policy.level(auto_key, original_bytes, budget)
-            if image_enabled and not image_configured:
-                raise ImageIsolationFailure("image_configuration_missing", "图片隔离配置不完整，请在设置中重新启用。", 503)
-            prepared = None
+                        zstd_level = self.server.compression_policy.level(auto_key, uncompressed_bytes, budget)
             source_body = body
-            if image_enabled and not image_worker and self.command == "POST" and urlsplit(suffix).path.rstrip("/").endswith(("/responses", "/responses/compact")):
+            if rewritten is not None:
+                changed, image_meta = rewritten
                 try:
-                    prepared = image_isolation.prepare(body, headers, suffix, compression, zstd_level=zstd_level,
-                                                        auto_zstd_level=auto_zstd_level, budget_bytes=budget)
+                    outbound_body, outbound_encoding, applied_zstd_level = encode_changed_info(
+                        changed, headers, suffix, compression, zstd_level,
+                        auto_zstd_level=auto_zstd_level, budget_bytes=budget)
                 except (ImageIsolationFailure, ImportError):
                     raise
                 except Exception:
                     raise ImageIsolationFailure("image_preparation_failed", "图片隔离准备失败，原请求未发送。", 503) from None
-            if prepared is not None:
-                outbound_body, outbound_encoding, image_meta = prepared
-                update(**image_meta)
-                applied_zstd_level = image_meta.get("relay_zstd_level")
+                update(relay_zstd_level=applied_zstd_level, **image_meta)
+                transport_input_bytes = len(changed)
                 source_body = outbound_body
                 headers = {k: v for k, v in headers.items() if k.lower() not in {"content-md5", "digest", "content-encoding"}}
                 headers["Content-Encoding"] = outbound_encoding
             else:
+                input_encoding = self.headers.get("Content-Encoding", "identity").strip().lower()
+                transport_input_bytes = (len(body) if input_encoding in {"", "identity"}
+                                         else capture_meta.get("decoded_bytes"))
                 encoded = prepare_request_info(body, headers, self.command, suffix, compression, zstd_level,
                                                 auto_zstd_level=auto_zstd_level, budget_bytes=budget)
                 outbound_body, outbound_encoding, applied_zstd_level = encoded
@@ -1619,13 +1629,15 @@ class Handler(BaseHTTPRequestHandler):
                     PreparedRequest(outbound_body, outbound_encoding, applied_zstd_level), budget_bytes=budget,
                     zstd_level=AUTO_IMAGE_ZSTD_LEVEL if auto_zstd_level else zstd_level)
                 outbound_body, outbound_encoding, applied_zstd_level = prepared_image
+                transport_input_bytes = upload_meta.pop("transport_input_bytes", transport_input_bytes)
                 update(**upload_meta)
                 if upload_meta.get("image_upload_optimized"):
                     headers = {key:value for key,value in headers.items() if key.lower() not in {"content-md5", "digest"}}
             # The displayed compressed packet is measured before summary
-            # substitution. Preserve its encoding/level before overflow can
-            # rebuild a small identity body and replace the final relay fields.
-            update(transport_content_encoding=outbound_encoding, transport_zstd_level=applied_zstd_level)
+            # substitution. Capture both sides of this stage after image work,
+            # before overflow can replace the body and its encoding.
+            update(transport_content_encoding=outbound_encoding, transport_zstd_level=applied_zstd_level,
+                   transport_input_bytes=transport_input_bytes, transport_wire_bytes=len(outbound_body))
             if auto_decision is not None:
                 next_phase = self.server.compression_policy.finish(auto_key, auto_decision, len(outbound_body), budget)
                 update(relay_auto_zstd_next_phase=next_phase)

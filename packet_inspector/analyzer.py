@@ -44,6 +44,8 @@ def redact(value, key="", counts=None):
     if isinstance(value, list):
         return [redact(v, "", counts) for v in value]
     if isinstance(value, str):
+        if value[:11].lower() == "data:image/" and "," in value:
+            counts["inline_image_bytes"] += len(value) if value.isascii() else len(value.encode("utf-8"))
         if key in {"image_url", "image_data", "b64_json", "audio_data"}:
             counts["media"] += 1
             return f"[media value: {len(value.encode())} bytes, omitted]"
@@ -316,6 +318,7 @@ def inspect_request(raw, headers, path=""):
         meta.update(classify_request(value, headers, path))
         counts = Counter()
         view = redact(value, counts=counts)
+        image_bytes = counts.pop("inline_image_bytes", 0)
         thread = thread_identity(headers, value)
         model = value.get("model", "") if isinstance(value, dict) else ""
         meta.update(stats)
@@ -324,7 +327,7 @@ def inspect_request(raw, headers, path=""):
         kind = temporary_request_kind(value)
         if kind:
             meta["request_kind"] = kind
-        meta.update(thread_id=thread, model=clean_text(str(model))[:120],
+        meta.update(thread_id=thread, model=clean_text(str(model))[:120], inline_image_bytes=image_bytes,
                     inspection="json", redactions=dict(counts))
         return meta, {"body": view, "source_sizes": index.sizes}
     except Exception as exc:

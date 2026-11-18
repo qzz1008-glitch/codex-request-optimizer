@@ -30,7 +30,7 @@ assert.deepEqual(Array.from(context.events(packet({scheduled_retries:1}))), []);
 
 function node(tag,text='') {
   const classes=new Set();
-  return {tag,tagName:tag,text,textContent:text,children:[],dataset:{},attributes:{},
+  return {tag,tagName:tag,localName:tag,text,textContent:text,children:[],dataset:{},attributes:{},
     classList:{add(...values){values.forEach(value=>classes.add(value));},contains(value){return classes.has(value);},
       toggle(value,enabled){if(enabled)classes.add(value);else classes.delete(value);}},
     append(...children){this.children.push(...children);},setAttribute(name,value){this.attributes[name]=value;},
@@ -41,20 +41,22 @@ function descendants(root){return root.children.flatMap(child=>[child,...descend
 let rendered;
 const opened=[];
 Object.assign(context, {
-  URL,requestBodyView:null,
+  URL,requestBodyView:null,sessionSummaries:[],uiI18n:{labels:values=>values},
   state:{status:{packet_size_protection_enabled:true,capacity_retry_enabled:true,image_analysis_mode:'optimized',
     open_directory_supported:true,open_image_supported:true,reveal_image_supported:true}},
   document:{createDocumentFragment:()=>node('fragment'),createElementNS:(_,tag)=>node(tag)},
-  panel:title=>Object.assign(node('section'),{title}),
-  fact:(parent,label,value)=>{const row=node('fact');row.label=label;row.value=value;row.append(node('label',label),node('value',value));parent.append(row);return row;},
   el:(tag,cls,text)=>Object.assign(node(tag,text),{className:cls||''}),
-  originalBytes:()=>100,compressedBytes:()=>50,bytes:value=>value==null?'—':String(value),
+  bytes:value=>value==null?'—':String(value),
   $:id=>id==='packet-protection-panel'?rendered?.children.find(child=>child.id===id):null,
   reconcileContent:(_,root)=>{rendered=root;},api:async(route,data)=>{opened.push([route,data.path]);return {opened:true};},
   fail:error=>{throw error;}
 });
+vm.runInContext(source.split(/\r?\n/).filter(line=>/^function (originalBytes|compressedBytes|panel|auxiliarySessionKind)\(|^const (states|auxiliaryLabels)\b/.test(line)).join('\n'),context);
+vm.runInContext(source.slice(source.indexOf('function fact('),source.indexOf('function showTab(')),context);
+vm.runInContext(source.slice(source.indexOf('function purposeFromMetadata('),source.indexOf('function cacheRequestPurpose(')),context);
 vm.runInContext(source.slice(source.indexOf('function localImagePath('),source.indexOf('function renderHeaders(')),context);
 vm.runInContext(source.slice(source.indexOf('function renderProtectionPanelState('),source.indexOf('function bars(')),context);
+vm.runInContext(source.slice(source.indexOf('function renderHeaders('),source.indexOf('async function setInterfaceLanguage(')),context);
 vm.runInContext(source.slice(source.indexOf('function packetDetailVersion('),source.indexOf('async function selectPacket(')),context);
 const pictureA='C:\\saved-images\\a.png',pictureB='C:\\saved-images\\b.png';
 const imagePacket=(id,created,image_paths,extra={})=>({id,created,thread_id:'session-a',image_isolation_applied:true,image_paths,...extra});
@@ -83,23 +85,24 @@ assert.deepEqual(uniqueImageRows(repeatedImages),['first','new-image'],'Loading 
 const waitingPacket={id:'pending',state:'captured',status:null};
 for(const fields of [{image_isolation_applied:true},{image_paths:['C:\\image.png']},
   {upstream_usage:{input_tokens:123},reported_usage:{input_tokens:500000}},
+  {inline_image_bytes:123},{transport_input_bytes:1000},{transport_wire_bytes:500},
   {overflow_cache_hit:true,relay_wire_bytes:1000},{image_upload_before_bytes:1200000},{image_upload_images:[{width:1600,height:900}]}])
   assert.notEqual(context.packetDetailVersion({...waitingPacket,...fields}),context.packetDetailVersion(waitingPacket),
     'Protection details must refresh even if request status has not changed');
 const labels=['大小预测','超限压缩','容量重试','解图优化'];
-function rows(){return rendered.children[1].children;}
+function rows(){return rendered.children.at(-1).children.filter(child=>child.dataset.protection);}
 function headings(){return rows().map(row=>{
   const heading=row.children[0],status=heading.lastChild;
-  assert.equal(heading.value,row.dataset.triggered==='true'?'✓':'—');
+  assert.equal(heading.lastChild.text,row.dataset.triggered==='true'?'✓':'—');
   assert.equal(status.title,context.t(row.dataset.triggered==='true'?'已触发':'未触发'));
   assert.equal(status.attributes['aria-label'],status.title);
   assert.equal(status.attributes.role,'img');
   assert.equal(row.dataset.mechanism,row.dataset.renderKey.replace('protection:',''));
-  return heading;
+  return {label:heading.children[0].text,value:status.text};
 });}
 function details(key){return rows().find(row=>row.dataset.renderKey==='protection:'+key)?.children[1];}
-function fields(root){return Object.fromEntries(descendants(root).filter(child=>child.tag==='fact').map(row=>[row.label,row.value]));}
-function facts(section){return Object.fromEntries((section===1?headings():rendered.children[section].children).map(row=>[row.label,row.value]));}
+function fields(root){return Object.fromEntries(descendants(root).filter(child=>child.className==='fact-row').map(row=>[row.children[0].text,row.children[1].text]));}
+function facts(section){return section===1?Object.fromEntries(headings().map(row=>[row.label,row.value])):fields(rendered.children[section]);}
 const mechanisms=['predictive','overflow','retry','optimization'];
 for(let mask=0;mask<16;mask++) {
   const active=mechanisms.filter((_,index)=>mask&(1<<index));
@@ -114,30 +117,30 @@ for(let mask=0;mask<16;mask++) {
     assert.equal(markers.attributes['aria-label'],active.map(key=>labels[mechanisms.indexOf(key)]).join(' · ')+' · 已触发');
     for(const marker of markers.children)assert.equal(marker.title,labels[mechanisms.indexOf(marker.dataset.mechanism)]+' · 已触发');
   }
-  context.renderCompression(meta);
+  context.renderHeaders(meta);
   assert.deepEqual(Array.from(headings(),row=>row.value),mechanisms.map(key=>active.includes(key)?'✓':'—'));
 }
 assert.equal(context.packetProtection({image_isolation_removed:1}).optimization,true);
 assert.equal(context.packetProtection({image_isolation_removed:'1'}).optimization,false);
 assert.equal(context.renderProtectionMarkers(context.packetProtection({image_upload_optimized:true})),null,
   'Resizing an image is ordinary compression and must not create a special mechanism marker');
-context.renderCompression(packet({outcome:'capacity_error',capacity_error_seen:true,stop_reason:'retry_limit'},3));
+context.renderHeaders(packet({outcome:'capacity_error',capacity_error_seen:true,stop_reason:'retry_limit'},3));
 assert.deepEqual(Array.from(headings(),row=>row.label),labels);
 assert.equal(headings()[2].value,'✓');
 assert.deepEqual(fields(details('retry')),{'重试次数':'3'});
-context.renderCompression(packet({journal_available:false}));
+context.renderHeaders(packet({journal_available:false}));
 assert.equal(headings()[2].value,'—');
 assert.equal(details('retry'),undefined);
-context.renderCompression(packet({outcome:'cancelled',scheduled_retries:1}));
+context.renderHeaders(packet({outcome:'cancelled',scheduled_retries:1}));
 assert.equal(headings()[2].value,'—');
-context.renderCompression({capacity_retry_count:2});
+context.renderHeaders({capacity_retry_count:2});
 assert.equal(headings()[2].value,'✓');
 assert.deepEqual(fields(details('retry')),{'重试次数':'2'});
-context.renderCompression({source:'live',native_retry_advised:true,capacity_retry_count:0,
+context.renderHeaders({source:'live',native_retry_advised:true,capacity_retry_count:0,
   native_retry_delay_ms:30000,capacity_retry_diagnostic:{max_retries:15,scheduled_retries:1}});
 assert.equal(headings()[2].value,'✓');
 assert.deepEqual(fields(details('retry')),{'重试次数':'—'},'An advice, delay or configured limit cannot stand in for actual retries');
-context.renderCompression({});
+context.renderHeaders({});
 assert.deepEqual(Array.from(headings(),row=>row.value),labels.map(()=>'—'));
 assert(rows().every(row=>row.children.length===1),'Untriggered protections must have no detail fields');
 // A summary can turn a compressed packet into a small identity upload. The
@@ -146,57 +149,80 @@ const interrupted={source:'live',state:'relay_error',status:200,
   relay_content_encoding:'identity',relay_zstd_level:null,
   overflow_compaction_calls:1,overflow_original_wire_bytes:1004951,
   usage_override_request_bytes:1004951,usage_override_trigger_bytes:950000};
-context.renderCompression(interrupted);
+context.renderHeaders(interrupted);
 assert.equal(facts(0)['文本压缩'],undefined);
 assert.equal(facts(1)['大小预测'],'—');
 assert.equal(facts(1)['超限压缩'],'✓');
 assert.deepEqual(fields(details('overflow')),{'处理前大小':'1004951','处理后大小':'—'});
-context.renderCompression({...interrupted,transport_content_encoding:'zstd',transport_zstd_level:17});
+context.renderHeaders({...interrupted,transport_content_encoding:'zstd',transport_zstd_level:17});
 assert.equal(facts(0)['文本压缩'],'zstd · 17级');
-context.renderCompression({...interrupted,transport_content_encoding:'zstd',transport_zstd_level:22});
+context.renderHeaders({...interrupted,transport_content_encoding:'zstd',transport_zstd_level:22});
 assert.equal(facts(0)['文本压缩'],'zstd · 22级');
-context.renderCompression({...interrupted,state:'streaming'});
+context.renderHeaders({...interrupted,state:'streaming'});
 assert.equal(facts(1)['大小预测'],'—');
-context.renderCompression({...interrupted,state:'complete',usage_override_applied:true,
+context.renderHeaders({...interrupted,state:'complete',usage_override_applied:true,
   upstream_usage:{input_tokens:19643},reported_usage:{input_tokens:500000},relay_wire_bytes:95000,outbound_wire_bytes:91000});
 assert.equal(facts(1)['大小预测'],'✓');
 assert.deepEqual(fields(details('predictive')),{'原始 Token':'19,643','改写 Token':'500,000'});
 assert.deepEqual(fields(details('overflow')),{'处理前大小':'1004951','处理后大小':'95000'});
-context.renderCompression({...interrupted,usage_override_applied:true});
+context.renderHeaders({...interrupted,usage_override_applied:true});
 assert.deepEqual(fields(details('predictive')),{'原始 Token':'—','改写 Token':'—'});
-context.renderCompression({...interrupted,state:'complete',usage_override_applied:false,reported_usage:{input_tokens:500000}});
+context.renderHeaders({...interrupted,state:'complete',usage_override_applied:false,reported_usage:{input_tokens:500000}});
 assert.equal(facts(1)['大小预测'],'—');
 assert.equal(details('predictive'),undefined);
-context.renderCompression({source:'live',relay_content_encoding:'zstd',relay_zstd_level:1});
+context.renderHeaders({source:'live',relay_content_encoding:'zstd',relay_zstd_level:1});
 assert.equal(facts(0)['文本压缩'],'zstd · 1级');
 assert.equal(facts(0)['压缩方式'],undefined);
 assert.equal(facts(0)['压缩等级'],undefined);
 for(const meta of [{},{relay_content_encoding:'identity',relay_zstd_level:1},{relay_zstd_level:1}]) {
-  context.renderCompression(meta);
+  context.renderHeaders(meta);
   assert.equal(facts(0)['文本压缩'],undefined,'Missing or inactive compression must not add an empty row');
 }
-context.renderCompression({relay_content_encoding:'zstd'});
+const historicalImageRequest={source:'live',model:'example',state:'complete',status:200,duration_ms:1300,response_summary:{status:'completed'},
+  decoded_bytes:2806092,image_isolation_removed:3,image_isolation_applied:true,
+  image_isolation_decoded_before:2806092,image_isolation_decoded_after:1931967,
+  transport_content_encoding:'zstd',transport_zstd_level:16,overflow_original_wire_bytes:954743};
+context.renderHeaders(historicalImageRequest);
+assert.deepEqual(facts(0),{'模型':'example','结果':'完成 · HTTP 200','总耗时':'1.3 秒',
+  '原始请求':'2806092','图片大小':'≈ 874125','转发请求':'954743','文本压缩':'zstd · 16级','压缩比例':'49.4%'});
+assert.deepEqual(descendants(rendered).filter(child=>child.tag==='h3').map(child=>child.text),['请求概况','请求保护']);
+const sizeList=rendered.children[0].children[1];
+assert.equal(sizeList.tag,'dl');
+assert(sizeList.children.every(row=>row.children[0].tag==='dt'&&row.children[1].tag==='dd'));
+context.renderHeaders({...historicalImageRequest,transport_content_encoding:'identity'});
+assert.equal(facts(0)['压缩比例'],undefined,'Image-to-path size changes alone do not qualify as compression');
+const resizedAndCompacted={decoded_bytes:2000000,inline_image_bytes:800000,image_upload_optimized:true,
+  transport_content_encoding:'zstd',transport_input_bytes:1200000,transport_wire_bytes:600000,
+  outbound_wire_bytes:100000,overflow_original_wire_bytes:600000,overflow_cache_hit:true};
+context.renderHeaders(resizedAndCompacted);
+assert.equal(facts(0)['图片大小'],'800000');
+assert.equal(facts(0)['压缩比例'],'50.0%','Use only the measured transport stage');
+context.renderHeaders({...resizedAndCompacted,transport_input_bytes:undefined});
+assert.equal(facts(0)['压缩比例'],undefined,'A resize with no before-size cannot use the original request size');
+context.renderHeaders({relay_content_encoding:'zstd'});
 assert.equal(facts(0)['文本压缩'],'zstd','A missing level must not hide a known compression method');
-context.renderCompression({...interrupted,overflow_compaction_calls:0,overflow_cache_hit:true});
+context.renderHeaders({...interrupted,overflow_compaction_calls:0,overflow_cache_hit:true});
 assert.equal(facts(0)['文本压缩'],undefined);
-context.renderCompression({source:'live',relay_error:'overflow_invalid_json',overflow_original_wire_bytes:1234567});
+context.renderHeaders({source:'live',relay_error:'overflow_invalid_json',overflow_original_wire_bytes:1234567});
 assert.equal(facts(1)['超限压缩'],'✓');
 assert.deepEqual(fields(details('overflow')),{'处理前大小':'1234567','处理后大小':'—'});
 // A normal generation request must expose its retained images inside protection.
 const folder='C:\\retained-images\\',image=folder+'example.png';
-context.renderCompression({source:'live',request_kind:'turn',image_isolation_applied:true,image_paths:[image,image]});
+context.renderHeaders({source:'live',request_kind:'turn',image_isolation_applied:true,image_paths:[image,image]});
 assert.equal(facts(1)['解图优化'],'✓');
 assert.equal(facts(1)['缩图保护'],undefined);
 assert.equal(details('resize'),undefined);
 let codes=descendants(details('optimization')).filter(child=>child.tag==='code');
 assert.deepEqual(codes.map(child=>child.text),[folder,'example.png']);
 assert.equal(descendants(details('optimization')).filter(child=>child.tag==='button').length,3);
-context.renderCompression({source:'live',image_paths:[image]});
+context.renderHeaders({source:'live',request_kind:'image_analysis',image_paths:[image]});
+assert.deepEqual(descendants(rendered).filter(child=>child.tag==='h3').map(child=>child.text),['请求概况','子会话信息','图片信息','请求保护']);
+context.renderHeaders({source:'live',image_paths:[image]});
 assert.equal(facts(1)['解图优化'],'—','A path in a request does not prove that this request optimized an image');
 assert.equal(details('optimization'),undefined);
-context.renderCompression({source:'live',image_isolation_applied:true});
+context.renderHeaders({source:'live',image_isolation_applied:true});
 assert.deepEqual(fields(details('optimization')),{'图片路径':'—'});
-context.renderCompression({source:'live',image_upload_optimized:true,image_upload_before_bytes:1200000,image_upload_images:[
+context.renderHeaders({source:'live',image_upload_optimized:true,image_upload_before_bytes:1200000,image_upload_images:[
   {original_width:2560,original_height:1440,width:1600,height:900},
   {mask:true,original_width:1000,original_height:1000,width:800,height:800}]});
 assert.equal(facts(1)['缩图保护'],undefined);
@@ -204,16 +230,16 @@ assert.equal(details('resize'),undefined);
 assert.equal(rendered.children.length,2,'Resolution details belong inside request size, without a separate card');
 assert.equal(facts(0)['图片压缩'],'参考图 1 · 2560 × 1440 → 1600 × 900\n编辑蒙版 · 1000 × 1000 → 800 × 800');
 assert.equal(descendants(rendered).some(child=>child.tag==='h4'),false,'Image compression belongs in a fact row');
-context.renderCompression({source:'live',image_upload_optimized:true});
+context.renderHeaders({source:'live',image_upload_optimized:true});
 assert.equal(facts(0)['图片压缩'],undefined,'Missing resolutions must not add an empty row');
-context.renderCompression({image_upload_optimized:true,image_upload_images:[null,{},
+context.renderHeaders({image_upload_optimized:true,image_upload_images:[null,{},
   {original_width:2560,original_height:1440,width:0,height:900}]});
 assert.equal(facts(0)['图片压缩'],undefined,'Invalid dimensions must not be shown');
-context.renderCompression({source:'live',image_upload_optimized:false,image_upload_images:[{original_width:2560,original_height:1440,width:2560,height:1440}]});
+context.renderHeaders({source:'live',image_upload_optimized:false,image_upload_images:[{original_width:2560,original_height:1440,width:2560,height:1440}]});
 assert.equal(facts(0)['图片压缩'],undefined,'Unmodified images must not show an image compression row');
 // Image optimization has its own setting, independent of request-size protection.
 context.state.status.packet_size_protection_enabled=false;context.state.status.capacity_retry_enabled=false;
-context.renderCompression({source:'live',image_isolation_applied:true,image_paths:[image]});
+context.renderHeaders({source:'live',image_isolation_applied:true,image_paths:[image]});
 assert.equal(rendered.children[1].attributes['aria-disabled'],'false');
 assert.equal(rows()[3].classList.contains('protection-inactive'),false);
 assert.equal(rows()[0].classList.contains('protection-inactive'),true);
@@ -225,25 +251,26 @@ assert.equal(descendants(details('optimization')).filter(child=>child.tag==='but
 english=true;
 const englishMarkers=context.renderProtectionMarkers(context.packetProtection({image_isolation_applied:true,image_upload_optimized:true}));
 assert.equal(englishMarkers.attributes['aria-label'],'Image analysis optimization · Triggered');
-context.renderCompression({source:'live',transport_content_encoding:'zstd',transport_zstd_level:1,image_upload_optimized:true,image_upload_before_bytes:1200000,
+context.renderHeaders({source:'live',transport_content_encoding:'zstd',transport_zstd_level:1,image_upload_optimized:true,image_upload_before_bytes:1200000,
   image_upload_images:[{original_width:2560,original_height:1440,width:1600,height:900}]});
 assert.equal(facts(0)['Text compression'],'zstd · Level 1');
 assert.equal(facts(0)['Image compression'],'2560 × 1440 → 1600 × 900');
-context.renderCompression(interrupted);
+assert.deepEqual(descendants(rendered).filter(child=>child.tag==='h3').map(child=>child.text),['Request overview','Request protection']);
+context.renderHeaders(interrupted);
 assert.equal(facts(1)['Size prediction'],'—');
-context.renderCompression({...interrupted,state:'streaming'});
+context.renderHeaders({...interrupted,state:'streaming'});
 assert.equal(facts(1)['Size prediction'],'—');
-context.renderCompression({...interrupted,usage_override_applied:false,reported_usage:{input_tokens:500000}});
+context.renderHeaders({...interrupted,usage_override_applied:false,reported_usage:{input_tokens:500000}});
 assert.equal(facts(1)['Size prediction'],'—');
-context.renderCompression(packet({outcome:'capacity_error',capacity_error_seen:true,stop_reason:'retry_limit'},3));
+context.renderHeaders(packet({outcome:'capacity_error',capacity_error_seen:true,stop_reason:'retry_limit'},3));
 assert.deepEqual(Array.from(headings(),row=>row.label),['Size prediction','Over-limit compaction','Capacity retry','Image analysis optimization']);
 assert.equal(headings()[2].value,'✓');
 assert.deepEqual(fields(details('retry')),{'Retry count':'3'});
 (async()=>{
   english=false;
-  context.renderCompression({source:'live',image_isolation_applied:true,image_paths:[image]});
+  context.renderHeaders({source:'live',image_isolation_applied:true,image_paths:[image]});
   const actions=descendants(details('optimization')).filter(child=>child.tag==='button');
   for(const action of actions)await action.onclick({currentTarget:action});
   assert.deepEqual(opened,[['/api/open-directory',folder],['/api/open-image',image],['/api/reveal-image',image]]);
-  console.log('Unique image markers, ordering/pagination, four mechanism symbols, image size fields, file actions, refresh and English labels passed.');
+  console.log('Image markers, request size and compression fields, protection indicators, file actions, refresh and English labels passed.');
 })().catch(error=>{console.error(error);process.exitCode=1;});

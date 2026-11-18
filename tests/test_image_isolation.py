@@ -763,11 +763,47 @@ class ImageRelayTests(unittest.TestCase):
         self.assertTrue(result["image_isolation_enabled"])
         self.assertIs(tomllib.loads(self.config.read_text(encoding="utf8"))["features"]["view_image"], False)
         self.assertEqual(self.relay(raw)[0], 200)
-        outgoing = json.loads(self.up.requests[-1]["body"])
+        forwarded = self.up.requests[-1]["body"]
+        outgoing = json.loads(forwarded)
         self.assertEqual(outgoing["input"][-1]["content"][1]["type"], "input_text")
         meta, inbound = self.latest()
         self.assertEqual(meta["image_isolation_removed"], 1)
+        self.assertEqual(meta["inline_image_bytes"], len(image_part()["image_url"]))
+        self.assertEqual(meta["transport_input_bytes"], len(forwarded))
+        self.assertEqual(meta["transport_wire_bytes"], len(forwarded))
         self.assertEqual(inbound["body"]["input"][-1]["content"][1]["type"], "input_image")
+
+    def test_auto_compression_selects_and_resets_using_the_rewritten_body(self):
+        self.enable()
+        body = request_body()
+        content = body["input"][-1]["content"]
+        png = b"\x89PNG\r\n\x1a\n" + b"x" * 700000
+        content[1]["image_url"] = "data:image/png;base64," + base64.b64encode(png).decode()
+        old_context = encode({"input": "x" * 1500000})
+        for capture in (True, False):
+            with self.subTest(capture=capture), patch.dict(self.server.settings, {
+                    "auto_detect_providers": True, "packet_size_protection_enabled": True,
+                    "auto_zstd_level_enabled": True, "budget_bytes": 1000000, "capture_enabled": capture}):
+                headers = {"session_id": f"image-auto-{capture}"}
+                with patch("zstandard.ZstdCompressor", wraps=zstandard.ZstdCompressor) as compressor:
+                    self.assertEqual(self.relay(old_context, headers=headers)[0], 200)
+                    compressor.assert_called_once_with(level=16)
+                for text_bytes, expected_levels in ((890000, []), (945000, [1])):
+                    content[0]["text"] = "x" * text_bytes
+                    raw = encode(body)
+                    self.assertGreater(len(raw), 1500000)
+                    with patch("zstandard.ZstdCompressor", wraps=zstandard.ZstdCompressor) as compressor:
+                        self.assertEqual(self.relay(raw, headers=headers)[0], 200)
+                        self.assertEqual([call.kwargs["level"] for call in compressor.call_args_list], expected_levels)
+                    if capture:
+                        meta, _ = self.latest()
+                        self.assertEqual(meta["decoded_bytes"], len(raw))
+                        self.assertEqual(meta["relay_auto_zstd_phase"], 1 if expected_levels else 0)
+                        self.assertEqual(meta["relay_auto_zstd_previous_phase"], 0 if expected_levels else 17)
+                # An unseen session uses the same rewritten size for the initial 1.5 MB split.
+                with patch("zstandard.ZstdCompressor", wraps=zstandard.ZstdCompressor) as compressor:
+                    self.assertEqual(self.relay(raw, headers={"session_id": f"image-unseen-{capture}"})[0], 200)
+                    compressor.assert_called_once_with(level=1)
 
     def test_clipboard_relay_uses_one_stable_cache_before_and_after_source_cleanup(self):
         self.enable()
@@ -848,7 +884,7 @@ class ImageRelayTests(unittest.TestCase):
                 for coding in ("identity", "zstd"):
                     wire = zstandard.ZstdCompressor().compress(raw) if coding == "zstd" else raw
                     with self.server.maintenance_guard, self.subTest(capture=capture, coding=coding), patch.object(
-                            self.server.image_isolation, "prepare", side_effect=AssertionError("independent image was rewritten")), patch.object(
+                            self.server.image_isolation, "rewrite", side_effect=AssertionError("independent image was rewritten")), patch.object(
                             self.server.overflow, "prepare", side_effect=AssertionError("independent image was compacted")):
                         os.utime(retained, (1, 1))
                         self.assertEqual(self.relay(wire, headers={"Content-Encoding": coding})[0], 200)
