@@ -38,7 +38,7 @@ UI_FILES = {"/": ("index.html", "text/html; charset=utf-8"),
             "/tray.js": ("tray.js", "text/javascript; charset=utf-8"),
             "/tray.css": ("tray.css", "text/css; charset=utf-8")}
 POST_PATHS = {"/api/settings", "/api/proxy-settings", "/api/proxy-test", "/api/context-settings", "/api/link", "/api/sharing", "/api/restart-notice", "/api/connection/resume", "/api/connections"}
-GET_PATHS = {"/api/status", "/api/proxy-settings", "/api/tray-status", "/api/context-settings", "/api/packet-filters", "/api/packets", "/api/sharing", "/api/restart-notice", "/api/connections"}
+GET_PATHS = {"/api/status", "/api/proxy-settings", "/api/tray-status", "/api/context-settings", "/api/packet-filters", "/api/packets", "/api/sharing", "/api/restart-notice", "/api/connections", "/api/session-labels/wait"}
 
 
 def open_directory(value):
@@ -351,6 +351,11 @@ class UIHandler(BaseHTTPRequestHandler):
 
     def _session_summaries(self):
         try:
+            status, summary = self._relay_json("/api/session-summaries")
+            if status not in (404, 405):
+                self._json(status, summary)
+                return
+            # Only relays without the summaries endpoint need the local fallback.
             status, data = self._relay_json("/api/status")
             if status != 200 or not isinstance(data.get("data_dir"), str):
                 self._json(200, {"state": "unavailable", "sessions": []})

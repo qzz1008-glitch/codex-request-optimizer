@@ -495,6 +495,21 @@ class ProviderRelayTests(unittest.TestCase):
             with self.opener.open(self.server.ui_url + "api/session-summaries", timeout=3) as response:
                 self.assertEqual(json.load(response)["state"], "unavailable")
 
+    def test_sidebar_can_catch_a_label_lookup_that_finishes_during_the_snapshot(self):
+        updates = self.server.session_label_updates
+        before = updates.revision()
+
+        def finish_lookup(_data_dir):
+            updates.begin()
+            updates.complete(True)
+            return {"state": "available", "sessions": [{"thread_id": "session", "title": None}]}
+
+        with patch.object(self.server.session_summaries, "read", side_effect=finish_lookup):
+            with self.opener.open(self.server.ui_url + "api/session-summaries", timeout=3) as response:
+                self.assertEqual(json.load(response)["label_revision"], before)
+        with self.opener.open(self.server.ui_url + f"api/session-labels/wait?after={before}", timeout=3) as response:
+            self.assertEqual(json.load(response), {"changed": True, "pending": False})
+
     def test_same_service_exposes_request_token_lookup(self):
         self.post(self.server.endpoint + "/responses")
         packet = self.server.store.list()[0]

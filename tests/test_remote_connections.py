@@ -776,13 +776,13 @@ class WindowsRemoteRelayTests(unittest.TestCase):
             def rows():
                 return {row["thread_id"]: row for row in sidebar.read(capture)["sessions"]}
 
+            revision = labels.updates.revision()
             self.assertIsNone(rows()[thread]["title"])
-            deadline = time.monotonic() + 4
-            while time.monotonic() < deadline:
-                sessions = rows()
-                if sessions.get(parent, {}).get("title") and not labels.refreshing:
-                    break
-                time.sleep(.02)
+            self.assertTrue(labels.updates.wait(revision, timeout=2)["changed"])
+            parent_revision = labels.updates.revision()
+            rows()  # The first lookup exposes the child-to-parent relationship.
+            self.assertTrue(labels.updates.wait(parent_revision, timeout=2)["changed"])
+            sessions = rows()
             self.assertEqual(sessions[legacy]["title"], "Saved remote chat")
             self.assertEqual(sessions[legacy]["origin"], {"kind": "remote", "address": self.host.destination})
             self.assertEqual(sessions[thread]["title"], "Remote child")
@@ -802,12 +802,16 @@ class WindowsRemoteRelayTests(unittest.TestCase):
             return {"index": {thread: host.name}}
         with patch("packet_inspector.ssh_session_labels.saved_hosts", return_value=[self.host, second]), \
              patch.object(self.relays, "ssh", side_effect=ssh) as read:
-            labels._refresh([(thread, None, None)], labels.generation)
+            revision = labels.updates.revision()
+            labels({thread: (None, None)})
+            self.assertTrue(labels.updates.wait(revision, timeout=2)["changed"])
             self.assertEqual(read.call_count, 2)
             sidebar = SessionSummaries(TokenWindows(self.root), ssh_labels=labels)
             self.assertEqual(sidebar._labels([thread]), {})
 
-            labels._refresh([(thread, None, self.host.id)], labels.generation)
+            revision = labels.updates.revision()
+            labels({thread: (None, self.host.id)})
+            self.assertTrue(labels.updates.wait(revision, timeout=2)["changed"])
             self.assertEqual(read.call_count, 3)
             resolved = sidebar._labels([thread], native_origins={thread: (self.host.id, None)})
             self.assertEqual(resolved[thread]["title"], self.host.name)

@@ -39,12 +39,15 @@ class LegacyHandler(BaseHTTPRequestHandler):
         if body == b"drop-response":
             self.close_connection = True
             return
+        status = 200
         if self.path == "/health":
             value = {"app": "codex-packet-inspector", "version": "0.2.0"}
         elif self.path == "/api/status":
             value = {"version": "0.2.0", "active_requests": 1}
             if hasattr(self.server, "test_data_dir"):
                 value["data_dir"] = self.server.test_data_dir
+        elif self.path == "/api/session-summaries":
+            status, value = 404, {"error": "not_supported"}
         elif self.path == "/api/packets/" + "a" * 32:
             value = self.server.test_packet
         elif self.path.startswith("/api/packets?") and hasattr(self.server, "test_packet"):
@@ -52,7 +55,7 @@ class LegacyHandler(BaseHTTPRequestHandler):
         else:
             value = {"received": body.decode()}
         raw = json.dumps(value).encode()
-        self.send_response(404 if self.path == "/api/packets/missing" else 200)
+        self.send_response(404 if self.path == "/api/packets/missing" else status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(raw)))
         self.end_headers()
@@ -189,14 +192,15 @@ class DesktopUITests(unittest.TestCase):
         self.assertEqual((status, json.loads(body)), (200, {"state": "unavailable"}))
         lookup.assert_not_called()
 
-    def test_session_summaries_are_local_read_only_metadata(self):
+    def test_session_summaries_fall_back_to_read_only_metadata_for_legacy_relays(self):
         self.backend.test_data_dir = str(self.folder)
         expected = {"state": "available", "sessions": [{"thread_id": "thread-test", "title": "会话名称"}]}
         with patch.object(self.ui.session_summaries, "read", return_value=expected) as read:
             status, body, _headers = self.request("/api/session-summaries")
         self.assertEqual((status, json.loads(body)), (200, expected))
         read.assert_called_once_with(str(self.folder))
-        self.assertEqual([(r[0], r[1]) for r in self.backend.requests], [("GET", "/api/status")])
+        self.assertEqual([(r[0], r[1]) for r in self.backend.requests],
+                         [("GET", "/api/session-summaries"), ("GET", "/api/status")])
 
     def test_ui_request_origin_is_translated_only_after_local_validation(self):
         status, _body, _headers = self.request("/api/settings", "POST", b'{"budget_bytes":1000000}',

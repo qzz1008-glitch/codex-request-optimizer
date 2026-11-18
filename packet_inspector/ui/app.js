@@ -573,6 +573,7 @@ const listTokenObserver = new IntersectionObserver(entries=>{
   loadListTokens();
 },{root:$("packet-list"),rootMargin:"100px"});
 let sessionSummaries = [], sessionMetadataAt = 0, sessionMetadataProbeAt = 0, sessionMetadataLoading = false, sessionMetadataSupported = null;
+let sessionLabelWaiting = false, sessionLabelRevision = null, sessionMetadataRefreshQueued = false;
 const sessionConnectionObserver=new ResizeObserver(()=>renderSessionConnections());
 const OTHER_SESSION_GROUP="group:other";
 const auxiliaryLabels={image_analysis:"图片解析",next_message_suggestion:"消息建议",title_generation:"自动标题",session_index:"会话索引",ambient_suggestions:"任务推荐",subagent:"子任务"};
@@ -609,8 +610,9 @@ function sessionGroups() {
       if(visited.has(current.thread_id))break;
       visited.add(current.thread_id);
       const kind=auxiliarySessionKind(current);
-      const knownRemote=current.origin?.kind==="remote"&&current.origin.address;
-      if((kind==="subagent"&&sessionTitle(current))||(!kind&&(imageParents.has(current.thread_id)||sessionTitle(current)||knownRemote))) {owner=current;break;}
+      const name=sessionTitle(current);
+      const imageParent=imageParents.has(current.thread_id)&&current.origin?.kind!=="remote";
+      if((kind==="subagent"&&name)||(!kind&&(name||imageParent))) {owner=current;break;}
       current=rows.get(current.parent_thread_id);
     }
     const id=owner?.thread_id||OTHER_SESSION_GROUP;
@@ -858,18 +860,44 @@ async function refreshFilters() {
   state.filterRevision=revision;
   renderStorageInfo();renderSessions();
 }
-async function refreshSessionSummaries() {
-  if(!state.status || sessionMetadataLoading || Date.now()-sessionMetadataAt<5000)return;
+async function watchSessionLabels(revision) {
+  if(!Number.isSafeInteger(revision)||document.hidden)return;
+  sessionLabelRevision=revision;
+  if(sessionLabelWaiting)return;
+  sessionLabelWaiting=true;
+  let changed=false;
+  try {
+    while(sessionLabelRevision!==null&&!document.hidden) {
+      const after=sessionLabelRevision;sessionLabelRevision=null;
+      const update=await api("/api/session-labels/wait?after="+after,undefined,AbortSignal.timeout(20000));
+      changed=update.changed===true;
+      if(changed)break;
+      if(update.pending===true)sessionLabelRevision??=after;
+    }
+  } catch(_) {} finally {
+    sessionLabelWaiting=false;sessionLabelRevision=null;
+  }
+  if(changed)await refreshSessionSummaries(true);
+}
+async function refreshSessionSummaries(fromLabels=false) {
+  if(!state.status||(!fromLabels&&Date.now()-sessionMetadataAt<5000))return;
+  if(sessionMetadataLoading) {
+    if(fromLabels)sessionMetadataRefreshQueued=true;
+    return;
+  }
   const membership=()=>JSON.stringify(sessionGroups().map(group=>[group.thread_id,group.members.map(row=>row.thread_id).sort()]));
   const previousMembers=membership();
   sessionMetadataLoading=true;
   try {
-    if(sessionMetadataSupported!==false || Date.now()-sessionMetadataProbeAt>=30000) {
+    if(fromLabels || sessionMetadataSupported!==false || Date.now()-sessionMetadataProbeAt>=30000) {
       sessionMetadataProbeAt=Date.now();
       try {
         const result=await api("/api/session-summaries",undefined,AbortSignal.timeout(5000));
         if(result.state==="available" && Array.isArray(result.sessions)) {
-          sessionSummaries=preserveSessionTitles(await enrichSessionPurposes(result.sessions));sessionMetadataSupported=true;return;
+          sessionSummaries=preserveSessionTitles(await enrichSessionPurposes(result.sessions));
+          sessionMetadataSupported=true;
+          watchSessionLabels(result.label_revision).catch(fail);
+          return;
         }
       } catch(_) {}
       sessionMetadataSupported=false;
@@ -895,6 +923,10 @@ async function refreshSessionSummaries() {
     sessionSummaries=(await enrichSessionPurposes(results)).map(row=>sessionTitle(row)?{...row,title_cached:true}:row);
   } finally {
     sessionMetadataAt=Date.now();sessionMetadataLoading=false;
+    if(sessionMetadataRefreshQueued) {
+      sessionMetadataRefreshQueued=false;
+      queueMicrotask(()=>refreshSessionSummaries(true).catch(fail));
+    }
     const groups=sessionGroups();
     const group=selectedSessionGroup(groups)||groups.find(group=>group.members.some(row=>row.thread_id===state.detail?.thread_id))||
       groups.slice().sort((a,b)=>(b.updated_at||0)-(a.updated_at||0))[0];

@@ -77,12 +77,14 @@ test('a confirmed image parent remains a group before its name or native record 
   assert.equal(context.otherTaskSessions().length,0);
  }
 });
-test('an unnamed session with a confirmed SSH address displays its own card',()=>{
+test('a confirmed SSH session displays its own card once the native title is available',()=>{
  const origin={kind:'remote',address:'192.0.2.25'};
- const groups=grouped([session('remote',{origin}),
-  session('helper',{origin,parent_thread_id:'remote',session_kind:'title_generation'}),
-  session('unresolved')]);
+ const pending=[session('remote',{origin}),session('helper',{origin,parent_thread_id:'remote',session_kind:'title_generation'}),
+  session('unresolved')];
+ assert.deepEqual(grouped(pending).map(group=>group.title),['其他']);
+ const groups=grouped([{...pending[0],title:'Real SSH title'},...pending.slice(1)]);
  const remote=groups.find(group=>group.thread_id==='remote');
+ assert.equal(remote.title,'Real SSH title');
  assert.deepEqual(remote.origin,origin);
  assert.deepEqual(remote.members.map(row=>row.thread_id),['remote','helper']);
  assert.deepEqual(Array.from(context.otherTaskSessions(),row=>row.thread_id),['unresolved']);
@@ -164,15 +166,17 @@ test('title retention does not invent names for new or unidentified sessions or 
  assert.equal(context.preserveSessionTitles([]).length,0);
 });
 (async()=>{
-  const saved=Object.fromEntries(['AbortSignal','URLSearchParams','uploadBytes','api','state','sessionSummaries','sessionMetadataAt','sessionMetadataProbeAt','sessionMetadataLoading','sessionMetadataSupported','sessionLegacyCursor','enrichSessionPurposes','renderSessions','renderStorageInfo','setFilterOptions','renderList','selectSession'].map(key=>[key,context[key]]));
+  const saved=Object.fromEntries(['AbortSignal','Date','URLSearchParams','document','queueMicrotask','fail','uploadBytes','api','state','sessionSummaries','sessionMetadataAt','sessionMetadataProbeAt','sessionMetadataLoading','sessionMetadataSupported','sessionLabelWaiting','sessionLabelRevision','sessionMetadataRefreshQueued','sessionLegacyCursor','enrichSessionPurposes','renderSessions','renderStorageInfo','setFilterOptions','renderList','selectSession'].map(key=>[key,context[key]]));
   const requests=[],renders=[],selections=[];
   let resolveSummaries,resolveEnrichment;
   const summaries=new Promise(resolve=>{resolveSummaries=resolve;}),enrichment=new Promise(resolve=>{resolveEnrichment=resolve;});
   try {
     vm.runInContext(source.slice(source.indexOf('async function refreshFilters('),source.indexOf('function hasTextSelectionWithin(')),context);
     Object.assign(context,{
-      AbortSignal,state:{status:{storage:{revision:1}},sessions:[],filters:{thread:''}},sessionSummaries:[],
+      AbortSignal,queueMicrotask,document:{hidden:false},fail:error=>{throw error;},
+      state:{status:{storage:{revision:1}},sessions:[],filters:{thread:''}},sessionSummaries:[],
       sessionMetadataAt:0,sessionMetadataProbeAt:0,sessionMetadataLoading:false,sessionMetadataSupported:null,
+      sessionLabelWaiting:false,sessionLabelRevision:null,sessionMetadataRefreshQueued:false,
       api:async path=>{requests.push(path);if(path==='/api/packet-filters')return {kinds:[],statuses:[],threads:['main','image']};if(path==='/api/session-summaries')return summaries;throw Error('Unexpected API request: '+path);},
       requestKinds:{generation:'Generation',compaction:'Compaction'},statusLabel:value=>value,
       setFilterOptions(){},renderStorageInfo(){},renderList(){},
@@ -212,6 +216,65 @@ test('title retention does not invent names for new or unidentified sessions or 
     assert.equal(context.sessionMetadataSupported,false);assert.equal(context.sessionSummaries[0].title,'Frontend');
     assert.equal(context.sessionSummaries[0].title_cached,true);assert.equal(context.sessionSummaries[0].updated_at,300);
     assert.equal(context.state.filters.thread,'thread:main');assert.equal(context.sessionSummaries[0].latest_packet.wire_bytes,400);passed++;
+
+    let now=100000, reads=0, id='remote', title=null;
+    const origin={kind:'remote',address:'192.0.2.25'};
+    let resolveNotice;
+    const notice=new Promise(resolve=>{resolveNotice=resolve;});
+    const labelRequests=[];
+    Object.assign(context,{Date:{now:()=>now},sessionMetadataSupported:true,sessionMetadataAt:0,sessionSummaries:[],
+      state:{status:{storage:{revision:2}},sessions:[id],filters:{thread:''}},
+      api:async path=>{
+        labelRequests.push(path);
+        if(path==='/api/session-labels/wait?after=0')return notice;
+        assert.equal(path,'/api/session-summaries');reads++;
+        return {state:'available',sessions:[session(id,{title,origin})],...(title?{}:{label_revision:0})};
+      }});
+    await context.refreshSessionSummaries();
+    assert.deepEqual(renders.at(-1).map(group=>group.title),['其他']);
+    assert.deepEqual(labelRequests,['/api/session-summaries','/api/session-labels/wait?after=0']);
+    title='Actual remote chat';resolveNotice({changed:true,pending:false});
+    await new Promise(resolve=>setImmediate(resolve));
+    assert.equal(reads,2,'A completed lookup refreshes the list without a poll or time advancing');
+    assert.deepEqual(renders.at(-1).map(group=>[group.thread_id,group.title]),[['remote','Actual remote chat']]);
+    now+=2000;
+    await context.refreshSessionSummaries();
+    assert.equal(reads,2,'A resolved title returns to normal refresh timing');passed++;
+
+    now=110000;id='missing';context.state.sessions=[id];
+    let waits=0;
+    context.api=async path=>{
+      if(path==='/api/session-labels/wait?after=1')return {changed:false,pending:++waits===1};
+      assert.equal(path,'/api/session-summaries');reads++;
+      return {state:'available',sessions:[session(id,{origin})],label_revision:1};
+    };
+    await context.refreshSessionSummaries();
+    await new Promise(resolve=>setImmediate(resolve));
+    assert.equal(waits,2,'A bounded wait is only renewed while the backend is still looking');
+    assert.equal(reads,3,'Completing a lookup without a change does not reload the summaries');passed++;
+
+    id='concurrent';context.state.sessions=[id];now=120000;
+    const snapshot={state:'available',sessions:[session(id,{origin})],label_revision:2};
+    let finishLookup,finishSnapshot,summaryCalls=0;
+    const lookup=new Promise(resolve=>{finishLookup=resolve;});
+    const slowSnapshot=new Promise(resolve=>{finishSnapshot=resolve;});
+    context.api=async path=>{
+      if(path==='/api/session-labels/wait?after=2')return lookup;
+      assert.equal(path,'/api/session-summaries');
+      summaryCalls++;
+      if(summaryCalls===1)return snapshot;
+      if(summaryCalls===2)return slowSnapshot;
+      return {state:'available',sessions:[session(id,{origin,title:'Title from concurrent lookup'})]};
+    };
+    await context.refreshSessionSummaries();now+=5000;
+    const inFlight=context.refreshSessionSummaries();
+    finishLookup({changed:true,pending:false});
+    await new Promise(resolve=>setImmediate(resolve));
+    assert.equal(context.sessionMetadataRefreshQueued,true);
+    finishSnapshot({...snapshot,label_revision:undefined});await inFlight;
+    await new Promise(resolve=>setImmediate(resolve));
+    assert.equal(summaryCalls,3);
+    assert.deepEqual(renders.at(-1).map(group=>group.title),['Title from concurrent lookup']);passed++;
   } finally {Object.assign(context,saved);}
   console.log(JSON.stringify({passed}));
 })().catch(error=>{console.error(error);process.exitCode=1;});

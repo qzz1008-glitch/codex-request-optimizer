@@ -38,6 +38,7 @@ from .token_window import TokenWindows
 from .response_usage import packet_usage
 from .response_summary import ResponseSummary
 from .session_summary import SessionSummaries
+from .background_session_labels import SessionLabelUpdates
 from .ssh_session_labels import SshSessionLabels
 from .storage import DEFAULT_STORAGE_BYTES, Store
 from .storage_paths import resolve_directory, path_settings, grouped_paths
@@ -240,7 +241,8 @@ class InspectorServer(ThreadingHTTPServer):
             self.restart_notices.mark("sharing")
         self.provider_next_scan = 0
         self.upgrade_draining = False
-        self.wsl = WslConnection(self.data_dir)
+        self.session_label_updates = SessionLabelUpdates()
+        self.wsl = WslConnection(self.data_dir, label_updates=self.session_label_updates)
         self.token_windows = TokenWindows()
         self.cache_dir = resolve_directory(self.data_dir, self.settings["cache_dir"])
         self.log_dir = resolve_directory(self.data_dir, self.settings["log_dir"])
@@ -298,7 +300,8 @@ class InspectorServer(ThreadingHTTPServer):
         self.connections = Connections(self.link.config.parent, self.connection_profile, self.set_connection,
                                        transport=self.remote_relays,
                                        cache_path=self.cache_dir / "remote-connections.json")
-        ssh_labels = (SshSessionLabels(self.remote_relays, self.connections.codex_home, self.connections.ssh_config)
+        ssh_labels = (SshSessionLabels(self.remote_relays, self.connections.codex_home, self.connections.ssh_config,
+                                       updates=self.session_label_updates)
                       if self.remote_relays is not None else None)
         self.session_summaries = SessionSummaries(self.token_windows, wsl_labels=self.wsl.labels, ssh_labels=ssh_labels)
         self.analysis_thread = threading.Thread(target=self._classify_pending, daemon=True)
@@ -1097,10 +1100,21 @@ class Handler(BaseHTTPRequestHandler):
                       else self.server.updates.start(data.get("action")))
             self._json(200, result)
         elif path == "/api/session-summaries" and self.command == "GET":
+            updates = self.server.session_label_updates
+            # Capture the revision before reading so a fast lookup cannot race the subscription.
+            revision = updates.revision()
             try:
-                self._json(200, self.server.session_summaries.read(self.server.cache_dir))
+                summary = self.server.session_summaries.read(self.server.cache_dir)
+                if updates.needs_wait(revision):
+                    summary["label_revision"] = revision
             except (OSError, ValueError, TypeError, AttributeError, sqlite3.Error):
-                self._json(200, {"state": "unavailable", "sessions": []})
+                summary = {"state": "unavailable", "sessions": []}
+            self._json(200, summary)
+        elif path == "/api/session-labels/wait" and self.command == "GET":
+            after = one("after")
+            if not re.fullmatch(r"[0-9]{1,16}", after):
+                raise ValueError("invalid session label revision")
+            self._json(200, self.server.session_label_updates.wait(int(after)))
         elif path == "/api/installation" and self.command in {"GET", "POST"}:
             action = "Status" if self.command == "GET" else json.loads(self._body(1024)).get("action")
             if action not in {"Status", "Install", "Remove"}:

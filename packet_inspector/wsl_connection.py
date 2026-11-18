@@ -212,13 +212,13 @@ class LocalWsl:
 
 
 class WslConnection:
-    def __init__(self, data_dir, backend=None):
+    def __init__(self, data_dir, backend=None, *, label_updates=None):
         self.directory = Path(data_dir) / "wsl-connections"
         self.backend = backend or LocalWsl()
         self.result = {"targets": [], "warnings": [], "changed": False, "reload_required": False}
         self._lock = threading.RLock()
         self._running_at, self._running = 0, []
-        self.labels = BackgroundSessionLabels(self._find_labels)
+        self.labels = BackgroundSessionLabels(self._find_labels, updates=label_updates)
         self.metadata_error = ""
         self._metadata_retry = 0
         self._discovered_at = 0
