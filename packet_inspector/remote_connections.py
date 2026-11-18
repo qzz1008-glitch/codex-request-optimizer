@@ -15,6 +15,7 @@ import threading
 import time
 from urllib.parse import quote
 
+from .native_state import managed_remote_connections, read_global_state
 from .network_diagnostics import safe_text
 from .remote_control import SCRIPT, RESULT_PREFIX
 
@@ -76,19 +77,11 @@ def ssh_aliases(config, *, config_hash=None):
 
 def saved_hosts(codex_home, ssh_config, *, config_hash=None):
     hosts, destinations = [], set()
-    state_path = codex_home / ".codex-global-state.json"
     try:
-        if state_path.stat().st_size > 16 * 1024 * 1024:
-            raise ValueError("Codex 服务器列表过大，无法读取。")
-        state = json.loads(state_path.read_text(encoding="utf-8-sig"))
-    except FileNotFoundError:
-        state = {}
+        state = read_global_state(codex_home)
     except (OSError, UnicodeError, ValueError) as exc:
         raise ValueError("无法读取 Codex 已保存的服务器列表。") from exc
-    rows = state.get("codex-managed-remote-connections", []) if isinstance(state, dict) else []
-    if isinstance(rows, dict):
-        rows = list(rows.values())
-    for row in rows if isinstance(rows, list) else []:
+    for row in managed_remote_connections(state):
         if not isinstance(row, dict):
             continue
         identity = row.get("hostId", "")

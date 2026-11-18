@@ -12,7 +12,7 @@ import zlib
 from .request_context import (AUXILIARY_KINDS, IMAGE_ANALYST_PREFIXES, last_user_text, temporary_kind_from_metadata,
                               temporary_request_kind, request_session_context, session_id)
 from .response_usage import packet_usage
-from .native_state import read_state, state_databases
+from .native_state import read_state, state_databases, thread_origins
 from .token_estimate import estimate_usage, overflow_applied
 
 MAX_SESSIONS = 300
@@ -126,6 +126,7 @@ class SessionSummaries:
                         edges = []
                 # Codex App stores its display name separately from the initial-message title.
                 labels = {r[0]: {"title": r[3] if isinstance(r[3], str) and r[3].strip() else r[1], "updated_at": r[2],
+                                "origin": {"kind": "local"},
                                 "fallback_title": subagent_title(r[5], r[3], r[4]),
                                 **({"session_kind": "subagent"} if subagent_source(r[5]) else {})} for r in rows}
                 parents = {}
@@ -209,6 +210,7 @@ class SessionSummaries:
             if label.get("ssh_connection_key"):
                 ssh_origins[record["thread_id"]] = label["ssh_connection_key"]
             record["title"] = label.get("title")
+            record["origin"] = label.get("origin")
             if not record["title"] and label.get("fallback_title"):
                 record.update(title=label["fallback_title"], title_source="subagent")
             if label.get("session_kind"):
@@ -251,7 +253,7 @@ class SessionSummaries:
                     ssh_origins[thread] = label["ssh_connection_key"]
                 title = label.get("title") or label.get("fallback_title")
                 parent = {"thread_id": thread, "packet_count": 0, "updated_at": label["updated_at"] if number(label.get("updated_at")) else 0,
-                          "title": title, "latest_packet": None}
+                          "title": title, "latest_packet": None, "origin": label.get("origin")}
                 if label.get("session_kind"):
                     parent["session_kind"] = label["session_kind"]
                 if label.get("parent_thread_id"):
@@ -328,6 +330,9 @@ class SessionSummaries:
                         "usage_override_applied": bool(packet.get("usage_override_applied"))}
                 elif packet.get("usage_override_applied"):
                     record["token_window"] = {"state": "unavailable"}
+        origins = thread_origins(self.tokens.home, (record["thread_id"] for record in records))
+        for record in records:
+            record["origin"] = origins.get(record["thread_id"], record["origin"])
         records.sort(key=lambda r: (-r["updated_at"], r["thread_id"]))
         return {"state": "available", "sessions": records}
 
