@@ -39,6 +39,10 @@ def select_zstd_level(encoding, zstd_level=DEFAULT_ZSTD_LEVEL, *,
     return level
 
 
+def below_auto_zstd_threshold(body_bytes, budget_bytes):
+    return body_bytes * 100 < budget_bytes * 90
+
+
 def prepare_zstd(body, encoding, zstd_level=DEFAULT_ZSTD_LEVEL, *,
                  auto_zstd_level=False, budget_bytes=None, image_request=False):
     level = select_zstd_level(encoding, zstd_level,
@@ -55,9 +59,9 @@ def prepare_zstd(body, encoding, zstd_level=DEFAULT_ZSTD_LEVEL, *,
             decoded = decode_body(body, "zstd")
         except (ValueError, zstandard.ZstdError):
             return PreparedRequest(body, encoding)
-    # The current original size takes priority over the previous session mode.
+    # The uncompressed body entering transport takes priority over the previous session mode.
     # Native zstd stays byte-for-byte intact when no extra compression is needed.
-    if auto_zstd_level and len(decoded) * 100 < budget_bytes * 90:
+    if auto_zstd_level and below_auto_zstd_threshold(len(decoded), budget_bytes):
         return PreparedRequest(body, encoding or "identity")
     compressed = zstandard.ZstdCompressor(level=level).compress(decoded)
     if len(compressed) < len(body):
