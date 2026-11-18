@@ -197,6 +197,22 @@ class RemoteConnectionsTests(unittest.TestCase):
             self.manager.apply(["local", self.rows[0]["hostId"]], "activate", revision=revision)
         self.assertEqual(self.local_calls, [])
 
+    def test_ssh_account_edit_refreshes_status_and_invalidates_old_confirmation(self):
+        users = self.root / "users.conf"
+        users.write_text("Host server-a\n User root\n", encoding="utf8")
+        with self.ssh.open("a", encoding="utf8") as stream:
+            stream.write("Include users.conf\n")
+        self.settled()
+        old_revision = self.manager.snapshot()["revision"]
+        self.remote_calls.clear()
+        users.write_text("Host server-a\n User codex-personal\n", encoding="utf8")
+        identity = self.rows[0]["hostId"]
+        with self.assertRaisesRegex(ValueError, "影响范围"):
+            self.manager.apply([identity], "activate", revision=old_revision)
+        self.settled()
+        self.assertIn((identity, None), self.remote_calls)
+        self.assertTrue(all(action is None for _, action in self.remote_calls))
+
     def test_port_hint_survives_restart_without_caching_relay_capabilities(self):
         cache = self.root / "cache" / "remote-connections.json"
         self.manager.cache_path = cache
@@ -219,17 +235,18 @@ class RemoteConnectionsTests(unittest.TestCase):
             self.manager.apply(["local"], "activate")
 
     def test_ssh_uses_fixed_remote_command_batch_auth_and_no_shell(self):
-        value = RESULT_PREFIX + json.dumps({"state": "connected"})
+        value = RESULT_PREFIX + json.dumps({"home": "/root/.codex", "uid": 0, "files": {"config.toml": None}})
         result = SimpleNamespace(returncode=0, stdout=("banner\n" + value).encode(), stderr=b"")
         with patch("packet_inspector.remote_connections.shutil.which", return_value="ssh"), \
              patch("packet_inspector.remote_connections.subprocess.run", return_value=result) as run:
-            self.assertEqual(SshControl()(Host("id", "name", "root@host", 2202), "activate")["state"], "connected")
+            self.assertEqual(SshControl()(Host("id", "name", "root@host", 2202), "tunnel_snapshot")["home"], "/root/.codex")
         args, kwargs = run.call_args
         self.assertEqual(args[0][-3:], ["--", "root@host", "exec \"${SHELL:-/bin/sh}\" -lc 'cd / && exec python3 -I -'"])
         self.assertIn("BatchMode=yes", args[0])
-        self.assertNotIn("StrictHostKeyChecking=no", args[0])
+        self.assertIn("StrictHostKeyChecking=yes", args[0])
+        self.assertIn("ControlPath=none", args[0])
         self.assertNotIn("shell", kwargs)
-        self.assertIn(b'"action": "activate"', kwargs["input"])
+        self.assertIn(b'"action": "tunnel_snapshot"', kwargs["input"])
         self.assertEqual(kwargs["timeout"], 90)
 
     def test_ssh_timeout_never_replays_uncertain_config_changes(self):
@@ -260,6 +277,29 @@ class RemoteConnectionsTests(unittest.TestCase):
                 self.manager.apply(identities, "reconnect")
         self.assertEqual(self.remote_calls, [])
         self.assertEqual(self.local_calls, [])
+
+    def test_reconnect_failure_is_only_retained_for_the_same_remote_account(self):
+        identity = self.rows[0]["hostId"]
+        account = "root"
+
+        def transport(host, action, origin):
+            result = self.transport(host, action, origin)
+            result["account_key"] = account
+            if action == "reconnect":
+                result["codex_reconnect"] = {"state": "unconfirmed", "error": "Old account could not reload"}
+            return result
+
+        self.manager.transport = transport
+        self.settled()
+        self.manager.apply([identity], "reconnect")
+        self.settled()
+        self.manager.snapshot(refresh=True)
+        self.assertEqual(self.settled()[identity]["codex_reconnect"]["state"], "unconfirmed")
+        account = "codex-personal"
+        self.manager.snapshot(refresh=True)
+        result = self.settled()[identity]
+        self.assertNotIn("codex_reconnect", result)
+        self.assertNotIn("account_key", result)
 
     def test_reconnect_transport_failure_is_unconfirmed_and_keeps_provider_state(self):
         identity = self.rows[0]["hostId"]
@@ -616,6 +656,7 @@ class WindowsRemoteRelayTests(unittest.TestCase):
         self.original = b'model_provider = "openai"\nmodel = "fixture"\n'
         self.config.write_bytes(self.original)
         self.host = Host("remote-ssh-test", "server", "server", 2222)
+        self.remote_home, self.uid = self.root, 0
         self.ready = True
         self.calls, self.forwards = [], []
         self.relays = self.manager()
@@ -646,7 +687,9 @@ class WindowsRemoteRelayTests(unittest.TestCase):
         output = io.StringIO()
         fixture_lock = SimpleNamespace(flock=lambda *_: None, LOCK_EX=1, LOCK_NB=2)
         with patch.dict(sys.modules, {"fcntl": fixture_lock}), patch("os.O_NOFOLLOW", 0, create=True), \
-             patch.dict("os.environ", {"CODEX_HOME": str(self.root)}), patch("shutil.which", return_value=None), \
+             patch.dict("os.environ", {"CODEX_HOME": str(self.remote_home)}), \
+             patch("os.getuid", return_value=self.uid, create=True), patch("pathlib.Path.home", return_value=self.remote_home), \
+             patch("shutil.which", return_value=None), \
              redirect_stdout(output):
             exec("INPUT = " + repr(json.dumps({"action": action, **options})) + "\n" + SCRIPT, {})
         return json.loads(output.getvalue().split(RESULT_PREFIX)[-1])
@@ -708,9 +751,80 @@ class WindowsRemoteRelayTests(unittest.TestCase):
         self.assertEqual(self.relays(self.host, "restore")["state"], "disconnected")
         self.assertEqual(self.config.read_bytes().rstrip(), original.rstrip())
 
+    def test_switch_accounts_with_an_existing_legacy_relay(self):
+        original_key = self.relays.key(self.host)
+        legacy = {"home": str(self.root.resolve()), "token": "a" * 48, "proof": "b" * 48, "port": 51001, "enabled": True}
+        updates, routes, fields = config_changes({"config.toml": self.original}, {}, {},
+            f"http://127.0.0.1:{legacy['port']}/relay/{legacy['token']}")
+        self.config.write_bytes(updates["config.toml"])
+        legacy.update(routes=routes, fields=fields)
+        self.relays._save(original_key, legacy)
+        personal_home = self.root / "personal"
+        personal_home.mkdir()
+        personal_config = personal_home / "config.toml"
+        personal_original = self.original.replace(b'"fixture"', b'"personal"')
+        personal_config.write_bytes(personal_original)
+
+        self.remote_home, self.uid = personal_home, 1001
+        self.assertTrue(self.relays.needs_resume(self.host))
+        with patch.object(self.relays, "ssh", wraps=self.ssh) as check:
+            self.assertEqual(self.relays(self.host, None)["state"], "disconnected")
+        check.assert_called_once_with(self.host, "tunnel_snapshot", native=True)
+        self.assertEqual(self.calls, ["tunnel_snapshot"])
+        self.relays.retry_at.clear()
+        self.assertFalse(self.relays.needs_resume(), "The old account must not keep scheduling background probes")
+
+        def reconnect(host, action, **options):
+            if action != "tunnel_reconnect":
+                return self.ssh(host, action, **options)
+            self.assertEqual(options, {"home": str(personal_home.resolve()), "uid": 1001})
+            return {"state": "reloaded", "codex_restart": {"supported": True}}
+
+        with patch.object(self.relays, "ssh", side_effect=reconnect):
+            result = self.relays(self.host, "reconnect")
+        self.assertEqual(result["codex_reconnect"]["state"], "reloaded")
+        self.assertEqual(result["state"], "disconnected")
+        self.assertEqual(personal_config.read_bytes(), personal_original)
+        self.assertEqual(self.relays(self.host, "activate")["state"], "connected")
+        records = dict(self.relays.records())
+        self.assertEqual(len(records), 2)
+        self.assertEqual(records[original_key], legacy)
+        personal = next(record for record in records.values() if record.get("uid") == 1001)
+        self.assertNotEqual(personal["token"], legacy["token"])
+        self.assertIn(personal["token"].encode(), personal_config.read_bytes())
+        self.assertEqual(self.config.read_bytes(), updates["config.toml"])
+
+        self.remote_home, self.uid = self.root, 0
+        self.assertEqual(self.relays(self.host, None)["state"], "connected")
+        original_process = self.relays.processes[original_key]
+        self.remote_home, self.uid = personal_home, 1001
+        self.assertEqual(self.relays(self.host, "restore")["state"], "disconnected")
+        self.assertEqual(personal_config.read_bytes().rstrip(), personal_original.rstrip())
+        self.assertIsNone(original_process.poll())
+        self.assertEqual(self.config.read_bytes(), updates["config.toml"])
+        self.remote_home, self.uid = self.root, 0
+        self.assertEqual(self.relays(self.host, "restore")["state"], "disconnected")
+        self.assertEqual(self.config.read_bytes().rstrip(), self.original.rstrip())
+
+    def test_account_change_after_snapshot_blocks_write_and_restart_even_with_same_config_directory(self):
+        for operation, command in [("activate", "tunnel_write"), ("reconnect", "tunnel_reconnect")]:
+            with self.subTest(operation=operation):
+                self.uid = 0
+
+                def switch_account(host, action, **options):
+                    if action == command:
+                        self.uid = 1001
+                    return self.ssh(host, action, **options)
+
+                with patch.object(self.relays, "ssh", side_effect=switch_account):
+                    with self.assertRaisesRegex(ValueError, "SSH 登录账号或 Codex 配置目录已变化"):
+                        self.relays(self.host, operation)
+                self.assertEqual(self.config.read_bytes(), self.original)
+                self.assertFalse(list(self.root.glob("config.toml.inspector-backup-ssh-*")))
+
     def test_remote_writer_rejects_a_concurrent_edit(self):
         encoded = base64.b64encode(b'model = "new"\n').decode("ascii")
-        value = self.ssh(self.host, "tunnel_write", home=str(self.root.resolve()),
+        value = self.ssh(self.host, "tunnel_write", home=str(self.root.resolve()), uid=self.uid,
                          expected={"config.toml": "old"}, updates={"config.toml": encoded})
         self.assertIn("配置已变化", value["error"])
         self.assertEqual(self.config.read_bytes(), self.original)
