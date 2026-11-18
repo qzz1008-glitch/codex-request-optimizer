@@ -12,7 +12,7 @@ import zlib
 from .request_context import (AUXILIARY_KINDS, IMAGE_ANALYST_PREFIXES, last_user_text, temporary_kind_from_metadata,
                               temporary_request_kind, request_session_context, session_id)
 from .response_usage import packet_usage
-from .native_state import read_state, state_databases, thread_origins
+from .native_state import WSL_HOST_ID, read_state, state_databases, thread_origins
 from .token_estimate import estimate_usage, overflow_applied
 
 MAX_SESSIONS = 300
@@ -86,22 +86,30 @@ def external_labels(raw, ids, labels=None):
     return labels
 
 
+def connection_scope(metadata):
+    for kind in ("ssh", "wsl"):
+        key = metadata.get(kind + "_connection_key")
+        if isinstance(key, str) and key:
+            return kind, key
+    return None
+
+
 class SessionSummaries:
-    def __init__(self, token_windows, *, extra_labels=None, ssh_labels=None):
+    def __init__(self, token_windows, *, wsl_labels=None, ssh_labels=None):
         self.tokens = token_windows
-        self.extra_labels = extra_labels
-        self.ssh_labels = ssh_labels
+        self.connection_labels = {kind: reader for kind, reader in (("wsl", wsl_labels), ("ssh", ssh_labels)) if reader}
         self._cursor = 0
         self._token_states = {}
         self._request_labels = OrderedDict()
         self._lock = threading.Lock()
 
-    def _labels(self, ids, ssh_origins=None, native_origins=None):
+    def _labels(self, ids, captured_origins=None, native_origins=None):
         if not ids:
             return {}
-        ssh_origins = ssh_origins or {}
+        captured_origins = captured_origins or {}
         native_origins = native_origins or {}
-        local_ids = [thread for thread in ids if thread not in ssh_origins]
+        local_ids = [thread for thread in ids if thread not in captured_origins
+                     and native_origins.get(thread, (None, None))[0] != WSL_HOST_ID]
         found, resolved, parent_candidates = {}, set(), {}
         for database in state_databases(self.tokens.home):
             remaining = [thread for thread in local_ids if thread not in resolved]
@@ -157,31 +165,42 @@ class SessionSummaries:
                 resolved.update(row[0] for row in rows)
             except (OSError, sqlite3.Error):
                 continue
-        if self.extra_labels:
-            missing = [thread for thread in local_ids if thread not in resolved]
-            for thread, label in self.extra_labels(missing).items():
-                if thread in missing:
-                    found.setdefault(thread, {}).update(label)
         missing = [thread for thread in local_ids if not found.get(thread, {}).get("title")]
         for thread, label in self._index_labels(missing).items():
             previous = found.get(thread, {})
             if number(previous.get("updated_at")) and (not number(label["updated_at"]) or previous["updated_at"] > label["updated_at"]):
                 label["updated_at"] = previous["updated_at"]
             found[thread] = {**previous, **label}
-        if self.ssh_labels:
-            requests = {}
-            for thread in ids:
-                if thread in ssh_origins:
-                    requests[thread] = (ssh_origins[thread], None)
-                    continue
-                host_id, display = native_origins.get(thread, (None, None))
-                if host_id == "local":
-                    continue
+        self._lookup_connected_labels(ids, captured_origins, native_origins, found, resolved)
+        return found
+
+    def _lookup_connected_labels(self, ids, captured_origins, native_origins, found, resolved):
+        requests = {kind: {} for kind in self.connection_labels}
+        for thread in ids:
+            if thread in captured_origins:
+                kind, key = captured_origins[thread]
+                if kind in requests:
+                    requests[kind][thread] = (key, None)
+                continue
+            host_id, display = native_origins.get(thread, (None, None))
+            if host_id == WSL_HOST_ID:
+                if "wsl" in requests:
+                    requests["wsl"][thread] = (None, host_id)
+            elif host_id is None and thread not in found and thread not in resolved:
+                for pending in requests.values():
+                    pending[thread] = (None, None)
+            elif host_id not in (None, "local") and "ssh" in requests:
                 known_remote = display and display.get("kind") == "remote"
                 if known_remote or (thread not in found and thread not in resolved):
-                    requests[thread] = (None, host_id)
-            found.update(self.ssh_labels(requests))
-        return found
+                    requests["ssh"][thread] = (None, host_id)
+
+        results = {kind: self.connection_labels[kind](pending) for kind, pending in requests.items() if pending}
+        for thread in ids:
+            candidates = [results[kind] for kind in results if thread in requests[kind]]
+            if candidates and all(thread in result for result in candidates):
+                matches = [label for result in candidates for label in result[thread]]
+                if len(matches) == 1:
+                    found[thread] = matches[0]
 
     def _index_labels(self, ids):
         if not ids:
@@ -211,12 +230,13 @@ class SessionSummaries:
         except OSError:
             return {}
 
-    def _prepare_records(self, database, records, labels, ssh_origins, native_origins):
+    def _prepare_records(self, database, records, labels, captured_origins, native_origins):
         unread = 0
         for record in records:
             label = labels.get(record["thread_id"], {})
-            if label.get("ssh_connection_key"):
-                ssh_origins[record["thread_id"]] = label["ssh_connection_key"]
+            scope = connection_scope(label)
+            if scope:
+                captured_origins[record["thread_id"]] = scope
             record["title"] = label.get("title")
             record["origin"] = label.get("origin")
             if not record["title"] and label.get("fallback_title"):
@@ -250,15 +270,16 @@ class SessionSummaries:
             parent_origins = {}
             for record in records:
                 parent = record.get("parent_thread_id")
-                origin = ssh_origins.get(record["thread_id"])
+                origin = captured_origins.get(record["thread_id"])
                 if parent in unseen_parents and origin:
                     parent_origins.setdefault(parent, set()).add(origin)
-            ssh_origins.update((parent, next(iter(origins))) for parent, origins in parent_origins.items() if len(origins) == 1)
-            parent_labels = self._labels(parents, ssh_origins, native_origins)
+            captured_origins.update((parent, next(iter(origins))) for parent, origins in parent_origins.items() if len(origins) == 1)
+            parent_labels = self._labels(parents, captured_origins, native_origins)
             for thread in parents:
                 label = parent_labels.get(thread, {})
-                if label.get("ssh_connection_key"):
-                    ssh_origins[thread] = label["ssh_connection_key"]
+                scope = connection_scope(label)
+                if scope:
+                    captured_origins[thread] = scope
                 title = label.get("title") or label.get("fallback_title")
                 parent = {"thread_id": thread, "packet_count": 0, "updated_at": label["updated_at"] if number(label.get("updated_at")) else 0,
                           "title": title, "latest_packet": None, "origin": label.get("origin")}
@@ -275,7 +296,7 @@ class SessionSummaries:
         path = (Path(data_dir) / "packets.sqlite").resolve()
         records = []
         reported_packets = {}
-        ssh_origins = {}
+        captured_origins = {}
         with closing(sqlite3.connect(path.as_uri() + "?mode=ro", uri=True, timeout=.2)) as db:
             db.execute("PRAGMA query_only=ON")
             db.execute("BEGIN")
@@ -294,9 +315,9 @@ class SessionSummaries:
                 try:
                     meta = json.loads(row[2])
                     size = meta.get("outbound_wire_bytes")
-                    origin = meta.get("ssh_connection_key")
-                    if thread and meta.get("source") == "live" and isinstance(origin, str) and origin:
-                        ssh_origins[thread] = origin
+                    scope = connection_scope(meta)
+                    if thread and meta.get("source") == "live" and scope:
+                        captured_origins[thread] = scope
                     if meta.get("usage_override_applied") or meta.get("upstream_usage") or overflow_applied(meta):
                         reported_packets[thread] = meta
                 except (ValueError, TypeError, AttributeError):
@@ -310,9 +331,9 @@ class SessionSummaries:
                                    if isinstance(meta.get("session_kind"), str) and meta["session_kind"] in
                                       AUXILIARY_KINDS else {})})
         native_origins = thread_origins(self.tokens.home)
-        labels = self._labels([r["thread_id"] for r in records if r["thread_id"]], ssh_origins, native_origins)
+        labels = self._labels([r["thread_id"] for r in records if r["thread_id"]], captured_origins, native_origins)
         with self._lock:
-            self._prepare_records(path, records, labels, ssh_origins, native_origins)
+            self._prepare_records(path, records, labels, captured_origins, native_origins)
             ids = [r["thread_id"] for r in records if r["thread_id"]
                    and packet_usage(reported_packets.get(r["thread_id"], {})) is None
                    and not overflow_applied(reported_packets.get(r["thread_id"], {}))
