@@ -19,6 +19,7 @@ import tomllib
 from urllib.parse import urlsplit
 
 from .config_link import ConfigLink, PROVIDER
+from .native_state import LABEL_READER
 from .providers import ProviderManager
 from .network_diagnostics import safe_text
 
@@ -34,51 +35,10 @@ printf '%s' "$response"
 
 LABEL_LAUNCH = 'cd "$1" && exec python3 -I -S -'
 
-# Only requested IDs and display metadata leave Linux; never auth or messages.
-LABEL_SCRIPT = r'''
-import json,sqlite3,sys
-from contextlib import closing
-from pathlib import Path
+LABEL_SCRIPT = LABEL_READER + r'''
+import json,sys
 request=json.load(sys.stdin)
-home=Path(request["home"])
-wanted=set(request["ids"][:300])
-rows,edges,index=[],[],{}
-def revision(path):
-    value=path.stem[len("state_"):]
-    return int(value) if value.isdigit() else -1
-for path in sorted(home.glob("state_*.sqlite"),key=revision,reverse=True):
-    if not wanted: break
-    try:
-        with closing(sqlite3.connect(path.as_uri()+"?mode=ro",uri=True,timeout=.2)) as db:
-            db.execute("PRAGMA query_only=ON")
-            columns={row[1] for row in db.execute("PRAGMA table_info(threads)")}
-            if "id" not in columns: continue
-            times=(["nullif(updated_at_ms,0)/1000.0"] if "updated_at_ms" in columns else [])
-            times += ["updated_at"] if "updated_at" in columns else []
-            updated="coalesce("+",".join(times+["NULL"])+")" if times else "NULL"
-            fields=["id"]+["substr("+key+",1,"+str(size)+")" if key in columns else "NULL"
-                for key,size in (("title",512),("name",512),("agent_nickname",128),("source",8192))]+[updated]
-            ids=sorted(wanted); placeholders=",".join("?" for _ in ids)
-            current=db.execute("SELECT "+",".join(fields)+" FROM threads WHERE id IN ("+placeholders+")",ids).fetchall()
-            try:
-                edges += db.execute("SELECT child_thread_id,min(parent_thread_id) FROM thread_spawn_edges WHERE child_thread_id IN ("+
-                    placeholders+") GROUP BY child_thread_id HAVING count(DISTINCT parent_thread_id)=1",ids).fetchall()
-            except sqlite3.OperationalError: pass
-            rows += current
-            wanted.difference_update(row[0] for row in current)
-    except (OSError,sqlite3.Error): continue
-try:
-    with (home/"session_index.jsonl").open("rb") as stream:
-        stream.seek(0,2); offset=max(0,stream.tell()-1024*1024); stream.seek(offset)
-        lines=stream.read(1024*1024).split(b"\n")
-    for line in reversed(lines[1:-1] if offset else lines[:-1]):
-        try:
-            item=json.loads(line); key=item.get("id"); title=item.get("thread_name")
-            if key in request["ids"] and key not in index and isinstance(title,str) and title:
-                index[key]=title[:512]
-        except (ValueError,TypeError,AttributeError): pass
-except OSError: pass
-print("CPI_LABELS="+json.dumps({"rows":rows,"edges":edges,"index":index},ensure_ascii=True))
+print("CPI_LABELS=" + json.dumps(read_label_data(request["home"], request["ids"]), ensure_ascii=True))
 '''
 
 
@@ -415,7 +375,7 @@ class WslConnection:
         ids = sorted({value for value in ids if isinstance(value, str) and re.fullmatch(r"[a-fA-F0-9-]{36}", value)})[:300]
         if not ids:
             return {}
-        from .session_summary import subagent_source, subagent_title
+        from .session_summary import external_labels
         found = {}
         with self._lock:
             if time.monotonic() < self._metadata_retry:
@@ -434,33 +394,13 @@ class WslConnection:
                         requested = sorted(set(ids) | (cached[1] if cached else set()))
                         if len(requested) > 300:
                             requested = ids
-                        labels, parents = index_labels(Path(target["config"]), requested), {}
+                        labels = index_labels(Path(target["config"]), requested)
                         try:
                             raw = self.backend.labels(target["distribution"], target["home"], requested)
+                            labels = external_labels(raw, set(requested), labels)
                             self._metadata_errors.pop(key, None)
                         except (OSError, ValueError, TypeError, KeyError) as exc:
-                            raw = {}
                             self._metadata_errors[key] = warning(target["distribution"], exc)
-                        for child, parent in raw.get("edges", []):
-                            if child in requested and isinstance(parent, str) and re.fullmatch(r"[a-fA-F0-9-]{36}", parent) and child != parent:
-                                parents.setdefault(child, set()).add(parent)
-                        for thread, title, name, nickname, source, updated in raw.get("rows", []):
-                            if thread not in requested:
-                                continue
-                            subagent = subagent_source(source)
-                            spawn = subagent.get("thread_spawn", {}) if subagent else {}
-                            parent = spawn.get("parent_thread_id") if isinstance(spawn, dict) else None
-                            if isinstance(parent, str) and re.fullmatch(r"[a-fA-F0-9-]{36}", parent) and parent != thread:
-                                parents.setdefault(thread, set()).add(parent)
-                            labels[thread] = {"title": name if isinstance(name, str) and name.strip() else title or labels.get(thread, {}).get("title"),
-                                              "updated_at": updated, "fallback_title": subagent_title(source, name, nickname),
-                                              **({"session_kind": "subagent"} if subagent else {})}
-                        for thread, title in raw.get("index", {}).items():
-                            if thread in requested and isinstance(title, str) and not labels.get(thread, {}).get("title"):
-                                labels.setdefault(thread, {})["title"] = title[:512]
-                        for thread, values in parents.items():
-                            if len(values) == 1:
-                                labels.setdefault(thread, {}).update(parent_thread_id=next(iter(values)), session_kind="subagent")
                         cached = (time.monotonic(), set(requested), labels)
                         self._labels[key] = cached
                     for thread, label in cached[2].items():
