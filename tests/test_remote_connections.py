@@ -370,10 +370,11 @@ class RemoteScriptTests(unittest.TestCase):
                         stream.write('# changed while restarting\n')
             restart_started = any(call[0][-1] == "restart" for call in self.native_calls)
             ready = self.native_mode != "not-started" and not (self.native_mode == "not-ready" and restart_started)
-            socket = self.root.parent / "other-home.sock" if self.native_mode == "wrong-home" else self.socket
+            changed_socket = self.native_mode == "socket-changed" and len(self.native_calls) == 2
+            socket = self.root.parent / "other-home.sock" if self.native_mode == "wrong-home" or changed_socket else self.socket
             value = {"status": "restarted" if action == "restart" else "running" if ready else "notRunning",
-                     "managedCodexPath": str(self.native_cli), "socketPath": str(socket)}
-            if self.native_mode != "unmanaged" and not (
+                     "managedCodexPath": str(self.native_cli), "socketPath": str(socket), "appServerVersion": "0.169.0"}
+            if self.native_mode not in {"unmanaged", "socket-changed"} and not (
                     self.native_mode == "unmanaged-after-restart" and action == "version" and restart_started):
                 value["backend"] = "pid"
             return SimpleNamespace(returncode=0, stdout=json.dumps(value).encode(), stderr=b"")
@@ -443,6 +444,11 @@ class RemoteScriptTests(unittest.TestCase):
         peer_checks = 0
         proc = Path("/proc")
         original_open = Path.open
+        original_stat = Path.stat
+        running_binary = self.root / "desktop-codex"
+        replacement_binary = self.root / "updated-codex"
+        running_binary.touch()
+        replacement_binary.touch()
         home = self.root.parent if invalid == "home" else self.root
         cmdline = b"codex\0-c\0features.code_mode_host=true\0app-server\0--listen\0unix://\0"
         samples = {
@@ -456,6 +462,12 @@ class RemoteScriptTests(unittest.TestCase):
                 value = samples[path.name]
                 return io.StringIO(value) if isinstance(value, str) else io.BytesIO(value)
             return original_open(path, *args, **kwargs)
+
+        def stat_path(path, *args, **kwargs):
+            if path.name == "exe" and path.parent.parent == proc:
+                image_changed = invalid == "image" and len(self.native_calls) == 2
+                path = replacement_binary if path.parent.name == str(new_pid) or image_changed else running_binary
+            return original_stat(path, *args, **kwargs)
 
         class Peer:
             def __enter__(self): return self
@@ -485,7 +497,7 @@ class RemoteScriptTests(unittest.TestCase):
         poller.poll.return_value = [(old_pid + 10000, 1)] if exits else []
         with (
             patch("pathlib.Path.open", new=open_path),
-            patch("pathlib.Path.samefile", return_value=invalid != "exe"),
+            patch("pathlib.Path.stat", new=stat_path),
             patch("os.pidfd_open", side_effect=lambda pid: pid + 10000, create=True),
             patch("os.close", closed_fds),
             patch("select.poll", return_value=poller, create=True),
@@ -533,7 +545,7 @@ class RemoteScriptTests(unittest.TestCase):
         self.assertEqual([args[-1] for args, _ in self.native_calls], ["version", "version"])
         self.assertFalse(any(body for _, body in self.calls))
 
-    def test_ordinary_ssh_reconnect_waits_for_replacement_before_acknowledging(self):
+    def test_ordinary_ssh_reconnect_uses_the_live_binary_and_waits_for_replacement(self):
         with self.ssh_app_server() as (send_signal, closed_fds):
             probe = self.execute()
             self.assertTrue(probe["codex_restart"]["supported"])
@@ -544,13 +556,13 @@ class RemoteScriptTests(unittest.TestCase):
             self.assertEqual([call.args[0] for call in closed_fds.call_args_list], [12100, 12100, 12200, 12100])
         self.assertEqual(result["codex_reconnect"]["state"], "reloaded")
         self.assertFalse(result["reload_required"])
-        self.assertEqual([args[-1] for args, _ in self.native_calls], ["version", "version", "version"])
+        self.assertEqual([args[-1] for args, _ in self.native_calls], ["version"] * 4)
+        self.assertTrue(all(args[0] == str(self.native_cli) for args, _ in self.native_calls))
         self.assertEqual(self.status["restart_notice"]["items"][0]["target"], "wsl")
 
     def test_ssh_reconnect_rejects_an_unrelated_or_unverifiable_listener(self):
         reasons = {
             "uid": "属于当前 SSH 账号",
-            "exe": "Codex 命令不一致",
             "home": "配置目录与当前连接不匹配",
             "transport": "启动参数检查",
             "signal": "SIGHUP",
@@ -576,6 +588,19 @@ class RemoteScriptTests(unittest.TestCase):
         self.assertIn("后台进程刚发生变化", result["error"])
         self.assertEqual(result["error"], result["codex_restart"]["reason"])
         self.assertEqual([args[-1] for args, _ in self.native_calls], ["version"])
+
+    def test_tunnel_reconnect_refuses_a_socket_or_executable_change_during_native_probe(self):
+        for changed in ("socket", "image"):
+            with self.subTest(changed=changed), self.ssh_app_server(invalid=changed) as (send_signal, _):
+                self.native_calls.clear()
+                if changed == "socket":
+                    self.native_mode = "socket-changed"
+                result = self.execute("tunnel_reconnect", home=str(self.root.resolve()), uid=1000)
+                send_signal.assert_not_called()
+                self.assertEqual(result["state"], "unconfirmed")
+                self.assertTrue(result["codex_restart"]["supported"])
+                self.assertIn("后台进程刚发生变化", result["error"])
+                self.assertEqual([args[-1] for args, _ in self.native_calls], ["version", "version"])
 
     def test_ssh_reconnect_timeout_preserves_pending_configuration(self):
         for exits in (False, True):
