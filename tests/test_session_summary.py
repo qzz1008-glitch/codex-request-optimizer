@@ -173,6 +173,86 @@ class SessionSummaryTests(unittest.TestCase):
         row = self.reader.read(self.capture)["sessions"][0]
         self.assertEqual(row["token_window"], {"state": "unavailable"})
 
+    def test_tool_search_keeps_real_usage_of_the_predictive_request(self):
+        with self.rollout.open("a", encoding="utf8") as stream:
+            stream.write(json.dumps(event(at=108, inputs=500000, outputs=73)) + "\n")
+        generation = {"path": "/v1/responses", "status": 200, "state": "complete",
+                      "usage_override_applied": True,
+                      "upstream_usage": {"input_tokens": 123456, "output_tokens": 73, "total_tokens": 123529},
+                      "reported_usage": {"input_tokens": 500000, "output_tokens": 73, "total_tokens": 500073}}
+        search = {"path": "/v1/alpha/search", "request_kind": "tool_search", "outbound_wire_bytes": 850}
+        with closing(sqlite3.connect(self.capture / "packets.sqlite")) as db:
+            db.execute("UPDATE packet_summaries SET meta=? WHERE id='b'", (json.dumps(generation),))
+            db.execute("INSERT INTO packet_summaries VALUES (?,?,?,?,?)", ("search", 110, THREAD, "POST", json.dumps(search)))
+            db.commit()
+        row = self.reader.read(self.capture)["sessions"][0]
+        self.assertEqual(row["latest_packet"], {"id": "search", "created": 110, "wire_bytes": 850})
+        self.assertEqual(row["token_window"]["input_tokens"], 123456)
+        self.assertEqual(row["token_window"]["recorded_at"], 105)
+
+    def test_overflow_uses_original_estimate_even_when_prediction_also_applies(self):
+        estimate = {"state": "available", "source": "codex_estimate", "estimated": True, "input_tokens": 260000}
+        meta = {"path": "/v1/responses", "status": 200, "state": "complete", "usage_override_applied": True,
+                "upstream_usage": {"input_tokens": 30000, "output_tokens": 2, "total_tokens": 30002},
+                "reported_usage": {"input_tokens": 500000, "output_tokens": 2, "total_tokens": 500002}}
+        with closing(sqlite3.connect(self.capture / "packets.sqlite")) as db:
+            db.execute("INSERT INTO packet_summaries VALUES (?,?,?,?,?)",
+                       ("search", 110, THREAD, "POST", '{"path":"/v1/alpha/search","request_kind":"tool_search"}'))
+            db.commit()
+            for protection in ({"overflow_compaction_calls": 1}, {"overflow_cache_hit": True}):
+                for request_estimate in (estimate, {"state": "unavailable"}):
+                    with self.subTest(protection=protection, estimate=request_estimate["state"]):
+                        db.execute("UPDATE packet_summaries SET meta=? WHERE id='b'",
+                                   (json.dumps({**meta, **protection, "request_token_estimate": request_estimate}),))
+                        db.commit()
+                        row = self.reader.read(self.capture)["sessions"][0]
+                        expected = {**estimate, "recorded_at": 105} if request_estimate is estimate else {"state": "unavailable"}
+                        self.assertEqual(row["token_window"], expected)
+
+    def test_compact_boundaries_do_not_inherit_predictions_and_real_500k_is_preserved(self):
+        with self.rollout.open("a", encoding="utf8") as stream:
+            stream.write(json.dumps(event(at=108, inputs=500000, outputs=73)) + "\n")
+        with closing(sqlite3.connect(self.capture / "packets.sqlite")) as db:
+            db.execute("UPDATE packet_summaries SET meta=? WHERE id='b'", (json.dumps({
+                "path": "/v1/responses", "usage_override_applied": True,
+                "reported_usage": {"input_tokens": 500000},
+            }),))
+            db.execute("INSERT INTO packet_summaries VALUES (?,?,?,?,?)",
+                       ("compact", 109, THREAD, "POST", '{"path":"/v1/responses/compact","status":200,"state":"complete"}'))
+            db.commit()
+            self.assertEqual(self.reader.read(self.capture)["sessions"][0]["token_window"], {"state": "unavailable"})
+
+            with self.rollout.open("a", encoding="utf8") as stream:
+                stream.write(json.dumps(event(at=113, inputs=121000, outputs=3, cumulative=1500000)) + "\n")
+            meta = {"path": "/v1/responses", "status": 200, "state": "complete",
+                    "duration_ms": 2000, "usage_override_request_bytes": 980000}
+            db.execute("INSERT INTO packet_summaries VALUES (?,?,?,?,?)", ("next", 110, THREAD, "POST", json.dumps(meta)))
+            db.commit()
+            self.assertEqual(self.reader.read(self.capture)["sessions"][0]["token_window"], {"state": "unavailable"})
+
+            meta["upstream_usage"] = {"input_tokens": 500000, "output_tokens": 3, "total_tokens": 500003}
+            db.execute("UPDATE packet_summaries SET meta=? WHERE id='next'", (json.dumps(meta),))
+            db.commit()
+        window = self.reader.read(self.capture)["sessions"][0]["token_window"]
+        self.assertEqual((window["input_tokens"], window["source"]), (500000, "upstream_response"))
+
+    def test_delayed_native_prediction_cannot_supply_the_next_generation(self):
+        with self.rollout.open("a", encoding="utf8") as stream:
+            stream.write(json.dumps(event(at=113, inputs=500000, outputs=73)) + "\n")
+        meta = {"path": "/v1/responses", "status": 200, "state": "complete", "duration_ms": 2000}
+        with closing(sqlite3.connect(self.capture / "packets.sqlite")) as db:
+            db.execute("INSERT INTO packet_summaries VALUES (?,?,?,?,?)", ("next", 110, THREAD, "POST", json.dumps(meta)))
+            db.commit()
+            window = self.reader.read(self.capture)["sessions"][0]["token_window"]
+            self.assertEqual((window["input_tokens"], window["source"]), (500000, "codex_history"))
+
+            for previous in ({"usage_override_applied": True, "reported_usage": {"input_tokens": 500000}},
+                             {"usage_override_applied": True}):
+                with self.subTest(previous=previous):
+                    db.execute("UPDATE packet_summaries SET meta=? WHERE id='b'", (json.dumps(previous),))
+                    db.commit()
+                    self.assertEqual(self.reader.read(self.capture)["sessions"][0]["token_window"], {"state": "unavailable"})
+
     def test_renames_and_updated_packet_values_refresh_without_history_writes(self):
         before = self.rollout.read_bytes(), self.rollout.stat().st_mtime_ns
         self.reader.read(self.capture)

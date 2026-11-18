@@ -14,6 +14,8 @@ from .request_context import (AUXILIARY_KINDS, IMAGE_ANALYST_PREFIXES, last_user
 from .response_usage import packet_usage
 from .native_state import WSL_HOST_ID, read_state, state_databases, thread_origins
 from .token_estimate import estimate_usage, overflow_applied
+from .token_window import is_token_request
+from .usage_trigger import REPORTED_INPUT_TOKENS
 
 MAX_SESSIONS = 300
 INDEX_TASK_PREFIX = "You are in a fork of an existing Codex thread.\nFill the structured description field"
@@ -91,6 +93,48 @@ def connection_scope(metadata):
         key = metadata.get(kind + "_connection_key")
         if isinstance(key, str) and key:
             return kind, key
+    return None
+
+
+def _packet_summary(thread, row):
+    packet_id, created, method, raw = row
+    try:
+        meta = json.loads(raw)
+    except (ValueError, TypeError):
+        meta = None
+    packet = meta if isinstance(meta, dict) else {}
+    packet.update(id=packet_id, created=created, method=method, thread_id=thread)
+    return packet
+
+
+def _latest_model_packet(db, latest):
+    if is_token_request(latest, include_compaction=True):
+        return latest
+    thread = latest["thread_id"]
+    if thread:
+        rows = db.execute("""SELECT id,created,method,meta FROM packet_summaries
+                            WHERE thread=? AND method='POST' AND (created,id)<(?,?)
+                            ORDER BY created DESC,id DESC""", (thread, latest["created"], latest["id"]))
+        for row in rows:
+            packet = _packet_summary(thread, row)
+            if is_token_request(packet, include_compaction=True):
+                return packet
+    return None
+
+
+def _captured_token_window(packet):
+    if overflow_applied(packet):
+        estimate = estimate_usage(packet)
+        return {**estimate, "recorded_at": packet["created"]} if estimate else {"state": "unavailable"}
+    usage = packet_usage(packet)
+    if usage is not None:
+        return {"state": "available", "source": "upstream_response",
+                "input_tokens": usage["input_tokens"], "output_tokens": usage["output_tokens"],
+                "used_tokens": usage["total_tokens"], "recorded_at": packet["created"],
+                "usage_override_applied": bool(packet.get("usage_override_applied"))}
+    if (not is_token_request(packet) or packet.get("usage_override_applied")
+            or packet.get("usage_override_request_bytes") is not None):
+        return {"state": "unavailable"}
     return None
 
 
@@ -292,10 +336,34 @@ class SessionSummaries:
                 records.append(parent)
                 known.add(thread)
 
+    def _native_token_window(self, path, packet):
+        thread = packet["thread_id"]
+        # Old summaries may have no endpoint or response timing to match against.
+        if any(field in packet for field in ("path", "status", "state", "model", "duration_ms")):
+            window = self.tokens.lookup(packet)
+        else:
+            window = self.tokens.latest(thread)
+        if window["state"] != "available" or window.get("estimated"):
+            return window
+        # A late native notification may echo an earlier relay override, even
+        # after a new request starts. Read the relay's provenance after the log.
+        try:
+            with closing(sqlite3.connect(path.as_uri() + "?mode=ro", uri=True, timeout=.2)) as db:
+                override = db.execute("""SELECT 1 FROM packet_summaries
+                    WHERE thread=? AND created<=? AND method='POST'
+                    AND CASE WHEN json_valid(meta) THEN json_type(meta,'$.usage_override_applied')='true'
+                        AND CASE WHEN json_type(meta,'$.reported_usage.input_tokens')='integer'
+                                 THEN json_extract(meta,'$.reported_usage.input_tokens') ELSE ? END=?
+                        ELSE 0 END LIMIT 1""",
+                    (thread, window["recorded_at"], REPORTED_INPUT_TOKENS, window["input_tokens"])).fetchone()
+        except sqlite3.Error:
+            return {"state": "unavailable"}
+        return {"state": "unavailable"} if override else window
+
     def read(self, data_dir):
         path = (Path(data_dir) / "packets.sqlite").resolve()
         records = []
-        reported_packets = {}
+        model_packets = {}
         captured_origins = {}
         with closing(sqlite3.connect(path.as_uri() + "?mode=ro", uri=True, timeout=.2)) as db:
             db.execute("PRAGMA query_only=ON")
@@ -307,21 +375,17 @@ class SessionSummaries:
                 # Keep known IDs searchable by the existing thread/time index.
                 # Older stores may use either NULL or '' for an unknown ID.
                 condition = "thread=?" if thread else "coalesce(thread,'')=?"
-                row = db.execute("SELECT id,created,meta FROM packet_summaries "
+                row = db.execute("SELECT id,created,method,meta FROM packet_summaries "
                                  "WHERE " + condition + " AND method!='GET' "
                                  "ORDER BY created DESC,id DESC LIMIT 1", (thread,)).fetchone()
                 if not row:
                     continue
-                try:
-                    meta = json.loads(row[2])
-                    size = meta.get("outbound_wire_bytes")
-                    scope = connection_scope(meta)
-                    if thread and meta.get("source") == "live" and scope:
-                        captured_origins[thread] = scope
-                    if meta.get("usage_override_applied") or meta.get("upstream_usage") or overflow_applied(meta):
-                        reported_packets[thread] = meta
-                except (ValueError, TypeError, AttributeError):
-                    meta, size = {}, None
+                meta = _packet_summary(thread, row)
+                size = meta.get("outbound_wire_bytes")
+                scope = connection_scope(meta)
+                if thread and meta.get("source") == "live" and scope:
+                    captured_origins[thread] = scope
+                model_packets[thread] = _latest_model_packet(db, meta)
                 records.append({"thread_id": thread, "packet_count": count, "updated_at": created,
                                 "title": None, "latest_packet": {"id": row[0], "created": row[1],
                                 "wire_bytes": size if number(size) and size >= 0 else None},
@@ -334,32 +398,24 @@ class SessionSummaries:
         labels = self._labels([r["thread_id"] for r in records if r["thread_id"]], captured_origins, native_origins)
         with self._lock:
             self._prepare_records(path, records, labels, captured_origins, native_origins)
-            ids = [r["thread_id"] for r in records if r["thread_id"]
-                   and packet_usage(reported_packets.get(r["thread_id"], {})) is None
-                   and not overflow_applied(reported_packets.get(r["thread_id"], {}))
-                   and not reported_packets.get(r["thread_id"], {}).get("usage_override_applied")]
+            fallback = []
+            for record in records:
+                thread = record["thread_id"]
+                packet = model_packets.get(thread)
+                window = _captured_token_window(packet) if packet else None
+                if window is None and thread and packet:
+                    fallback.append((record, packet))
+                else:
+                    record["token_window"] = window or {"state": "unavailable"}
+            ids = {packet["id"] for _, packet in fallback}
             self._token_states = {k: v for k, v in self._token_states.items() if k in ids}
             # At most eight bounded history reads per refresh, rotating through larger lists.
-            for offset in range(min(8, len(ids))):
-                index = (self._cursor + offset) % len(ids)
-                self._token_states[ids[index]] = self.tokens.latest(ids[index])
-            self._cursor = (self._cursor + min(8, len(ids))) % len(ids) if ids else 0
-            for record in records:
-                record["token_window"] = self._token_states.get(record["thread_id"], {"state": "loading" if record["thread_id"] else "unavailable"})
-                packet = reported_packets.get(record["thread_id"], {})
-                usage = packet_usage(packet)
-                estimate = estimate_usage(packet)
-                if overflow_applied(packet):
-                    record["token_window"] = ({**estimate, "recorded_at": record["latest_packet"]["created"]}
-                                              if estimate else {"state": "unavailable"})
-                elif usage is not None:
-                    record["token_window"] = {"state": "available", "source": "upstream_response",
-                        "input_tokens": usage["input_tokens"], "output_tokens": usage["output_tokens"],
-                        "used_tokens": usage["total_tokens"],
-                        "recorded_at": record["latest_packet"]["created"],
-                        "usage_override_applied": bool(packet.get("usage_override_applied"))}
-                elif packet.get("usage_override_applied"):
-                    record["token_window"] = {"state": "unavailable"}
+            for offset in range(min(8, len(fallback))):
+                _, packet = fallback[(self._cursor + offset) % len(fallback)]
+                self._token_states[packet["id"]] = self._native_token_window(path, packet)
+            self._cursor = (self._cursor + min(8, len(fallback))) % len(fallback) if fallback else 0
+            for record, packet in fallback:
+                record["token_window"] = self._token_states.get(packet["id"], {"state": "loading"})
         for record in records:
             if record["thread_id"] in native_origins:
                 record["origin"] = native_origins[record["thread_id"]][1]
