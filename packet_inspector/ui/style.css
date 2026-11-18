@@ -221,6 +221,11 @@ code.session-id{font-family:Consolas,"Cascadia Mono",monospace;font-size:11px;wo
 .detail-content .panel{padding:14px 16px;margin-bottom:12px}
 .detail-content .panel>h3{margin-bottom:10px}
 .detail-content .panel>.fact-row{margin:8px 0}
+.request-processing-facts{margin:0}
+.request-processing-facts .fact-row{margin:8px 0}
+.request-processing-facts .fact-row:last-child{margin-bottom:0}
+.request-processing-facts dt{color:var(--muted);flex:none;white-space:nowrap}
+.request-processing-facts dd{margin:0;min-width:0;overflow-wrap:anywhere}
 .detail-content .bar-row{margin:10px 0}
 .detail-content .panel>:last-child{margin-bottom:0}
 .detail-content .two-columns{gap:12px}
@@ -663,7 +668,6 @@ dialog{width:min(760px,calc(var(--desktop-width) - 80px));max-height:calc(var(--
 .protection-details{min-width:0;margin:7px 0 0 5px;padding-left:10px;border-left:2px solid var(--line)}
 .protection-details .fact-row{gap:12px;margin:5px 0;font-size:11px}
 .protection-details .fact-row>span:last-child{text-align:right;white-space:nowrap}
-.image-compression-row>span:first-child{flex:none}
 .image-compression-details{min-width:0;white-space:pre-line;text-align:right;line-height:1.5;overflow-wrap:anywhere}
 .protection-details .image-path-group{padding:8px}
 .protection-details .image-path-item{padding:6px 0}

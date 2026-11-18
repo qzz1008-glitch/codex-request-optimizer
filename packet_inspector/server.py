@@ -1595,6 +1595,9 @@ class Handler(BaseHTTPRequestHandler):
                 raise ImageIsolationFailure("image_configuration_missing", "图片隔离配置不完整，请在设置中重新启用。", 503)
             prepared = None
             source_body = body
+            input_encoding = next((value for key, value in headers.items() if key.lower() == "content-encoding"), "identity").strip().lower()
+            transport_input_bytes = (len(body) if input_encoding in {"", "identity"}
+                                     else capture_meta.get("decoded_bytes"))
             if image_enabled and not image_worker and self.command == "POST" and urlsplit(suffix).path.rstrip("/").endswith(("/responses", "/responses/compact")):
                 try:
                     prepared = image_isolation.prepare(body, headers, suffix, compression, zstd_level=zstd_level,
@@ -1607,6 +1610,7 @@ class Handler(BaseHTTPRequestHandler):
                 outbound_body, outbound_encoding, image_meta = prepared
                 update(**image_meta)
                 applied_zstd_level = image_meta.get("relay_zstd_level")
+                transport_input_bytes = image_meta["image_isolation_decoded_after"]
                 source_body = outbound_body
                 headers = {k: v for k, v in headers.items() if k.lower() not in {"content-md5", "digest", "content-encoding"}}
                 headers["Content-Encoding"] = outbound_encoding
@@ -1619,13 +1623,15 @@ class Handler(BaseHTTPRequestHandler):
                     PreparedRequest(outbound_body, outbound_encoding, applied_zstd_level), budget_bytes=budget,
                     zstd_level=AUTO_IMAGE_ZSTD_LEVEL if auto_zstd_level else zstd_level)
                 outbound_body, outbound_encoding, applied_zstd_level = prepared_image
+                transport_input_bytes = upload_meta.pop("transport_input_bytes", transport_input_bytes)
                 update(**upload_meta)
                 if upload_meta.get("image_upload_optimized"):
                     headers = {key:value for key,value in headers.items() if key.lower() not in {"content-md5", "digest"}}
             # The displayed compressed packet is measured before summary
-            # substitution. Preserve its encoding/level before overflow can
-            # rebuild a small identity body and replace the final relay fields.
-            update(transport_content_encoding=outbound_encoding, transport_zstd_level=applied_zstd_level)
+            # substitution. Capture both sides of this stage after image work,
+            # before overflow can replace the body and its encoding.
+            update(transport_content_encoding=outbound_encoding, transport_zstd_level=applied_zstd_level,
+                   transport_input_bytes=transport_input_bytes, transport_wire_bytes=len(outbound_body))
             if auto_decision is not None:
                 next_phase = self.server.compression_policy.finish(auto_key, auto_decision, len(outbound_body), budget)
                 update(relay_auto_zstd_next_phase=next_phase)
