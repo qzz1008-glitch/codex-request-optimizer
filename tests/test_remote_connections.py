@@ -316,10 +316,14 @@ class RemoteScriptTests(unittest.TestCase):
                 if self.native_mode in {"config-changed", "changed"}:
                     with (self.root / "config.toml").open("a") as stream:
                         stream.write('# changed while restarting\n')
-            ready = not (self.native_mode == "not-ready" and any(call[0][-1] == "restart" for call in self.native_calls))
+            restart_started = any(call[0][-1] == "restart" for call in self.native_calls)
+            ready = not (self.native_mode == "not-ready" and restart_started)
             socket = self.root.parent / "other-home.sock" if self.native_mode == "wrong-home" else self.socket
             value = {"status": "restarted" if action == "restart" else "running" if ready else "notRunning",
                      "managedCodexPath": str(self.native_cli), "socketPath": str(socket)}
+            if self.native_mode != "unmanaged" and not (
+                    self.native_mode == "unmanaged-after-restart" and action == "version" and restart_started):
+                value["backend"] = "pid"
             return SimpleNamespace(returncode=0, stdout=json.dumps(value).encode(), stderr=b"")
         original_resolve = Path.resolve
         original_stat = Path.stat
@@ -395,6 +399,19 @@ class RemoteScriptTests(unittest.TestCase):
         self.assertTrue(result["reload_required"])
         self.assertEqual([args[-1] for args, _ in self.native_calls], ["version"])
 
+    def test_running_unmanaged_app_server_never_offers_or_attempts_restart(self):
+        self.enable_native()
+        self.native_mode = "unmanaged"
+        probe = self.execute()
+        self.assertFalse(probe["codex_restart"]["supported"])
+        self.assertTrue(probe["reload_required"])
+
+        result = self.execute("reconnect")
+        self.assertEqual(result["codex_reconnect"]["state"], "unconfirmed")
+        self.assertTrue(result["reload_required"])
+        self.assertEqual([args[-1] for args, _ in self.native_calls], ["version", "version"])
+        self.assertFalse(any(body for _, body in self.calls))
+
     def test_unsupported_daemon_never_restarts_or_acknowledges(self):
         for mode in ("missing", "wrong-home", "wrong-owner", "regular-file"):
             with self.subTest(mode=mode):
@@ -410,7 +427,7 @@ class RemoteScriptTests(unittest.TestCase):
                 self.assertFalse(any(body for _, body in self.calls))
 
     def test_failure_timeout_or_not_ready_does_not_clear_pending_configuration(self):
-        for mode in ("failure", "timeout", "not-ready"):
+        for mode in ("failure", "timeout", "not-ready", "unmanaged-after-restart"):
             with self.subTest(mode=mode):
                 self.enable_native();self.native_mode = mode
                 self.calls.clear();self.native_calls.clear()

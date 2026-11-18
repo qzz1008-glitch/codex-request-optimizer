@@ -13,6 +13,11 @@ class NoRedirect(HTTPRedirectHandler):
     def redirect_request(self, *args, **kwargs):
         return None
 
+def managed_daemon_running(value):
+    # The native version command omits backend when the socket serves an unmanaged app server.
+    backend = value.get("backend")
+    return value.get("status") == "running" and isinstance(backend, str) and bool(backend)
+
 def native_codex(home):
     unsupported = {"supported": False, "reason": "远程 Codex 不支持原生后台重载，请在 ChatGPT 中重新连接此服务器。"}
     search = str(pathlib.Path(os.environ.get("CODEX_INSTALL_DIR") or pathlib.Path.home() / ".local/bin")) + os.pathsep + os.environ.get("PATH", "")
@@ -22,9 +27,11 @@ def native_codex(home):
     env = dict(os.environ, CODEX_HOME=str(home))
     try:
         value = native_command(cli, "version", env, 8)
+        if not managed_daemon_running(value):
+            return unsupported, None
         managed = pathlib.Path(value.get("managedCodexPath", ""))
         socket = pathlib.Path(value.get("socketPath", ""))
-        if value.get("status") != "running" or not managed.is_absolute() or not managed.is_file():
+        if not managed.is_absolute() or not managed.is_file():
             return unsupported, None
         if not socket.is_absolute():
             return unsupported, None
@@ -61,7 +68,7 @@ def restart_native(context):
     if result.get("status") != "restarted" or result.get("socketPath") != socket:
         raise ValueError("Codex 原生后台未确认重载完成，请刷新状态后检查。")
     ready = native_command(cli, "version", env, 8)
-    if ready.get("status") != "running" or ready.get("socketPath") != socket:
+    if not managed_daemon_running(ready) or ready.get("socketPath") != socket:
         raise ValueError("Codex 原生后台尚未就绪，请刷新状态后检查。")
 
 def config_digest(config):
