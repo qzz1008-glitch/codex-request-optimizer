@@ -85,12 +85,23 @@ const localControls=[
       await page.waitForFunction(()=>document.querySelectorAll('.connection-device').length===1);
       const controls=page.locator('#connection-controls'),panel=page.locator('#connection-panel');
       const localLabel=controls.locator('.connection-local-label'),localConnect=page.locator('#compression-connect');
+      const localToggle=page.locator('#request-compression'),serverAddress=panel.locator('.connection-device-info strong');
       const actions=panel.locator('.connection-device-actions'),reconnect=panel.locator('.connection-device-reconnect');
       assert.equal(await localLabel.isHidden(),true);
       const reopenPanel=async()=>{
         await page.mouse.move(0,page.viewportSize().height-1);
         await page.keyboard.press('Escape');await panel.waitFor({state:'hidden'});
         await page.locator('#compression-connect').hover();await panel.waitFor({state:'visible'});
+      };
+      const assertAlignment=async()=>{
+        const rightEdge=locator=>locator.evaluate(node=>node.getBoundingClientRect().right);
+        const divider=toggle=>toggle.evaluate(node=>{
+          const [disconnect,connect]=node.children;
+          return (disconnect.getBoundingClientRect().right+connect.getBoundingClientRect().left)/2;
+        });
+        assert(Math.abs(await rightEdge(localLabel)-await rightEdge(serverAddress))<1,'The local label and server address share a right edge');
+        assert(Math.abs(await divider(localToggle)-await divider(actions))<1,'The local and remote toggle dividers align');
+        assert.equal(await serverAddress.evaluate(node=>node.scrollWidth<=node.clientWidth),true,'A full IPv4 address fits');
       };
       const waitForReconnectPrompt=async()=>{
         await page.getByRole('dialog',{name:'现在重新连接 Codex？'}).waitFor({state:'visible'});
@@ -110,11 +121,9 @@ const localControls=[
       await page.locator('#compression-connect').hover();await panel.waitFor({state:'visible'});
       assert.doesNotMatch(await panel.textContent(),/本机/);
       assert.equal(await localLabel.isVisible(),true);
-      const labelBox=await localLabel.boundingBox(),localPillBox=await page.locator('#request-compression').boundingBox();
+      const labelBox=await localLabel.boundingBox(),localPillBox=await localToggle.boundingBox();
       assert(labelBox.x+labelBox.width<localPillBox.x,'The local label sits to the left of the local controls');
-      const serverAddress=panel.locator('.connection-device-info strong');
-      assert(Math.abs(labelBox.x-(await serverAddress.boundingBox()).x)<1,'The local label and server address share a left edge');
-      assert.equal(await serverAddress.evaluate(node=>node.scrollWidth<=node.clientWidth),true,'A full IPv4 address fits');
+      await assertAlignment();
       const actionsBox=await actions.boundingBox(),reconnectBox=await reconnect.boundingBox();
       assert(actionsBox.x+actionsBox.width<reconnectBox.x,'Reconnect sits to the right of the server connection controls');
       assert.equal(await actions.locator('[aria-pressed="true"]').evaluate(button=>getComputedStyle(button).opacity),'1');
@@ -259,10 +268,12 @@ const localControls=[
       const unsupportedCalls=await page.evaluate(()=>fixture.calls.length);
       await reconnect.click({force:true});assert.equal(await page.evaluate(()=>fixture.calls.length),unsupportedCalls);
       assert.equal(await page.locator('#devices-confirm-dialog').isVisible(),false);
+      await page.setViewportSize({width:1200,height:800});
       await page.evaluate(()=>uiI18n.setLanguage('en',{persist:false}));
       await reopenPanel();
       assert.equal(await panel.getAttribute('aria-label'),'Server connections');
       assert.equal(await localLabel.textContent(),'Local');
+      await assertAlignment();
       await page.mouse.move(0,page.viewportSize().height-1);
       await page.keyboard.press('Escape');await panel.waitFor({state:'hidden'});
       await page.evaluate(()=>fixture.rows.pop());
