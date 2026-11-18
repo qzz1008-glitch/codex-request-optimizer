@@ -82,6 +82,9 @@ const localControls=[
       });
       await page.waitForFunction(()=>document.querySelectorAll('.connection-device').length===1);
       const controls=page.locator('#connection-controls'),panel=page.locator('#connection-panel');
+      const localLabel=controls.locator('.connection-local-label'),localConnect=page.locator('#compression-connect');
+      const actions=panel.locator('.connection-device-actions'),reconnect=panel.locator('.connection-device-reconnect');
+      assert.equal(await localLabel.isHidden(),true);
       const reopenPanel=async()=>{
         await page.mouse.move(0,page.viewportSize().height-1);
         await page.keyboard.press('Escape');await panel.waitFor({state:'hidden'});
@@ -104,6 +107,12 @@ const localControls=[
       await page.mouse.move(0,790);
       await page.locator('#compression-connect').hover();await panel.waitFor({state:'visible'});
       assert.doesNotMatch(await panel.textContent(),/本机/);
+      assert.equal(await localLabel.isVisible(),true);
+      const labelBox=await localLabel.boundingBox(),localPillBox=await page.locator('#request-compression').boundingBox();
+      assert(labelBox.x+labelBox.width<localPillBox.x,'The local label sits to the left of the local controls');
+      const actionsBox=await actions.boundingBox(),reconnectBox=await reconnect.boundingBox();
+      assert(actionsBox.x+actionsBox.width<reconnectBox.x,'Reconnect sits to the right of the server connection controls');
+      assert.equal(await actions.locator('[aria-pressed="true"]').evaluate(button=>getComputedStyle(button).opacity),'1');
       const bounds=await panel.boundingBox();assert(bounds.x>=0&&bounds.x+bounds.width<=1201&&bounds.y>=0&&bounds.y+bounds.height<=801);
       assert.equal(await page.evaluate(()=>document.activeElement.id),'connection-controls','Hover must not move keyboard focus');
       await page.locator('.connection-device').last().getByRole('button',{name:'接入',exact:true}).click();
@@ -169,7 +178,7 @@ const localControls=[
       await page.locator('#devices-confirm-cancel').click();
       await page.setViewportSize({width:700,height:700});
       await controls.focus();await page.keyboard.press('ArrowDown');await panel.waitFor({state:'visible'});
-      assert.equal(await page.evaluate(()=>document.getElementById('connection-panel').contains(document.activeElement)),true,'ArrowDown enters the device controls');
+      assert.equal(await actions.locator('button:enabled').evaluate(button=>button===document.activeElement),true,'ArrowDown focuses the first available server action');
       const narrow=await panel.boundingBox();assert(narrow.x>=0&&narrow.x+narrow.width<=701&&narrow.y>=0&&narrow.y+narrow.height<=701);
       await page.keyboard.press('Escape');await panel.waitFor({state:'hidden'});
       await page.evaluate(()=>fixture.unavailable=true);
@@ -185,7 +194,7 @@ const localControls=[
       await reopenPanel();
       await page.waitForFunction(()=>document.querySelectorAll('.connection-device').length===1);
       assert.equal(await page.locator('#connection-devices-status').isHidden(),true);
-      const reconnect=page.getByRole('button',{name:'重连 Codex · Server 176',exact:true});
+      assert.equal(await reconnect.getAttribute('aria-label'),'重连 Codex · Server 176');
       assert.equal(await page.locator('.connection-device-reconnect:visible').count(),1,'Only SSH devices offer daemon reconnect');
       const beforeReconnect=await page.evaluate(()=>({calls:fixture.calls.length,states:fixture.rows.map(row=>row.state)}));
       await reconnect.click();
@@ -244,11 +253,21 @@ const localControls=[
       const unsupportedCalls=await page.evaluate(()=>fixture.calls.length);
       await reconnect.click({force:true});assert.equal(await page.evaluate(()=>fixture.calls.length),unsupportedCalls);
       assert.equal(await page.locator('#devices-confirm-dialog').isVisible(),false);
-      await page.evaluate(()=>{fixture.rows.pop();uiI18n.setLanguage('en',{persist:false});});
+      await page.evaluate(()=>uiI18n.setLanguage('en',{persist:false}));
       await reopenPanel();
-      await page.waitForFunction(()=>document.getElementById('connection-devices-status').textContent==='No saved servers');
       assert.equal(await panel.getAttribute('aria-label'),'Server connections');
-      assert.equal(await page.locator('.connection-device').count(),0);
+      assert.equal(await localLabel.textContent(),'Local');
+      await page.mouse.move(0,page.viewportSize().height-1);
+      await page.keyboard.press('Escape');await panel.waitFor({state:'hidden'});
+      await page.evaluate(()=>fixture.rows.pop());
+      const buttonColors=button=>{const style=getComputedStyle(button);return [style.color,style.backgroundColor];};
+      const normalColors=await localConnect.evaluate(buttonColors);
+      await localConnect.hover();
+      await page.locator('.connection-device').waitFor({state:'detached'});
+      assert.equal(await panel.isHidden(),true,'A local-only configuration has no hover panel');
+      assert.equal(await localLabel.isHidden(),true,'A local-only configuration has no hover label');
+      assert.deepEqual(await localConnect.evaluate(buttonColors),normalColors,'A local-only configuration has no hover color change');
+      assert.equal(await localConnect.isEnabled(),true);
       assert.deepEqual(errors,[]);
       await page.close();
     }
