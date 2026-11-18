@@ -24,11 +24,25 @@ globalThis.InspectorConnections = {
       if(row.reload_required)return value+" · "+tr(row.kind==="local"?"请重启 ChatGPT App":"请重新连接远程 Codex");
       return value+(row.warning_count?" · "+tr("部分配置未完成，请检查此设备的接入详情。"):"");
     }
+    function statusIndicator(row) {
+      const reload=row.reload_required?tr(row.kind==="local"?"配置待生效，请重启 ChatGPT App。":row.codex_restart?.supported?
+        "配置待生效，请点击“重连”重新加载此服务器的 Codex。":"配置待生效，请在 ChatGPT 中重新连接此服务器的 Codex。"):"";
+      const error=row.error||row.codex_reconnect?.error;
+      if(error||row.state==="error")return {kind:"error",message:[
+        tr(row.error||row.state==="error"?"接入异常":"重连结果未确认"),error?tr(error):"",reload].filter(Boolean).join("\n")};
+      let message=reload||stateText(row);
+      if(reload&&row.warning_count)message+="\n"+tr("部分配置未完成，请检查此设备的接入详情。");
+      if(row.codex_reconnect?.warning)message+="\n"+tr(row.codex_reconnect.warning);
+      const kind=reload?"pending":row.warning_count||row.codex_reconnect?.warning?"warning":
+        row.state==="connected"?"connected":row.state==="disconnected"?"disconnected":"unknown";
+      return {kind,message};
+    }
     function element(tag,cls="") {const node=document.createElement(tag);node.className=cls;return node;}
     function rowNodes(row) {
       if(nodes.has(row.id))return nodes.get(row.id);
       const root=element("div","connection-device"),info=element("div","connection-device-info");
       const title=element("strong"),state=element("span","connection-device-state");
+      state.setAttribute("role","img");
       const buttons=element("div","language-toggle connection-device-actions");buttons.setAttribute("role","group");
       const actions={};
       for(const action of ["restore","activate"]) {
@@ -38,7 +52,7 @@ globalThis.InspectorConnections = {
       const tools=element("div","connection-device-controls"),reconnect=element("button","connection-device-reconnect");
       reconnect.type="button";
       reconnect.addEventListener("click",()=>{if(reconnect.getAttribute("aria-disabled")!=="true")confirm("reconnect",[row.id]);});
-      tools.append(reconnect,buttons);info.append(title,state);root.append(info,tools);list.append(root);
+      tools.append(reconnect,buttons);info.append(state,title);root.append(info,tools);list.append(root);
       const value={root,title,state,buttons,actions,reconnect};nodes.set(row.id,value);return value;
     }
     function render() {
@@ -56,12 +70,13 @@ globalThis.InspectorConnections = {
       for(const [id,value] of nodes)if(!rows.some(row=>row.id===id)){value.root.remove();nodes.delete(id);}
       for(const row of rows) {
         const value=rowNodes(row);text(value.title,name(row));value.title.title=name(row);
-        const stateLabel=stateText(row);text(value.state,stateLabel);value.root.dataset.state=row.error?"error":row.state;
+        const indicator=statusIndicator(row);value.state.dataset.status=indicator.kind;
+        const stateLabel=row.busy?stateText(row):indicator.message;
+        value.state.title=stateLabel;value.state.setAttribute("aria-label",stateLabel);
+        value.root.dataset.state=row.error?"error":row.state;
         value.root.setAttribute("aria-busy",String(!!row.busy));
-        const detail=row.error?tr(row.error):row.warning_count?tr("部分配置未完成，请检查此设备的接入详情。"):"";
-        value.state.title=row.error?stateLabel+"\n"+detail:stateLabel;
         value.buttons.setAttribute("aria-label",name(row));
-        value.buttons.setAttribute("aria-description",detail);
+        value.buttons.setAttribute("aria-description",stateLabel);
         for(const [action,button] of Object.entries(value.actions)) {
           text(button,tr(action==="activate"?"接入":"断开"));
           button.setAttribute("aria-pressed",String(row.state===desired(action)&&!row.error));
