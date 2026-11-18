@@ -94,6 +94,7 @@ class SessionSummaryTests(unittest.TestCase):
     def test_recent_packet_title_native_update_and_token_window(self):
         rows = self.reader.read(self.capture)["sessions"]
         self.assertEqual(rows[0]["title"], "会话名称")
+        self.assertEqual(rows[0]["origin"], {"kind": "local"})
         self.assertEqual(rows[0]["updated_at"], 110.5)
         self.assertEqual(rows[0]["packet_count"], 2)
         self.assertEqual(rows[0]["latest_packet"], {"id": "b", "created": 105, "wire_bytes": 4000})
@@ -189,8 +190,32 @@ class SessionSummaryTests(unittest.TestCase):
         (self.native / "state_5.sqlite").unlink()
         row = self.reader.read(self.capture)["sessions"][0]
         self.assertIsNone(row["title"])
+        self.assertIsNone(row["origin"])
         self.assertEqual(row["updated_at"], 105)
         self.assertEqual(row["latest_packet"]["wire_bytes"], 4000)
+
+    def test_explicit_ssh_membership_overrides_local_index_for_sidebar_origin(self):
+        path = self.native / ".codex-global-state.json"
+        host = "remote-ssh-fixture"
+        membership = {THREAD: host}
+        state = {
+            "thread-project-membership-host-ids": membership,
+            "thread-project-assignments": {THREAD: {"hostId": host}},
+            "codex-managed-remote-connections": {host: {"hostId": host, "alias": "dev-box",
+                                                       "hostname": "codex@[2001:db8::7]"}},
+        }
+        expected = {"kind": "remote", "address": "2001:db8::7"}
+        with path.open("w", encoding="utf-8") as stream:
+            json.dump(state, stream)
+        self.assertEqual(self.reader.read(self.capture)["sessions"][0]["origin"], expected)
+
+        membership[THREAD] = "remote-ssh-removed"
+        path.write_text(json.dumps(state), encoding="utf-8")
+        self.assertIsNone(self.reader.read(self.capture)["sessions"][0]["origin"])
+
+        membership.clear()
+        path.write_text(json.dumps(state), encoding="utf-8")
+        self.assertEqual(self.reader.read(self.capture)["sessions"][0]["origin"], expected)
 
     def test_catalog_reads_do_not_modify_databases(self):
         paths = [self.native / "state_5.sqlite", self.capture / "packets.sqlite"]
