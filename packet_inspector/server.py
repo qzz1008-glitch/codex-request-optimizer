@@ -38,6 +38,7 @@ from .token_window import TokenWindows
 from .response_usage import packet_usage
 from .response_summary import ResponseSummary
 from .session_summary import SessionSummaries
+from .ssh_session_labels import SshSessionLabels
 from .storage import DEFAULT_STORAGE_BYTES, Store
 from .storage_paths import resolve_directory, path_settings, grouped_paths
 from .transport import (AUTO_IMAGE_ZSTD_LEVEL, DEFAULT_IMAGE_ZSTD_LEVEL, DEFAULT_ZSTD_LEVEL,
@@ -241,7 +242,6 @@ class InspectorServer(ThreadingHTTPServer):
         self.upgrade_draining = False
         self.wsl = WslConnection(self.data_dir)
         self.token_windows = TokenWindows()
-        self.session_summaries = SessionSummaries(self.token_windows, extra_labels=self.wsl.labels)
         self.cache_dir = resolve_directory(self.data_dir, self.settings["cache_dir"])
         self.log_dir = resolve_directory(self.data_dir, self.settings["log_dir"])
         self.cache_dir.mkdir(parents=True, exist_ok=True)
@@ -298,6 +298,9 @@ class InspectorServer(ThreadingHTTPServer):
         self.connections = Connections(self.link.config.parent, self.connection_profile, self.set_connection,
                                        transport=self.remote_relays,
                                        cache_path=self.cache_dir / "remote-connections.json")
+        ssh_labels = (SshSessionLabels(self.remote_relays, self.connections.codex_home, self.connections.ssh_config)
+                      if self.remote_relays is not None else None)
+        self.session_summaries = SessionSummaries(self.token_windows, extra_labels=self.wsl.labels, ssh_labels=ssh_labels)
         self.analysis_thread = threading.Thread(target=self._classify_pending, daemon=True)
         self.analysis_thread.start()
 
@@ -1452,12 +1455,12 @@ class Handler(BaseHTTPRequestHandler):
             self._json(400, {"error": "invalid_request_path"})
             return
         shared_client = prefix == urlsplit(self.server.sharing.client_endpoint).path
-        ssh_upstream = None
+        ssh_upstream, ssh_origin = None, None
         if suffix.startswith("/ssh/"):
             access = self.server.remote_relays
             parts = suffix.split("/", 5)
             if access and not shared_client and len(parts) == 6 and parts[3] == "p":
-                ssh_upstream = access.route(parts[2], parts[4])
+                ssh_upstream, ssh_origin = access.route(parts[2], parts[4])
             if not ssh_upstream:
                 self._json(404, {"error": "unknown_ssh_route"})
                 return
@@ -1533,6 +1536,8 @@ class Handler(BaseHTTPRequestHandler):
                 capture_meta = meta
                 meta.update(method=self.command, path=safe_path(suffix), source="live",
                             capture_point="app_exit_before_downstream")
+                if ssh_origin:
+                    meta["ssh_connection_key"] = ssh_origin
                 packet_id = self.server.store.add(meta, content)
             except Exception:
                 self.server.capture_errors += 1
