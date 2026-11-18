@@ -596,14 +596,15 @@ dialog{width:min(760px,calc(var(--desktop-width) - 80px));max-height:calc(var(--
 @keyframes reconnect-sweep {
   to { --reconnect-sweep-angle: 1turn; }
 }
-@supports (background-image: conic-gradient(in oklab, white, black)) {
+@supports (background-image: repeating-conic-gradient(in oklab, white 0deg, black 180deg)) {
   @media (prefers-reduced-motion: no-preference) and (forced-colors: none) {
     .connection-device-reconnect.needs-reconnect:not(:disabled, [aria-disabled=true]) {
       border-color: transparent;
       background:
         linear-gradient(var(--reconnect-face), var(--reconnect-face)) padding-box,
-        conic-gradient(from var(--reconnect-sweep-angle, 0turn) in oklab,
-          var(--reconnect-rim) 68%, #afd1f6 81%, #82b7f4 90%, #dcecfc 97%, var(--reconnect-rim)) border-box;
+        repeating-conic-gradient(from var(--reconnect-sweep-angle, 0turn) in oklab,
+          var(--reconnect-rim) 0deg 65deg, #afd1f6 112deg, #82b7f4 144deg, #dcecfc 169deg,
+          var(--reconnect-rim) 180deg) border-box;
       animation: reconnect-sweep 2.4s linear 2;
     }
   }
