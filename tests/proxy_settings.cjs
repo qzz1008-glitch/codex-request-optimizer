@@ -57,8 +57,10 @@ let browser,cases=0;
   ].join('\n')});
   await page.evaluate(()=>{fillProxySettings();settingsBaseline=readSettingsDraft();settingsEditing=true;$('settings-dialog').showModal();});
   const sections=await page.locator('.settings-content>section').evaluateAll(nodes=>nodes.map(node=>node.id));
-  assert.deepEqual(sections.slice(sections.indexOf('storage-location-settings'),sections.indexOf('storage-location-settings')+4),
-    ['storage-location-settings','connection-settings','proxy-settings','sharing-settings']);cases++;
+  const storage=sections.indexOf('storage-location-settings');
+  assert.deepEqual(sections.slice(storage,storage+3),['storage-location-settings','connection-settings','proxy-settings']);
+  assert.deepEqual(await page.locator('#connection-settings .entry-port-row input').evaluateAll(nodes=>nodes.map(node=>node.id)),
+    ['entry-port','sharing-port','exit-port']);cases++;
   const detectedAddress=page.locator('#proxy-detected-address');
   const manualAddress=page.locator('#proxy-address');
   assert.equal(await detectedAddress.isDisabled(),true);
