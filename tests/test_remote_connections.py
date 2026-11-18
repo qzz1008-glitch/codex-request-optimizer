@@ -727,8 +727,14 @@ class WindowsRemoteRelayTests(unittest.TestCase):
         for session, owner in ((thread, personal), (legacy, None), (other_account, root_key)):
             store.add({"method": "POST", "path": "/responses", "thread_id": session,
                        **({"ssh_connection_key": owner} if owner else {})})
-        labels = SshSessionLabels(self.relays, self.root, self.root / "ssh-config")
-        sidebar = SessionSummaries(TokenWindows(self.root / "local"), ssh_labels=labels)
+        local = self.root / "local"
+        local.mkdir()
+        (local / ".codex-global-state.json").write_text(json.dumps({
+            "thread-project-membership-host-ids": {legacy: self.host.id},
+            "codex-managed-remote-connections": [{"hostId": self.host.id, "hostname": self.host.destination}],
+        }), encoding="utf8")
+        labels = SshSessionLabels(self.relays, local, self.root / "ssh-config")
+        sidebar = SessionSummaries(TokenWindows(local), ssh_labels=labels)
         with patch("packet_inspector.ssh_session_labels.saved_hosts", return_value=[self.host]):
             def rows():
                 return {row["thread_id"]: row for row in sidebar.read(capture)["sessions"]}
@@ -741,6 +747,7 @@ class WindowsRemoteRelayTests(unittest.TestCase):
                     break
                 time.sleep(.02)
             self.assertEqual(sessions[legacy]["title"], "Saved remote chat")
+            self.assertEqual(sessions[legacy]["origin"], {"kind": "remote", "address": self.host.destination})
             self.assertEqual(sessions[thread]["title"], "Remote child")
             self.assertEqual(sessions[thread]["parent_thread_id"], parent)
             self.assertEqual(sessions[parent]["title"], "Remote parent")
@@ -758,9 +765,13 @@ class WindowsRemoteRelayTests(unittest.TestCase):
             return {"index": {thread: host.name}}
         with patch("packet_inspector.ssh_session_labels.saved_hosts", return_value=[self.host, second]), \
              patch.object(self.relays, "ssh", side_effect=ssh) as read:
-            labels._refresh([(thread, None)])
-        self.assertEqual(read.call_count, 2)
-        self.assertEqual(labels({thread: None}), {})
+            labels._refresh([(thread, None, None)])
+            self.assertEqual(read.call_count, 2)
+            self.assertEqual(labels({thread: (None, None)}), {})
+
+            labels._refresh([(thread, None, self.host.id)])
+            self.assertEqual(read.call_count, 3)
+            self.assertEqual(labels({thread: (None, self.host.id)})[thread]["title"], self.host.name)
 
     def test_failed_probe_does_not_modify_config(self):
         self.ready = False
