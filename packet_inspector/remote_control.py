@@ -13,10 +13,14 @@ from urllib.parse import urlsplit
 from urllib.request import build_opener, ProxyHandler, HTTPRedirectHandler, Request
 from urllib.error import HTTPError
 
-RECONNECT_UNSUPPORTED = "远程 Codex 不支持原生后台重载，请在 ChatGPT 中重新连接此服务器。"
+RECONNECT_SOCKET_UNVERIFIED = "无法确认远程 Codex 控制套接字属于当前 SSH 账号和配置目录。"
+RECONNECT_PROCESS_CHANGED = "远程 Codex 后台进程刚发生变化，请等 ChatGPT 恢复连接后再试。"
 RECONNECT_UNCONFIRMED = "重连结果未确认，请刷新状态后检查；待生效提醒已保留。"
 SSH_DRAIN_TIMEOUT = 60
 SSH_RECONNECT_TIMEOUT = 100
+
+class ReconnectProbeError(ValueError):
+    """A fixed diagnostic that can be returned without exposing the SSH environment."""
 
 class NoRedirect(HTTPRedirectHandler):
     def redirect_request(self, *args, **kwargs):
@@ -38,85 +42,93 @@ def owned_native_socket(home, socket_path):
     return stat.S_ISSOCK(endpoint.st_mode) and endpoint.st_uid == os.getuid()
 
 def socket_peer_pid(socket_path):
-    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as peer:
-        peer.settimeout(1)
-        peer.connect(str(socket_path.resolve(strict=True)))
-        pid, uid, _ = struct.unpack("iII", peer.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("iII")))
-        if pid <= 0 or uid != os.getuid():
-            raise ValueError(RECONNECT_UNSUPPORTED)
-        # Close normally so Codex does not report failed WebSocket handshakes on status checks.
-        key = base64.b64encode(os.urandom(16))
-        peer.sendall(b"GET / HTTP/1.1\r\nHost: localhost\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n"
-                     b"Sec-WebSocket-Version: 13\r\nSec-WebSocket-Key: " + key + b"\r\n\r\n")
-        try:
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as peer:
+            peer.settimeout(1)
+            peer.connect(str(socket_path.resolve(strict=True)))
+            pid, uid, _ = struct.unpack("iII", peer.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("iII")))
+            if pid <= 0 or uid != os.getuid():
+                raise ReconnectProbeError("无法确认远程 Codex 后台进程属于当前 SSH 账号。")
+            # Close normally so Codex does not report failed WebSocket handshakes on status checks.
+            key = base64.b64encode(os.urandom(16))
+            peer.sendall(b"GET / HTTP/1.1\r\nHost: localhost\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n"
+                         b"Sec-WebSocket-Version: 13\r\nSec-WebSocket-Key: " + key + b"\r\n\r\n")
             with HTTPResponse(peer) as response:
                 response.begin()
                 if response.status != 101:
-                    raise ValueError(RECONNECT_UNSUPPORTED)
-        except HTTPException as exc:
-            raise ValueError(RECONNECT_UNSUPPORTED) from exc
-        peer.sendall(b"\x88\x80" + os.urandom(4))
-        peer.recv(128)
+                    raise ReconnectProbeError("远程 Codex 后台未通过 WebSocket 握手检查。")
+            peer.sendall(b"\x88\x80" + os.urandom(4))
+            peer.recv(128)
+    except (OSError, HTTPException) as exc:
+        raise ReconnectProbeError("无法通过控制套接字连接远程 Codex 后台。") from exc
     return pid
 
 @contextmanager
 def verified_ssh_app_server(cli, home, socket_path):
     if not (hasattr(os, "pidfd_open") and hasattr(signal, "pidfd_send_signal") and hasattr(socket, "SO_PEERCRED")):
-        raise ValueError(RECONNECT_UNSUPPORTED)
+        raise ReconnectProbeError("远程 Python 环境缺少安全重载 Codex 所需的进程接口。")
     if not owned_native_socket(home, socket_path):
-        raise ValueError(RECONNECT_UNSUPPORTED)
+        raise ReconnectProbeError(RECONNECT_SOCKET_UNVERIFIED)
     pid = socket_peer_pid(socket_path)
     pidfd = os.pidfd_open(pid)
     try:
         process = pathlib.Path("/proc") / str(pid)
         if not (process / "exe").samefile(cli):
-            raise ValueError(RECONNECT_UNSUPPORTED)
+            raise ReconnectProbeError("远程后台进程与本次 SSH 登录找到的 Codex 命令不一致。")
         args = (process / "cmdline").read_bytes().split(b"\0")
-        server_args = args[args.index(b"app-server", 1) + 1:]
+        server_args = args[args.index(b"app-server", 1) + 1:] if b"app-server" in args[1:] else []
         default_socket = b"--listen=unix://" in server_args or (b"--listen", b"unix://") in zip(server_args, server_args[1:])
         if server_args[:1] == [b"proxy"] or not default_socket:
-            raise ValueError(RECONNECT_UNSUPPORTED)
+            raise ReconnectProbeError("远程 Codex 后台未通过 Unix 套接字启动参数检查。")
         paths = dict(item.split(b"=", 1) for item in (process / "environ").read_bytes().split(b"\0")
                      if item.startswith((b"CODEX_HOME=", b"HOME=")))
         server_home = paths.get(b"CODEX_HOME") or os.path.join(paths.get(b"HOME", b""), b".codex")
         server_home = pathlib.Path(os.fsdecode(server_home))
         if not server_home.is_absolute() or server_home.resolve() != home.resolve():
-            raise ValueError(RECONNECT_UNSUPPORTED)
+            raise ReconnectProbeError("远程 Codex 后台的配置目录与当前连接不匹配。")
         # Codex handles SIGHUP as a graceful-only drain, including repeated requests.
         with (process / "status").open() as status:
             caught = next((int(line.split()[1], 16) for line in status if line.startswith("SigCgt:")), 0)
-        if not caught & (1 << (signal.SIGHUP - 1)) or socket_peer_pid(socket_path) != pid:
-            raise ValueError(RECONNECT_UNSUPPORTED)
+        if not caught & (1 << (signal.SIGHUP - 1)):
+            raise ReconnectProbeError("远程 Codex 后台未注册重载所需的 SIGHUP 处理程序。")
+        if socket_peer_pid(socket_path) != pid:
+            raise ReconnectProbeError(RECONNECT_PROCESS_CHANGED)
         yield pid, pidfd
     finally:
         os.close(pidfd)
 
 def native_codex(home):
-    unsupported = {"supported": False, "reason": RECONNECT_UNSUPPORTED}
     search = str(pathlib.Path(os.environ.get("CODEX_INSTALL_DIR") or pathlib.Path.home() / ".local/bin")) + os.pathsep + os.environ.get("PATH", "")
     cli = shutil.which("codex", path=search)
     if not cli:
-        return unsupported, None
+        return {"supported": False, "reason": "本次 SSH 登录找不到 Codex 命令。"}, None
     supported = {"supported": True, "reason": ""}
     env = dict(os.environ, CODEX_HOME=str(home))
+    reason = "无法读取远程 Codex 后台状态。"
     try:
         value = native_command(cli, "version", env, 8)
+        if value.get("status") != "running":
+            raise ReconnectProbeError("远程 Codex 后台尚未就绪，请等 ChatGPT 恢复连接后再试。")
         socket_path = value.get("socketPath")
-        if value.get("status") != "running" or not isinstance(socket_path, str):
-            return unsupported, None
+        if not isinstance(socket_path, str):
+            raise ReconnectProbeError("远程 Codex 后台未报告控制套接字地址。")
         socket_path = pathlib.Path(socket_path)
+        reason = "无法读取远程 Codex 的控制套接字或进程信息。"
         if managed_daemon_running(value):
             managed = value.get("managedCodexPath")
-            if not isinstance(managed, str):
-                return unsupported, None
-            managed = pathlib.Path(managed)
-            if not managed.is_absolute() or not managed.is_file() or not owned_native_socket(home, socket_path):
-                return unsupported, None
-            return supported, (str(managed), env, socket_path, None)
+            managed_path = pathlib.Path(managed) if isinstance(managed, str) else None
+            if managed_path is None or not managed_path.is_absolute() or not managed_path.is_file():
+                raise ReconnectProbeError("无法确认远程 Codex 守护进程使用的可执行文件。")
+            if not owned_native_socket(home, socket_path):
+                raise ReconnectProbeError(RECONNECT_SOCKET_UNVERIFIED)
+            return supported, (str(managed_path), env, socket_path, None)
         with verified_ssh_app_server(cli, home, socket_path) as (pid, _):
             return supported, (cli, env, socket_path, pid)
+    except ReconnectProbeError as exc:
+        reason = str(exc)
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError):
-        return unsupported, None
+        pass
+    return {"supported": False, "reason": reason}, None
 
 def native_command(cli, action, env, timeout):
     result = subprocess.run([cli, "app-server", "daemon", action], env=env, cwd="/",
@@ -131,9 +143,9 @@ def native_command(cli, action, env, timeout):
         raise ValueError("Codex 原生后台未返回有效状态。")
     return value
 
-def restart_native(context):
+def restart_native(context, unavailable_reason):
     if context is None:
-        raise ValueError(RECONNECT_UNSUPPORTED)
+        raise ReconnectProbeError(unavailable_reason)
     cli, env, socket_path, pid = context
     if pid is not None:
         restart_ssh_app_server(cli, env, socket_path, pid)
@@ -149,7 +161,7 @@ def restart_ssh_app_server(cli, env, socket_path, pid):
     home = pathlib.Path(env["CODEX_HOME"])
     with verified_ssh_app_server(cli, home, socket_path) as (current_pid, pidfd):
         if current_pid != pid:
-            raise ValueError(RECONNECT_UNCONFIRMED)
+            raise ReconnectProbeError(RECONNECT_PROCESS_CHANGED)
         exit_event = select.poll()
         exit_event.register(pidfd, select.POLLIN)
         signal.pidfd_send_signal(pidfd, signal.SIGHUP)
@@ -310,7 +322,7 @@ def tunnel_control(home, options):
         capability, context = native_codex(home)
         try:
             digest = config_digest(config)
-            restart_native(context)
+            restart_native(context, capability["reason"])
             warning = "" if config_digest(config) == digest else "Codex 已重载，但配置又有变化，请再次重新连接。"
             return {"state": "reloaded", "warning": warning, "codex_restart": capability}
         except (OSError, ValueError, subprocess.SubprocessError) as exc:
@@ -395,7 +407,7 @@ def control():
         try:
             digest = config_digest(config)
             notice = status.get("restart_notice", {})
-            restart_native(native_context)
+            restart_native(native_context, capability["reason"])
             reconnect = {"state": "reloaded", "error": "", "warning": ""}
             status = request(selected, "/api/status")
             if config_digest(config) != digest or status.get("restart_notice", {}).get("revision") != notice.get("revision"):
