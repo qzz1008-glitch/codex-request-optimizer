@@ -4,10 +4,17 @@ from .entry_port import DEFAULT_PORT
 RESULT_PREFIX = "INSPECTOR_CONNECTION_RESULT:"
 
 SCRIPT = r'''
-import hashlib, json, os, pathlib, re, shutil, stat, subprocess
+from contextlib import contextmanager
+import base64, hashlib, json, os, pathlib, re, select, shutil, signal, socket, stat, struct, subprocess, time
+from http.client import HTTPException, HTTPResponse
 from urllib.parse import urlsplit
 from urllib.request import build_opener, ProxyHandler, HTTPRedirectHandler, Request
 from urllib.error import HTTPError
+
+RECONNECT_UNSUPPORTED = "远程 Codex 不支持原生后台重载，请在 ChatGPT 中重新连接此服务器。"
+RECONNECT_UNCONFIRMED = "重连结果未确认，请刷新状态后检查；待生效提醒已保留。"
+SSH_DRAIN_TIMEOUT = 60
+SSH_RECONNECT_TIMEOUT = 100
 
 class NoRedirect(HTTPRedirectHandler):
     def redirect_request(self, *args, **kwargs):
@@ -18,33 +25,95 @@ def managed_daemon_running(value):
     backend = value.get("backend")
     return value.get("status") == "running" and isinstance(backend, str) and bool(backend)
 
+def owned_native_socket(home, socket_path):
+    if not socket_path.is_absolute():
+        return False
+    # Codex can link the control socket to a shorter runtime path outside CODEX_HOME.
+    parent, resolved_home = socket_path.parent.resolve(), home.resolve()
+    if parent != resolved_home and resolved_home not in parent.parents:
+        return False
+    endpoint = socket_path.stat()
+    return stat.S_ISSOCK(endpoint.st_mode) and endpoint.st_uid == os.getuid()
+
+def socket_peer_pid(socket_path):
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as peer:
+        peer.settimeout(1)
+        peer.connect(str(socket_path.resolve(strict=True)))
+        pid, uid, _ = struct.unpack("iII", peer.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("iII")))
+        if pid <= 0 or uid != os.getuid():
+            raise ValueError(RECONNECT_UNSUPPORTED)
+        # Close normally so Codex does not report failed WebSocket handshakes on status checks.
+        key = base64.b64encode(os.urandom(16))
+        peer.sendall(b"GET / HTTP/1.1\r\nHost: localhost\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n"
+                     b"Sec-WebSocket-Version: 13\r\nSec-WebSocket-Key: " + key + b"\r\n\r\n")
+        try:
+            with HTTPResponse(peer) as response:
+                response.begin()
+                if response.status != 101:
+                    raise ValueError(RECONNECT_UNSUPPORTED)
+        except HTTPException as exc:
+            raise ValueError(RECONNECT_UNSUPPORTED) from exc
+        peer.sendall(b"\x88\x80" + os.urandom(4))
+        peer.recv(128)
+    return pid
+
+@contextmanager
+def verified_ssh_app_server(cli, home, socket_path):
+    if not (hasattr(os, "pidfd_open") and hasattr(signal, "pidfd_send_signal") and hasattr(socket, "SO_PEERCRED")):
+        raise ValueError(RECONNECT_UNSUPPORTED)
+    if not owned_native_socket(home, socket_path):
+        raise ValueError(RECONNECT_UNSUPPORTED)
+    pid = socket_peer_pid(socket_path)
+    pidfd = os.pidfd_open(pid)
+    try:
+        process = pathlib.Path("/proc") / str(pid)
+        if not (process / "exe").samefile(cli):
+            raise ValueError(RECONNECT_UNSUPPORTED)
+        args = (process / "cmdline").read_bytes().split(b"\0")
+        server_args = args[args.index(b"app-server", 1) + 1:]
+        default_socket = b"--listen=unix://" in server_args or (b"--listen", b"unix://") in zip(server_args, server_args[1:])
+        if server_args[:1] == [b"proxy"] or not default_socket:
+            raise ValueError(RECONNECT_UNSUPPORTED)
+        paths = dict(item.split(b"=", 1) for item in (process / "environ").read_bytes().split(b"\0")
+                     if item.startswith((b"CODEX_HOME=", b"HOME=")))
+        server_home = paths.get(b"CODEX_HOME") or os.path.join(paths.get(b"HOME", b""), b".codex")
+        server_home = pathlib.Path(os.fsdecode(server_home))
+        if not server_home.is_absolute() or server_home.resolve() != home.resolve():
+            raise ValueError(RECONNECT_UNSUPPORTED)
+        # Codex handles SIGHUP as a graceful-only drain, including repeated requests.
+        with (process / "status").open() as status:
+            caught = next((int(line.split()[1], 16) for line in status if line.startswith("SigCgt:")), 0)
+        if not caught & (1 << (signal.SIGHUP - 1)) or socket_peer_pid(socket_path) != pid:
+            raise ValueError(RECONNECT_UNSUPPORTED)
+        yield pid, pidfd
+    finally:
+        os.close(pidfd)
+
 def native_codex(home):
-    unsupported = {"supported": False, "reason": "远程 Codex 不支持原生后台重载，请在 ChatGPT 中重新连接此服务器。"}
+    unsupported = {"supported": False, "reason": RECONNECT_UNSUPPORTED}
     search = str(pathlib.Path(os.environ.get("CODEX_INSTALL_DIR") or pathlib.Path.home() / ".local/bin")) + os.pathsep + os.environ.get("PATH", "")
     cli = shutil.which("codex", path=search)
     if not cli:
         return unsupported, None
+    supported = {"supported": True, "reason": ""}
     env = dict(os.environ, CODEX_HOME=str(home))
     try:
         value = native_command(cli, "version", env, 8)
-        if not managed_daemon_running(value):
+        socket_path = value.get("socketPath")
+        if value.get("status") != "running" or not isinstance(socket_path, str):
             return unsupported, None
-        managed = pathlib.Path(value.get("managedCodexPath", ""))
-        socket = pathlib.Path(value.get("socketPath", ""))
-        if not managed.is_absolute() or not managed.is_file():
-            return unsupported, None
-        if not socket.is_absolute():
-            return unsupported, None
-        # Codex can link the control socket to a shorter path outside CODEX_HOME.
-        socket_dir = socket.parent.resolve()
-        resolved_home = home.resolve()
-        if socket_dir != resolved_home and resolved_home not in socket_dir.parents:
-            return unsupported, None
-        endpoint = socket.stat()
-        if not stat.S_ISSOCK(endpoint.st_mode) or endpoint.st_uid != os.getuid():
-            return unsupported, None
-        return {"supported": True, "reason": ""}, (str(managed), env, str(socket))
-    except (OSError, ValueError, subprocess.SubprocessError):
+        socket_path = pathlib.Path(socket_path)
+        if managed_daemon_running(value):
+            managed = value.get("managedCodexPath")
+            if not isinstance(managed, str):
+                return unsupported, None
+            managed = pathlib.Path(managed)
+            if not managed.is_absolute() or not managed.is_file() or not owned_native_socket(home, socket_path):
+                return unsupported, None
+            return supported, (str(managed), env, socket_path, None)
+        with verified_ssh_app_server(cli, home, socket_path) as (pid, _):
+            return supported, (cli, env, socket_path, pid)
+    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError):
         return unsupported, None
 
 def native_command(cli, action, env, timeout):
@@ -62,14 +131,44 @@ def native_command(cli, action, env, timeout):
 
 def restart_native(context):
     if context is None:
-        raise ValueError("远程 Codex 不支持原生后台重载，请在 ChatGPT 中重新连接此服务器。")
-    cli, env, socket = context
+        raise ValueError(RECONNECT_UNSUPPORTED)
+    cli, env, socket_path, pid = context
+    if pid is not None:
+        restart_ssh_app_server(cli, env, socket_path, pid)
+        return
     result = native_command(cli, "restart", env, 120)
-    if result.get("status") != "restarted" or result.get("socketPath") != socket:
+    if result.get("status") != "restarted" or result.get("socketPath") != str(socket_path):
         raise ValueError("Codex 原生后台未确认重载完成，请刷新状态后检查。")
     ready = native_command(cli, "version", env, 8)
-    if not managed_daemon_running(ready) or ready.get("socketPath") != socket:
+    if not managed_daemon_running(ready) or ready.get("socketPath") != str(socket_path):
         raise ValueError("Codex 原生后台尚未就绪，请刷新状态后检查。")
+
+def restart_ssh_app_server(cli, env, socket_path, pid):
+    home = pathlib.Path(env["CODEX_HOME"])
+    with verified_ssh_app_server(cli, home, socket_path) as (current_pid, pidfd):
+        if current_pid != pid:
+            raise ValueError(RECONNECT_UNCONFIRMED)
+        exit_event = select.poll()
+        exit_event.register(pidfd, select.POLLIN)
+        signal.pidfd_send_signal(pidfd, signal.SIGHUP)
+        if not exit_event.poll(SSH_DRAIN_TIMEOUT * 1000):
+            raise ValueError(RECONNECT_UNCONFIRMED)
+        # Desktop owns the proxy and may need its WebSocket heartbeat to detect the disconnect.
+        deadline = time.monotonic() + SSH_RECONNECT_TIMEOUT
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            try:
+                with verified_ssh_app_server(cli, home, socket_path) as (new_pid, _):
+                    ready = native_command(cli, "version", env, min(8, remaining))
+                    if (new_pid != pid and ready.get("status") == "running"
+                            and ready.get("socketPath") == str(socket_path) and socket_peer_pid(socket_path) == new_pid):
+                        return
+            except (OSError, ValueError, RuntimeError, subprocess.SubprocessError):
+                pass
+            time.sleep(max(0, min(0.5, deadline - time.monotonic())))
+    raise ValueError(RECONNECT_UNCONFIRMED)
 
 def config_digest(config):
     with config.open("rb") as source:
@@ -163,7 +262,7 @@ def control():
             status = request(selected, "/api/status")
             profile = status["profile"]
         except subprocess.TimeoutExpired:
-            reconnect = {"state": "unconfirmed", "error": "重连结果未确认，请刷新状态后检查；待生效提醒已保留。"}
+            reconnect = {"state": "unconfirmed", "error": RECONNECT_UNCONFIRMED}
         except Exception as exc:
             reconnect = {"state": "unconfirmed", "error": str(exc)[:1500]}
     elif action in {"activate", "restore"}:

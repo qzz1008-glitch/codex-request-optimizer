@@ -1,16 +1,18 @@
 """Per-host connection ownership, bounded discovery and SSH control contracts."""
-from contextlib import redirect_stdout
+from contextlib import contextmanager, redirect_stdout
 import io
 import json
 from pathlib import Path
+import signal
 import stat
+import struct
 import subprocess
 import tempfile
 import threading
 import time
 from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 from urllib.error import HTTPError
 from urllib.request import Request, build_opener, ProxyHandler
 
@@ -377,6 +379,68 @@ class RemoteScriptTests(unittest.TestCase):
             {"key": "connection", "target": "chatgpt", "scope": ""},
             {"key": "wsl", "target": "wsl", "scope": "distribution"}]}
 
+    @contextmanager
+    def ssh_app_server(self, *, invalid=None, exits=True, replacement=True):
+        self.enable_native()
+        self.native_mode = "unmanaged"
+        self.socket.parent.mkdir(exist_ok=True)
+        self.socket.touch()
+        old_pid, new_pid = 2100, 2200
+        peer_pid = old_pid
+        proc = Path("/proc")
+        original_open = Path.open
+        home = self.root.parent if invalid == "home" else self.root
+        cmdline = b"codex\0-c\0features.code_mode_host=true\0app-server\0--listen\0unix://\0"
+        samples = {
+            "cmdline": cmdline.replace(b"unix://", b"stdio://") if invalid == "transport" else cmdline,
+            "environ": b"CODEX_HOME=" + str(home).encode("utf-8") + b"\0",
+            "status": "SigCgt:\t0\n" if invalid == "signal" else "SigCgt:\t1\n",
+        }
+
+        def open_path(path, *args, **kwargs):
+            if path.parent.parent == proc:
+                value = samples[path.name]
+                return io.StringIO(value) if isinstance(value, str) else io.BytesIO(value)
+            return original_open(path, *args, **kwargs)
+
+        class Peer:
+            def __enter__(self): return self
+            def __exit__(self, *args): pass
+            def settimeout(self, timeout): pass
+            def connect(self, address):
+                if peer_pid is None:
+                    raise ConnectionRefusedError()
+            def getsockopt(self, *args):
+                return struct.pack("iII", peer_pid, 1001 if invalid == "uid" else 1000, 1000)
+            def sendall(self, data): pass
+            def makefile(self, mode):
+                return io.BytesIO(b"HTTP/1.1 101 Switching Protocols\r\n\r\n")
+            def recv(self, size): return b"\x88\x00"
+
+        def stop_backend(*args):
+            nonlocal peer_pid
+            if exits:
+                peer_pid = new_pid if replacement else None
+
+        send_signal = Mock(side_effect=stop_backend)
+        closed_fds = Mock()
+        poller = Mock()
+        poller.poll.return_value = [(old_pid + 10000, 1)] if exits else []
+        with (
+            patch("pathlib.Path.open", new=open_path),
+            patch("pathlib.Path.samefile", return_value=invalid != "exe"),
+            patch("os.pidfd_open", side_effect=lambda pid: pid + 10000, create=True),
+            patch("os.close", closed_fds),
+            patch("select.poll", return_value=poller, create=True),
+            patch("select.POLLIN", 1, create=True),
+            patch("signal.pidfd_send_signal", send_signal, create=True),
+            patch("signal.SIGHUP", 1, create=True),
+            patch("socket.socket", return_value=Peer()),
+            patch("socket.AF_UNIX", 1, create=True),
+            patch("socket.SO_PEERCRED", 17, create=True),
+        ):
+            yield send_signal, closed_fds
+
     def test_native_reconnect_verifies_ready_then_acknowledges_only_current_account(self):
         self.enable_native()
         result = self.execute("reconnect")
@@ -399,7 +463,7 @@ class RemoteScriptTests(unittest.TestCase):
         self.assertTrue(result["reload_required"])
         self.assertEqual([args[-1] for args, _ in self.native_calls], ["version"])
 
-    def test_running_unmanaged_app_server_never_offers_or_attempts_restart(self):
+    def test_unverified_app_server_never_offers_or_attempts_restart(self):
         self.enable_native()
         self.native_mode = "unmanaged"
         probe = self.execute()
@@ -411,6 +475,42 @@ class RemoteScriptTests(unittest.TestCase):
         self.assertTrue(result["reload_required"])
         self.assertEqual([args[-1] for args, _ in self.native_calls], ["version", "version"])
         self.assertFalse(any(body for _, body in self.calls))
+
+    def test_ordinary_ssh_reconnect_waits_for_replacement_before_acknowledging(self):
+        with self.ssh_app_server() as (send_signal, closed_fds):
+            probe = self.execute()
+            self.assertTrue(probe["codex_restart"]["supported"])
+            self.assertTrue(probe["reload_required"])
+            send_signal.assert_not_called()
+            result = self.execute("reconnect")
+            send_signal.assert_called_once_with(12100, signal.SIGHUP)
+            self.assertEqual([call.args[0] for call in closed_fds.call_args_list], [12100, 12100, 12200, 12100])
+        self.assertEqual(result["codex_reconnect"]["state"], "reloaded")
+        self.assertFalse(result["reload_required"])
+        self.assertEqual([args[-1] for args, _ in self.native_calls], ["version", "version", "version"])
+        self.assertEqual(self.status["restart_notice"]["items"][0]["target"], "wsl")
+
+    def test_ssh_reconnect_rejects_an_unrelated_or_unverifiable_listener(self):
+        for invalid in ("uid", "exe", "home", "transport", "signal"):
+            with self.subTest(invalid=invalid), self.ssh_app_server(invalid=invalid) as (send_signal, _):
+                self.calls.clear()
+                result = self.execute("reconnect")
+                send_signal.assert_not_called()
+                self.assertFalse(result["codex_restart"]["supported"])
+                self.assertEqual(result["codex_reconnect"]["state"], "unconfirmed")
+                self.assertTrue(result["reload_required"])
+                self.assertFalse(any(body for _, body in self.calls))
+
+    def test_ssh_reconnect_timeout_preserves_pending_configuration(self):
+        for exits in (False, True):
+            with self.subTest(exits=exits), self.ssh_app_server(exits=exits, replacement=False) as (send_signal, _):
+                self.calls.clear()
+                with patch("time.monotonic", side_effect=(0, 99, 100, 101)), patch("time.sleep"):
+                    result = self.execute("reconnect")
+                send_signal.assert_called_once()
+                self.assertEqual(result["codex_reconnect"]["state"], "unconfirmed")
+                self.assertTrue(result["reload_required"])
+                self.assertFalse(any(body for _, body in self.calls))
 
     def test_unsupported_daemon_never_restarts_or_acknowledges(self):
         for mode in ("missing", "wrong-home", "wrong-owner", "regular-file"):
