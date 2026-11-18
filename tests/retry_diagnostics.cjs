@@ -150,14 +150,14 @@ const interrupted={source:'live',state:'relay_error',status:200,
   overflow_compaction_calls:1,overflow_original_wire_bytes:1004951,
   usage_override_request_bytes:1004951,usage_override_trigger_bytes:950000};
 context.renderHeaders(interrupted);
-assert.equal(facts(0)['文本压缩'],undefined);
+assert.equal(facts(0)['请求压缩'],'-');
 assert.equal(facts(1)['大小预测'],'—');
 assert.equal(facts(1)['超限压缩'],'✓');
 assert.deepEqual(fields(details('overflow')),{'处理前大小':'1004951','处理后大小':'—'});
 context.renderHeaders({...interrupted,transport_content_encoding:'zstd',transport_zstd_level:17});
-assert.equal(facts(0)['文本压缩'],'zstd · 17级');
+assert.equal(facts(0)['请求压缩'],'zstd · 17 级');
 context.renderHeaders({...interrupted,transport_content_encoding:'zstd',transport_zstd_level:22});
-assert.equal(facts(0)['文本压缩'],'zstd · 22级');
+assert.equal(facts(0)['请求压缩'],'zstd · 22 级');
 context.renderHeaders({...interrupted,state:'streaming'});
 assert.equal(facts(1)['大小预测'],'—');
 context.renderHeaders({...interrupted,state:'complete',usage_override_applied:true,
@@ -171,25 +171,31 @@ context.renderHeaders({...interrupted,state:'complete',usage_override_applied:fa
 assert.equal(facts(1)['大小预测'],'—');
 assert.equal(details('predictive'),undefined);
 context.renderHeaders({source:'live',relay_content_encoding:'zstd',relay_zstd_level:1});
-assert.equal(facts(0)['文本压缩'],'zstd · 1级');
+assert.equal(facts(0)['请求压缩'],'zstd · 1 级');
+assert.equal(facts(0)['文本压缩'],undefined);
 assert.equal(facts(0)['压缩方式'],undefined);
 assert.equal(facts(0)['压缩等级'],undefined);
-for(const meta of [{},{relay_content_encoding:'identity',relay_zstd_level:1},{relay_zstd_level:1}]) {
+for(const meta of [{},{relay_zstd_level:1}]) {
   context.renderHeaders(meta);
-  assert.equal(facts(0)['文本压缩'],undefined,'Missing or inactive compression must not add an empty row');
+  assert.equal(facts(0)['请求压缩'],'-','Missing encoding must remain unknown');
 }
+context.renderHeaders({relay_content_encoding:'identity',relay_zstd_level:1});
+assert.equal(facts(0)['请求压缩'],'-');
+context.renderHeaders({relay_content_encoding:'gzip'});
+assert.equal(facts(0)['请求压缩'],'gzip');
 const historicalImageRequest={source:'live',model:'example',state:'complete',status:200,duration_ms:1300,response_summary:{status:'completed'},
   decoded_bytes:2806092,image_isolation_removed:3,image_isolation_applied:true,
   image_isolation_decoded_before:2806092,image_isolation_decoded_after:1931967,
   transport_content_encoding:'zstd',transport_zstd_level:16,overflow_original_wire_bytes:954743};
 context.renderHeaders(historicalImageRequest);
 assert.deepEqual(facts(0),{'模型':'example','结果':'完成 · HTTP 200','总耗时':'1.3 秒',
-  '原始请求':'2806092','图片大小':'≈ 874125','转发请求':'954743','文本压缩':'zstd · 16级','压缩比例':'49.4%'});
+  '原始请求':'2806092','图片大小':'≈ 874125','转发请求':'954743','请求压缩':'zstd · 16 级','压缩比例':'49.4%'});
 assert.deepEqual(descendants(rendered).filter(child=>child.tag==='h3').map(child=>child.text),['请求概况','请求保护']);
 const sizeList=rendered.children[0].children[1];
 assert.equal(sizeList.tag,'dl');
 assert(sizeList.children.every(row=>row.children[0].tag==='dt'&&row.children[1].tag==='dd'));
 context.renderHeaders({...historicalImageRequest,transport_content_encoding:'identity'});
+assert.equal(facts(0)['请求压缩'],'-');
 assert.equal(facts(0)['压缩比例'],undefined,'Image-to-path size changes alone do not qualify as compression');
 const resizedAndCompacted={decoded_bytes:2000000,inline_image_bytes:800000,image_upload_optimized:true,
   transport_content_encoding:'zstd',transport_input_bytes:1200000,transport_wire_bytes:600000,
@@ -200,9 +206,9 @@ assert.equal(facts(0)['压缩比例'],'50.0%','Use only the measured transport s
 context.renderHeaders({...resizedAndCompacted,transport_input_bytes:undefined});
 assert.equal(facts(0)['压缩比例'],undefined,'A resize with no before-size cannot use the original request size');
 context.renderHeaders({relay_content_encoding:'zstd'});
-assert.equal(facts(0)['文本压缩'],'zstd','A missing level must not hide a known compression method');
+assert.equal(facts(0)['请求压缩'],'zstd','A missing level must not hide a known compression method');
 context.renderHeaders({...interrupted,overflow_compaction_calls:0,overflow_cache_hit:true});
-assert.equal(facts(0)['文本压缩'],undefined);
+assert.equal(facts(0)['请求压缩'],'-');
 context.renderHeaders({source:'live',relay_error:'overflow_invalid_json',overflow_original_wire_bytes:1234567});
 assert.equal(facts(1)['超限压缩'],'✓');
 assert.deepEqual(fields(details('overflow')),{'处理前大小':'1234567','处理后大小':'—'});
@@ -253,9 +259,11 @@ const englishMarkers=context.renderProtectionMarkers(context.packetProtection({i
 assert.equal(englishMarkers.attributes['aria-label'],'Image analysis optimization · Triggered');
 context.renderHeaders({source:'live',transport_content_encoding:'zstd',transport_zstd_level:1,image_upload_optimized:true,image_upload_before_bytes:1200000,
   image_upload_images:[{original_width:2560,original_height:1440,width:1600,height:900}]});
-assert.equal(facts(0)['Text compression'],'zstd · Level 1');
+assert.equal(facts(0)['Request compression'],'zstd · Level 1');
 assert.equal(facts(0)['Image compression'],'2560 × 1440 → 1600 × 900');
 assert.deepEqual(descendants(rendered).filter(child=>child.tag==='h3').map(child=>child.text),['Request overview','Request protection']);
+context.renderHeaders({transport_content_encoding:'identity'});
+assert.equal(facts(0)['Request compression'],'-');
 context.renderHeaders(interrupted);
 assert.equal(facts(1)['Size prediction'],'—');
 context.renderHeaders({...interrupted,state:'streaming'});

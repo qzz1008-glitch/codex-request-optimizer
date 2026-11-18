@@ -2340,9 +2340,13 @@ function appendRequestProcessingFacts(facts,m) {
   const encoding=hasTransport?m.transport_content_encoding:summaryTriggered?null:m.relay_content_encoding||m.outbound_content_encoding;
   const level=hasTransport?m.transport_zstd_level:summaryTriggered?null:m.relay_zstd_level;
   const method=typeof encoding==="string"?encoding.trim().toLowerCase():"";
-  if(method&&method!=="identity") {
-    const grade=method==="zstd"&&Number.isInteger(level)&&level>=1&&level<=22?t("{level}级").replace("{level}",level):"";
-    fact(facts,t("文本压缩"),grade?`${method} · ${grade}`:method);
+  const isCompressed=!!method&&method!=="identity";
+  let compression=isCompressed?method:"-";
+  if(method==="zstd"&&Number.isInteger(level)&&level>=1&&level<=22) {
+    compression=t("zstd · {level} 级").replace("{level}",level);
+  }
+  fact(facts,t("请求压缩"),compression);
+  if(isCompressed) {
     // Older resized requests did not record the uncompressed body of the selected resize.
     const legacyInput=m.image_upload_optimized?null:m.image_isolation_decoded_after??(m.image_isolation_applied?null:original);
     const before=m.transport_input_bytes??legacyInput,after=m.transport_wire_bytes??compressed;
