@@ -2288,7 +2288,7 @@ async function selectPacket(id,refresh=false,expectedListRequest=null) {
   if(changed || tokenVersion(m)!==tokenVersion(previousDetail||{})) {cancelTokenRead();tokenWindow=cachedTokenWindow(m);}
   else if(tokenWindow?.state==="unavailable") tokenWindow=null;
   loadTokenWindow();
-  renderOverview(m); renderCompression(m); renderHeaders(m);
+  renderOverview(m); renderHeaders(m);
   if(changed)$("diff-content").replaceChildren(el("p","muted",t("加载中…")));
   if(changed||detailsChanged) {state.path=""; state.text=null; $("body-results").hidden=true; await loadTree("");if(requestId===state.detailRequest)await loadDiff();}
   else if(state.tab==="diff") await loadDiff();
@@ -2309,11 +2309,8 @@ function renderProtectionPanelState() {
     row.title=inactive?t(hint[row.dataset.protection]||"可在设置中开启请求大小保护"):"";
   }
 }
-function renderCompression(m) {
-  const root=document.createDocumentFragment();
-  const sizes=panel(t("请求处理")), original=originalBytes(m), compressed=compressedBytes(m);
-  const facts=el("dl","request-processing-facts");
-  sizes.append(facts);
+function appendRequestProcessingFacts(facts,m) {
+  const original=originalBytes(m), compressed=compressedBytes(m);
   fact(facts,t("原始请求"),bytes(original)).title=t("原始请求大小（图片处理、传输压缩前）");
   const imageSize=m.inline_image_bytes;
   if(Number.isSafeInteger(imageSize)&&imageSize>0) {
@@ -2360,7 +2357,8 @@ function renderCompression(m) {
     fact(facts,t("输入 Token（估算）"),sortInputTokens(estimate)!==null?"≈ "+nf.format(estimate.input_tokens):"—").title=t("超限摘要前输入 Token（估算）");
     fact(facts,t("上游实际输入 Token"),Number.isSafeInteger(actual)&&actual>=0?nf.format(actual):"—");
   }
-  root.append(sizes);
+}
+function requestProtectionPanel(m) {
   const steps=panel(t("请求保护"));steps.id="packet-protection-panel";steps.classList.add("packet-protection-panel");
   const flags=packetProtection(m);
   const item=(key,category)=>{
@@ -2394,7 +2392,7 @@ function renderCompression(m) {
     if(paths.length)optimization.append(renderImagePaths(paths));
     else fact(optimization,t("图片路径"),"—");
   }
-  root.append(steps);reconcileContent($("compression-content"),root);renderProtectionPanelState();
+  return steps;
 }
 function bars(title, rows, total,bodyAvailable=true) {
   const p=panel(title);
@@ -2525,7 +2523,7 @@ async function ensureJsonView(id,sequence) {
   requestBodyView={id,body,nodes,root:node,language:uiI18n.language,reasoningEncryptedBytes};
   if(state.detail?.id===id) {
     if(reasoningEncryptedBytes!==null&&state.detail.reasoning_encrypted_bytes==null)renderOverview(state.detail);
-    renderHeaders(state.detail);renderCompression(state.detail);
+    renderHeaders(state.detail);
   }
   const text=JSON.stringify(body,null,2);
   requestBodyDownloadUrl=URL.createObjectURL(new Blob([text+"\n"],{type:"application/json;charset=utf-8"}));
@@ -2816,21 +2814,23 @@ function renderImagePaths(paths) {
 }
 function renderHeaders(m) {
   const root=document.createDocumentFragment(),p=panel(t("请求概况"));
-  if(m.source!=="live")fact(p,t("数据来源"),t("历史重建（大小为估算）"));
-  fact(p,t("模型"),m.model||t("未标记"));
+  const facts=el("dl","request-overview-facts");
+  if(m.source!=="live")fact(facts,t("数据来源"),t("历史重建（大小为估算）"));
+  fact(facts,t("模型"),m.model||t("未标记"));
   const endings={completed:"完成",failed:"失败",incomplete:"未完成",cancelled:"已取消",interrupted:"已中断"};
   const ended=m.response_summary?.status,code=Number.isInteger(m.status)&&m.status>=100&&m.status<=599?m.status:null;
   const relayFailed=["relay_error","client_disconnected","interrupted"].includes(m.state);
   const result=relayFailed?states[m.state]:code>=400?t("失败"):Object.hasOwn(endings,ended)?t(endings[ended]):m.state==="complete"?t("已结束"):states[m.state]||t("尚未收到");
-  fact(p,t("结果"),result+(code!==null?" · HTTP "+code:""));
-  fact(p,t("总耗时"),Number.isFinite(m.duration_ms)&&m.duration_ms>=0?nf.format(Math.round(m.duration_ms/100)/10)+" "+t("秒"):"—");
+  fact(facts,t("结果"),result+(code!==null?" · HTTP "+code:""));
+  fact(facts,t("总耗时"),Number.isFinite(m.duration_ms)&&m.duration_ms>=0?nf.format(Math.round(m.duration_ms/100)/10)+" "+t("秒"):"—");
   const errorReason=m.network_error?.message||m.relay_error;
-  if(typeof errorReason==="string"&&errorReason)fact(p,t("错误原因"),t(errorReason));
+  if(typeof errorReason==="string"&&errorReason)fact(facts,t("错误原因"),t(errorReason));
+  if(m.details_evicted)fact(facts,t("请求详情"),t("已回收"));
+  appendRequestProcessingFacts(facts,m);
+  p.append(facts);root.append(p);
   const session=sessionSummaries.find(row=>row.thread_id===m.thread_id);
   const auxiliary=auxiliarySessionKind(session),purpose=purposeFromMetadata(m);
   const specialKind=[purpose,m.request_kind,auxiliary].find(kind=>kind&&kind!=="subagent"&&Object.hasOwn(auxiliaryLabels,kind));
-  if(m.details_evicted)fact(p,t("请求详情"),t("已回收"));
-  root.append(p);
   if(specialKind) {
     const context=panel(t("子会话信息"));context.id="request-session-info";
     fact(context,"session_id",m.thread_id||"—").classList.add("request-context");
@@ -2843,7 +2843,8 @@ function renderHeaders(m) {
     const body=requestBodyView&&requestBodyView.id===m.id?requestBodyView.body:null,paths=requestImagePaths(m,body);
     root.append(renderImageInfo(paths));
   }
-  reconcileContent($("headers-content"),root);
+  root.append(requestProtectionPanel(m));
+  reconcileContent($("headers-content"),root);renderProtectionPanelState();
 }
 async function setInterfaceLanguage(language,{persist=true}={}) {
   const changed=language!==uiI18n.language;
@@ -2864,7 +2865,7 @@ async function setInterfaceLanguage(language,{persist=true}={}) {
       if(!("packet_size_protection_enabled" in state.status))$("packet-size-message").textContent=t("当前中转暂不支持此功能。");
     }
     if(state.detail) {
-      showTab(state.tab);renderOverview(state.detail);renderCompression(state.detail);renderHeaders(state.detail);
+      showTab(state.tab);renderOverview(state.detail);renderHeaders(state.detail);
       const selected=state.selected, path=state.path, query=$("tree-query").value, searchVisible=!$("body-results").hidden;
       await loadTree(path);
       if(revision!==interfaceLanguageRevision)return;
