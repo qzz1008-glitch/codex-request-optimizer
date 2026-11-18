@@ -43,7 +43,12 @@ globalThis.InspectorConnections = {
     function rowNodes(row) {
       if(nodes.has(row.id))return nodes.get(row.id);
       const root=element("div","connection-device"),info=element("div","connection-device-info");
-      const title=element("strong"),state=element("span","connection-device-state");
+      const label=element("strong"),state=element("span","connection-device-state");
+      label.addEventListener("pointerenter", () => {
+        if (label.scrollWidth > label.clientWidth) label.title = label.textContent;
+        else label.removeAttribute("title");
+      });
+      label.addEventListener("pointerleave", () => label.removeAttribute("title"));
       state.setAttribute("role","img");
       const buttons=element("div","language-toggle connection-device-actions");buttons.setAttribute("role","group");
       const actions={};
@@ -54,8 +59,8 @@ globalThis.InspectorConnections = {
       const tools=element("div","connection-device-controls"),reconnect=element("button","connection-device-reconnect");
       reconnect.type="button";
       reconnect.addEventListener("click",()=>{if(reconnect.getAttribute("aria-disabled")!=="true")confirm("reconnect",[row.id]);});
-      tools.append(reconnect,buttons);info.append(state,title);root.append(info,tools);list.append(root);
-      const value={root,title,state,buttons,actions,reconnect};nodes.set(row.id,value);return value;
+      tools.append(reconnect,buttons);info.append(state,label);root.append(info,tools);list.append(root);
+      const value={root,label,state,buttons,actions,reconnect};nodes.set(row.id,value);return value;
     }
     function render() {
       localActivity(rows.some(row=>row.id==="local"&&row.busy)||pending.has("local"));
@@ -71,7 +76,7 @@ globalThis.InspectorConnections = {
       text(get("compression-hint"),tr("控制本机和全部服务器；悬停可单独切换。"));
       for(const [id,value] of nodes)if(!rows.some(row=>row.id===id)){value.root.remove();nodes.delete(id);}
       for(const row of rows) {
-        const value=rowNodes(row);text(value.title,name(row));value.title.title=name(row);
+        const value=rowNodes(row);text(value.label,name(row));
         const indicator=statusIndicator(row);value.state.dataset.status=indicator.kind;
         const stateLabel=row.busy?stateText(row):indicator.message;
         value.state.title=stateLabel;value.state.setAttribute("aria-label",stateLabel);
