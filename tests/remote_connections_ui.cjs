@@ -102,6 +102,14 @@ const localControls=[
         });
         assert(Math.abs(await rightEdge(localLabel)-await rightEdge(serverAddress))<1,'The local label and server address share a right edge');
         assert(Math.abs(await divider(localToggle)-await divider(actions))<1,'The local and remote toggle dividers align');
+        const metrics=locator=>locator.evaluate(node=>{
+          const {top,height}=node.getBoundingClientRect();
+          return {size:parseFloat(getComputedStyle(node).fontSize),centerY:top+height/2};
+        });
+        const [local,remote,localButton,remoteButton]=await Promise.all([localLabel,serverAddress,localConnect,actions.locator('button').first()].map(metrics));
+        assert.equal(local.size,remote.size,'The local label and server address use the same font size');
+        assert(local.size>localButton.size&&remote.size>remoteButton.size,'Device labels are larger than the action text');
+        assert(Math.abs(local.centerY-localButton.centerY)<1&&Math.abs(remote.centerY-remoteButton.centerY)<1,'Each device label is vertically centered with its controls');
         assert.equal(await serverAddress.evaluate(node=>node.scrollWidth<=node.clientWidth),true,'A full IPv4 address fits');
       };
       const waitForReconnectPrompt=async()=>{
