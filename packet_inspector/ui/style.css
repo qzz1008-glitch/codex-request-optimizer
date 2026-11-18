@@ -519,11 +519,13 @@ dialog{width:min(760px,calc(var(--desktop-width) - 80px));max-height:calc(var(--
 .header-compression:focus-visible{outline:2px solid #a3baff;outline-offset:2px;border-radius:9px}
 :is(.connection-local-label,.connection-device-info strong) {
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 500;
   line-height: 20px;
+  color: var(--ink);
+  color: color-mix(in oklab, var(--ink) 68%, var(--muted));
   text-box: trim-both text;
 }
-.connection-local-label{margin-inline-end:8px;visibility:hidden;color:var(--ink)}
+.connection-local-label{margin-inline-end:8px;visibility:hidden}
 .header-compression[data-server-panel-open] .connection-local-label{visibility:visible}
 .connection-panel {
   position: fixed;
@@ -558,7 +560,13 @@ dialog{width:min(760px,calc(var(--desktop-width) - 80px));max-height:calc(var(--
 }
 .connection-device:first-child{border-top:0;padding-top:0}
 .connection-device-info{display:flex;flex:1;align-items:center;justify-content:flex-end;gap:4px;min-width:0}
-.connection-device-info strong{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.connection-device-info strong {
+  min-width: 0;
+  overflow: hidden;
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .connection-device-state{display:inline-flex;align-items:center;justify-content:center;flex:0 0 16px;width:16px;height:20px;color:var(--muted)}
 .connection-device-state::before{content:"";box-sizing:border-box;width:8px;height:8px;border:1.5px solid currentColor;border-radius:50%;background:currentColor}
 .connection-device-state[data-status=connected]{color:var(--green)}
