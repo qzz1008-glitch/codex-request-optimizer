@@ -4,8 +4,10 @@ globalThis.InspectorConnections = {
   create({request, status, localBusy, refreshLocal, localActivity=()=>{}}) {
     const get=id=>document.getElementById(id), tr=value=>uiI18n.t(value);
     const panel=get("connection-panel"), controls=get("connection-controls");
+    const headerToggle=get("request-compression");
     const dialog=get("devices-confirm-dialog"), list=get("connection-devices-list");
     const nativePopover="popover" in HTMLElement.prototype;
+    const anchorPositioning=CSS.supports("top: anchor(bottom)");
     const nodes=new Map(), confirmNodes=new Map(), pending=new Map();
     let rows=[],loaded=false,loading=false,submitting=false,catalogError="",revision="",timer=null,closeTimer=null,hover=false;
     let plan=null,finished=false,disposed=false;
@@ -64,8 +66,8 @@ globalThis.InspectorConnections = {
         button.disabled=!loaded||anyBusy()||localBusy()||!!pressed;
         button.title=tr(action==="activate"?"接入全部设备":"断开全部设备");
       }
-      get("request-compression").setAttribute("aria-busy",String(loading||anyBusy()));
-      get("request-compression").title=tr("控制本机和全部服务器；悬停可单独切换。");
+      headerToggle.setAttribute("aria-busy",String(loading||anyBusy()));
+      headerToggle.title=tr("控制本机和全部服务器；悬停可单独切换。");
       text(get("compression-hint"),tr("控制本机和全部服务器；悬停可单独切换。"));
       for(const [id,value] of nodes)if(!rows.some(row=>row.id===id)){value.root.remove();nodes.delete(id);}
       for(const row of rows) {
@@ -95,6 +97,7 @@ globalThis.InspectorConnections = {
       const message=catalogError||(!loaded?tr("正在读取设备列表…"):"");
       text(get("connection-devices-error"),tr(message));get("connection-devices-error").hidden=!message;
       renderConfirmation();
+      place();
     }
     function renderConfirmation() {
       if(!plan)return;
@@ -115,11 +118,23 @@ globalThis.InspectorConnections = {
       text(get("devices-confirm-cancel"),tr(finished?"完成":running?"关闭":"取消"));
       dialog.setAttribute("aria-busy",String(submitting||running));
     }
+    function toggleDivider(toggle) {
+      const [disconnect, connect] = toggle.children;
+      return (disconnect.getBoundingClientRect().right + connect.getBoundingClientRect().left) / 2;
+    }
     function place() {
-      if(!isOpen()||CSS.supports("position-area: block-end span-inline-start"))return;
-      const r=controls.getBoundingClientRect(),p=panel.getBoundingClientRect();
-      panel.style.left=Math.max(12,Math.min(r.right-p.width,innerWidth-p.width-12))+"px";
-      panel.style.top=Math.max(12,Math.min(r.bottom+6,innerHeight-p.height-12))+"px";
+      if (!isOpen()) return;
+      const trigger = controls.getBoundingClientRect();
+      const bounds = panel.getBoundingClientRect();
+      const deviceToggle = list.querySelector(".connection-device-actions");
+      const left = deviceToggle
+        ? bounds.left + toggleDivider(headerToggle) - toggleDivider(deviceToggle)
+        : trigger.right - bounds.width;
+      panel.style.left = `${Math.max(12, Math.min(left, innerWidth - bounds.width - 12))}px`;
+      if (!anchorPositioning) {
+        const top = Math.max(12, Math.min(trigger.bottom + 6, innerHeight - bounds.height - 12));
+        panel.style.top = `${top}px`;
+      }
     }
     function hide() {
       clearTimeout(closeTimer);
@@ -162,7 +177,7 @@ globalThis.InspectorConnections = {
         if(error.status===404){rows=[];loaded=false;catalogError=tr("当前运行版本不支持设备接入管理，请更新 EXE 后使用。");}
         else catalogError=error.message;
       }
-      finally {loading=false;render();place();schedule();}
+      finally {loading=false;render();schedule();}
     }
     async function confirm(action,identities=null) {
       if(dialog.open||document.querySelector("dialog[open]"))return;

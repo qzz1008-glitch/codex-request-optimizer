@@ -508,11 +508,35 @@ dialog{width:min(760px,calc(var(--desktop-width) - 80px));max-height:calc(var(--
 .header-compression{display:flex;align-items:center;flex-shrink:0}.compression-toggle{flex-shrink:0;padding:2px}.compression-toggle button{min-width:64px;padding:3px 14px}
 .header-compression{anchor-name:--connection-controls}
 .header-compression:focus-visible{outline:2px solid #a3baff;outline-offset:2px;border-radius:9px}
-.connection-panel{box-sizing:border-box;width:min(430px,calc(100vw - 24px));max-height:calc(100dvh - 80px);overflow:auto;padding:14px;border:1px solid var(--line);border-radius:12px;background:var(--panel);color:var(--ink);box-shadow:0 10px 32px #0003;text-align:start;scrollbar-gutter:stable}
-.connection-device{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 0;border-top:1px solid var(--line)}
+.connection-panel {
+  position: fixed;
+  inset: auto;
+  z-index: 40;
+  box-sizing: border-box;
+  width: min(348px, calc(100vw - 24px));
+  max-height: calc(100dvh - 80px);
+  overflow: auto;
+  scrollbar-gutter: stable;
+  margin: 0;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel);
+  color: var(--ink);
+  box-shadow: 0 10px 32px #0003;
+  text-align: start;
+}
+.connection-device {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 0;
+  border-top: 1px solid var(--line);
+}
 .connection-device:first-child{border-top:0;padding-top:0}
-.connection-device-info{display:flex;align-items:center;gap:6px;min-width:0}
-.connection-device-info strong{min-width:0;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.connection-device-info{display:flex;align-items:center;gap:4px;min-width:0}
+.connection-device-info strong{min-width:0;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .connection-device-state{display:inline-flex;align-items:center;justify-content:center;flex:0 0 20px;width:20px;height:20px;color:var(--muted);cursor:help}
 .connection-device-state::before{content:"";box-sizing:border-box;width:8px;height:8px;border:1.5px solid currentColor;border-radius:50%;background:currentColor}
 .connection-device-state[data-status=connected]{color:var(--green)}
@@ -521,9 +545,33 @@ dialog{width:min(760px,calc(var(--desktop-width) - 80px));max-height:calc(var(--
 .connection-device-state[data-status=pending]::before{outline:1px solid currentColor;outline-offset:2px}
 .connection-device-state[data-status=error]{color:var(--danger)}
 .connection-device-state[data-status=error]::before{border-radius:2px;transform:rotate(45deg)}
-.connection-device-actions{flex-shrink:0;padding:2px}.connection-device-actions button{padding:3px 9px;min-width:46px}
+.connection-device-actions{flex-shrink:0;padding:2px}
+.connection-device-actions button {
+  min-width: 40px;
+  min-height: 24px;
+  padding: 3px 7px;
+  font-size: 11px;
+  line-height: 18px;
+  white-space: nowrap;
+}
 .connection-device-controls{flex-shrink:0;display:flex;align-items:center;gap:8px}
-.connection-device-reconnect{position:relative;display:inline-flex;align-items:center;justify-content:center;min-width:46px;min-height:32px;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--bg);color:var(--muted);font-size:12px;font-weight:600;line-height:20px;white-space:nowrap}
+.connection-device-reconnect {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 42px;
+  min-height: 30px;
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--bg);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 18px;
+  white-space: nowrap;
+}
 .connection-device-reconnect.needs-reconnect{border-color:var(--warn);color:var(--warn)}
 .connection-device-reconnect.needs-reconnect::after{content:"";position:absolute;inset:-4px;border:2px solid var(--warn);border-radius:inherit;opacity:0;pointer-events:none}
 @media(prefers-reduced-motion:no-preference){.connection-device-reconnect.needs-reconnect::after{animation:reconnect-attention 2.2s ease-in-out 2}}
@@ -537,13 +585,14 @@ dialog{width:min(760px,calc(var(--desktop-width) - 80px));max-height:calc(var(--
 .connection-confirm-targets li{padding:9px 0;display:flex;flex-direction:column;gap:3px;border-bottom:1px solid var(--line);font-size:13px}
 .connection-confirm-targets span{font-size:12px;color:var(--muted);white-space:pre-wrap;overflow-wrap:anywhere}
 .connection-confirm-targets [data-state=error] span{color:var(--danger)}
-@supports(position-area:block-end span-inline-start){
-  .connection-panel{position-anchor:--connection-controls;position-area:block-end span-inline-start;position-try-fallbacks:flip-block,flip-inline,flip-block flip-inline;inset:auto;margin:6px 0 0}
+@supports (top: anchor(bottom)) {
+  .connection-panel {
+    position-anchor: --connection-controls;
+    top: calc(anchor(bottom) + 6px);
+    position-try-fallbacks: flip-block;
+  }
 }
-@supports not (position-area:block-end span-inline-start){
-  .connection-panel{position:fixed;inset:auto;margin:0;z-index:40}
-}
-.connection-panel-fallback[hidden]{display:none}.connection-panel-fallback:not([hidden]){display:block;position:fixed;inset:auto;margin:0;z-index:40}
+.connection-panel-fallback:not([hidden]){display:block}
 #compression-confirm-dialog{width:min(440px,calc(100vw - 48px))}#compression-confirm-dialog h2{font-size:20px}#compression-confirm-dialog .button-row{justify-content:flex-end}#compression-confirm-message{color:var(--danger)}
 #exit-confirm-dialog{width:min(540px,calc(100vw - 48px))}#exit-confirm-dialog h2{font-size:20px}#exit-confirm-dialog .button-row{justify-content:flex-end;flex-wrap:wrap}#exit-confirm-message{color:var(--danger)}
 #connect-confirm-dialog{width:min(460px,calc(100vw - 48px))}#connect-confirm-dialog h2{font-size:20px}#connect-confirm-dialog .button-row{justify-content:flex-end}#connect-confirm-message{color:var(--danger)}
