@@ -4,6 +4,7 @@ globalThis.InspectorConnections = {
   create({request}) {
     const get=id=>document.getElementById(id), tr=value=>uiI18n.t(value);
     const panel=get("connection-panel"), controls=get("connection-controls");
+    const headerToggle=get("request-compression");
     const localLabel=controls.querySelector(".connection-local-label");
     const dialog=get("devices-confirm-dialog"), list=get("connection-devices-list");
     const applyButton=get("devices-confirm-apply"), cancelButton=get("devices-confirm-cancel");
@@ -118,13 +119,23 @@ globalThis.InspectorConnections = {
         text(hint,tr("配置待生效，请在 ChatGPT 中重新连接此服务器的 Codex。"));
       dialog.setAttribute("aria-busy",String(submitting||running));
     }
+    function toggleDivider(toggle) {
+      const [disconnect, connect] = toggle.children;
+      return (disconnect.getBoundingClientRect().right + connect.getBoundingClientRect().left) / 2;
+    }
     function place() {
       if (!isOpen()) return;
       const trigger = controls.getBoundingClientRect();
+      const deviceToggle = list.querySelector(".connection-device-actions");
+      const headerDivider = toggleDivider(headerToggle);
+      if (deviceToggle) {
+        const deviceInset = toggleDivider(deviceToggle) - deviceToggle.getBoundingClientRect().left;
+        const gap = headerDivider - localLabel.getBoundingClientRect().right - deviceInset;
+        panel.style.setProperty("--connection-device-gap", `${Math.max(8, gap)}px`);
+      }
       const bounds = panel.getBoundingClientRect();
-      const serverLabel = list.querySelector(".connection-device-info strong");
-      const left = serverLabel
-        ? bounds.left + localLabel.getBoundingClientRect().left - serverLabel.getBoundingClientRect().left
+      const left = deviceToggle
+        ? bounds.left + headerDivider - toggleDivider(deviceToggle)
         : trigger.right - bounds.width;
       panel.style.left = `${Math.max(12, Math.min(left, innerWidth - bounds.width - 12))}px`;
       if (!anchorPositioning) {
