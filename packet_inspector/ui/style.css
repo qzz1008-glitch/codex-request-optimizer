@@ -338,10 +338,11 @@ code.session-id{font-family:Consolas,"Cascadia Mono",monospace;font-size:11px;wo
 #settings-dialog .image-mode-pills span{color:var(--muted)}
 #settings-dialog .image-mode-pills label:has(input:disabled){opacity:.5;cursor:default}
 #settings-dialog .image-mode-pills input:disabled{opacity:0;cursor:default}
-#settings-dialog .entry-port-row{display:grid;grid-template-columns:var(--settings-label-width) var(--settings-number-width) minmax(0,1fr);align-items:center;gap:16px;margin:0}
-#settings-dialog .entry-port-row input{width:100%;min-width:0}
+#settings-dialog .entry-port-row{display:grid;grid-template-columns:var(--settings-label-width) max-content minmax(0,1fr);align-items:center;gap:16px;margin:0}
+#settings-dialog .entry-port-row input{inline-size:84px}
+#settings-dialog .entry-port-details{display:flex;flex-wrap:wrap;column-gap:12px;min-inline-size:0}
 #settings-dialog #sharing-settings:not([hidden]){display:grid;gap:12px;margin-block-start:12px}
-#settings-dialog .entry-port-status{min-width:0;min-height:20px;font-size:13px;line-height:20px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#settings-dialog :is(.entry-port-hint,.entry-port-status){min-inline-size:0;font-size:13px;line-height:20px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #settings-dialog .entry-port-status[data-state=active]{color:var(--green)}
 #settings-dialog .entry-port-status:is([data-state=pending],[data-state=unsaved]){color:var(--warn)}
 #settings-dialog .entry-port-status[data-state=error]{color:var(--danger)}
@@ -485,8 +486,10 @@ code.session-id{font-family:Consolas,"Cascadia Mono",monospace;font-size:11px;wo
   #settings-dialog .proxy-inline-row{grid-template-columns:max-content minmax(0,1fr);column-gap:8px}
   #settings-dialog :is(.image-directory-row,.proxy-controls){grid-template-columns:minmax(0,var(--settings-path-width)) auto}
   #settings-dialog .settings-language-row{grid-template-columns:minmax(0,1fr) auto}
-  #settings-dialog :is(.entry-port-row,.zstd-level-control,.packet-size-limit,.runtime-setting-row,.image-directory-settings,.settings-grid label){grid-template-columns:minmax(0,1fr);gap:8px}
-  #settings-dialog .entry-port-row input,#settings-dialog .settings-grid input{width:var(--settings-number-width)}
+  #settings-dialog :is(.zstd-level-control,.packet-size-limit,.runtime-setting-row,.image-directory-settings,.settings-grid label){grid-template-columns:minmax(0,1fr);gap:8px}
+  #settings-dialog .entry-port-row{grid-template-columns:max-content minmax(0,1fr);gap:8px}
+  #settings-dialog .entry-port-row>label{grid-column:1/-1}
+  #settings-dialog .settings-grid input{width:var(--settings-number-width)}
   #settings-dialog .runtime-inline-hint{padding-inline-start:22px}
   #settings-dialog .image-directory-settings .help{grid-column:1}
   #settings-dialog .capacity-retry-limit{grid-template-columns:68px minmax(0,1fr);gap:8px}
@@ -758,7 +761,6 @@ dialog{width:min(760px,calc(var(--desktop-width) - 80px));max-height:calc(var(--
 .floating-feedback .help{margin:0;color:inherit;white-space:normal}
 #settings-dialog #settings-restore{grid-column:2}
 #settings-dialog #settings-save{grid-column:3}
-#settings-dialog #link-status[hidden]{display:block!important;visibility:hidden}
 
 #service-restart-dialog{width:min(460px,calc(100vw - 48px))}
 #service-restart-dialog h2{font-size:20px}
