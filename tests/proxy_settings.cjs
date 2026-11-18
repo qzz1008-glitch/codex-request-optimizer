@@ -55,20 +55,26 @@ let browser,cases=0;
     extract('function readSettingsDraft()','function setSettingsMessage('),
     extract('function finishSettingsSave()','function renderUpdates('),
     extract('function discardSettingsDraft()','function closeSettings()'),
-    extract('action("proxy-detect",','action("storage-dir-open",')
+    extract('action("proxy-test",','action("storage-dir-open",')
   ].join('\n')});
   await page.evaluate(()=>{fillProxySettings();settingsBaseline=readSettingsDraft();settingsEditing=true;$('settings-dialog').showModal();});
+  const sections=await page.locator('.settings-content>section').evaluateAll(nodes=>nodes.map(node=>node.id));
+  assert.deepEqual(sections.slice(sections.indexOf('storage-location-settings'),sections.indexOf('storage-location-settings')+4),
+    ['storage-location-settings','connection-settings','proxy-settings','sharing-settings']);cases++;
   const detectedAddress=page.locator('#proxy-detected-address');
-  assert.equal(await page.locator('#proxy-detected output').count(),1);
-  assert.match(await detectedAddress.textContent(),/regional.invalid:8080.*auto-user/);
+  assert.equal(await page.locator('#proxy-detected input:disabled').count(),3);
+  assert.match(await detectedAddress.inputValue(),/regional.invalid:8080/);
+  assert.equal(await page.locator('#proxy-detected-username').inputValue(),'auto-user');
+  assert.equal(await page.locator('#proxy-detected-password').inputValue(),'');
   assert.doesNotMatch(await page.locator('#proxy-settings').textContent(),/检测来源|代理例外|保存后用于新请求/);
   assert.equal(await detectedAddress.evaluate(output=>output.labels[0].textContent),'代理地址');
   await page.evaluate(()=>{state.status.profile={upstream:'http://upstream.invalid/v1'};fillProxySettings();});
-  assert.match(await detectedAddress.textContent(),/alternate.invalid:8080/);
+  assert.match(await detectedAddress.inputValue(),/alternate.invalid:8080/);
   await page.evaluate(()=>{state.status.profile.upstream='https://upstream.invalid/v1';fillProxySettings();});
   assert.equal(await page.locator('#proxy-address').isDisabled(),true);
-  await page.locator('#proxy-detect').click();
-  assert.match(await detectedAddress.textContent(),/new-region.invalid/);
+  assert.equal(await page.locator('#proxy-detect').count(),0);
+  await page.evaluate(()=>{state.status.proxy_settings.detected.https.address='http://new-region.invalid:8080';fillProxySettings();});
+  assert.match(await detectedAddress.inputValue(),/new-region.invalid/);
   assert.equal(await page.evaluate(()=>requests.filter(r=>r.data).length),0);cases++;
 
   await page.locator('#proxy-mode label').filter({has:page.locator('input[value="manual"]')}).click();
@@ -78,6 +84,13 @@ let browser,cases=0;
   await page.locator('#proxy-address').fill('http://manual.invalid:8080');
   await page.locator('#proxy-username').fill('manual-user');
   await page.locator('#proxy-password').fill('manual-secret');
+  await page.locator('#proxy-mode input[value="auto"]').check();
+  assert.equal(await page.locator('#proxy-detected input:disabled').count(),3);
+  await page.locator('#proxy-mode input[value="auto"]').focus();
+  await page.keyboard.press('ArrowRight');
+  assert.equal(await page.locator('#proxy-mode input[value="manual"]').isChecked(),true);
+  assert.equal(await page.locator('#proxy-address').inputValue(),'http://manual.invalid:8080');
+  assert.equal(await page.locator('#proxy-username').inputValue(),'manual-user');
   await page.evaluate(()=>fillProxySettings());
   assert.equal(await page.locator('#proxy-password').inputValue(),'manual-secret','Polling must preserve unsaved authentication');
   assert.equal(await page.evaluate(()=>requests.filter(r=>r.data).length),0,'Changing mode and typing must not auto-save');
@@ -89,7 +102,7 @@ let browser,cases=0;
   assert.equal(await page.evaluate(()=>state.status.proxy_settings.manual.bypass),'localhost,127.0.0.1,::1,*.saved.invalid');
   assert.equal(await page.evaluate(()=>changedSettings().length),0);
   assert.equal(await page.locator('#proxy-password').getAttribute('type'),'password');
-  assert.match(await page.locator('#proxy-password').getAttribute('placeholder'),/已保存/);cases++;
+  assert.match(await page.locator('#proxy-password').getAttribute('placeholder'),/已存密码/);cases++;
 
   await page.locator('#proxy-username').fill('renamed-user');
   await page.evaluate(()=>saveSettings());
@@ -147,7 +160,7 @@ let browser,cases=0;
   assert.equal(await page.locator('#proxy-test-result').isVisible(),false);
   await page.evaluate(()=>restoreSettings());cases++;
 
-  for(const width of [1120,1440])for(const language of ['zh','en']){
+  for(const width of [320,600,1120,1440])for(const language of ['zh','en']){
     await page.setViewportSize({width,height:900});
     await page.evaluate(language=>{
       uiI18n.setLanguage(language,{persist:false});
@@ -156,10 +169,28 @@ let browser,cases=0;
       fillProxySettings();
     },language);
     assert.equal(await detectedAddress.locator('img').count(),0,'Detected content is text');
-    assert.match(await detectedAddress.textContent(),/long-regional-proxy.invalid:8080/);
-    assert.equal(await page.locator('#proxy-detection-warning').isVisible(),true);
-    const overflow=await page.locator('#proxy-settings').evaluate(node=>node.scrollWidth>node.clientWidth+1);
-    assert.equal(overflow,false,'Proxy settings fit the dialog');cases++;
+    assert.match(await detectedAddress.inputValue(),/long-regional-proxy.invalid:8080/);
+    assert.equal(await page.locator('#proxy-detected-username').inputValue(),'<img onerror="throw 1">');
+    for(const mode of ['auto','manual']){
+      await page.locator('#proxy-mode input[value="'+mode+'"]').check();
+      assert.equal(await page.locator('#proxy-detection-warning').isVisible(),mode==='auto');
+      await page.locator('#proxy-test').scrollIntoViewIfNeeded();
+      const group=mode==='auto'?'#proxy-detected':'#proxy-manual';
+      const controls=await page.locator('#proxy-mode,'+group+' input:not([type=checkbox]),#proxy-test').evaluateAll(nodes=>nodes.map(node=>{
+        const r=node.getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height};
+      }));
+      assert(controls.every(r=>r.width>=24&&r.height>=24),'Controls remain usable');
+      if(width>=1120){
+        assert(controls.every(r=>Math.abs(r.y-controls[0].y)<1&&r.height===controls[0].height),'Proxy controls share one row and height');
+        for(let i=1;i<controls.length;i++)assert(controls[i].x>=controls[i-1].x+controls[i-1].width,'Controls do not overlap');
+      }
+      const beforeTest=await page.locator('#proxy-test').boundingBox();
+      await page.evaluate(()=>{$('proxy-test').setAttribute('aria-busy','true');fillProxySettings();});
+      assert.deepEqual(await page.locator('#proxy-test').boundingBox(),beforeTest,'Testing state does not shift the button');
+      await page.evaluate(()=>{$('proxy-test').setAttribute('aria-busy','false');fillProxySettings();});
+      const overflow=await page.locator('#proxy-settings').evaluate(node=>node.scrollWidth>node.clientWidth+1);
+      assert.equal(overflow,false,'Proxy settings fit the dialog');cases++;
+    }
   }
   await page.evaluate(()=>{state.status.proxy_settings_supported=false;fillProxySettings();});
   assert.equal(await page.locator('#proxy-settings').isVisible(),false);cases++;

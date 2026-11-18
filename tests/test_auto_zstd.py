@@ -158,6 +158,36 @@ class CompressionPolicyTests(unittest.TestCase):
                 self.assertEqual((decision.previous_phase, decision.phase), (17, 17))
                 self.assertEqual(decision.level, 16)
 
+    def test_recorded_image_rewrite_releases_wrong_phase_in_details_and_summaries(self):
+        for details in (True, False):
+            self.store.configure_limits(512 * 1024**2, 2000, int(details))
+            for active in (True, False):
+                with self.subTest(details=details, active=active):
+                    key = ('upstream', f'old-image-phase-{details}-{active}')
+                    ticket = self.policy.reserve()
+                    if active:
+                        self.assertEqual(self.policy.begin(key, ticket, 1500000, 1000).phase, 17)
+                    packet = self.record(key, relay_auto_zstd_ticket=ticket, relay_auto_zstd_next_phase=17,
+                                         relay_auto_zstd_budget_bytes=1000, image_isolation_decoded_after=890,
+                                         transport_content_encoding='identity', outbound_wire_bytes=890)
+                    self.assertEqual(self.store.get(packet, content=True)[1] is not None, details)
+                    self.assertEqual(self.policy.level(key, 1500000, 1000), 1)
+                    decision = self.begin(raw=1500000, key=key)
+                    self.assertEqual((decision.previous_phase, decision.phase), (0, 1))
+                    self.assertEqual(self.policy.finish(key, decision, 900, 1000), 17)
+                    # No capture for the new ticket. The older small body cannot release it.
+                    self.assertEqual(self.begin(raw=1500000, key=key).phase, 17)
+
+    def test_legacy_history_uses_rewritten_size_without_a_saved_next_phase(self):
+        for rewritten, wire, level, expected in ((890, 890, None, 0), (900, 400, 16, 17)):
+            with self.subTest(rewritten=rewritten):
+                key = ('upstream', f'legacy-image-{rewritten}')
+                self.record(key, image_isolation_decoded_after=rewritten, outbound_wire_bytes=wire,
+                            transport_content_encoding='zstd' if level else 'identity', transport_zstd_level=level)
+                decision = self.begin(raw=1500000, key=key)
+                self.assertEqual(decision.previous_phase, expected)
+                self.assertEqual(decision.level, level or 1)
+
     def test_legacy_summary_sizes_and_high_grade_recover_without_details_or_age_limit(self):
         self.store.configure_limits(512 * 1024**2, 2000, 0)
         cases = [
