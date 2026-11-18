@@ -1,9 +1,11 @@
 """Fixed, standard-library-only script sent over the user's existing SSH session."""
 from .entry_port import DEFAULT_PORT
+from .native_state import LABEL_READER
 
 RESULT_PREFIX = "INSPECTOR_CONNECTION_RESULT:"
+SSH_LABEL_BATCH = 32
 
-SCRIPT = r'''
+SCRIPT = LABEL_READER + r'''
 from contextlib import contextmanager
 import base64, hashlib, json, os, pathlib, re, select, shutil, signal, socket, stat, struct, subprocess, tempfile, time
 from http.client import HTTPException, HTTPResponse
@@ -266,6 +268,15 @@ def tunnel_control(home, options):
     home = home.resolve()
     action = options["action"]
     account = {"home": str(home), "uid": os.getuid()}
+    if action == "tunnel_labels":
+        ids = options.get("ids")
+        if not isinstance(ids, list) or not 0 < len(ids) <= SSH_LABEL_BATCH or any(
+                not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}", value)
+                for value in ids):
+            raise ValueError("会话 ID 无效。")
+        if any(key in options and options[key] != value for key, value in account.items()):
+            raise ValueError("SSH 登录账号或 Codex 配置目录已变化。")
+        return {**account, **read_label_data(home, ids)}
     if action == "tunnel_snapshot":
         files = {name: base64.b64encode(raw).decode("ascii") if raw is not None else None
                  for name, raw in remote_files(home).items()}
@@ -432,4 +443,4 @@ try:
 except Exception as exc:
     result = {"state": "error", "error": "远程接入操作未完成：" + type(exc).__name__ + "；请刷新状态后检查远程中转日志。"}
 print(RESULT_PREFIX + json.dumps(result, ensure_ascii=True))
-'''.replace("DEFAULT_PORT", repr(DEFAULT_PORT)).replace("RESULT_PREFIX", repr(RESULT_PREFIX))
+'''.replace("DEFAULT_PORT", repr(DEFAULT_PORT)).replace("RESULT_PREFIX", repr(RESULT_PREFIX)).replace("SSH_LABEL_BATCH", str(SSH_LABEL_BATCH))

@@ -165,7 +165,8 @@ class SshControl:
         script = "INPUT = " + repr(payload) + "\n" + SCRIPT
         try:
             result = subprocess.run(arguments, input=script.encode(), capture_output=True,
-                timeout=240 if action in {"reconnect", "tunnel_reconnect"} else 90 if action else 30,
+                timeout=(12 if action == "tunnel_labels" else
+                         240 if action in {"reconnect", "tunnel_reconnect"} else 90 if action else 30),
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         except subprocess.TimeoutExpired:
             raise ValueError("操作结果未确认，请刷新状态后检查。" if action else "SSH 状态检查超时。") from None

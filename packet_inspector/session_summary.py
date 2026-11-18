@@ -58,21 +58,52 @@ def subagent_title(source, name=None, nickname=None):
     return "子任务 · " + (task + ("（" + agent + "）" if agent and agent != task else "") if task else agent)
 
 
+def external_labels(raw, ids, labels=None):
+    """Normalize the read-only native index results from a Linux host."""
+    if not isinstance(raw, dict):
+        raise ValueError("Invalid native session index response")
+    labels, parents = dict(labels or {}), {}
+    for child, parent in raw.get("edges", []):
+        if child in ids and session_id(parent) and child != parent:
+            parents.setdefault(child, set()).add(parent)
+    for thread, title, name, nickname, source, updated in raw.get("rows", []):
+        if thread not in ids:
+            continue
+        subagent = subagent_source(source)
+        spawn = subagent.get("thread_spawn", {}) if subagent else {}
+        parent = session_id(spawn.get("parent_thread_id")) if isinstance(spawn, dict) else None
+        if parent and parent != thread:
+            parents.setdefault(thread, set()).add(parent)
+        labels[thread] = {"title": name if isinstance(name, str) and name.strip() else title or labels.get(thread, {}).get("title"),
+                          "updated_at": updated, "fallback_title": subagent_title(source, name, nickname),
+                          **({"session_kind": "subagent"} if subagent else {})}
+    for thread, title in raw.get("index", {}).items():
+        if thread in ids and isinstance(title, str) and title.strip() and not labels.get(thread, {}).get("title"):
+            labels.setdefault(thread, {})["title"] = title[:512]
+    for thread, values in parents.items():
+        if len(values) == 1:
+            labels.setdefault(thread, {}).update(parent_thread_id=next(iter(values)), session_kind="subagent")
+    return labels
+
+
 class SessionSummaries:
-    def __init__(self, token_windows, *, extra_labels=None):
+    def __init__(self, token_windows, *, extra_labels=None, ssh_labels=None):
         self.tokens = token_windows
         self.extra_labels = extra_labels
+        self.ssh_labels = ssh_labels
         self._cursor = 0
         self._token_states = {}
         self._request_labels = OrderedDict()
         self._lock = threading.Lock()
 
-    def _labels(self, ids):
+    def _labels(self, ids, ssh_origins=None):
         if not ids:
             return {}
+        ssh_origins = ssh_origins or {}
+        local_ids = [thread for thread in ids if thread not in ssh_origins]
         found, resolved, parent_candidates = {}, set(), {}
         for database in state_databases(self.tokens.home):
-            remaining = [thread for thread in ids if thread not in resolved]
+            remaining = [thread for thread in local_ids if thread not in resolved]
             if not remaining:
                 break
             try:
@@ -125,10 +156,22 @@ class SessionSummaries:
             except (OSError, sqlite3.Error):
                 continue
         if self.extra_labels:
-            missing = [thread for thread in ids if thread not in resolved]
+            missing = [thread for thread in local_ids if thread not in resolved]
             for thread, label in self.extra_labels(missing).items():
                 if thread in missing:
                     found.setdefault(thread, {}).update(label)
+        missing = [thread for thread in local_ids if not found.get(thread, {}).get("title")]
+        for thread, label in self._index_labels(missing).items():
+            previous = found.get(thread, {})
+            if number(previous.get("updated_at")) and (not number(label["updated_at"]) or previous["updated_at"] > label["updated_at"]):
+                label["updated_at"] = previous["updated_at"]
+            found[thread] = {**previous, **label}
+        if self.ssh_labels:
+            # Pre-upgrade captures only have the exact thread ID. Local native
+            # indexes keep priority for those records whose route is unknown.
+            requests = {thread: ssh_origins.get(thread) for thread in ids
+                        if thread in ssh_origins or (thread not in found and thread not in resolved)}
+            found.update(self.ssh_labels(requests))
         return found
 
     def _index_labels(self, ids):
@@ -159,10 +202,12 @@ class SessionSummaries:
         except OSError:
             return {}
 
-    def _prepare_records(self, database, records, labels):
+    def _prepare_records(self, database, records, labels, ssh_origins):
         unread = 0
         for record in records:
             label = labels.get(record["thread_id"], {})
+            if label.get("ssh_connection_key"):
+                ssh_origins[record["thread_id"]] = label["ssh_connection_key"]
             record["title"] = label.get("title")
             if not record["title"] and label.get("fallback_title"):
                 record.update(title=label["fallback_title"], title_source="subagent")
@@ -191,11 +236,19 @@ class SessionSummaries:
                               if record.get("parent_thread_id") and record["parent_thread_id"] not in known})
             if not parents or len(known) + len(parents) > MAX_SESSIONS * 2:
                 break
-            parent_labels = self._labels(parents)
-            for thread, indexed in self._index_labels([p for p in parents if not parent_labels.get(p, {}).get("title")]).items():
-                parent_labels.setdefault(thread, {}).update(indexed)
+            unseen_parents = set(parents)
+            parent_origins = {}
+            for record in records:
+                parent = record.get("parent_thread_id")
+                origin = ssh_origins.get(record["thread_id"])
+                if parent in unseen_parents and origin:
+                    parent_origins.setdefault(parent, set()).add(origin)
+            ssh_origins.update((parent, next(iter(origins))) for parent, origins in parent_origins.items() if len(origins) == 1)
+            parent_labels = self._labels(parents, ssh_origins)
             for thread in parents:
                 label = parent_labels.get(thread, {})
+                if label.get("ssh_connection_key"):
+                    ssh_origins[thread] = label["ssh_connection_key"]
                 title = label.get("title") or label.get("fallback_title")
                 parent = {"thread_id": thread, "packet_count": 0, "updated_at": label["updated_at"] if number(label.get("updated_at")) else 0,
                           "title": title, "latest_packet": None}
@@ -212,6 +265,7 @@ class SessionSummaries:
         path = (Path(data_dir) / "packets.sqlite").resolve()
         records = []
         reported_packets = {}
+        ssh_origins = {}
         with closing(sqlite3.connect(path.as_uri() + "?mode=ro", uri=True, timeout=.2)) as db:
             db.execute("PRAGMA query_only=ON")
             db.execute("BEGIN")
@@ -230,6 +284,9 @@ class SessionSummaries:
                 try:
                     meta = json.loads(row[2])
                     size = meta.get("outbound_wire_bytes")
+                    origin = meta.get("ssh_connection_key")
+                    if thread and meta.get("source") == "live" and isinstance(origin, str) and origin:
+                        ssh_origins[thread] = origin
                     if meta.get("usage_override_applied") or meta.get("upstream_usage") or overflow_applied(meta):
                         reported_packets[thread] = meta
                 except (ValueError, TypeError, AttributeError):
@@ -242,15 +299,9 @@ class SessionSummaries:
                                 **({"session_kind": meta["session_kind"]}
                                    if isinstance(meta.get("session_kind"), str) and meta["session_kind"] in
                                       AUXILIARY_KINDS else {})})
-        labels = self._labels([r["thread_id"] for r in records if r["thread_id"]])
-        missing = [r["thread_id"] for r in records if r["thread_id"] and not labels.get(r["thread_id"], {}).get("title")]
-        for thread, label in self._index_labels(missing).items():
-            previous = labels.get(thread, {})
-            if number(previous.get("updated_at")) and (not number(label["updated_at"]) or previous["updated_at"] > label["updated_at"]):
-                label["updated_at"] = previous["updated_at"]
-            labels[thread] = {**previous, **label}
+        labels = self._labels([r["thread_id"] for r in records if r["thread_id"]], ssh_origins)
         with self._lock:
-            self._prepare_records(path, records, labels)
+            self._prepare_records(path, records, labels, ssh_origins)
             ids = [r["thread_id"] for r in records if r["thread_id"]
                    and packet_usage(reported_packets.get(r["thread_id"], {})) is None
                    and not overflow_applied(reported_packets.get(r["thread_id"], {}))

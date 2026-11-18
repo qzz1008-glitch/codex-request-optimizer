@@ -1,10 +1,11 @@
 """Per-host connection ownership, bounded discovery and SSH control contracts."""
-from contextlib import contextmanager, redirect_stdout
+from contextlib import closing, contextmanager, redirect_stdout
 import base64
 import io
 import json
 from pathlib import Path
 import signal
+import sqlite3
 import stat
 import struct
 import subprocess
@@ -21,6 +22,10 @@ from urllib.request import Request, build_opener, ProxyHandler
 from packet_inspector.remote_connections import Connections, Host, SshControl, saved_hosts
 from packet_inspector.remote_control import SCRIPT, RESULT_PREFIX
 from packet_inspector.remote_relay import RemoteRelays, config_changes
+from packet_inspector.session_summary import SessionSummaries
+from packet_inspector.ssh_session_labels import SshSessionLabels
+from packet_inspector.storage import Store
+from packet_inspector.token_window import TokenWindows
 
 
 class RemoteConnectionsTests(unittest.TestCase):
@@ -693,6 +698,69 @@ class WindowsRemoteRelayTests(unittest.TestCase):
              redirect_stdout(output):
             exec("INPUT = " + repr(json.dumps({"action": action, **options})) + "\n" + SCRIPT, {})
         return json.loads(output.getvalue().split(RESULT_PREFIX)[-1])
+
+    def test_session_sidebar_resolves_existing_history_and_scopes_new_captures_to_the_ssh_account(self):
+        root_key = self.relays.key(self.host)
+        self.relays._save(root_key, {"enabled": True, "home": str(self.root), "uid": 0, "token": "1" * 48})
+        self.remote_home, self.uid = self.root / "personal", 1001
+        self.remote_home.mkdir()
+        config = self.remote_home / "config.toml"
+        config.write_bytes(self.original)
+        personal = self.relays(self.host, "activate")["account_key"]
+        record = dict(self.relays.records())[personal]
+        provider = next(iter(record["routes"]))
+        self.assertEqual(self.relays.route(record["token"], provider), (record["routes"][provider], personal))
+
+        thread, legacy, other_account, parent = (f"00000000-0000-7000-8000-{n:012d}" for n in range(1, 5))
+        database = self.remote_home / "state_12.sqlite"
+        with closing(sqlite3.connect(database)) as db, db:
+            db.execute("CREATE TABLE threads(id TEXT,name TEXT,source TEXT,updated_at_ms INTEGER)")
+            spawn = json.dumps({"subagent": {"thread_spawn": {"parent_thread_id": parent}}})
+            db.executemany("INSERT INTO threads VALUES(?,?,?,1000)", [
+                (thread, "Remote child", spawn), (parent, "Remote parent", None), (other_account, "Wrong account", None)])
+        index = self.remote_home / "session_index.jsonl"
+        index.write_text(json.dumps({"id": legacy, "thread_name": "Saved remote chat"}) + "\n", encoding="utf8")
+        before = {path: path.read_bytes() for path in (config, database, index)}
+
+        capture = self.root / "capture"
+        store = Store(capture)
+        for session, owner in ((thread, personal), (legacy, None), (other_account, root_key)):
+            store.add({"method": "POST", "path": "/responses", "thread_id": session,
+                       **({"ssh_connection_key": owner} if owner else {})})
+        labels = SshSessionLabels(self.relays, self.root, self.root / "ssh-config")
+        sidebar = SessionSummaries(TokenWindows(self.root / "local"), ssh_labels=labels)
+        with patch("packet_inspector.ssh_session_labels.saved_hosts", return_value=[self.host]):
+            def rows():
+                return {row["thread_id"]: row for row in sidebar.read(capture)["sessions"]}
+
+            self.assertIsNone(rows()[thread]["title"])
+            deadline = time.monotonic() + 4
+            while time.monotonic() < deadline:
+                sessions = rows()
+                if sessions.get(parent, {}).get("title") and not labels.refreshing:
+                    break
+                time.sleep(.02)
+            self.assertEqual(sessions[legacy]["title"], "Saved remote chat")
+            self.assertEqual(sessions[thread]["title"], "Remote child")
+            self.assertEqual(sessions[thread]["parent_thread_id"], parent)
+            self.assertEqual(sessions[parent]["title"], "Remote parent")
+            self.assertIsNone(sessions[other_account]["title"])
+        self.assertEqual({path: path.read_bytes() for path in before}, before)
+
+    def test_legacy_history_does_not_pick_a_name_when_two_ssh_hosts_match(self):
+        second = Host("remote-ssh-second", "second", "second")
+        thread = "00000000-0000-7000-8000-000000000001"
+        for host, token in ((self.host, "1" * 48), (second, "2" * 48)):
+            self.relays._save(self.relays.key(host), {"enabled": True, "token": token})
+        labels = SshSessionLabels(self.relays, self.root, self.root / "ssh-config")
+        def ssh(host, action, *, ids):
+            self.assertEqual((action, ids), ("tunnel_labels", [thread]))
+            return {"index": {thread: host.name}}
+        with patch("packet_inspector.ssh_session_labels.saved_hosts", return_value=[self.host, second]), \
+             patch.object(self.relays, "ssh", side_effect=ssh) as read:
+            labels._refresh([(thread, None)])
+        self.assertEqual(read.call_count, 2)
+        self.assertEqual(labels({thread: None}), {})
 
     def test_failed_probe_does_not_modify_config(self):
         self.ready = False
