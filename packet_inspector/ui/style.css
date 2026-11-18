@@ -592,14 +592,14 @@ dialog{width:min(760px,calc(var(--desktop-width) - 80px));max-height:calc(var(--
   line-height: 16px;
   white-space: nowrap;
 }
-.connection-device-reconnect:not(:disabled, [aria-disabled=true]):hover{border-color:var(--reconnect-rim);background:var(--soft);color:var(--accent)}
-.connection-device-reconnect.needs-reconnect:not(:disabled, [aria-disabled=true]) {
+.connection-device-reconnect:hover{border-color:var(--reconnect-rim);background:var(--soft);color:var(--accent)}
+.connection-device-reconnect.needs-reconnect {
   --reconnect-face: var(--soft);
   border-color: var(--reconnect-rim);
   background: var(--reconnect-face);
   color: var(--accent);
 }
-.connection-device-reconnect.needs-reconnect:not(:disabled, [aria-disabled=true]):hover {
+.connection-device-reconnect.needs-reconnect:hover {
   --reconnect-face: #e7eeff;
 }
 @property --reconnect-sweep-angle {
@@ -612,7 +612,7 @@ dialog{width:min(760px,calc(var(--desktop-width) - 80px));max-height:calc(var(--
 }
 @supports (background-image: repeating-conic-gradient(in oklab, white 0deg, black 180deg)) {
   @media (prefers-reduced-motion: no-preference) and (forced-colors: none) {
-    .connection-device-reconnect.needs-reconnect:not(:disabled, [aria-disabled=true]) {
+    .connection-device-reconnect.needs-reconnect {
       border-color: transparent;
       background:
         linear-gradient(var(--reconnect-face), var(--reconnect-face)) padding-box,
@@ -623,7 +623,6 @@ dialog{width:min(760px,calc(var(--desktop-width) - 80px));max-height:calc(var(--
     }
   }
 }
-.connection-device-reconnect:disabled,.connection-device-reconnect[aria-disabled=true]{opacity:.5;cursor:default;border-color:var(--line);background:var(--bg);color:var(--muted)}
 .connection-device-reconnect:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .connection-error{font-size:12px;color:var(--danger);overflow-wrap:anywhere;white-space:pre-wrap}
 #devices-confirm-dialog{width:min(540px,calc(100vw - 48px))}#devices-confirm-dialog h2{font-size:20px}#devices-confirm-dialog .button-row{justify-content:flex-end}

@@ -9,7 +9,6 @@ const uiI18n = (() => {
     "本机接入状态暂不可用。":"Local connection status is unavailable.",
     "配置待生效，请重启 ChatGPT App。":"Configuration is pending. Restart the ChatGPT App to apply it.",
     "配置待生效，请点击“重连”重新加载此服务器的 Codex。":"Configuration is pending. Click Reconnect to reload Codex on this server.",
-    "配置待生效，请在 ChatGPT 中重新连接此服务器的 Codex。":"Configuration is pending. Reconnect to Codex on this server in ChatGPT.",
     "重连结果未确认":"Reconnection unconfirmed",
     "重新连接 Codex":"Reconnect Codex",
     "现在重新连接 Codex？":"Reconnect Codex now?",
