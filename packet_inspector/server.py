@@ -91,33 +91,40 @@ def outbound_proxies():
     return system_proxies()
 
 
+STORAGE_MB_BYTES = 1_000_000
 STORAGE_LEGACY_BYTES = 1024 * 1024
-MIN_STORAGE_BYTES = 16 * STORAGE_LEGACY_BYTES
-MAX_STORAGE_BYTES = 8192 * STORAGE_LEGACY_BYTES
+MIN_LEGACY_STORAGE_MB = 16
+MAX_LEGACY_STORAGE_MB = 8192
+MIN_LEGACY_STORAGE_BYTES = MIN_LEGACY_STORAGE_MB * STORAGE_LEGACY_BYTES
+MIN_STORAGE_BYTES = 17 * STORAGE_MB_BYTES
+MAX_STORAGE_BYTES = 8590 * STORAGE_MB_BYTES
 MAX_PACKETS = 100_000
+
+
+def legacy_storage_limit(size):
+    return min(MAX_LEGACY_STORAGE_MB, (size + STORAGE_LEGACY_BYTES - 1) // STORAGE_LEGACY_BYTES)
 
 
 def storage_settings(saved):
     values = dict(saved)
     legacy = values.get("max_storage_mb")
-    if type(legacy) is not int or not 16 <= legacy <= 8192:
+    if type(legacy) is not int or not MIN_LEGACY_STORAGE_MB <= legacy <= MAX_LEGACY_STORAGE_MB:
         legacy = None
     size = values.get("max_storage_bytes")
-    if (type(size) is not int or not MIN_STORAGE_BYTES <= size <= MAX_STORAGE_BYTES
-            or (legacy is not None and (size + STORAGE_LEGACY_BYTES - 1) // STORAGE_LEGACY_BYTES != legacy)):
+    if (type(size) is not int or not MIN_LEGACY_STORAGE_BYTES <= size <= MAX_STORAGE_BYTES
+            or (legacy is not None and legacy_storage_limit(size) != legacy)):
         size = legacy * STORAGE_LEGACY_BYTES if legacy is not None else DEFAULT_STORAGE_BYTES
+    if values.get("retention_policy") != "records_first" and size == 512 * STORAGE_LEGACY_BYTES:
+        # Apply the previous factory-default migration before rounding custom limits.
+        size = DEFAULT_STORAGE_BYTES
+    size = (size + STORAGE_MB_BYTES - 1) // STORAGE_MB_BYTES * STORAGE_MB_BYTES
     values["max_storage_bytes"] = size
-    # Older clients require whole legacy units; round up so a downgrade cannot shrink the limit.
-    values["max_storage_mb"] = (size + STORAGE_LEGACY_BYTES - 1) // STORAGE_LEGACY_BYTES
+    values["max_storage_mb"] = legacy_storage_limit(size)
     return values
 
 
 def retention_settings(saved):
     values = storage_settings(saved)
-    if values.get("retention_policy") != "records_first" and values["max_storage_bytes"] == 512 * STORAGE_LEGACY_BYTES:
-        # Migrate the old factory quota once; later explicit quota choices survive restarts.
-        values["max_storage_bytes"] = DEFAULT_STORAGE_BYTES
-        values["max_storage_mb"] = (DEFAULT_STORAGE_BYTES + STORAGE_LEGACY_BYTES - 1) // STORAGE_LEGACY_BYTES
     values["retention_policy"] = "records_first"
     # Read compatibility for older clients; details have no separate product limit.
     values["max_detail_packets"] = values.get("max_packets", 2000)
@@ -1208,8 +1215,9 @@ class Handler(BaseHTTPRequestHandler):
                 elif "image_isolation_enabled" in data:
                     candidate["image_analysis_mode"] = "optimized" if data["image_isolation_enabled"] else "native"
                 candidate["image_isolation_enabled"] = candidate["image_analysis_mode"] == "optimized"
-                for key, low, high in (("budget_bytes", MIN_BUDGET_BYTES, MAX_BODY), ("max_storage_mb", 16, 8192),
-                                       ("max_storage_bytes", MIN_STORAGE_BYTES, MAX_STORAGE_BYTES),
+                for key, low, high in (("budget_bytes", MIN_BUDGET_BYTES, MAX_BODY),
+                                       ("max_storage_mb", MIN_LEGACY_STORAGE_MB, MAX_LEGACY_STORAGE_MB),
+                                       ("max_storage_bytes", MIN_LEGACY_STORAGE_BYTES, MAX_STORAGE_BYTES),
                                        ("max_packets", 10, MAX_PACKETS), ("max_detail_packets", 0, MAX_PACKETS),
                                        ("sharing_port", 1, 65535), ("egress_port", 1, 65535),
                                        ("capacity_retry_max_retries", 1, MAX_RETRIES),
@@ -1223,7 +1231,7 @@ class Handler(BaseHTTPRequestHandler):
                 if {"sharing_port", "egress_port"}.intersection(data) and candidate["sharing_port"] == candidate["egress_port"]:
                     raise ValueError("额度端口与出口端口不能相同。")
                 if "max_storage_bytes" in data:
-                    legacy = (candidate["max_storage_bytes"] + STORAGE_LEGACY_BYTES - 1) // STORAGE_LEGACY_BYTES
+                    legacy = legacy_storage_limit(candidate["max_storage_bytes"])
                     if "max_storage_mb" in data and candidate["max_storage_mb"] != legacy:
                         raise ValueError("存储上限设置冲突")
                     candidate["max_storage_mb"] = legacy
@@ -1264,8 +1272,8 @@ class Handler(BaseHTTPRequestHandler):
                     self.server.restart_notices.change("capacity_retry",
                         previous["capacity_retry_max_retries"] if previous["capacity_retry_enabled"] else None,
                         candidate["capacity_retry_max_retries"] if candidate["capacity_retry_enabled"] else None)
-                self.server.store.configure_limits(candidate["max_storage_bytes"],
-                                                   candidate["max_packets"])
+                self.server.store.configure_limits(self.server.settings["max_storage_bytes"],
+                                                   self.server.settings["max_packets"])
                 if candidate["auto_zstd_level_enabled"] != previous["auto_zstd_level_enabled"]:
                     self.server.compression_policy.clear()
             self._json(200, self.server.status())

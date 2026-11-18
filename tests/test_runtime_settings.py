@@ -10,7 +10,7 @@ from unittest.mock import patch
 from tests import test_packet_inspector as fixtures
 from tests.response_fixtures import CREATED, FAILED, SUCCESS, Response, frame
 from packet_inspector.startup import configure_startup, startup_supported
-from packet_inspector.server import InspectorServer
+from packet_inspector.server import MAX_STORAGE_BYTES, InspectorServer
 from packet_inspector.analyzer import encode, inspect_request
 
 
@@ -32,7 +32,7 @@ class RuntimeSettingsTests(unittest.TestCase):
                                    "capacity_retry_max_retries": 3, "capacity_retry_delay_seconds": 50})
         self.server.startup_state_known = True
 
-    def test_exact_storage_byte_limits_survive_unrelated_settings_updates(self):
+    def test_fractional_storage_limits_are_rounded_and_stay_normalized(self):
         previous = dict(self.server.settings)
         def restore():
             self.server.save_settings(previous)
@@ -40,18 +40,18 @@ class RuntimeSettingsTests(unittest.TestCase):
         self.addCleanup(restore)
         status, result = self.api("/api/settings", {"max_storage_bytes": 512000123})
         self.assertEqual(status, 200)
-        self.assertEqual(result["max_storage_bytes"], 512000123)
-        self.assertEqual(result["storage"]["max_bytes"], 512000123)
-        self.assertEqual(result["max_storage_mb"], 489)
+        self.assertEqual(result["max_storage_bytes"], 513_000_000)
+        self.assertEqual(result["storage"]["max_bytes"], 513_000_000)
+        self.assertEqual(result["max_storage_mb"], 490)
         status, result = self.api("/api/settings", {"capture_enabled": previous["capture_enabled"]})
         self.assertEqual(status, 200)
-        self.assertEqual(result["storage"]["max_bytes"], 512000123)
+        self.assertEqual(result["storage"]["max_bytes"], 513_000_000)
         saved = json.loads(self.server.settings_path.read_text(encoding="utf8"))
-        self.assertEqual(saved["max_storage_bytes"], 512000123)
+        self.assertEqual(saved["max_storage_bytes"], 513_000_000)
 
     def test_invalid_storage_byte_limits_reject_the_entire_update(self):
         previous = dict(self.server.settings)
-        for fields in ({"max_storage_bytes": value} for value in (True, "512000000", 512000000.0, 0, 8589934593)):
+        for fields in ({"max_storage_bytes": value} for value in (True, "512000000", 512000000.0, 0, MAX_STORAGE_BYTES + 1)):
             with self.subTest(fields=fields):
                 status, _ = self.api("/api/settings", {"max_packets": 10, **fields})
                 self.assertEqual(status, 400)
@@ -170,12 +170,12 @@ class RuntimeSettingsTests(unittest.TestCase):
         previous = dict(self.server.settings)
         def restore():
             self.server.save_settings(previous)
-            self.server.store.configure_limits(previous["max_storage_mb"] * 1024 * 1024,
+            self.server.store.configure_limits(previous["max_storage_bytes"],
                                                previous["max_packets"], previous["max_detail_packets"])
         self.addCleanup(restore)
         status, result = self.api("/api/settings", {"max_packets": 10, "max_detail_packets": 1, "max_storage_mb": 16})
         self.assertEqual(status, 200)
-        self.assertEqual((result["max_packets"], result["max_detail_packets"], result["max_storage_mb"]), (10, 10, 16))
+        self.assertEqual((result["max_packets"], result["max_detail_packets"], result["max_storage_bytes"]), (10, 10, 17_000_000))
         self.assertEqual(result["retention_policy"], "records_first")
         self.assertIsNone(self.server.store.max_detail_count)
         saved = json.loads(self.server.settings_path.read_text(encoding="utf8"))
