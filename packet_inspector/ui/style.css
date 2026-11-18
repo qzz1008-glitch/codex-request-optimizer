@@ -273,6 +273,7 @@ code.session-id{font-family:Consolas,"Cascadia Mono",monospace;font-size:11px;wo
   --settings-number-width:128px;
   --settings-context-width:152px;
   --settings-path-width:320px;
+  --settings-path-actions-width:190px;
   --settings-padding:28px;
   --settings-section-indent:16px;
   --settings-control-height:36px;
@@ -407,10 +408,8 @@ code.session-id{font-family:Consolas,"Cascadia Mono",monospace;font-size:11px;wo
 #settings-dialog .runtime-setting-row+.runtime-setting-row{margin-top:12px}
 #settings-dialog #request-protection-settings .runtime-setting-row{margin-top:12px}
 #settings-dialog .runtime-inline-hint{min-width:0;margin:0}
-#settings-dialog .proxy-inline-row{display:grid;grid-template-columns:max-content minmax(0,var(--settings-path-width)) 76px;align-items:center;gap:8px}
 #settings-dialog .proxy-address-field{min-width:0}
-#settings-dialog .proxy-address-field input{width:100%;min-width:0;text-align:left}
-#settings-dialog #proxy-test{width:76px;padding-inline:6px;white-space:nowrap}
+#settings-dialog #proxy-test{justify-self:start;width:76px;padding-inline:6px;white-space:nowrap}
 #settings-dialog #proxy-settings>.help{margin:12px 0 0}
 #settings-dialog .proxy-test-result{display:block;margin-top:12px;font-size:13px;line-height:20px;white-space:pre-wrap;overflow-wrap:anywhere}
 #settings-dialog .capacity-retry-limit{display:grid;grid-template-columns:var(--settings-inline-label-width) 68px minmax(0,1fr);align-items:center;gap:8px;min-width:0;color:var(--muted);font-size:13px;line-height:20px}
@@ -419,9 +418,10 @@ code.session-id{font-family:Consolas,"Cascadia Mono",monospace;font-size:11px;wo
 #settings-dialog .capacity-retry-limit label{white-space:nowrap}
 #settings-dialog .capacity-retry-limit input{width:68px}
 #settings-dialog .capacity-retry-limit>span{font-size:12px}
-#settings-dialog .image-directory-settings{display:grid;grid-template-columns:var(--settings-label-width) minmax(0,1fr);align-items:center;gap:8px 16px;margin:16px 0 0}
-#settings-dialog .image-directory-row{display:grid;grid-template-columns:minmax(0,var(--settings-path-width)) auto;justify-content:start;align-items:center;gap:8px;min-width:0}
-#settings-dialog .image-directory-row input{width:100%;min-width:0;text-align:left}
+#settings-dialog :is(.image-directory-settings,.proxy-inline-row){display:grid;grid-template-columns:var(--settings-label-width) minmax(0,1fr);align-items:center;gap:8px 16px}
+#settings-dialog .image-directory-settings{margin:16px 0 0}
+#settings-dialog :is(.image-directory-row,.proxy-controls){display:grid;grid-template-columns:minmax(0,var(--settings-path-width)) var(--settings-path-actions-width);justify-content:start;align-items:center;gap:8px;min-width:0}
+#settings-dialog :is(.image-directory-row,.proxy-address-field) input{width:100%;min-width:0;text-align:left}
 #settings-dialog .image-directory-actions{display:flex;align-items:center;gap:8px}
 #settings-dialog .image-directory-settings .help{grid-column:2;margin:0}
 #settings-dialog .context-heading{margin:0}
@@ -482,6 +482,8 @@ code.session-id{font-family:Consolas,"Cascadia Mono",monospace;font-size:11px;wo
 }
 @container settings-dialog (max-width:500px){
   #settings-dialog>.settings-content{--settings-section-indent:12px}
+  #settings-dialog .proxy-inline-row{grid-template-columns:max-content minmax(0,1fr);column-gap:8px}
+  #settings-dialog :is(.image-directory-row,.proxy-controls){grid-template-columns:minmax(0,var(--settings-path-width)) auto}
   #settings-dialog .settings-language-row{grid-template-columns:minmax(0,1fr) auto}
   #settings-dialog :is(.entry-port-row,.zstd-level-control,.packet-size-limit,.runtime-setting-row,.image-directory-settings,.settings-grid label){grid-template-columns:minmax(0,1fr);gap:8px}
   #settings-dialog .entry-port-row input,#settings-dialog .settings-grid input{width:var(--settings-number-width)}
@@ -496,8 +498,7 @@ code.session-id{font-family:Consolas,"Cascadia Mono",monospace;font-size:11px;wo
   #settings-dialog #settings-restore{grid-column:2}
 }
 @container settings-dialog (max-width:360px){
-  #settings-dialog .proxy-inline-row{grid-template-columns:minmax(0,1fr) 76px}
-  #settings-dialog #proxy-mode{grid-column:1/-1}
+  #settings-dialog .proxy-inline-row{grid-template-columns:minmax(0,1fr)}
 }
 @container settings-dialog (max-width:380px){
   #settings-dialog .image-directory-row{grid-template-columns:minmax(0,1fr);max-width:var(--settings-path-width)}
