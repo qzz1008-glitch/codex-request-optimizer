@@ -239,8 +239,10 @@ class RemoteRelays:
         return next((record for _, record in self.records() if record["token"] == token), None)
 
     def route(self, token, identifier):
-        record = self.find(token)
-        return record.get("routes", {}).get(identifier) if record else None
+        for key, record in self.records():
+            if record["token"] == token:
+                return record.get("routes", {}).get(identifier), key
+        return None, None
 
     def needs_resume(self, host=None):
         device = self.key(host) if host else None
