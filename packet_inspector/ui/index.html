@@ -212,10 +212,7 @@
         <button id="proxy-test" type="button" title="测试当前配置，不保存；不发送对话或 Codex 登录凭据。">测试代理</button>
       </div></div>
       <div id="proxy-detected" class="proxy-fields">
-        <div class="runtime-setting-row"><span>检测来源</span><output id="proxy-source">—</output></div>
-        <div class="runtime-setting-row"><span>HTTP</span><output id="proxy-http">—</output></div>
-        <div class="runtime-setting-row"><span>HTTPS</span><output id="proxy-https">—</output></div>
-        <div class="runtime-setting-row"><span>代理例外</span><output id="proxy-detected-bypass">—</output></div>
+        <div class="runtime-setting-row"><label for="proxy-detected-address">代理地址</label><output id="proxy-detected-address">—</output></div>
         <p id="proxy-detection-warning" class="help" role="status" hidden></p>
       </div>
       <div id="proxy-manual" class="proxy-fields" hidden>
@@ -224,9 +221,7 @@
         <div class="runtime-setting-row"><label for="proxy-password">代理密码</label><input id="proxy-password" name="proxy-password" type="password" maxlength="4096" autocomplete="new-password" aria-describedby="proxy-password-hint" disabled></div>
         <div id="proxy-saved-password" class="runtime-setting-row" hidden><span></span><label class="proxy-clear-password"><input id="proxy-clear-password" name="proxy-clear-password" type="checkbox" disabled><span>清除已存密码</span></label></div>
         <p id="proxy-password-hint" class="help muted">密码不回显；已保存时留空保留。</p>
-        <div class="runtime-setting-row"><label for="proxy-bypass">代理例外</label><input id="proxy-bypass" name="proxy-bypass" type="text" maxlength="4096" placeholder="localhost,127.0.0.1,::1" autocomplete="off" spellcheck="false" disabled></div>
       </div>
-      <p class="help muted">保存后用于新请求；进行中的请求不受影响。</p>
       <p id="proxy-message" data-feedback-source data-feedback-target="settings-inline-feedback" class="help" role="status" hidden></p>
       <output id="proxy-test-result" class="proxy-test-result" role="status" aria-live="polite" hidden></output>
     </section>

@@ -1508,7 +1508,7 @@ function proxySettingsDraft() {
   if(!state.status.proxy_settings_supported)return "";
   const mode=selectedProxyMode();
   return JSON.stringify(mode==="auto"?{mode}:{mode,address:$("proxy-address").value,username:$("proxy-username").value,
-    password:$("proxy-clear-password").checked?"":$("proxy-password").value||null,bypass:$("proxy-bypass").value});
+    password:$("proxy-clear-password").checked?"":$("proxy-password").value||null});
 }
 function fillProxySettings(force=false) {
   const s=state.status,proxy=s.proxy_settings,supported=!!s.proxy_settings_supported&&!!proxy;
@@ -1516,7 +1516,7 @@ function fillProxySettings(force=false) {
   if(!supported)return;
   if(!settingsEditing||force) {
     for(const input of $("proxy-mode").querySelectorAll("input"))input.checked=input.value===proxy.mode;
-    for(const field of ["address","username","bypass"])$("proxy-"+field).value=proxy.manual[field];
+    for(const field of ["address","username"])$("proxy-"+field).value=proxy.manual[field];
     $("proxy-password").value="";$("proxy-clear-password").checked=false;
   }
   const manual=selectedProxyMode()==="manual",detected=proxy.detected;
@@ -1531,17 +1531,14 @@ function fillProxySettings(force=false) {
   $("proxy-saved-password").hidden=!proxy.password_saved;
   $("proxy-clear-password").disabled=settingsSaving||!manual||!proxy.password_saved;
   $("proxy-password").placeholder=proxy.password_saved?t("已保存，留空保留"):t("无需认证可留空");
-  const sources={environment:"进程环境变量",windows_registry:"Windows 系统代理",direct:"未检测到代理，直接连接"};
-  $("proxy-source").textContent=t(sources[detected.source]??"—");
-  for(const scheme of ["http","https"]) {
-    const value=detected[scheme],parts=[value?.invalid?t("代理地址无效"):value?.address||t("直接连接")];
-    if(value?.username)parts.push(t("账号：{name}").replace("{name}",value.username));
-    if(value?.password_saved)parts.push(t("密码已配置"));
-    $("proxy-"+scheme).textContent=parts.join(" · ");
-  }
-  $("proxy-detected-bypass").textContent=detected.bypass||"—";
+  const scheme=s.profile?.upstream?.toLowerCase().startsWith("http://")?"http":"https";
+  const value=detected[scheme]??detected.https??detected.http;
+  const parts=[value?.invalid?t("代理地址无效"):value?.address||t("直接连接")];
+  if(value?.username)parts.push(t("账号：{name}").replace("{name}",value.username));
+  if(value?.password_saved)parts.push(t("密码已配置"));
+  $("proxy-detected-address").textContent=parts.join(" · ");
   const warnings=[];
-  if(detected.pac_url||detected.auto_discovery)warnings.push(t("检测到 PAC/自动发现；当前仅使用上方的 HTTP/HTTPS 代理。")+(detected.pac_url?" "+detected.pac_url:""));
+  if(detected.pac_url||detected.auto_discovery)warnings.push(t("检测到 PAC/自动发现。转发依照 HTTP/HTTPS 代理配置。")+(detected.pac_url?" "+detected.pac_url:""));
   if(detected.unsupported_all_proxy)warnings.push(t("ALL_PROXY 未用于转发，请配置 HTTP/HTTPS 代理。"));
   $("proxy-detection-warning").textContent=warnings.join(" ");$("proxy-detection-warning").hidden=!warnings.length;
 }
