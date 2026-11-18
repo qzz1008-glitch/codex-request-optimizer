@@ -41,7 +41,8 @@ const localControls=[
       await page.evaluate(()=>{
         window.fixture={rows:[{id:'local',name:'本机',kind:'local',state:'disconnected'},
           {id:'remote-a',name:'Server 176',kind:'ssh',state:'disconnected',codex_restart:{supported:true}}],
-          calls:[],localCalls:[],local:{profile:{active:false,can_restore:false}},failRemote:false,failReconnect:false};
+          calls:[],reads:0,localCalls:[],local:{profile:{active:false,can_restore:false}},failRemote:false,failReconnect:false,
+          needsReload:true,holdRemote:false,completeRemote:null};
         window.api=async(path,data)=>{
             if(path==='/api/status')return structuredClone(fixture.local);
             if(path==='/api/link') {
@@ -54,14 +55,14 @@ const localControls=[
             if(path!=='/api/connections')throw Error('Unexpected fixture path '+path);
             if(fixture.unavailable)throw Object.assign(Error('ui_route_not_found'),{status:404});
             if(fixture.networkError)throw Object.assign(Error('forwarding_service_unavailable'),{status:502});
-            if(!data)return {targets:structuredClone(fixture.rows),error:'',revision:'fixture-revision'};
+            if(!data){fixture.reads++;return {targets:structuredClone(fixture.rows),error:'',revision:'fixture-revision'};}
             fixture.calls.push(structuredClone(data));
             const accepted={};
             for(const id of data.targets){
               const row=fixture.rows.find(row=>row.id===id),operation=String(Math.random());accepted[id]=operation;
               Object.assign(row,{busy:true,action:data.action,operation_id:operation,error:''});
               if(data.action==='reconnect')delete row.codex_reconnect;
-              setTimeout(()=>{
+              const complete=()=>{
                 if(data.action==='reconnect'){
                   Object.assign(row,{busy:false,codex_reconnect:fixture.failReconnect?
                     {state:'unconfirmed',error:'Native restart timed out; reminder retained'}:{state:'reloaded',error:''}});
@@ -69,8 +70,10 @@ const localControls=[
                   return;
                 }
                 const fail=id==='remote-a'&&fixture.failRemote;
-                Object.assign(row,{busy:false,state:fail?'error':data.action==='activate'?'connected':'disconnected',error:fail?'Synthetic SSH failure':'',reload_required:!fail});
-              },40);
+                Object.assign(row,{busy:false,state:fail?'error':data.action==='activate'?'connected':'disconnected',error:fail?'Synthetic SSH failure':'',reload_required:!fail&&fixture.needsReload});
+              };
+              if(fixture.holdRemote&&data.action!=='reconnect')fixture.completeRemote=complete;
+              else setTimeout(complete,40);
             }
             return {accepted};
         };
@@ -79,10 +82,20 @@ const localControls=[
       });
       await page.waitForFunction(()=>document.querySelectorAll('.connection-device').length===1);
       const controls=page.locator('#connection-controls'),panel=page.locator('#connection-panel');
+      const localLabel=controls.locator('.connection-local-label'),localConnect=page.locator('#compression-connect');
+      const actions=panel.locator('.connection-device-actions'),reconnect=panel.locator('.connection-device-reconnect');
+      assert.equal(await localLabel.isHidden(),true);
       const reopenPanel=async()=>{
         await page.mouse.move(0,page.viewportSize().height-1);
         await page.keyboard.press('Escape');await panel.waitFor({state:'hidden'});
         await page.locator('#compression-connect').hover();await panel.waitFor({state:'visible'});
+      };
+      const waitForReconnectPrompt=async()=>{
+        await page.getByRole('dialog',{name:'现在重新连接 Codex？'}).waitFor({state:'visible'});
+        assert.equal(await page.locator('#devices-confirm-apply').textContent(),'立即重连');
+        assert.equal(await page.locator('#devices-confirm-cancel').textContent(),'稍后重连');
+        assert.equal(await page.evaluate(()=>document.activeElement.id),'devices-confirm-cancel','The follow-up focuses the safe action');
+        assert.deepEqual(await page.locator('#devices-confirm-targets strong').allTextContents(),['Server 176']);
       };
       assert.equal(await page.locator('#connection-devices-open').count(),0,'The extra dropdown triangle must be removed');
       await controls.focus();await page.keyboard.press('Escape');
@@ -94,6 +107,12 @@ const localControls=[
       await page.mouse.move(0,790);
       await page.locator('#compression-connect').hover();await panel.waitFor({state:'visible'});
       assert.doesNotMatch(await panel.textContent(),/本机/);
+      assert.equal(await localLabel.isVisible(),true);
+      const labelBox=await localLabel.boundingBox(),localPillBox=await page.locator('#request-compression').boundingBox();
+      assert(labelBox.x+labelBox.width<localPillBox.x,'The local label sits to the left of the local controls');
+      const actionsBox=await actions.boundingBox(),reconnectBox=await reconnect.boundingBox();
+      assert(actionsBox.x+actionsBox.width<reconnectBox.x,'Reconnect sits to the right of the server connection controls');
+      assert.equal(await actions.locator('[aria-pressed="true"]').evaluate(button=>getComputedStyle(button).opacity),'1');
       const bounds=await panel.boundingBox();assert(bounds.x>=0&&bounds.x+bounds.width<=1201&&bounds.y>=0&&bounds.y+bounds.height<=801);
       assert.equal(await page.evaluate(()=>document.activeElement.id),'connection-controls','Hover must not move keyboard focus');
       await page.locator('.connection-device').last().getByRole('button',{name:'接入',exact:true}).click();
@@ -102,11 +121,14 @@ const localControls=[
       assert.equal(await page.evaluate(()=>fixture.calls.length),0,'No changes before confirmation');
       assert.match(await page.locator('#devices-confirm-description').textContent(),/先验证连接，再备份并更新此服务器/);
       await page.locator('#devices-confirm-apply').click();
-      await page.waitForFunction(()=>document.querySelector('#devices-confirm-apply').hidden);
-      assert.deepEqual(await page.evaluate(()=>fixture.calls[0]),{targets:['remote-a'],action:'activate',revision:'fixture-revision'});
+      await waitForReconnectPrompt();
+      assert.deepEqual(await page.evaluate(()=>fixture.calls),[{targets:['remote-a'],action:'activate',revision:'fixture-revision'}],
+        'A connection change prompts before any reconnect POST');
       assert.equal(await page.evaluate(()=>fixture.local.profile.active),false,'A remote action leaves local state unchanged');
       await page.locator('#devices-confirm-cancel').click();
       assert.equal(await page.locator('#compression-disconnect').getAttribute('aria-pressed'),'true','A connected server does not affect the local pill');
+      await reopenPanel();
+      await page.locator('.connection-device-reconnect.needs-reconnect').waitFor({state:'visible'});
       await page.evaluate(()=>{fixture.rows[1].busy=true;});
       await reopenPanel();
       await page.locator('.connection-device[aria-busy="true"]').waitFor({state:'visible'});
@@ -136,14 +158,27 @@ const localControls=[
       await page.waitForFunction(()=>document.querySelector('#devices-confirm-apply').textContent==='重试');
       assert.equal(await page.evaluate(()=>fixture.local.profile.active),false);
       assert.match(await page.locator('#devices-confirm-targets').textContent(),/Synthetic SSH failure/);
-      await page.evaluate(()=>fixture.failRemote=false);
+      await page.evaluate(()=>{fixture.failRemote=false;fixture.holdRemote=true;});
+      await page.locator('#devices-confirm-apply').click();
+      await page.waitForFunction(()=>typeof fixture.completeRemote==='function');
+      assert.deepEqual(await page.evaluate(()=>fixture.calls.at(-1).targets),['remote-a'],'Retry only the failed scope');
+      await page.locator('#devices-confirm-cancel').click();
+      await page.locator('#compression-connect').click();
+      await page.locator('#connect-confirm-dialog').waitFor({state:'visible'});
+      const reads=await page.evaluate(()=>{fixture.completeRemote();fixture.holdRemote=false;return fixture.reads;});
+      await page.waitForFunction(reads=>fixture.reads>reads,reads);
+      assert.equal(await page.locator('#devices-confirm-dialog').isVisible(),false,'A follow-up waits for the other confirmation to close');
+      await page.locator('#connect-confirm-cancel').click();
+      await waitForReconnectPrompt();
+      assert.equal(await page.evaluate(()=>fixture.calls.at(-1).action),'restore');
       await page.locator('#devices-confirm-apply').click();
       await page.waitForFunction(()=>document.querySelector('#devices-confirm-apply').hidden);
-      assert.deepEqual(await page.evaluate(()=>fixture.calls.at(-1).targets),['remote-a'],'Retry only the failed scope');
+      assert.deepEqual(await page.evaluate(()=>fixture.calls.at(-1)),{targets:['remote-a'],action:'reconnect',revision:'fixture-revision'});
+      assert.equal(await page.evaluate(()=>fixture.rows[1].state),'disconnected','A confirmed reconnect keeps the new provider state');
       await page.locator('#devices-confirm-cancel').click();
       await page.setViewportSize({width:700,height:700});
       await controls.focus();await page.keyboard.press('ArrowDown');await panel.waitFor({state:'visible'});
-      assert.equal(await page.evaluate(()=>document.getElementById('connection-panel').contains(document.activeElement)),true,'ArrowDown enters the device controls');
+      assert.equal(await actions.locator('button:enabled').evaluate(button=>button===document.activeElement),true,'ArrowDown focuses the first available server action');
       const narrow=await panel.boundingBox();assert(narrow.x>=0&&narrow.x+narrow.width<=701&&narrow.y>=0&&narrow.y+narrow.height<=701);
       await page.keyboard.press('Escape');await panel.waitFor({state:'hidden'});
       await page.evaluate(()=>fixture.unavailable=true);
@@ -159,7 +194,7 @@ const localControls=[
       await reopenPanel();
       await page.waitForFunction(()=>document.querySelectorAll('.connection-device').length===1);
       assert.equal(await page.locator('#connection-devices-status').isHidden(),true);
-      const reconnect=page.getByRole('button',{name:'重连 Codex · Server 176',exact:true});
+      assert.equal(await reconnect.getAttribute('aria-label'),'重连 Codex · Server 176');
       assert.equal(await page.locator('.connection-device-reconnect:visible').count(),1,'Only SSH devices offer daemon reconnect');
       const beforeReconnect=await page.evaluate(()=>({calls:fixture.calls.length,states:fixture.rows.map(row=>row.state)}));
       await reconnect.click();
@@ -194,8 +229,22 @@ const localControls=[
       assert.deepEqual(await page.evaluate(()=>fixture.calls.at(-1).targets),['remote-a']);
       assert.equal(await page.evaluate(()=>fixture.rows[1].reload_required),false);
       await page.locator('#devices-confirm-cancel').click();
-      await page.evaluate(()=>fixture.rows[1].codex_restart={supported:false,reason:'该服务器没有可重载的原生后台'});
-      await page.locator('#compression-connect').hover();await panel.waitFor({state:'visible'});
+      await page.evaluate(()=>fixture.needsReload=false);
+      await reopenPanel();
+      await page.locator('.connection-device').getByRole('button',{name:'接入',exact:true}).click();
+      await page.locator('#devices-confirm-apply').click();
+      await page.waitForFunction(()=>document.querySelector('#devices-confirm-apply').hidden);
+      assert.equal(await page.locator('#devices-confirm-title').textContent(),'接入服务器','No prompt when no reload is pending');
+      assert.equal(await page.locator('#devices-confirm-hint').isHidden(),true);
+      await page.locator('#devices-confirm-cancel').click();
+      await page.evaluate(()=>{fixture.needsReload=true;fixture.rows[1].codex_restart={supported:false,reason:'该服务器没有可重载的原生后台'};});
+      await reopenPanel();
+      await page.locator('.connection-device').getByRole('button',{name:'断开',exact:true}).click();
+      await page.locator('#devices-confirm-apply').click();
+      await page.waitForFunction(()=>document.querySelector('#devices-confirm-apply').hidden);
+      assert.equal(await page.locator('#devices-confirm-title').textContent(),'断开服务器','A server without a reload command shows a manual reminder');
+      assert.match(await page.locator('#devices-confirm-hint').textContent(),/请在 ChatGPT 中重新连接/);
+      await page.locator('#devices-confirm-cancel').click();
       await reopenPanel();
       await page.waitForFunction(()=>document.querySelector('.connection-device-reconnect:not([hidden])').getAttribute('aria-disabled')==='true');
       assert.equal(await reconnect.evaluate(node=>node.disabled),false,'Unsupported action remains keyboard discoverable');
@@ -204,14 +253,24 @@ const localControls=[
       const unsupportedCalls=await page.evaluate(()=>fixture.calls.length);
       await reconnect.click({force:true});assert.equal(await page.evaluate(()=>fixture.calls.length),unsupportedCalls);
       assert.equal(await page.locator('#devices-confirm-dialog').isVisible(),false);
-      await page.evaluate(()=>{fixture.rows.pop();uiI18n.setLanguage('en',{persist:false});});
+      await page.evaluate(()=>uiI18n.setLanguage('en',{persist:false}));
       await reopenPanel();
-      await page.waitForFunction(()=>document.getElementById('connection-devices-status').textContent==='No saved servers');
       assert.equal(await panel.getAttribute('aria-label'),'Server connections');
-      assert.equal(await page.locator('.connection-device').count(),0);
+      assert.equal(await localLabel.textContent(),'Local');
+      await page.mouse.move(0,page.viewportSize().height-1);
+      await page.keyboard.press('Escape');await panel.waitFor({state:'hidden'});
+      await page.evaluate(()=>fixture.rows.pop());
+      const buttonColors=button=>{const style=getComputedStyle(button);return [style.color,style.backgroundColor];};
+      const normalColors=await localConnect.evaluate(buttonColors);
+      await localConnect.hover();
+      await page.locator('.connection-device').waitFor({state:'detached'});
+      assert.equal(await panel.isHidden(),true,'A local-only configuration has no hover panel');
+      assert.equal(await localLabel.isHidden(),true,'A local-only configuration has no hover label');
+      assert.deepEqual(await localConnect.evaluate(buttonColors),normalColors,'A local-only configuration has no hover color change');
+      assert.equal(await localConnect.isEnabled(),true);
       assert.deepEqual(errors,[]);
       await page.close();
     }
-    console.log('Remote connection UI: native/fallback hover, keyboard, scoped actions, daemon restart confirmation/failure, unsupported backend and recovery passed.');
+    console.log('Remote connection UI: native/fallback hover, scoped actions, immediate/deferred reconnect, manual reconnect and recovery passed.');
   } finally {await browser.close();}
 })().catch(error=>{console.error(error);process.exitCode=1;});
