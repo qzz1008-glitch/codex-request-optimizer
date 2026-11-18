@@ -6,10 +6,12 @@ globalThis.InspectorConnections = {
     const panel=get("connection-panel"), controls=get("connection-controls");
     const headerToggle=get("request-compression");
     const dialog=get("devices-confirm-dialog"), list=get("connection-devices-list");
+    const applyButton=get("devices-confirm-apply"), cancelButton=get("devices-confirm-cancel");
     const nativePopover="popover" in HTMLElement.prototype;
     const anchorPositioning=CSS.supports("top: anchor(bottom)");
-    const nodes=new Map(), confirmNodes=new Map(), pending=new Map();
-    let rows=[],loaded=false,loading=false,submitting=false,catalogError="",revision="",timer=null,closeTimer=null,hover=false;
+    const nodes=new Map(), confirmNodes=new Map(), pending=new Map(), reconnectPrompts=new Map();
+    let rows=[],hasServers=false,loading=false,submitting=false,catalogError="",revision="",timer=null,closeTimer=null,hover=false;
+    let openRequested=false,focusOnOpen=false;
     let plan=null,finished=false,disposed=false;
     const text=(node,value)=>{if(node.textContent!==value)node.textContent=value;};
     const isOpen=()=>nativePopover?panel.matches(":popover-open"):!panel.hidden;
@@ -17,6 +19,7 @@ globalThis.InspectorConnections = {
     const desired=action=>action==="activate"?"connected":"disconnected";
     const operationError=(row,action)=>row.error||(action==="reconnect"?row.codex_reconnect?.error:"");
     const completed=(row,action)=>action==="reconnect"?row.codex_reconnect?.state==="reloaded":row.state===desired(action);
+    const needsReconnect=row=>row.reload_required&&row.codex_restart?.supported&&!row.error;
     function stateText(row) {
       if(row.busy)return tr(row.action==="reconnect"?"正在重新连接…":row.action==="activate"?"正在接入…":row.action==="restore"?"正在断开…":"正在检查…");
       if(row.error||row.state==="error")return tr("接入异常");
@@ -57,7 +60,7 @@ globalThis.InspectorConnections = {
       const tools=element("div","connection-device-controls"),reconnect=element("button","connection-device-reconnect");
       reconnect.type="button";
       reconnect.addEventListener("click",()=>{if(reconnect.getAttribute("aria-disabled")!=="true")confirm("reconnect",row.id);});
-      tools.append(reconnect,buttons);info.append(state,label);root.append(info,tools);list.append(root);
+      tools.append(buttons,reconnect);info.append(state,label);root.append(info,tools);list.append(root);
       const value={root,label,state,buttons,actions,reconnect};nodes.set(row.id,value);return value;
     }
     function render() {
@@ -85,10 +88,8 @@ globalThis.InspectorConnections = {
         value.reconnect.title=tr(nativeHint||"重载此服务器当前账号的 Codex 后台，使配置生效。");
         value.reconnect.setAttribute("aria-description",value.reconnect.title);
       }
-      const message=catalogError||(!loaded?"正在读取服务器列表…":rows.length?"":"暂无已保存的服务器");
       const note=get("connection-devices-status");
-      text(note,tr(message));note.hidden=!message;
-      note.classList.toggle("connection-error",!!catalogError);
+      text(note,tr(catalogError));note.hidden=!catalogError;
       renderConfirmation();
       place();
     }
@@ -105,10 +106,16 @@ globalThis.InspectorConnections = {
       }
       const running=selected.some(row=>pending.has(row.id));
       const failed=finished&&selected.some(row=>operationError(row,plan.action)||!completed(row,plan.action));
-      get("devices-confirm-apply").hidden=finished&&!failed;
-      get("devices-confirm-apply").disabled=submitting||running||selected.some(busy)||!!catalogError;
-      text(get("devices-confirm-apply"),tr(submitting||running?"正在执行…":failed?"重试":plan.action==="reconnect"?"确认重新连接":plan.action==="activate"?"确认接入":"确认断开"));
-      text(get("devices-confirm-cancel"),tr(finished?"完成":running?"关闭":"取消"));
+      const followup=plan.followup&&!plan.submitted;
+      applyButton.hidden=finished&&!failed;
+      applyButton.disabled=submitting||running||selected.some(busy)||!!catalogError;
+      text(applyButton,tr(submitting||running?"正在执行…":failed?"重试":followup?"立即重连":
+        plan.action==="reconnect"?"确认重新连接":plan.action==="activate"?"确认接入":"确认断开"));
+      text(cancelButton,tr(finished?"完成":running?"关闭":followup?"稍后重连":"取消"));
+      const hint=get("devices-confirm-hint"), linkSucceeded=finished&&!failed&&plan.action!=="reconnect";
+      hint.hidden=linkSucceeded&&!selected[0].reload_required;
+      if(linkSucceeded&&selected[0].reload_required&&!selected[0].codex_restart?.supported)
+        text(hint,tr("配置待生效，请在 ChatGPT 中重新连接此服务器的 Codex。"));
       dialog.setAttribute("aria-busy",String(submitting||running));
     }
     function toggleDivider(toggle) {
@@ -131,15 +138,32 @@ globalThis.InspectorConnections = {
     }
     function hide() {
       clearTimeout(closeTimer);
+      openRequested=false;focusOnOpen=false;
       if(nativePopover){if(isOpen())panel.hidePopover();}else{panel.hidden=true;}
+      controls.removeAttribute("data-server-panel-open");
     }
-    function show() {
+    function focusFirstAction() {
+      panel.querySelector("button:not(:disabled):not([hidden])")?.focus();
+    }
+    function show(focus=false) {
       clearTimeout(closeTimer);
       if(document.querySelector("dialog[open]"))return;
-      if(!isOpen()) {
-        if(nativePopover)panel.showPopover({source:controls});else{panel.hidden=false;}
+      if(isOpen()) {
+        if(focus)focusFirstAction();
+        return;
       }
-      place();poll();
+      openRequested=true;focusOnOpen ||= focus;
+      poll();
+    }
+    function openAfterPoll() {
+      const focus=focusOnOpen;
+      const shouldOpen=openRequested&&hasServers&&(hover||controls.contains(document.activeElement));
+      openRequested=false;focusOnOpen=false;
+      if(!shouldOpen||disposed||document.querySelector("dialog[open]"))return;
+      if(nativePopover)panel.showPopover({source:controls});else{panel.hidden=false;}
+      controls.setAttribute("data-server-panel-open","");
+      place();
+      if(focus)focusFirstAction();
     }
     function leave() {
       hover=false;clearTimeout(closeTimer);
@@ -154,21 +178,42 @@ globalThis.InspectorConnections = {
     async function poll() {
       if(loading||disposed)return;
       loading=true;
+      // A status request already in flight may predate a new operation.
+      const observed=[...pending];
       try {
         const value=await request("/api/connections");
         if(!Array.isArray(value.targets))throw Error(tr("无法读取设备接入状态。"));
-        rows=value.targets.filter(row=>row.kind==="ssh");loaded=true;catalogError=value.error||"";revision=value.revision;
-        for(const [id,operation] of pending) {
+        rows=value.targets.filter(row=>row.kind==="ssh");
+        hasServers=rows.length>0;catalogError=value.error||"";revision=value.revision;
+        if(!hasServers)hide();
+        for(const [id,{operationId,action}] of observed) {
           const row=rows.find(target=>target.id===id);
-          if(row&&!row.busy&&row.operation_id===operation)pending.delete(id);
-          else if(!row||row.operation_id!==operation){pending.delete(id);catalogError=tr("设备状态已变化，请刷新后检查操作结果。");}
+          if(!row||row.operation_id!==operationId){
+            pending.delete(id);catalogError=tr("设备状态已变化，请刷新后检查操作结果。");continue;
+          }
+          if(row.busy)continue;
+          pending.delete(id);
+          if(action!=="reconnect"&&completed(row,action)&&needsReconnect(row))reconnectPrompts.set(id,operationId);
         }
         if(plan?.submitted&&!plan.targets.some(row=>pending.has(row.id)))finished=true;
       } catch(error) {
-        if(error.status===404){rows=[];loaded=false;catalogError=tr("当前运行版本不支持设备接入管理，请更新 EXE 后使用。");}
+        if(error.status===404){rows=[];catalogError=tr("当前运行版本不支持设备接入管理，请更新 EXE 后使用。");}
         else catalogError=error.message;
       }
-      finally {loading=false;render();schedule();}
+      finally {loading=false;offerReconnect();render();openAfterPoll();schedule();}
+    }
+    function offerReconnect() {
+      if(!reconnectPrompts.size||disposed||submitting||catalogError)return;
+      if(document.querySelector("dialog[open]:not(#devices-confirm-dialog)"))return;
+      if(dialog.open&&(!finished||plan.action==="reconnect"))return;
+      for(const [id,operationId] of reconnectPrompts) {
+        const row=rows.find(target=>target.id===id);
+        if(!row||row.operation_id!==operationId||!needsReconnect(row)){reconnectPrompts.delete(id);continue;}
+        if(row.busy||(dialog.open&&plan.targets[0].id!==id))continue;
+        reconnectPrompts.delete(id);
+        openConfirmation("reconnect",row,true);
+        return;
+      }
     }
     async function confirm(action,id) {
       if(dialog.open||document.querySelector("dialog[open]"))return;
@@ -176,14 +221,20 @@ globalThis.InspectorConnections = {
       if(disposed||dialog.open||document.querySelector("dialog[open]"))return;
       const target=rows.find(row=>row.id===id);
       if(!target||catalogError) {show();return;}
-      hide();finished=false;plan={action,targets:[{id:target.id,name:target.name}],revision,submitted:false};
+      openConfirmation(action,target);
+    }
+    function openConfirmation(action,target,followup=false) {
+      hide();finished=false;plan={action,targets:[{id:target.id,name:target.name}],revision,submitted:false,followup};
       confirmNodes.clear();get("devices-confirm-targets").replaceChildren();
-      text(get("devices-confirm-title"),tr(action==="reconnect"?"重新连接 Codex":action==="activate"?"接入服务器":"断开服务器"));
+      text(get("devices-confirm-title"),tr(followup?"现在重新连接 Codex？":action==="reconnect"?"重新连接 Codex":action==="activate"?"接入服务器":"断开服务器"));
       text(get("devices-confirm-description"),tr(action==="reconnect"?"将重载所选服务器当前账号的 Codex 后台，使配置生效。该账号正在执行或排队的任务可能中断。":action==="activate"?
         "软件会先验证连接，再备份并更新此服务器的 Codex 配置。":
         "将恢复此服务器的原始出口并开启 Codex 原生压缩。中转服务保持运行。"));
       text(get("devices-confirm-hint"),tr(action==="reconnect"?"ChatGPT 将短暂断开该服务器并尝试自动恢复连接。中转服务保持运行。":"配置变更后，请重新连接该服务器的 Codex。"));
-      get("devices-confirm-error").hidden=true;render();dialog.showModal();schedule();
+      get("devices-confirm-error").hidden=true;renderConfirmation();
+      if(dialog.open)cancelButton.focus();
+      else dialog.showModal();
+      schedule();
     }
     async function apply() {
       if(!plan||submitting||plan.targets.some(row=>pending.has(row.id)))return;
@@ -193,31 +244,38 @@ globalThis.InspectorConnections = {
       try {
         const value=await request("/api/connections",{targets:targets.map(row=>row.id),action:plan.action,revision:plan.revision});
         if(!value.accepted||typeof value.accepted!=="object")throw Error(tr("未能确认操作已开始，请刷新状态后检查。"));
-        for(const [id,operation] of Object.entries(value.accepted))pending.set(id,operation);
         plan.submitted=true;finished=false;
-        for(const row of rows)if(pending.has(row.id)) {
-          Object.assign(row,{busy:true,action:plan.action,error:""});
-          if(plan.action==="reconnect")delete row.codex_reconnect;
+        for(const [id,operationId] of Object.entries(value.accepted)) {
+          pending.set(id,{operationId,action:plan.action});
+          const row=rows.find(target=>target.id===id);
+          if(row) {
+            Object.assign(row,{busy:true,action:plan.action,error:"",operation_id:operationId});
+            if(plan.action==="reconnect")delete row.codex_reconnect;
+          }
         }
       } catch(error) {text(get("devices-confirm-error"),error.message);get("devices-confirm-error").hidden=false;}
-      finally {submitting=false;render();schedule();}
+      finally {submitting=false;offerReconnect();render();schedule();}
     }
     if(!nativePopover){panel.hidden=true;panel.classList.add("connection-panel-fallback");}
-    else panel.addEventListener("toggle",()=>{if(isOpen()){place();poll();}});
+    else panel.addEventListener("toggle",()=>{if(!isOpen())controls.removeAttribute("data-server-panel-open");});
     for(const node of [controls,panel]) {
       node.addEventListener("pointerenter",event=>{if(event.pointerType==="touch")return;hover=true;show();});
       node.addEventListener("pointerleave",leave);
-      node.addEventListener("focusin",show);
+      node.addEventListener("focusin",()=>show());
       node.addEventListener("focusout",leave);
     }
     controls.addEventListener("keydown",event=>{
-      if(event.key==="ArrowDown"){event.preventDefault();show();panel.querySelector("button:not(:disabled):not([hidden])")?.focus();}
+      if(event.key==="ArrowDown"){event.preventDefault();show(true);}
     });
     document.addEventListener("pointerdown",event=>{if(!controls.contains(event.target)&&!panel.contains(event.target))hide();});
-    document.addEventListener("keydown",event=>{if(event.key==="Escape"&&isOpen()){hide();event.stopPropagation();}});
+    document.addEventListener("keydown",event=>{if(event.key==="Escape"&&(isOpen()||openRequested)){hide();event.stopPropagation();}});
     globalThis.addEventListener("resize",place);
-    get("devices-confirm-apply").addEventListener("click",apply);
-    get("devices-confirm-cancel").addEventListener("click",()=>{dialog.close();schedule();});
+    applyButton.addEventListener("click",apply);
+    cancelButton.addEventListener("click",()=>dialog.close());
+    document.addEventListener("close",event=>{
+      if(event.target instanceof HTMLDialogElement)offerReconnect();
+      if(event.target===dialog)schedule();
+    },true);
     globalThis.addEventListener("pagehide",()=>{disposed=true;clearTimeout(timer);clearTimeout(closeTimer);});
     render();poll();
     return {render,hide};
@@ -1675,7 +1733,6 @@ function renderCompressionMode() {
   $("request-compression").setAttribute("aria-busy",String(busy));
   setText($("compression-hint"),t(connectionResumeBusy()?"正在检查接入配置…":unknown?"本机接入状态暂不可用。":
     connected?"由本软件管理 zstd 压缩，保留完整内容。":"直连原上游，由 Codex 管理原生压缩。"));
-  $("request-compression").title=$("compression-hint").textContent;
   $("compression-confirm-dialog").setAttribute("aria-busy",String(compressionSaving));
   for(const id of ["compression-confirm-cancel","compression-confirm-apply"])$(id).disabled=compressionSaving;
   setText($("compression-confirm-apply"),t(compressionTarget==="disconnected"?(compressionSaving?"正在取消接入…":"确认断开"):(compressionSaving?"正在切换…":"确认断开")));
