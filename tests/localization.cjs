@@ -57,7 +57,7 @@ Object.assign(context,{
   loadTree:async path=>{node('tree-query').value=path;},loadDiff:async()=>{},refreshFilters:async()=>{},
 });
 for(const name of ['renderStatus','renderContextPlaceholders','renderSettingsSaveProgress','renderUpdates',
-  'renderConnectPrompt','renderExitRequest','showTab','renderOverview','renderCompression','renderHeaders',
+  'renderConnectPrompt','renderExitRequest','showTab','renderOverview','renderHeaders',
   'renderLanguageSelection','updateSettingsSaveState','resetSettingsSaveProgress','fillSettings',
   'fillContextSettings','setSettingsMessage'])context[name]=(...args)=>calls.push([name,...args]);
 function extract(start,end) {
@@ -71,7 +71,7 @@ vm.runInContext(extract('function discardSettingsDraft()', 'function restoreSett
   assert.equal(i18n.language,'en');assert.equal(context.settingsLanguage,'en');
   assert.equal(storage.get('packet-inspector-language'),'zh');
   assert(calls.some(([name,fill])=>name==='renderStatus'&&fill===true));
-  assert(calls.some(([name])=>name==='renderCompression'),'request size and protection panels must repaint');
+  assert(calls.some(([name])=>name==='renderHeaders'),'request overview and protection panels must repaint');
   assert(calls.some(([name])=>name==='renderUpdates'));
   assert.equal(context.state.detail.raw,original.textContent);
   await context.discardSettingsDraft();
