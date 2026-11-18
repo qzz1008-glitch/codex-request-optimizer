@@ -524,7 +524,7 @@ dialog{width:min(760px,calc(var(--desktop-width) - 80px));max-height:calc(var(--
   z-index: 40;
   box-sizing: border-box;
   width: max-content;
-  max-width: min(312px, calc(100vw - 24px));
+  max-width: min(332px, calc(100vw - 24px));
   max-height: calc(100dvh - 80px);
   overflow: auto;
   scrollbar-width: thin;
@@ -568,10 +568,9 @@ dialog{width:min(760px,calc(var(--desktop-width) - 80px));max-height:calc(var(--
 }
 .connection-device-actions{flex-shrink:0;padding:2px}
 .connection-device-actions button {
-  min-width: 40px;
-  min-height: 24px;
-  padding: 3px 7px;
-  font-size: 11px;
+  min-width: 60px;
+  min-block-size: 24px;
+  padding: 3px 12px;
   line-height: 18px;
   white-space: nowrap;
 }

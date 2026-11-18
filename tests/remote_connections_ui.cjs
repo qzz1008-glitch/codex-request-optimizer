@@ -128,7 +128,7 @@ const localControls=[
       assert(actionsBox.x+actionsBox.width<reconnectBox.x,'Reconnect sits to the right of the server connection controls');
       assert.equal(await actions.locator('[aria-pressed="true"]').evaluate(button=>getComputedStyle(button).opacity),'1');
       const bounds=await panel.boundingBox();assert(bounds.x>=0&&bounds.x+bounds.width<=1201&&bounds.y>=0&&bounds.y+bounds.height<=801);
-      assert(bounds.width<312,'The address and actions determine the compact panel width');
+      assert(bounds.width<332,'The address and actions determine the compact panel width');
       assert.equal(await page.evaluate(()=>document.activeElement.id),'connection-controls','Hover must not move keyboard focus');
       await page.locator('.connection-device').last().getByRole('button',{name:'接入',exact:true}).click();
       await page.locator('#devices-confirm-dialog').waitFor({state:'visible'});
