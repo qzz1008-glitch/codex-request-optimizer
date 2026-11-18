@@ -15,6 +15,8 @@ from urllib.error import HTTPError
 
 RECONNECT_SOCKET_UNVERIFIED = "无法确认远程 Codex 控制套接字属于当前 SSH 账号和配置目录。"
 RECONNECT_PROCESS_CHANGED = "远程 Codex 后台进程刚发生变化，请等 ChatGPT 恢复连接后再试。"
+RECONNECT_STATUS_UNAVAILABLE = "无法读取远程 Codex 后台状态。"
+RECONNECT_NOT_READY = "远程 Codex 后台尚未就绪，请等 ChatGPT 恢复连接后再试。"
 RECONNECT_UNCONFIRMED = "重连结果未确认，请刷新状态后检查；待生效提醒已保留。"
 SSH_DRAIN_TIMEOUT = 60
 SSH_RECONNECT_TIMEOUT = 100
@@ -63,8 +65,17 @@ def socket_peer_pid(socket_path):
         raise ReconnectProbeError("无法通过控制套接字连接远程 Codex 后台。") from exc
     return pid
 
+def ssh_process_identity(pid):
+    image = (pathlib.Path("/proc") / str(pid) / "exe").stat()
+    return pid, image.st_dev, image.st_ino
+
+def confirm_ssh_process(socket_path, identity):
+    pid = socket_peer_pid(socket_path)
+    if pid != identity[0] or ssh_process_identity(pid) != identity:
+        raise ReconnectProbeError(RECONNECT_PROCESS_CHANGED)
+
 @contextmanager
-def verified_ssh_app_server(cli, home, socket_path):
+def verified_ssh_app_server(home, socket_path):
     if not (hasattr(os, "pidfd_open") and hasattr(signal, "pidfd_send_signal") and hasattr(socket, "SO_PEERCRED")):
         raise ReconnectProbeError("远程 Python 环境缺少安全重载 Codex 所需的进程接口。")
     if not owned_native_socket(home, socket_path):
@@ -72,9 +83,8 @@ def verified_ssh_app_server(cli, home, socket_path):
     pid = socket_peer_pid(socket_path)
     pidfd = os.pidfd_open(pid)
     try:
+        identity = ssh_process_identity(pid)
         process = pathlib.Path("/proc") / str(pid)
-        if not (process / "exe").samefile(cli):
-            raise ReconnectProbeError("远程后台进程与本次 SSH 登录找到的 Codex 命令不一致。")
         args = (process / "cmdline").read_bytes().split(b"\0")
         server_args = args[args.index(b"app-server", 1) + 1:] if b"app-server" in args[1:] else []
         default_socket = b"--listen=unix://" in server_args or (b"--listen", b"unix://") in zip(server_args, server_args[1:])
@@ -91,9 +101,8 @@ def verified_ssh_app_server(cli, home, socket_path):
             caught = next((int(line.split()[1], 16) for line in status if line.startswith("SigCgt:")), 0)
         if not caught & (1 << (signal.SIGHUP - 1)):
             raise ReconnectProbeError("远程 Codex 后台未注册重载所需的 SIGHUP 处理程序。")
-        if socket_peer_pid(socket_path) != pid:
-            raise ReconnectProbeError(RECONNECT_PROCESS_CHANGED)
-        yield pid, pidfd
+        confirm_ssh_process(socket_path, identity)
+        yield identity, pidfd
     finally:
         os.close(pidfd)
 
@@ -104,11 +113,11 @@ def native_codex(home):
         return {"supported": False, "reason": "本次 SSH 登录找不到 Codex 命令。"}, None
     supported = {"supported": True, "reason": ""}
     env = dict(os.environ, CODEX_HOME=str(home))
-    reason = "无法读取远程 Codex 后台状态。"
+    reason = RECONNECT_STATUS_UNAVAILABLE
     try:
         value = native_command(cli, "version", env, 8)
         if value.get("status") != "running":
-            raise ReconnectProbeError("远程 Codex 后台尚未就绪，请等 ChatGPT 恢复连接后再试。")
+            raise ReconnectProbeError(RECONNECT_NOT_READY)
         socket_path = value.get("socketPath")
         if not isinstance(socket_path, str):
             raise ReconnectProbeError("远程 Codex 后台未报告控制套接字地址。")
@@ -122,8 +131,8 @@ def native_codex(home):
             if not owned_native_socket(home, socket_path):
                 raise ReconnectProbeError(RECONNECT_SOCKET_UNVERIFIED)
             return supported, (str(managed_path), env, socket_path, None)
-        with verified_ssh_app_server(cli, home, socket_path) as (pid, _):
-            return supported, (cli, env, socket_path, pid)
+        with verified_ssh_app_server(home, socket_path) as (identity, _):
+            return supported, (cli, env, socket_path, identity)
     except ReconnectProbeError as exc:
         reason = str(exc)
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError):
@@ -146,9 +155,9 @@ def native_command(cli, action, env, timeout):
 def restart_native(context, unavailable_reason):
     if context is None:
         raise ReconnectProbeError(unavailable_reason)
-    cli, env, socket_path, pid = context
-    if pid is not None:
-        restart_ssh_app_server(cli, env, socket_path, pid)
+    cli, env, socket_path, identity = context
+    if identity is not None:
+        restart_ssh_app_server(cli, env, socket_path, identity)
         return
     result = native_command(cli, "restart", env, 120)
     if result.get("status") != "restarted" or result.get("socketPath") != str(socket_path):
@@ -157,10 +166,27 @@ def restart_native(context, unavailable_reason):
     if not managed_daemon_running(ready) or ready.get("socketPath") != str(socket_path):
         raise ValueError("Codex 原生后台尚未就绪，请刷新状态后检查。")
 
-def restart_ssh_app_server(cli, env, socket_path, pid):
+def confirm_ssh_app_server(cli, env, socket_path, identity, timeout):
+    # The CLI's version command initializes a connection to the app server.
+    # A launcher or a different CLI installation can probe the same running executable.
+    try:
+        ready = native_command(cli, "version", env, timeout)
+    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
+        raise ReconnectProbeError(RECONNECT_STATUS_UNAVAILABLE) from exc
+    if ready.get("status") != "running":
+        raise ReconnectProbeError(RECONNECT_NOT_READY)
+    if ready.get("socketPath") != str(socket_path):
+        raise ReconnectProbeError(RECONNECT_PROCESS_CHANGED)
+    confirm_ssh_process(socket_path, identity)
+    return ready
+
+def restart_ssh_app_server(cli, env, socket_path, expected_identity):
     home = pathlib.Path(env["CODEX_HOME"])
-    with verified_ssh_app_server(cli, home, socket_path) as (current_pid, pidfd):
-        if current_pid != pid:
+    with verified_ssh_app_server(home, socket_path) as (identity, pidfd):
+        if identity != expected_identity:
+            raise ReconnectProbeError(RECONNECT_PROCESS_CHANGED)
+        ready = confirm_ssh_app_server(cli, env, socket_path, identity, 8)
+        if managed_daemon_running(ready):
             raise ReconnectProbeError(RECONNECT_PROCESS_CHANGED)
         exit_event = select.poll()
         exit_event.register(pidfd, select.POLLIN)
@@ -174,10 +200,9 @@ def restart_ssh_app_server(cli, env, socket_path, pid):
             if remaining <= 0:
                 break
             try:
-                with verified_ssh_app_server(cli, home, socket_path) as (new_pid, _):
-                    ready = native_command(cli, "version", env, min(8, remaining))
-                    if (new_pid != pid and ready.get("status") == "running"
-                            and ready.get("socketPath") == str(socket_path) and socket_peer_pid(socket_path) == new_pid):
+                with verified_ssh_app_server(home, socket_path) as (replacement, _):
+                    if replacement[0] != identity[0]:
+                        confirm_ssh_app_server(cli, env, socket_path, replacement, min(8, remaining))
                         return
             except (OSError, ValueError, RuntimeError, subprocess.SubprocessError):
                 pass
