@@ -219,7 +219,7 @@ globalThis.InspectorConnections = {
     }
     async function confirm(action,id) {
       if(action!=="reconnect")await poll();
-      if(disposed||submitting||document.querySelector("dialog[open]"))return;
+      if(disposed||document.querySelector("dialog[open]"))return;
       const target=rows.find(row=>row.id===id);
       if(!target||(catalogError&&action!=="reconnect")){show();return;}
       openConfirmation(action,target);
@@ -239,23 +239,25 @@ globalThis.InspectorConnections = {
       schedule();
     }
     async function apply() {
-      if(!plan||submitting||plan.targets.some(row=>pending.has(row.id)))return;
-      const targets=plan.targets.filter(target=>{const row=rows.find(row=>row.id===target.id);return !finished||!row||operationError(row,plan.action)||!completed(row,plan.action);});
+      const current=plan;
+      if(!current||submitting||current.targets.some(row=>pending.has(row.id)))return;
+      const {action,revision}=current;
+      const targets=current.targets.filter(target=>{const row=rows.find(row=>row.id===target.id);return !finished||!row||operationError(row,action)||!completed(row,action);});
       if(targets.some(target=>{const row=rows.find(row=>row.id===target.id);return !row||busy(row);}))return;
-      submitting=true;plan.error="";render();
+      submitting=true;current.error="";render();
       try {
-        const value=await request("/api/connections",{targets:targets.map(row=>row.id),action:plan.action,revision:plan.revision});
+        const value=await request("/api/connections",{targets:targets.map(row=>row.id),action,revision});
         if(!value.accepted||typeof value.accepted!=="object")throw Error(tr("未能确认操作已开始，请刷新状态后检查。"));
-        plan.submitted=true;finished=false;
+        current.submitted=true;finished=false;
         for(const [id,operationId] of Object.entries(value.accepted)) {
-          pending.set(id,{operationId,action:plan.action});
+          pending.set(id,{operationId,action});
           const row=rows.find(target=>target.id===id);
           if(row) {
-            Object.assign(row,{busy:true,action:plan.action,error:"",operation_id:operationId});
-            if(plan.action==="reconnect")delete row.codex_reconnect;
+            Object.assign(row,{busy:true,action,error:"",operation_id:operationId});
+            if(action==="reconnect")delete row.codex_reconnect;
           }
         }
-      } catch(error) {plan.error=error.message;}
+      } catch(error) {current.error=error.message;}
       finally {submitting=false;offerReconnect();render();schedule();}
     }
     if(!nativePopover){panel.hidden=true;panel.classList.add("connection-panel-fallback");}

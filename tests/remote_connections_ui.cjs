@@ -77,6 +77,7 @@ const localControls=[
               if(fixture.holdRemote&&data.action!=='reconnect')fixture.completeRemote=complete;
               else setTimeout(complete,40);
             }
+            if(fixture.holdAcceptance)return new Promise(resolve=>{fixture.acceptOperation=()=>resolve({accepted});});
             return {accepted};
         };
         window.InspectorConnectionControls=InspectorConnections.create({request:api});
@@ -285,10 +286,18 @@ const localControls=[
       await page.waitForFunction(()=>document.querySelector('#devices-confirm-apply').hidden);
       assert.equal(await page.evaluate(()=>fixture.rows[1].reload_required),false,'A fresh successful restart clears the reminder');
       await page.locator('#devices-confirm-cancel').click();
-      await page.evaluate(()=>{delete fixture.rows[1].codex_restart;});
+      await page.evaluate(()=>{delete fixture.rows[1].codex_restart;fixture.holdAcceptance=true;});
       await reopenPanel();
       await page.locator('.connection-device').getByRole('button',{name:'接入',exact:true}).click();
       await page.locator('#devices-confirm-apply').click();
+      await page.waitForFunction(()=>typeof fixture.acceptOperation==='function');
+      await page.locator('#devices-confirm-cancel').click();
+      await reopenPanel();
+      await reconnect.click();
+      await page.getByRole('dialog',{name:'重新连接 Codex',exact:true}).waitFor({state:'visible'});
+      assert.equal(await page.locator('#devices-confirm-apply').isDisabled(),true,'The entry works while the previous operation is being accepted');
+      await page.locator('#devices-confirm-cancel').click();
+      await page.evaluate(()=>{fixture.holdAcceptance=false;fixture.acceptOperation();});
       await waitForReconnectPrompt();
       assert.equal(await page.evaluate(()=>fixture.calls.at(-1).action),'activate','Missing capability data also allows the choice after a connection change');
       await page.locator('#devices-confirm-cancel').click();
