@@ -38,8 +38,10 @@ let browser,cases=0;
       requests.push({url,data});
       if(url==='/api/proxy-test'){
         if(holdTest)await new Promise(resolve=>{window.releaseTest=resolve;});
-        return {state:testState,status:testState==='rejected'?407:401,elapsed_ms:32,target:'https://upstream.invalid/responses',
-          proxy_used:true,proxy:data.address||'http://regional.invalid:8080'};
+        const status={ok:404,rejected:407}[testState];
+        return {state:testState,status,elapsed_ms:32,target:'https://upstream.invalid/responses',
+          proxy_used:true,proxy:data.address||'http://regional.invalid:8080',
+          error:testState==='failed'?'Connection refused\nTry again':undefined};
       }
       if(data&&holdSave)await new Promise(resolve=>{window.releaseSave=resolve;});
       if(data&&failure)throw Error('Synthetic proxy failure');
@@ -124,8 +126,8 @@ let browser,cases=0;
   await page.evaluate(()=>{fillProxySettings();releaseTest();holdTest=false;});
   await page.waitForFunction(()=>$('proxy-test').getAttribute('aria-busy')==='false');
   assert.deepEqual(await page.evaluate(()=>requests.at(-1).data),{mode:'manual',address:'http://unsaved.invalid:8080'});
-  assert.match(await page.locator('#proxy-test-result').textContent(),/HTTP 401.*32 ms/);
-  assert.match(await page.locator('#proxy-test-result').textContent(),/unsaved.invalid:8080/);
+  assert.equal(await page.locator('#proxy-test-result').textContent(),
+    '连接已建立 · HTTP 404 · 耗时 32 ms\n测试目标：https://upstream.invalid/responses');
   assert.equal(await page.evaluate(()=>state.status.proxy_settings.mode),'auto');
   assert.equal(await page.evaluate(()=>requests.filter(r=>r.url==='/api/proxy-settings'&&r.data).length),savesBeforeTest);cases++;
 
@@ -141,6 +143,11 @@ let browser,cases=0;
   await page.waitForFunction(()=>$('proxy-test').getAttribute('aria-busy')==='false');
   assert.match(await page.locator('#proxy-test-result').textContent(),/HTTP 407/);
   assert.equal(await page.locator('#proxy-test-result').evaluate(node=>node.classList.contains('error')),true);
+  await page.evaluate(()=>{testState='failed';});
+  await page.locator('#proxy-test').click();
+  await page.waitForFunction(()=>$('proxy-test').getAttribute('aria-busy')==='false');
+  assert.equal(await page.locator('#proxy-test-result').textContent(),
+    '连接失败 · 耗时 32 ms · Connection refused Try again\n测试目标：https://upstream.invalid/responses');
   await page.locator('#proxy-address').fill('http://changed-again.invalid:8080');
   assert.equal(await page.locator('#proxy-test-result').isVisible(),false);
   await page.evaluate(()=>restoreSettings());cases++;

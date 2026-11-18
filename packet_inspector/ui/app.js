@@ -1592,10 +1592,8 @@ async function testProxySettings() {
     const summary=[t(states[result.state]??"连接失败")];
     if(result.status)summary.push("HTTP "+result.status);
     summary.push(t("耗时 {ms} ms").replace("{ms}",Number(result.elapsed_ms).toLocaleString()));
-    const lines=[summary.join(" · "),t("测试目标：{url}").replace("{url}",result.target),
-      result.proxy_used?t("使用代理：{address}").replace("{address}",result.proxy):t(result.bypassed?"直连（匹配代理例外）":"直连（未配置代理）")];
-    if(result.error)lines.push(result.error);
-    lines.push(t("仅检查网络连通性，不验证 Codex 账户权限。"));
+    if(result.error)summary.push(result.error.replace(/\s+/g," ").trim());
+    const lines=[summary.join(" · "),t("测试目标：{url}").replace("{url}",result.target)];
     output.textContent=lines.join("\n");output.className="proxy-test-result "+(result.state==="ok"?"muted":"error");
   } catch(error) {output.textContent=t("代理测试失败：")+t(error.message);output.className="proxy-test-result error";}
   finally {output.hidden=false;button.setAttribute("aria-busy","false");fillProxySettings();}
