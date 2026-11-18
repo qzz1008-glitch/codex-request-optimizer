@@ -8,8 +8,8 @@ from .session_summary import external_labels
 
 
 class SshSessionLabels(BackgroundSessionLabels):
-    def __init__(self, relays, codex_home, ssh_config):
-        super().__init__(self._find_labels, batch_size=SSH_LABEL_BATCH)
+    def __init__(self, relays, codex_home, ssh_config, *, updates=None):
+        super().__init__(self._find_labels, batch_size=SSH_LABEL_BATCH, updates=updates)
         self.relays = relays
         self.codex_home, self.ssh_config = codex_home, ssh_config
 

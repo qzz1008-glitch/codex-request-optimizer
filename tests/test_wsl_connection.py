@@ -498,9 +498,11 @@ class WslConnectionTests(unittest.TestCase):
                 self.assertEqual(json.load(response)["instance"], hashlib.sha256(server.endpoint.encode()).hexdigest())
             self.assertTrue(server.set_connection(False)["wsl"]["targets"])
 
-    def test_relay_captures_wsl_route_and_sidebar_does_not_wait_for_native_query(self):
+    def test_desktop_sidebar_loads_first_and_is_notified_when_wsl_title_is_ready(self):
+        from concurrent.futures import ThreadPoolExecutor
         from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
         from urllib.request import Request, urlopen
+        from packet_inspector.desktop_ui import DesktopUI
         from packet_inspector.server import InspectorServer
 
         class Upstream(BaseHTTPRequestHandler):
@@ -539,8 +541,10 @@ class WslConnectionTests(unittest.TestCase):
             self.assertEqual(response.status, 200)
         key = next(server.wsl._targets())[0].name
         self.assertEqual(server.store.list(thread=THREAD)[0]["wsl_connection_key"], key)
+        desktop = DesktopUI(server.server_port).start()
+        self.addCleanup(desktop.close)
 
-        entered, release = threading.Event(), threading.Event()
+        entered, release, waiting = threading.Event(), threading.Event(), threading.Event()
         original = self.backend.labels
         def slow_labels(*args):
             entered.set()
@@ -548,18 +552,36 @@ class WslConnectionTests(unittest.TestCase):
                 raise WslError("wsl_timeout")
             return original(*args)
 
-        def sessions():
-            with urlopen(server.ui_url + "api/session-summaries", timeout=2) as response:
-                return json.load(response)["sessions"]
+        wait = server.session_label_updates.wait
+        def mark_wait(*args):
+            waiting.set()
+            return wait(*args)
 
-        with patch.object(self.backend, "labels", side_effect=slow_labels):
+        def get(path):
+            with urlopen(desktop.ui_url + path, timeout=3) as response:
+                return json.load(response)
+
+        with patch.object(self.backend, "labels", side_effect=slow_labels), \
+             patch.object(server.session_label_updates, "wait", side_effect=mark_wait), \
+             ThreadPoolExecutor(max_workers=1) as client:
             try:
-                self.assertIsNone(sessions()[0]["title"])
+                first = get("api/session-summaries")
+                self.assertIsNone(first["sessions"][0]["title"])
                 self.assertTrue(entered.wait(2))
-                self.assertIsNone(sessions()[0]["title"])
+                self.assertEqual(wait(first["label_revision"], timeout=0), {"changed": False, "pending": True})
+                path = f"api/session-labels/wait?after={first['label_revision']}"
+                notice = client.submit(get, path)
+                self.assertTrue(waiting.wait(2))
+                self.assertIsNone(get("api/session-summaries")["sessions"][0]["title"])
+                self.assertFalse(notice.done())
             finally:
                 release.set()
-            named = self.wait_for(lambda: [row for row in sessions() if row["title"]])
+            updated = {"changed": True, "pending": False}
+            self.assertEqual(notice.result(timeout=3), updated)
+            self.assertEqual(get(path), updated, "Completion before a request starts also wakes it")
+            fresh = get("api/session-summaries")
+        self.assertNotIn("label_revision", fresh)
+        named = fresh["sessions"]
         self.assertEqual((named[0]["thread_id"], named[0]["title"]), (THREAD, "聊天对话串"))
 
 
