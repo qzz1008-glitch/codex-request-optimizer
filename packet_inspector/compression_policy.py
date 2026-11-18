@@ -5,7 +5,7 @@ from typing import NamedTuple
 
 from .request_context import temporary_kind_from_metadata
 from .request_types import image_request_kind
-from .transport import AUTO_ZSTD_HIGH_LEVEL
+from .transport import AUTO_ZSTD_HIGH_LEVEL, below_auto_zstd_threshold
 
 INITIAL_HIGH_BYTES = 1_500_000
 ORIGINAL, FAST, HIGH = 0, 1, 17
@@ -13,17 +13,17 @@ ORIGINAL, FAST, HIGH = 0, 1, 17
 # so upgraded and draining workers can share the database without migration.
 
 
-def select_phase(previous, original_bytes, budget_bytes):
+def select_phase(previous, uncompressed_bytes, budget_bytes):
     """One selection rule for both main requests and read-only auxiliaries.
 
-    Small original -> original; unknown large original -> initial size split;
+    Small plaintext -> original; unknown large plaintext -> initial size split;
     known high -> high; known original/fast -> fast. Wire size can only promote
     the *next* request in finish(), never change the current selection.
     """
-    if original_bytes * 100 < budget_bytes * 90:
+    if below_auto_zstd_threshold(uncompressed_bytes, budget_bytes):
         return ORIGINAL
     if previous is None:
-        return HIGH if original_bytes >= INITIAL_HIGH_BYTES else FAST
+        return HIGH if uncompressed_bytes >= INITIAL_HIGH_BYTES else FAST
     return HIGH if previous == HIGH else FAST
 
 
@@ -38,6 +38,12 @@ def is_main_request(meta):
             and meta.get("request_kind") not in {"prewarm", "memory", "tool_search", "image_generation", "image_edit"}
             and image_request_kind(meta.get("path", "")) is None
             and temporary_kind_from_metadata(meta) in {None, "subagent"})
+
+
+def _rewritten_body_is_small(size, recorded_budget, budget_bytes):
+    if type(recorded_budget) is int and recorded_budget > 0:
+        budget_bytes = recorded_budget
+    return type(size) is int and size >= 0 and below_auto_zstd_threshold(size, budget_bytes)
 
 
 class CompressionDecision(NamedTuple):
@@ -63,6 +69,9 @@ class CompressionPolicy:
                 phase INTEGER NOT NULL CHECK(phase IN (0,1,17)),
                 ticket INTEGER NOT NULL, touched REAL NOT NULL,
                 PRIMARY KEY(scope,thread))""")
+            c.execute("""CREATE INDEX IF NOT EXISTS packet_summary_image_zstd_ticket
+                ON packet_summaries(json_extract(meta,'$.relay_auto_zstd_ticket'))
+                WHERE json_type(meta,'$.image_isolation_decoded_after')='integer'""")
 
     @staticmethod
     def _record_phase(c, key, before_ticket, budget_bytes):
@@ -79,9 +88,11 @@ class CompressionPolicy:
             if (not is_main_request(meta)
                     or not meta.get("path", "").split("?", 1)[0].rstrip("/").endswith("/responses")):
                 continue
+            rewritten = meta.get("image_isolation_decoded_after")
+            small_rewrite = _rewritten_body_is_small(rewritten, meta.get("relay_auto_zstd_budget_bytes"), budget_bytes)
             phase = meta.get("relay_auto_zstd_next_phase")
             if type(phase) is int and phase in {ORIGINAL, FAST, HIGH}:
-                return phase
+                return ORIGINAL if small_rewrite else phase
             # Older records lack a phase. Preserve a known high level even
             # when its compressed packet is small; pressure also promotes high.
             size = next((meta.get(k) for k in ("overflow_original_wire_bytes", "usage_override_request_bytes",
@@ -89,14 +100,36 @@ class CompressionPolicy:
                          if type(meta.get(k)) is int and meta[k] >= 0), None)
             if size is None:
                 continue
+            if small_rewrite:
+                return ORIGINAL
             summary = meta.get("overflow_compaction_calls", 0) > 0 or meta.get("overflow_cache_hit") is True
             level = (meta.get("transport_zstd_level") if "transport_content_encoding" in meta
                      else None if summary else meta.get("relay_zstd_level"))
-            if level in {AUTO_ZSTD_HIGH_LEVEL, 17} or size * 100 >= budget_bytes * 90:
+            if level in {AUTO_ZSTD_HIGH_LEVEL, 17} or not below_auto_zstd_threshold(size, budget_bytes):
                 return HIGH
-            original = meta.get("decoded_bytes")
-            return ORIGINAL if type(original) is int and original * 100 < budget_bytes * 90 else FAST
+            uncompressed = rewritten if type(rewritten) is int and rewritten >= 0 else meta.get("decoded_bytes")
+            return (ORIGINAL if type(uncompressed) is int and below_auto_zstd_threshold(uncompressed, budget_bytes)
+                    else FAST)
         return None
+
+    def _previous_phase(self, c, key, stored, before_ticket, budget_bytes):
+        if stored is None:
+            return self._record_phase(c, key, before_ticket, budget_bytes)
+        phase, ticket = stored
+        if phase != ORIGINAL:
+            # Older workers advanced the phase using the body before image isolation.
+            # Only repair a stored phase using the record for that exact ticket.
+            row = c.execute("""SELECT json_extract(meta,'$.image_isolation_decoded_after'),
+                       json_extract(meta,'$.relay_auto_zstd_budget_bytes')
+                FROM packet_summaries
+                WHERE json_extract(meta,'$.relay_auto_zstd_ticket')=? AND thread=?
+                AND json_extract(meta,'$.source')='live'
+                AND json_extract(meta,'$.relay_compression_scope')=?
+                AND json_type(meta,'$.image_isolation_decoded_after')='integer'""",
+                (ticket, key[1], key[0])).fetchone()
+            if row and _rewritten_body_is_small(row[0], row[1], budget_bytes):
+                return ORIGINAL
+        return phase
 
     def reserve(self):
         # Allocate before inspection/compression so slow old requests cannot
@@ -105,23 +138,23 @@ class CompressionPolicy:
             c.execute("UPDATE auto_zstd_clock SET serial=serial+1 WHERE singleton=1")
             return c.execute("SELECT serial FROM auto_zstd_clock WHERE singleton=1").fetchone()[0]
 
-    def level(self, key, original_bytes, budget_bytes):
+    def level(self, key, uncompressed_bytes, budget_bytes):
         # Auxiliary dispatches can use the main session's selected level,
         # but must not advance its ticket or reset it with their shorter body.
         previous = None
         if key is not None:
             with self.store.connect() as c:
-                row = c.execute("SELECT phase FROM auto_zstd_sessions WHERE scope=? AND thread=?", key).fetchone()
+                row = c.execute("SELECT phase,ticket FROM auto_zstd_sessions WHERE scope=? AND thread=?", key).fetchone()
                 before = c.execute("SELECT serial FROM auto_zstd_clock WHERE singleton=1").fetchone()[0] + 1
-                previous = row[0] if row else self._record_phase(c, key, before, budget_bytes)
-        return phase_level(select_phase(previous, original_bytes, budget_bytes))
+                previous = self._previous_phase(c, key, row, before, budget_bytes)
+        return phase_level(select_phase(previous, uncompressed_bytes, budget_bytes))
 
-    def begin(self, key, ticket, original_bytes, budget_bytes):
+    def begin(self, key, ticket, uncompressed_bytes, budget_bytes):
         with self.store.lock, self.store.connect() as c:
             c.execute("BEGIN IMMEDIATE")
             previous = c.execute("SELECT phase,ticket FROM auto_zstd_sessions WHERE scope=? AND thread=?", key).fetchone()
-            previous_phase = previous[0] if previous else self._record_phase(c, key, ticket, budget_bytes)
-            phase = select_phase(previous_phase, original_bytes, budget_bytes)
+            previous_phase = self._previous_phase(c, key, previous, ticket, budget_bytes)
+            phase = select_phase(previous_phase, uncompressed_bytes, budget_bytes)
             decision = CompressionDecision(ticket, phase, previous_phase)
             reset = c.execute("SELECT reset_after FROM auto_zstd_clock WHERE singleton=1").fetchone()[0]
             if ticket <= reset or (previous and ticket <= previous[1]):
@@ -134,7 +167,7 @@ class CompressionPolicy:
 
     def finish(self, key, decision, compressed_bytes, budget_bytes):
         phase = decision.phase
-        if phase == FAST and compressed_bytes * 100 >= budget_bytes * 90:
+        if phase == FAST and not below_auto_zstd_threshold(compressed_bytes, budget_bytes):
             phase = HIGH
         with self.store.lock, self.store.connect() as c:
             changed = c.execute("UPDATE auto_zstd_sessions SET phase=? WHERE scope=? AND thread=? AND ticket=?",
