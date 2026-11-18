@@ -165,6 +165,16 @@ let browser,cases=0;
         assert(controls.every(r=>Math.abs(r.y-controls[0].y)<1&&r.height===controls[0].height),'Proxy controls share one row and height');
         for(let i=1;i<controls.length;i++)assert(controls[i].x>=controls[i-1].x+controls[i-1].width,'Controls do not overlap');
       }
+      if(width>=600){
+        const port=await page.locator('#entry-port').boundingBox();
+        const directory=await page.locator('#storage-dir').boundingBox();
+        const portLabel=await page.locator('label[for="entry-port"]').boundingBox();
+        const open=await page.locator('#storage-dir-open').boundingBox();
+        assert.equal(controls[0].x,portLabel.x,'Proxy mode aligns with settings labels');
+        assert.equal(controls[1].x,port.x,'Proxy address aligns with the port input');
+        assert.equal(controls[1].x,directory.x,'Proxy address aligns with the directory input');
+        assert.equal(controls[2].x,open.x,'The test and open buttons start in the same column');
+      }
       const beforeTest=await page.locator('#proxy-test').boundingBox();
       await page.evaluate(()=>{$('proxy-test').setAttribute('aria-busy','true');fillProxySettings();});
       assert.deepEqual(await page.locator('#proxy-test').boundingBox(),beforeTest,'Testing state does not shift the button');
