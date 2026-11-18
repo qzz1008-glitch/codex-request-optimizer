@@ -115,7 +115,7 @@ assert(connections.includes('globalThis.InspectorConnections ='),'Connection con
       await reopenPanel();
       await page.waitForFunction(()=>document.querySelectorAll('.connection-device').length===2);
       assert.equal(await page.locator('#connection-devices-error').isHidden(),true);
-      const reconnect=page.getByRole('button',{name:'重新连接 Codex · Server 176',exact:true});
+      const reconnect=page.getByRole('button',{name:'重连 Codex · Server 176',exact:true});
       assert.equal(await page.locator('.connection-device-reconnect:visible').count(),1,'Only SSH devices offer daemon reconnect');
       const beforeReconnect=await page.evaluate(()=>({calls:fixture.calls.length,states:fixture.rows.map(row=>row.state)}));
       await reconnect.click();

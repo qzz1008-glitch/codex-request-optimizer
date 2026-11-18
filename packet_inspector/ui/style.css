@@ -515,7 +515,11 @@ dialog{width:min(760px,calc(var(--desktop-width) - 80px));max-height:calc(var(--
 .connection-device-info strong{font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .connection-device-state{font-size:12px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .connection-device-actions{flex-shrink:0;padding:2px}.connection-device-actions button{padding:3px 9px;min-width:46px}
-.connection-device-controls{flex-shrink:0;display:flex;align-items:center;gap:6px}.connection-device-reconnect{font-size:12px;min-height:26px;padding:3px 9px;white-space:nowrap}.connection-device-reconnect[aria-disabled=true]{opacity:.55;cursor:default}
+.connection-device-controls{flex-shrink:0;display:flex;align-items:center;gap:8px}
+.connection-device-reconnect{display:inline-flex;align-items:center;justify-content:center;min-width:46px;min-height:32px;padding:5px 10px;border:1px solid var(--line);border-radius:999px;background:var(--bg);color:var(--muted);font-size:12px;font-weight:600;line-height:20px;white-space:nowrap}
+.connection-device-reconnect:not(:disabled):not([aria-disabled=true]):hover{border-color:var(--accent);background:var(--soft);color:var(--accent)}
+.connection-device-reconnect:disabled,.connection-device-reconnect[aria-disabled=true]{opacity:.5;cursor:default;border-color:var(--line);background:var(--bg);color:var(--muted)}
+.connection-device-reconnect:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .connection-error{font-size:12px;color:var(--danger);overflow-wrap:anywhere;white-space:pre-wrap}
 #devices-confirm-dialog{width:min(540px,calc(100vw - 48px))}#devices-confirm-dialog h2{font-size:20px}#devices-confirm-dialog .button-row{justify-content:flex-end}
 .connection-confirm-targets{list-style:none;padding:0;margin:14px 0;max-height:32vh;overflow:auto;scrollbar-gutter:stable}

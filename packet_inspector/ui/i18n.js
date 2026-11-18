@@ -7,6 +7,7 @@ const uiI18n = (() => {
     "按设备管理接入":"Manage connections by device",
     "设备接入":"Device connections",
     "重新连接 Codex":"Reconnect Codex",
+    "重连":"Reconnect",
     "正在重新连接…":"Reconnecting…",
     "确认重新连接":"Confirm reconnect",
     "重载此服务器当前账号的 Codex 后台，使配置生效。":"Reload the Codex backend for the current account on this server to apply configuration changes.",
