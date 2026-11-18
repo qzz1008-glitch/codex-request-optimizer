@@ -35,7 +35,7 @@ def _destination(value):
     return isinstance(value, str) and bool(re.fullmatch(r"[\w.@:[\]-]{1,255}", value)) and not value.startswith("-")
 
 
-def ssh_aliases(config):
+def ssh_aliases(config, *, config_hash=None):
     """Only concrete Host entries, including bounded OpenSSH Include files."""
     aliases, visited = [], set()
 
@@ -47,10 +47,12 @@ def ssh_aliases(config):
         try:
             if path.stat().st_size > 1024 * 1024:
                 return
-            lines = path.read_text(encoding="utf-8-sig").splitlines()
+            contents = path.read_text(encoding="utf-8-sig")
         except (OSError, UnicodeError):
             return
-        for line in lines:
+        if config_hash is not None:
+            config_hash.update(json.dumps((str(path), contents)).encode())
+        for line in contents.splitlines():
             try:
                 fields = shlex.split(line, comments=True, posix=True)
             except ValueError:
@@ -72,7 +74,7 @@ def ssh_aliases(config):
     return aliases[:MAX_TARGETS]
 
 
-def saved_hosts(codex_home, ssh_config):
+def saved_hosts(codex_home, ssh_config, *, config_hash=None):
     hosts, destinations = [], set()
     state_path = codex_home / ".codex-global-state.json"
     try:
@@ -122,7 +124,7 @@ def saved_hosts(codex_home, ssh_config):
                 referenced.add(value)
             if ":remote-connection-auto-connect-by-host-id:" in key and isinstance(value, dict):
                 referenced.update(value)
-    for alias in ssh_aliases(ssh_config):
+    for alias in ssh_aliases(ssh_config, config_hash=config_hash):
         if any(host.destination == alias for host in hosts):
             continue
         identity = "remote-ssh-discovered:" + quote(alias, safe="-_.!~*'()")
@@ -138,12 +140,15 @@ def saved_hosts(codex_home, ssh_config):
 
 class SshControl:
     @staticmethod
-    def arguments(host):
+    def arguments(host, *, fresh=False):
         executable = shutil.which("ssh")
         if not executable:
             raise ValueError("未找到 OpenSSH 客户端。")
         arguments = [executable, "-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5",
                      "-o", "ConnectionAttempts=1", "-o", "ServerAliveInterval=10", "-o", "ServerAliveCountMax=2"]
+        if fresh:
+            arguments += ["-o", "StrictHostKeyChecking=yes", "-o", "UpdateHostKeys=no",
+                          "-o", "ControlMaster=no", "-o", "ControlPath=none", "-o", "ForkAfterAuthentication=no"]
         if host.port is not None:
             arguments += ["-p", str(host.port)]
         if host.identity:
@@ -151,9 +156,10 @@ class SshControl:
         return arguments
 
     def __call__(self, host, action, origin="", **options):
-        arguments = self.arguments(host)
-        if action and action.startswith("tunnel_"):
-            arguments += ["-o", "StrictHostKeyChecking=yes", "-o", "UpdateHostKeys=no", "-o", "ClearAllForwardings=yes"]
+        tunnel = bool(action and action.startswith("tunnel_"))
+        arguments = self.arguments(host, fresh=tunnel)
+        if tunnel:
+            arguments += ["-o", "ClearAllForwardings=yes"]
         arguments += ["--", host.destination, "exec \"${SHELL:-/bin/sh}\" -lc 'cd / && exec python3 -I -'"]
         payload = json.dumps({"action": action, "origin": origin, **options}, ensure_ascii=True)
         script = "INPUT = " + repr(payload) + "\n" + SCRIPT
@@ -241,9 +247,11 @@ class Connections:
             return {"state": "error", "error": type(exc).__name__, "can_connect": False, "can_disconnect": False}
 
     def _discover(self):
-        hosts = saved_hosts(self.codex_home, self.ssh_config)
+        config_hash = hashlib.sha256()
+        hosts = saved_hosts(self.codex_home, self.ssh_config, config_hash=config_hash)
+        ssh_revision = config_hash.hexdigest()
         source = [(host.id, host.name, host.destination, host.port, host.identity) for host in hosts]
-        self.revision = hashlib.sha256(json.dumps(source, ensure_ascii=True).encode()).hexdigest()
+        self.revision = hashlib.sha256(json.dumps((source, ssh_revision)).encode()).hexdigest()
         current = {host.id for host in hosts} | {"local"}
         for identity in list(self.entries):
             if identity not in current and not self.entries[identity].get("busy"):
@@ -251,7 +259,7 @@ class Connections:
         for host in [None, *hosts]:
             identity = host.id if host else "local"
             entry = self.entries.setdefault(identity, {"id": identity, "state": "unknown", "checked": 0})
-            if entry.get("host") is not None and entry["host"] != host:
+            if entry.get("host") is not None and (entry["host"] != host or entry.get("ssh_revision") != ssh_revision):
                 if entry.get("busy"):
                     continue
                 entry.clear()
@@ -259,7 +267,7 @@ class Connections:
             hint = self.origins.get(identity, {})
             if host and isinstance(hint, dict) and hint.get("destination") == host.destination and hint.get("port") == host.port:
                 entry.setdefault("origin", hint.get("origin", ""))
-            entry.update(host=host, name=host.name if host else "本机", kind="ssh" if host else "local")
+            entry.update(host=host, ssh_revision=ssh_revision, name=host.name if host else "本机", kind="ssh" if host else "local")
 
     def _remember_origin(self, host, result):
         origin = result.get("origin")
@@ -320,6 +328,8 @@ class Connections:
                 with self.guard:
                     if host:
                         self._remember_origin(host, result)
+                        if result.get("account_key") and result["account_key"] != entry.get("account_key"):
+                            entry.pop("codex_reconnect", None)
                     entry.update(result, busy=False, checked=time.monotonic())
                     if action:
                         entry["completed_action"] = action
@@ -343,7 +353,8 @@ class Connections:
                             entry["error"] = entry["action_error"]
                 elif not entry.get("busy") and (refresh or time.monotonic() - entry.get("checked", 0) >= PROBE_TTL) and not self.closed:
                     self._launch(entry)
-                rows.append({key: value for key, value in entry.items() if key not in {"host", "origin", "checked", "local_result", "action_error"}})
+                rows.append({key: value for key, value in entry.items() if key not in {
+                    "host", "origin", "checked", "local_result", "action_error", "ssh_revision", "account_key"}})
             return {"targets": rows, "error": catalog_error, "revision": self.revision}
 
     def apply(self, identities, action, *, revision=None):

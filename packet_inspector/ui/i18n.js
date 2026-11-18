@@ -66,6 +66,7 @@ const uiI18n = (() => {
     "接入配置未完全更新，请查看设备状态。":"Connection configuration is incomplete. Check the device status.",
     "无法建立 SSH 请求转发，请检查 SSH 是否允许远程端口转发。":"Could not establish SSH request forwarding. Check whether SSH remote port forwarding is allowed.",
     "SSH 登录使用的 Codex 配置目录已变化。":"The Codex configuration directory for this SSH login has changed.",
+    "SSH 登录账号或 Codex 配置目录已变化，请重新确认操作。":"The SSH account or Codex configuration directory changed. Confirm the operation again.",
     "远程 Codex 配置已变化，请重新尝试。":"The remote Codex configuration changed. Try the operation again.",
     "服务器未返回接入状态，请检查 SSH 登录及系统的 Python 3。":"The server did not report a status. Check the SSH login and availability of Python 3.",
     "远程 provider 指向服务器本地服务，Windows 中转无法直接访问。":"The remote provider points to a server-local service that the Windows relay cannot reach.",
