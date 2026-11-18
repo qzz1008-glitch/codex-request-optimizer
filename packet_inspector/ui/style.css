@@ -110,18 +110,24 @@ body{height:100dvh;min-width:0;display:flex;flex-direction:column;overflow-x:hid
 .session-item:hover,.session-row:where(:has(.session-copy:hover)) > .session-item{background:#f3f6fc;border-color:var(--line)}
 .session-item.selected{background:var(--soft);border-color:#cad7fa;color:var(--accent);box-shadow:inset 3px 0 var(--accent)}
 .session-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;min-width:0}
-/* Let selection start in the left inset of either text row. */
-.session-heading,.session-meta{padding-left:12px}
-.session-row:has(.session-copy) .session-heading{padding-right:24px}
-.session-copy{position:absolute;top:5px;right:8px;display:grid;place-items:center;width:22px;height:22px;min-height:0;padding:0;border:0;border-radius:4px;background:transparent;color:var(--muted)}
+/* Let selection start in the left inset of each text row. */
+.session-heading,.session-id,.session-meta{padding-left:12px}
+.session-row:has(.session-copy) :is(.session-heading,.session-id){padding-right:24px}
+.session-copy{position:absolute;top:7px;right:8px;display:grid;place-items:center;width:22px;height:18px;min-height:0;padding:0;border:0;border-radius:4px;background:transparent;color:var(--muted)}
+.session-copy[data-session-copy="id"]{top:26px}
 .session-copy svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linejoin:round;stroke-linecap:round}
 .session-copy:hover{background:var(--soft);color:var(--accent)}
 .session-copy:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
 .session-copy-feedback{position:absolute;top:6px;right:34px;pointer-events:none}
+.session-copy[data-session-copy="id"] + .session-copy-feedback{top:25px}
 .session-copy-feedback:not(:empty){padding:2px 6px;border-radius:4px;background:var(--panel);color:var(--muted);font-size:11px;line-height:16px;white-space:nowrap}
 @media (hover:hover){
   .session-copy{opacity:0;pointer-events:none}
-  .session-row:has(.session-heading:hover, .session-copy:hover, :focus-visible, .session-copy-feedback:not(:empty)) .session-copy{opacity:1;pointer-events:auto}
+  .session-copy:is(:hover,:focus-visible),
+  .session-copy:has(+ .session-copy-feedback:not(:empty)),
+  .session-row:has(.session-item:focus-visible) .session-copy,
+  .session-row:has(.session-heading:hover) .session-copy[data-session-copy="title"],
+  .session-row:has(.session-id:hover) .session-copy[data-session-copy="id"]{opacity:1;pointer-events:auto}
 }
 .other-session-group{background:#f5f2fc;border-color:#e7e0f5}
 .other-session-group:hover{background:#eee8fa;border-color:#d8caee}
@@ -210,10 +216,13 @@ body{height:100dvh;min-width:0;display:flex;flex-direction:column;overflow-x:hid
 @media(prefers-reduced-motion:reduce){.trend-series-line{transition:none}}
 .image-path-item{display:flex;align-items:flex-start;gap:8px;min-width:0;padding:8px 0;border-top:1px solid var(--line)}
 .image-path-name{flex:1;min-width:0;color:var(--ink);font:12px/1.6 Consolas,"Cascadia Mono",monospace;white-space:pre-wrap;overflow-wrap:anywhere;user-select:text}
-.session-title{font-size:13px;font-weight:600;line-height:1.35;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
-.session-meta{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:4px;font-size:10px;line-height:1.35;color:var(--muted);font-variant-numeric:tabular-nums;white-space:nowrap}
-.session-origin{overflow:hidden;text-overflow:ellipsis}
-.session-updated{grid-column:2;justify-self:end;text-align:right;white-space:nowrap}
+.session-title,.session-id,.session-meta>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.session-title{font-size:13px;font-weight:600;line-height:1.35}
+.session-id{font:11px/1.35 Consolas,"Cascadia Mono",monospace;color:var(--muted)}
+.session-meta{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));align-items:center;gap:4px;font-size:10px;line-height:1.35;color:var(--muted);font-variant-numeric:tabular-nums}
+.session-token{grid-column:1}
+.session-origin{grid-column:2;text-align:center}
+.session-updated{grid-column:3;text-align:right}
 .session-metadata-note{flex-shrink:0;font-size:11px;line-height:1.5;margin:0 5px 4px}
 .requests-sidebar{position:relative;height:auto;max-height:none;min-height:0;border-bottom:0;gap:var(--records-heading-gap);padding:var(--view-inset)}
 .requests-sidebar .packet-list{margin-inline:0}
