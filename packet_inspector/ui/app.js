@@ -1,7 +1,7 @@
 "use strict";
 
 globalThis.InspectorConnections = {
-  create({request, status, localBusy, refreshLocal, localActivity=()=>{}}) {
+  create({request}) {
     const get=id=>document.getElementById(id), tr=value=>uiI18n.t(value);
     const panel=get("connection-panel"), controls=get("connection-controls");
     const headerToggle=get("request-compression");
@@ -12,10 +12,8 @@ globalThis.InspectorConnections = {
     let rows=[],loaded=false,loading=false,submitting=false,catalogError="",revision="",timer=null,closeTimer=null,hover=false;
     let plan=null,finished=false,disposed=false;
     const text=(node,value)=>{if(node.textContent!==value)node.textContent=value;};
-    const name=row=>row.kind==="local"?tr("本机"):row.name;
     const isOpen=()=>nativePopover?panel.matches(":popover-open"):!panel.hidden;
-    const busy=row=>!!row.busy||(row.id==="local"&&localBusy());
-    const anyBusy=()=>rows.some(busy)||submitting;
+    const busy=row=>!!row.busy;
     const desired=action=>action==="activate"?"connected":"disconnected";
     const operationError=(row,action)=>row.error||(action==="reconnect"?row.codex_reconnect?.error:"");
     const completed=(row,action)=>action==="reconnect"?row.codex_reconnect?.state==="reloaded":row.state===desired(action);
@@ -23,11 +21,11 @@ globalThis.InspectorConnections = {
       if(row.busy)return tr(row.action==="reconnect"?"正在重新连接…":row.action==="activate"?"正在接入…":row.action==="restore"?"正在断开…":"正在检查…");
       if(row.error||row.state==="error")return tr("接入异常");
       const value=tr(row.state==="connected"?"已接入":row.state==="disconnected"?"已断开":"待检查");
-      if(row.reload_required)return value+" · "+tr(row.kind==="local"?"请重启 ChatGPT App":"请重新连接远程 Codex");
+      if(row.reload_required)return value+" · "+tr("请重新连接远程 Codex");
       return value+(row.warning_count?" · "+tr("部分配置未完成，请检查此设备的接入详情。"):"");
     }
     function statusIndicator(row) {
-      const reload=row.reload_required?tr(row.kind==="local"?"配置待生效，请重启 ChatGPT App。":row.codex_restart?.supported?
+      const reload=row.reload_required?tr(row.codex_restart?.supported?
         "配置待生效，请点击“重连”重新加载此服务器的 Codex。":"配置待生效，请在 ChatGPT 中重新连接此服务器的 Codex。"):"";
       const error=row.error||row.codex_reconnect?.error;
       if(error||row.state==="error")return {kind:"error",message:[
@@ -54,53 +52,43 @@ globalThis.InspectorConnections = {
       const actions={};
       for(const action of ["restore","activate"]) {
         const button=element("button");button.type="button";
-        button.addEventListener("click",()=>confirm(action,[row.id]));buttons.append(button);actions[action]=button;
+        button.addEventListener("click",()=>confirm(action,row.id));buttons.append(button);actions[action]=button;
       }
       const tools=element("div","connection-device-controls"),reconnect=element("button","connection-device-reconnect");
       reconnect.type="button";
-      reconnect.addEventListener("click",()=>{if(reconnect.getAttribute("aria-disabled")!=="true")confirm("reconnect",[row.id]);});
+      reconnect.addEventListener("click",()=>{if(reconnect.getAttribute("aria-disabled")!=="true")confirm("reconnect",row.id);});
       tools.append(reconnect,buttons);info.append(state,label);root.append(info,tools);list.append(root);
       const value={root,label,state,buttons,actions,reconnect};nodes.set(row.id,value);return value;
     }
     function render() {
-      localActivity(rows.some(row=>row.id==="local"&&row.busy)||pending.has("local"));
-      const active=rows.length&&rows.every(row=>row.state==="connected"&&!row.error);
-      const disconnected=rows.length&&rows.every(row=>row.state==="disconnected"&&!row.error);
-      for(const [id,action,pressed] of [["compression-connect","activate",active],["compression-disconnect","restore",disconnected]]) {
-        const button=get(id);button.setAttribute("aria-pressed",String(!!pressed));
-        button.disabled=!loaded||anyBusy()||localBusy()||!!pressed;
-        button.title=tr(action==="activate"?"接入全部设备":"断开全部设备");
-      }
-      headerToggle.setAttribute("aria-busy",String(loading||anyBusy()));
-      headerToggle.title=tr("控制本机和全部服务器；悬停可单独切换。");
-      text(get("compression-hint"),tr("控制本机和全部服务器；悬停可单独切换。"));
       for(const [id,value] of nodes)if(!rows.some(row=>row.id===id)){value.root.remove();nodes.delete(id);}
       for(const row of rows) {
-        const value=rowNodes(row);text(value.label,name(row));
+        const value=rowNodes(row);text(value.label,row.name);
         const indicator=statusIndicator(row);value.state.dataset.status=indicator.kind;
         const stateLabel=row.busy?stateText(row):indicator.message;
         value.state.title=stateLabel;value.state.setAttribute("aria-label",stateLabel);
         value.root.dataset.state=row.error?"error":row.state;
         value.root.setAttribute("aria-busy",String(!!row.busy));
-        value.buttons.setAttribute("aria-label",name(row));
+        value.buttons.setAttribute("aria-label",row.name);
         value.buttons.setAttribute("aria-description",stateLabel);
         for(const [action,button] of Object.entries(value.actions)) {
           text(button,tr(action==="activate"?"接入":"断开"));
           button.setAttribute("aria-pressed",String(row.state===desired(action)&&!row.error));
           button.disabled=busy(row)||submitting||(row.state===desired(action)&&!row.error);
         }
-        value.reconnect.hidden=row.kind!=="ssh";
         value.reconnect.disabled=busy(row)||submitting;
         value.reconnect.setAttribute("aria-disabled",String(!row.codex_restart?.supported));
-        value.reconnect.classList.toggle("needs-reconnect",row.kind==="ssh"&&!!row.reload_required&&!!row.codex_restart?.supported&&!busy(row)&&!submitting);
+        value.reconnect.classList.toggle("needs-reconnect",!!row.reload_required&&!!row.codex_restart?.supported&&!busy(row)&&!submitting);
         text(value.reconnect,tr("重连"));
-        value.reconnect.setAttribute("aria-label",tr("重连")+" Codex · "+name(row));
+        value.reconnect.setAttribute("aria-label",tr("重连")+" Codex · "+row.name);
         const nativeHint=row.codex_reconnect?.error||row.codex_reconnect?.warning||(!row.codex_restart?.supported?row.codex_restart?.reason:"");
         value.reconnect.title=tr(nativeHint||"重载此服务器当前账号的 Codex 后台，使配置生效。");
         value.reconnect.setAttribute("aria-description",value.reconnect.title);
       }
-      const message=catalogError||(!loaded?tr("正在读取设备列表…"):"");
-      text(get("connection-devices-error"),tr(message));get("connection-devices-error").hidden=!message;
+      const message=catalogError||(!loaded?"正在读取服务器列表…":rows.length?"":"暂无已保存的服务器");
+      const note=get("connection-devices-status");
+      text(note,tr(message));note.hidden=!message;
+      note.classList.toggle("connection-error",!!catalogError);
       renderConfirmation();
       place();
     }
@@ -112,14 +100,14 @@ globalThis.InspectorConnections = {
         let node=confirmNodes.get(row.id);
         if(!node){node=element("li");const title=element("strong"),detail=element("span");node.append(title,detail);confirmNodes.set(row.id,node);get("devices-confirm-targets").append(node);}
         const error=operationError(row,plan.action),reloaded=plan.action==="reconnect"&&finished&&completed(row,plan.action);
-        text(node.firstChild,name(row));text(node.lastChild,error?tr(error):reloaded?tr(row.codex_reconnect?.warning||"Codex 后台已重载，等待 ChatGPT 恢复连接。"):stateText(row));
+        text(node.firstChild,row.name);text(node.lastChild,error?tr(error):reloaded?tr(row.codex_reconnect?.warning||"Codex 后台已重载，等待 ChatGPT 恢复连接。"):stateText(row));
         node.dataset.state=error?"error":row.state;
       }
       const running=selected.some(row=>pending.has(row.id));
       const failed=finished&&selected.some(row=>operationError(row,plan.action)||!completed(row,plan.action));
       get("devices-confirm-apply").hidden=finished&&!failed;
       get("devices-confirm-apply").disabled=submitting||running||selected.some(busy)||!!catalogError;
-      text(get("devices-confirm-apply"),tr(submitting||running?"正在执行…":failed?"重试失败设备":plan.action==="reconnect"?"确认重新连接":plan.action==="activate"?"确认接入":"确认断开"));
+      text(get("devices-confirm-apply"),tr(submitting||running?"正在执行…":failed?"重试":plan.action==="reconnect"?"确认重新连接":plan.action==="activate"?"确认接入":"确认断开"));
       text(get("devices-confirm-cancel"),tr(finished?"完成":running?"关闭":"取消"));
       dialog.setAttribute("aria-busy",String(submitting||running));
     }
@@ -169,36 +157,32 @@ globalThis.InspectorConnections = {
       try {
         const value=await request("/api/connections");
         if(!Array.isArray(value.targets))throw Error(tr("无法读取设备接入状态。"));
-        rows=value.targets;loaded=true;catalogError=value.error||"";revision=value.revision;
-        let localCompleted=false;
+        rows=value.targets.filter(row=>row.kind==="ssh");loaded=true;catalogError=value.error||"";revision=value.revision;
         for(const [id,operation] of pending) {
           const row=rows.find(target=>target.id===id);
-          if(row&&!row.busy&&row.operation_id===operation){pending.delete(id);localCompleted ||= id==="local";}
+          if(row&&!row.busy&&row.operation_id===operation)pending.delete(id);
           else if(!row||row.operation_id!==operation){pending.delete(id);catalogError=tr("设备状态已变化，请刷新后检查操作结果。");}
         }
         if(plan?.submitted&&!plan.targets.some(row=>pending.has(row.id)))finished=true;
-        if(localCompleted){localActivity(false);await refreshLocal();}
       } catch(error) {
         if(error.status===404){rows=[];loaded=false;catalogError=tr("当前运行版本不支持设备接入管理，请更新 EXE 后使用。");}
         else catalogError=error.message;
       }
       finally {loading=false;render();schedule();}
     }
-    async function confirm(action,identities=null) {
+    async function confirm(action,id) {
       if(dialog.open||document.querySelector("dialog[open]"))return;
       await poll();
       if(disposed||dialog.open||document.querySelector("dialog[open]"))return;
-      const targets=rows.filter(row=>identities?identities.includes(row.id):true);
-      if(!targets.length||(!identities&&catalogError)) {show();return;}
-      hide();finished=false;plan={action,targets:targets.map(({id,name,kind})=>({id,name,kind})),revision,submitted:false};
+      const target=rows.find(row=>row.id===id);
+      if(!target||catalogError) {show();return;}
+      hide();finished=false;plan={action,targets:[{id:target.id,name:target.name}],revision,submitted:false};
       confirmNodes.clear();get("devices-confirm-targets").replaceChildren();
-      const all=identities===null;
-      text(get("devices-confirm-title"),tr(action==="reconnect"?"重新连接 Codex":action==="activate"?(all?"接入全部设备":"接入所选设备"):(all?"断开全部设备":"断开所选设备")));
+      text(get("devices-confirm-title"),tr(action==="reconnect"?"重新连接 Codex":action==="activate"?"接入服务器":"断开服务器"));
       text(get("devices-confirm-description"),tr(action==="reconnect"?"将重载所选服务器当前账号的 Codex 后台，使配置生效。该账号正在执行或排队的任务可能中断。":action==="activate"?
-        "软件会先验证连接，再备份并更新所选设备的 Codex 配置。":
-        "将恢复以下设备的原始出口并开启 Codex 原生压缩，后续请求不再通过对应中转。中转服务保持运行。"));
-      const scope=targets.some(row=>row.kind==="local")?tr("本机操作包含已检测到的 WSL 配置。")+" ":"";
-      text(get("devices-confirm-hint"),action==="reconnect"?tr("ChatGPT 将短暂断开该服务器并尝试自动恢复连接。中转服务保持运行。"):scope+tr("本机配置变化后请重启 ChatGPT App。服务器配置变化后，可在对应设备行点击重连。"));
+        "软件会先验证连接，再备份并更新此服务器的 Codex 配置。":
+        "将恢复此服务器的原始出口并开启 Codex 原生压缩。中转服务保持运行。"));
+      text(get("devices-confirm-hint"),tr(action==="reconnect"?"ChatGPT 将短暂断开该服务器并尝试自动恢复连接。中转服务保持运行。":"配置变更后，请重新连接该服务器的 Codex。"));
       get("devices-confirm-error").hidden=true;render();dialog.showModal();schedule();
     }
     async function apply() {
@@ -232,19 +216,11 @@ globalThis.InspectorConnections = {
     document.addEventListener("pointerdown",event=>{if(!controls.contains(event.target)&&!panel.contains(event.target))hide();});
     document.addEventListener("keydown",event=>{if(event.key==="Escape"&&isOpen()){hide();event.stopPropagation();}});
     globalThis.addEventListener("resize",place);
-    get("compression-connect").addEventListener("click",()=>confirm("activate"));
-    get("compression-disconnect").addEventListener("click",()=>confirm("restore"));
     get("devices-confirm-apply").addEventListener("click",apply);
     get("devices-confirm-cancel").addEventListener("click",()=>{dialog.close();schedule();});
     globalThis.addEventListener("pagehide",()=>{disposed=true;clearTimeout(timer);clearTimeout(closeTimer);});
     render();poll();
-    return {sync(){
-      const local=rows.find(row=>row.id==="local"),s=status();
-      if(local&&!local.busy&&!pending.has("local")&&s?.profile) {
-        local.state=s.profile.config_error?"error":s.profile.active?"connected":"disconnected";
-      }
-      render();
-    }};
+    return {render,hide};
   }
 };
 
@@ -1688,21 +1664,22 @@ function renderLanguageSelection() {
 }
 function renderCompressionMode() {
   const s=state.status;if(!s)return;
-  const connected=!!s.profile?.active;
-  const unknown=!!s.profile?.config_error;
+  const connected=s.profile?.active===true;
+  const unknown=typeof s.profile?.active!=="boolean"||!!s.profile?.config_error;
+  const busy=compressionSaving||settingsSaving||exitSaving||connectSaving||connectChecking||!!linkSaving||connectionResumeBusy();
   for(const button of document.querySelectorAll("#request-compression button")) {
     const disconnect=button.dataset.compression==="disconnected";
     button.setAttribute("aria-pressed",String(!unknown&&(disconnect?!connected:connected)));
-    button.disabled=compressionSaving||settingsSaving||exitSaving||connectSaving||connectChecking||!!linkSaving||connectionResumeBusy()||unknown||(disconnect?!connected||!s.profile.can_restore:connected);
+    button.disabled=busy||unknown||(disconnect?!connected:connected);
   }
-  $("request-compression").setAttribute("aria-busy",String(compressionSaving||connectionResumeBusy()));
-  setText($("compression-hint"),t(connectionResumeBusy()?"正在检查接入配置…":connected?"由本软件管理 zstd 压缩，保留完整内容。":"直连原上游，由 Codex 管理原生压缩。"));
+  $("request-compression").setAttribute("aria-busy",String(busy));
+  setText($("compression-hint"),t(connectionResumeBusy()?"正在检查接入配置…":unknown?"本机接入状态暂不可用。":
+    connected?"由本软件管理 zstd 压缩，保留完整内容。":"直连原上游，由 Codex 管理原生压缩。"));
   $("request-compression").title=$("compression-hint").textContent;
   $("compression-confirm-dialog").setAttribute("aria-busy",String(compressionSaving));
   for(const id of ["compression-confirm-cancel","compression-confirm-apply"])$(id).disabled=compressionSaving;
   setText($("compression-confirm-apply"),t(compressionTarget==="disconnected"?(compressionSaving?"正在取消接入…":"确认断开"):(compressionSaving?"正在切换…":"确认断开")));
   if(!connected&&!compressionSaving&&$("compression-confirm-dialog").open)cancelCompressionChange();
-  globalThis.InspectorConnectionControls?.sync();
 }
 function showConnectionFeedback(which,result={}) {
   restartNotices.connection(which,result);
@@ -1710,15 +1687,17 @@ function showConnectionFeedback(which,result={}) {
 function requestCompressionChange(mode) {
   if(mode==="connected")return requestConnection("header");
   const s=state.status,dialog=$("compression-confirm-dialog");
-  if(!s||!s.profile?.active||compressionSaving||settingsSaving||settingsOpening||settingsEditing||linkSaving||exitSaving||connectSaving||$("connect-confirm-dialog").open||$("exit-confirm-dialog").open||dialog.open)return;
+  if(!s?.profile?.active||compressionSaving||settingsSaving||settingsOpening||settingsEditing||linkSaving||exitSaving||
+    connectSaving||connectChecking||connectionResumeBusy()||document.querySelector("dialog[open]"))return;
   const disconnect=mode==="disconnected";
-  if(!disconnect||!s.profile.can_restore||s.profile.config_error)return;
+  if(!disconnect||s.profile.config_error)return;
   compressionTarget=mode;
   $("compression-confirm-title").textContent=t("取消接入");
-  $("compression-confirm-description").textContent=t("恢复原上游并开启 Codex 原生压缩？");
+  $("compression-confirm-description").textContent=t("将恢复本机及已接入 WSL 的原始出口，并开启 Codex 原生压缩。");
   $("compression-confirm-hint").textContent=t("重启 ChatGPT App 生效。");
   renderCompressionMode();
   $("compression-confirm-message").hidden=true;
+  globalThis.InspectorConnectionControls?.hide();
   dialog.showModal();
 }
 function cancelCompressionChange() {
@@ -1728,7 +1707,7 @@ function cancelCompressionChange() {
 async function confirmCompressionChange() {
   const s=state.status,mode=compressionTarget,disconnect=mode==="disconnected";
   if(!s||!s.profile?.active||compressionSaving||settingsSaving||linkSaving)return;
-  if(!disconnect||!s.profile.can_restore||s.profile.config_error)return;
+  if(!disconnect||s.profile.config_error)return;
   compressionSaving=true;compressionRevision++;renderConnectionActions();
   $("compression-confirm-message").hidden=true;
   try {
@@ -1783,17 +1762,21 @@ function renderConnectPrompt() {
 }
 async function requestConnection(source="header") {
   const s=state.status,dialog=$("connect-confirm-dialog");
-  if(!s||s.profile?.active||s.profile?.config_error||connectSaving||connectChecking||linkSaving||settingsSaving||settingsOpening||compressionSaving||exitSaving||dialog.open||$("exit-confirm-dialog").open)return;
+  if(s?.profile?.active!==false||s.profile.config_error||connectSaving||connectChecking||linkSaving||settingsSaving||
+    settingsOpening||compressionSaving||exitSaving||connectionResumeBusy()||document.querySelector("dialog[open]"))return;
   if(settingsEditing)return;
   startupConnectChecked=true;connectChecking=true;renderConnectionActions();
   try {await refreshStatus();}
   finally {connectChecking=false;renderConnectionActions();}
   const current=state.status;
-  if(current.profile?.active||current.profile?.config_error||current.ui_exit_request||exitSaving||exitFinished||$("exit-confirm-dialog").open)return;
+  if(current.profile?.active!==false||current.profile.config_error||current.ui_exit_request||exitSaving||exitFinished||
+    document.querySelector("dialog[open]"))return;
   connectSource=source;
   $("connect-confirm-cancel").textContent=t(source==="startup"?"暂不接入":"取消");
   $("connect-confirm-hint").textContent=(current.loopback_proxy_repair_supported?t("接入时自动检查并补齐本机代理例外。"):"")+t("接入后关闭原生压缩，由本软件管理 zstd。配置变更后需重启 ChatGPT App。");
-  $("connect-confirm-message").hidden=true;renderConnectPrompt();dialog.showModal();
+  $("connect-confirm-message").hidden=true;renderConnectPrompt();
+  globalThis.InspectorConnectionControls?.hide();
+  dialog.showModal();
 }
 function cancelConnectPrompt() {
   if(connectSaving)return;
@@ -2809,6 +2792,7 @@ async function setInterfaceLanguage(language,{persist=true}={}) {
   const changed=language!==uiI18n.language;
   uiI18n.setLanguage(language,{persist});
   if(!changed)return;
+  globalThis.InspectorConnectionControls?.render();
   const revision=++interfaceLanguageRevision;
   const buttons=document.querySelectorAll("#language-toggle button");
   for(const button of buttons)button.disabled=true;
@@ -2899,6 +2883,8 @@ action("settings-save",saveSettings);
 action("ui-refresh",()=>{if(state.status?.ui_live_reload)location.reload();});
 action("updates-check",()=>performUpdate("check"));action("updates-install",()=>performUpdate("install"));
 setInterval(()=>{if($("settings-dialog").open&&!settingsSaving&&!updateBusy&&["checking","downloading","upgrading"].includes(updateStatus?.state))loadUpdates();},2000);
+action("compression-connect",()=>requestCompressionChange("connected"));
+action("compression-disconnect",()=>requestCompressionChange("disconnected"));
 action("compression-confirm-cancel",cancelCompressionChange);action("compression-confirm-apply",confirmCompressionChange);
 $("compression-confirm-dialog").addEventListener("cancel",event=>{event.preventDefault();cancelCompressionChange();});
 $("compression-confirm-dialog").addEventListener("close",()=>{if(!$("compression-confirm-dialog").open)compressionTarget=null;});
@@ -2946,7 +2932,8 @@ async function applyLinkAction(which) {
     const status=await api("/api/status");state.status={...state.status,...status};
     if(which==="activate"&&(!status.profile.active||status.profile.config_error||status.provider_sync_error))
       throw Error("接入未完成，请检查 Codex 配置后重试。");
-    if(which==="restore"&&status.profile.active)throw Error("恢复未完成，请重试。");
+    if(which==="restore"&&(status.profile.active!==false||status.profile.config_error))
+      throw Error("恢复未完成，请重试。");
     return result;
   } finally {linkRevision++;}
 }
@@ -3589,8 +3576,5 @@ async function poll() {
 }
 const pollTimer=setInterval(poll,2000);
 document.addEventListener("visibilitychange",()=>{if(document.hidden){tokenTrendView.cancelPending();return;}if(workspaceView==="trends")tokenTrendView.refresh();else if(workspaceView==="records"){loadTokenWindow();loadMorePackets();loadListTokens();}});
-globalThis.InspectorConnectionControls=InspectorConnections.create({request:api,status:()=>state.status,
-  localBusy:()=>settingsSaving||settingsOpening||settingsEditing||compressionSaving||linkSaving||exitSaving||connectSaving||connectChecking||connectionResumeBusy(),
-  localActivity:busy=>{if(compressionSaving!==busy){compressionSaving=busy;compressionRevision++;}},
-  refreshLocal:()=>refreshStatus()});
+globalThis.InspectorConnectionControls=InspectorConnections.create({request:api});
 (async()=>{state.polling=true;try{await Promise.all([refreshStatus(true),refreshFilters()]);await refreshSessionSummaries();}finally{state.polling=false;}})().catch(fail);
