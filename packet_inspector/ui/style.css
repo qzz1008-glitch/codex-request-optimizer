@@ -201,8 +201,7 @@ code.session-id{font-family:Consolas,"Cascadia Mono",monospace;font-size:11px;wo
 .session-title{font-size:13px;font-weight:600;line-height:1.5;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .session-meta{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:4px;font-size:10px;line-height:1.6;color:var(--muted);font-variant-numeric:tabular-nums;white-space:nowrap}
 .session-origin{overflow:hidden;text-overflow:ellipsis}
-.session-updated{justify-self:end;text-align:right;white-space:nowrap}
-.other-session-group .session-updated{grid-column:1/-1}
+.session-updated{grid-column:2;justify-self:end;text-align:right;white-space:nowrap}
 .session-metadata-note{flex-shrink:0;font-size:11px;line-height:1.5;margin:0 5px 4px}
 .requests-sidebar{position:relative;height:auto;max-height:none;min-height:0;border-bottom:0;gap:var(--records-heading-gap);padding:var(--view-inset)}
 .requests-sidebar .packet-list{margin-inline:0}
