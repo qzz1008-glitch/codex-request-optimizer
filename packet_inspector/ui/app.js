@@ -960,6 +960,34 @@ function renderSessionConnections() {
   }
   items.append(svg);
 }
+function sessionTitleCopy(title,previousFeedback) {
+  const button=el("button","session-copy"),label=t("复制会话名称");
+  button.type="button";button.title=label;button.setAttribute("aria-label",label);
+  const icon=document.createElementNS("http://www.w3.org/2000/svg","svg"),path=document.createElementNS(icon.namespaceURI,"path");
+  icon.setAttribute("viewBox","0 0 24 24");icon.setAttribute("aria-hidden","true");
+  path.setAttribute("d","M9 9h11v11H9zM15 6V4H4v11h2");icon.append(path);button.append(icon);
+  const feedback=el("span","session-copy-feedback");
+  feedback.setAttribute("role","status");
+  if(previousFeedback) {
+    feedback.dataset.copyFeedback=previousFeedback;
+    feedback.textContent=t(previousFeedback);
+  }
+  button.onclick=async event=>{
+    const status=event.currentTarget.nextElementSibling;
+    let result="已复制";
+    try {await navigator.clipboard.writeText(title);}
+    catch(_) {result="复制失败";}
+    if(!status.isConnected)return;
+    clearTimeout(status.copyFeedbackTimer);
+    status.dataset.copyFeedback=result;
+    status.textContent=t(result);
+    status.copyFeedbackTimer=setTimeout(()=>{
+      delete status.dataset.copyFeedback;
+      status.textContent="";
+    },1600);
+  };
+  return [button,feedback];
+}
 function renderSessions() {
   const list=$("session-list");
   if(!state.status)return;
@@ -977,17 +1005,29 @@ function renderSessions() {
   const selectedItem=items.find(item=>item.dataset.session===selected);
   const anchor=selectedItem&&visible(selectedItem)?selectedItem:items.find(visible);
   const anchorId=anchor?.dataset.session, anchorOffset=anchor?anchor.getBoundingClientRect().top-bounds.top:0;
-  const focusedId=list.contains(document.activeElement)?document.activeElement.closest(".session-item")?.dataset.session:null;
+  const focused=list.contains(document.activeElement)?document.activeElement:null;
+  const focusedId=focused?.closest(".session-row")?.dataset.session;
+  const copyFocused=focused?.classList.contains("session-copy");
+  const copyFeedback=new Map(Array.from(list.querySelectorAll(".session-copy-feedback[data-copy-feedback]"),status=>[
+    status.parentElement.dataset.session,status.dataset.copyFeedback
+  ]));
   const fragment=el("div","session-items");
   for(const id of ids) {
     const otherGroup=id===OTHER_SESSION_GROUP;
     const value=otherGroup?OTHER_SESSION_GROUP:id?"thread:"+id:"unknown", data=summaries.get(id)||{};
     const title=data.title;
     const origin=data.origin?.address;
-    if(query && !(title+"\n"+data.members.map(row=>row.thread_id+" "+(row.title||"")+" "+(auxiliaryLabels[auxiliarySessionKind(row)]?t(auxiliaryLabels[auxiliarySessionKind(row)]):"")).join("\n")).toLowerCase().includes(query))continue;
+    if(query) {
+      const memberSearch=data.members.map(member=>{
+        const kindLabel=auxiliaryLabels[auxiliarySessionKind(member)];
+        return [member.thread_id,member.title,kindLabel&&t(kindLabel)].join(" ");
+      });
+      if(![title,otherGroup?"":id,...memberSearch].join("\n").toLowerCase().includes(query))continue;
+    }
+    const row=el("div","session-row");row.dataset.session=value;
     const item=el("button","session-item"+(otherGroup?" other-session-group":"")+(value===selected?" selected":""));
     item.type="button";item.dataset.session=value;
-    item.title=otherGroup?title:title+"\n"+(id||t("未识别会话"));
+    item.title=title;
     if(origin)item.title+="\n"+origin;
     if(data.title_cached)item.title+="\n"+t("会话名称暂不可用，显示上次加载的名称");
     for(const link of connections) {
@@ -1002,15 +1042,15 @@ function renderSessions() {
     const meta=el("div","session-meta");
     const when=el("span","session-updated",updated?dateFormat.format(updated)+" "+clockFormat.format(updated):"—");
     if(updated)when.title=timestampFormat.format(updated);
-    if(!otherGroup) {
-      if(id)item.append(el("code","session-id",id));
-      if(origin||data.origin===null)meta.append(el("span","session-origin",origin||"—"));
-    }
+    if(!otherGroup&&(origin||data.origin===null))meta.append(el("span","session-origin",origin||"—"));
     meta.append(when);item.append(meta);
     bindSelectableRow(item,()=>{
       if(hasTextSelectionWithin($("session-list")))window.getSelection().removeAllRanges();
       return selectSession(value);
-    });fragment.append(item);
+    });
+    row.append(item);
+    if(!otherGroup)row.append(...sessionTitleCopy(title,copyFeedback.get(value)));
+    fragment.append(row);
   }
   if(!fragment.childElementCount) {
     if(!sessionMetadataAt) {
@@ -1030,7 +1070,9 @@ function renderSessions() {
   const sessionItems=list.querySelector(".session-items");
   if(sessionItems)sessionConnectionObserver.observe(sessionItems);
   const updatedItems=Array.from(list.querySelectorAll(".session-item"));
-  const nextAnchor=updatedItems.find(item=>item.dataset.session===anchorId),nextFocus=updatedItems.find(item=>item.dataset.session===focusedId);
+  const nextAnchor=updatedItems.find(item=>item.dataset.session===anchorId);
+  const focusedItem=updatedItems.find(item=>item.dataset.session===focusedId);
+  const nextFocus=copyFocused?focusedItem?.parentElement.querySelector(".session-copy"):focusedItem;
   $("session-metadata-note").hidden=sessionMetadataSupported!==false;
   if(nextFocus&&nextFocus!==document.activeElement)nextFocus.focus({preventScroll:true});
   list.scrollTop=scrollTop;
