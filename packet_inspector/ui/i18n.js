@@ -282,6 +282,7 @@ const uiI18n = (() => {
     "操作":"Actions",
     "编辑":"Edit",
     "复制":"Copy",
+    "复制会话 ID":"Copy session ID",
     "复制会话名称":"Copy session name",
     "复制失败":"Copy failed",
     "重置":"Reset",
