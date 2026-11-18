@@ -16,12 +16,15 @@ import subprocess
 import threading
 import time
 import tomllib
+from collections import defaultdict
 from urllib.parse import urlsplit
 
+from .background_session_labels import BackgroundSessionLabels
 from .config_link import ConfigLink, PROVIDER
 from .native_state import LABEL_READER
 from .providers import ProviderManager
 from .network_diagnostics import safe_text
+from .session_summary import external_labels
 
 
 PROBE_SCRIPT = r'''
@@ -34,11 +37,17 @@ printf '%s' "$response"
 '''
 
 LABEL_LAUNCH = 'cd "$1" && exec python3 -I -S -'
+LABEL_QUERY_LAUNCH = LABEL_LAUNCH + ' "${CODEX_HOME:-$HOME/.codex}"'
 
 LABEL_SCRIPT = LABEL_READER + r'''
 import json,sys
+from pathlib import Path
 request=json.load(sys.stdin)
-print("CPI_LABELS=" + json.dumps(read_label_data(request["home"], request["ids"]), ensure_ascii=True))
+if Path(sys.argv[1]).resolve() == Path(request["home"]).resolve():
+    result = read_label_data(request["home"], request["ids"])
+else:
+    result = {"error": "codex_home_changed"}
+print("CPI_LABELS=" + json.dumps(result, ensure_ascii=True))
 '''
 
 
@@ -172,12 +181,17 @@ class LocalWsl:
         # WSL inherits the Windows launch directory; a broken /mnt drive must
         # never enter Python's imports through cwd, PYTHONPATH or site hooks.
         script = LABEL_SCRIPT.replace('request=json.load(sys.stdin)', 'request=' + repr({"home": home, "ids": ids}))
-        text = self.run(["-d", distribution, "--exec", "sh", "-lc", LABEL_LAUNCH,
+        text = self.run(["-d", distribution, "--exec", "sh", "-lc", LABEL_QUERY_LAUNCH,
                          "codex-inspector-labels", home], data=script.encode("utf-8"))
         lines = [line[len("CPI_LABELS="):] for line in text.splitlines() if line.startswith("CPI_LABELS=")]
         if len(lines) != 1:
             raise WslError("metadata_invalid_response")
-        return json.loads(lines[0])
+        result = json.loads(lines[0])
+        if not isinstance(result, dict):
+            raise WslError("metadata_invalid_response")
+        if result.get("error") == "codex_home_changed":
+            raise WslError("codex_home_changed")
+        return result
 
     def migrate_providers(self, distribution, home, aliases):
         # Native Linux SQLite owns its WAL locks; never write it through UNC.
@@ -204,10 +218,12 @@ class WslConnection:
         self.result = {"targets": [], "warnings": [], "changed": False, "reload_required": False}
         self._lock = threading.RLock()
         self._running_at, self._running = 0, []
-        self._labels = {}
+        self.labels = BackgroundSessionLabels(self._find_labels)
         self.metadata_error = ""
         self._metadata_retry = 0
         self._discovered_at = 0
+        self._discovered_running = None
+        self._label_targets = []
         self._metadata_errors = {}
 
     def _distributions(self, *, refresh=False):
@@ -249,6 +265,8 @@ class WslConnection:
                 detected.append((directory, target, config))
             except (WslError, OSError) as exc:
                 warnings.append(warning(distribution, exc))
+        self._label_targets = detected
+        self._discovered_running = tuple(running)
         return detected, warnings
 
     @staticmethod
@@ -302,6 +320,7 @@ class WslConnection:
             for directory, target, config in candidates:
                 try:
                     link = ConfigLink(config, directory / "link.json")
+                    manager = ProviderManager(link, endpoint, upstream, wsl_connection_key=directory.name)
                     def publish_routes(updated):
                         nonlocal routes
                         publish(updated)
@@ -311,7 +330,7 @@ class WslConnection:
                         marker = hashlib.sha256(endpoint.encode()).hexdigest()
                         # Verify this exact Windows instance before any Linux write.
                         self.backend.probe(target["distribution"], own.port, marker)
-                        update = ProviderManager(link, endpoint, upstream).sync(routes, publish_routes, retry_limit=retry_limit,
+                        update = manager.sync(routes, publish_routes, retry_limit=retry_limit,
                             session_migrator=lambda aliases: self.backend.migrate_providers(
                                 target["distribution"], target["home"], aliases))
                     else:
@@ -322,7 +341,7 @@ class WslConnection:
                                 continue
                             # Manually connected URLs still identify their saved
                             # upstream. Record/backup them before native restore.
-                            ProviderManager(link, endpoint, upstream).sync(routes, publish_routes,
+                            manager.sync(routes, publish_routes,
                                 session_migrator=lambda aliases: self.backend.migrate_providers(
                                     target["distribution"], target["home"], aliases))
                         update = link.restore()
@@ -335,7 +354,7 @@ class WslConnection:
                                               for item in update.get("warnings", []))
                 except (OSError, ValueError) as exc:
                     result["warnings"].append(warning(target["distribution"], exc))
-            self._labels.clear()
+            self.labels.clear()
             return result
 
     def reconcile_sessions(self, endpoint, upstream, routes):
@@ -370,44 +389,55 @@ class WslConnection:
                     result["warnings"].append(warning(target["distribution"], exc))
             return result
 
-    def labels(self, ids):
-        """Bounded, cached, read-only display metadata; never runs on forwarding."""
-        ids = sorted({value for value in ids if isinstance(value, str) and re.fullmatch(r"[a-fA-F0-9-]{36}", value)})[:300]
-        if not ids:
-            return {}
-        from .session_summary import external_labels
-        found = {}
+    def _find_labels(self, requests):
+        matches = defaultdict(list)
         with self._lock:
             if time.monotonic() < self._metadata_retry:
-                return found
+                return matches
             try:
-                running = self._distributions()
-                if time.monotonic() - self._discovered_at > 60:
+                running = self._distributions(refresh=True)
+                if tuple(running) != self._discovered_running or time.monotonic() - self._discovered_at > 60:
                     self._discover(running)
-                targets = list(self._targets())
-                for directory, target in targets:
-                    if target["distribution"] not in running:
-                        continue
-                    key = str(directory)
-                    cached = self._labels.get(key)
-                    if not cached or time.monotonic() - cached[0] > 15 or not set(ids) <= cached[1]:
-                        requested = sorted(set(ids) | (cached[1] if cached else set()))
-                        if len(requested) > 300:
-                            requested = ids
-                        labels = index_labels(Path(target["config"]), requested)
-                        try:
-                            raw = self.backend.labels(target["distribution"], target["home"], requested)
-                            labels = external_labels(raw, set(requested), labels)
-                            self._metadata_errors.pop(key, None)
-                        except (OSError, ValueError, TypeError, KeyError) as exc:
-                            self._metadata_errors[key] = warning(target["distribution"], exc)
-                        cached = (time.monotonic(), set(requested), labels)
-                        self._labels[key] = cached
-                    for thread, label in cached[2].items():
-                        if thread in ids:
-                            found.setdefault(thread, label)
-                self._metadata_status()
+                targets = self._label_targets
             except (OSError, ValueError, TypeError, KeyError) as exc:
                 self.metadata_error = str(exc) if isinstance(exc, WslError) else type(exc).__name__
                 self._metadata_retry = time.monotonic() + 15
-        return found
+                return matches
+
+        errors = {}
+        for directory, target, config in targets:
+            batch = {request[0]: request for request in requests if request[1] in (None, directory.name)}
+            if not batch:
+                continue
+            labels, error = self._read_target_labels(target, config, sorted(batch))
+            errors[directory.name] = error
+            for thread, label in labels.items():
+                matches[batch[thread]].append({**label, "wsl_connection_key": directory.name})
+
+        with self._lock:
+            active = {directory.name for directory, _, _ in self._label_targets}
+            self._metadata_errors.update(errors)
+            self._metadata_errors = {key: error for key, error in self._metadata_errors.items() if error and key in active}
+            if any(error and error["reason"] == "codex_home_changed" for error in errors.values()):
+                self._discovered_running = None
+            try:
+                self._metadata_status()
+            except (OSError, ValueError) as exc:
+                self.metadata_error = type(exc).__name__
+        return matches
+
+    def _read_target_labels(self, target, config, ids):
+        distribution, home = target["distribution"], target["home"]
+        try:
+            raw = self.backend.labels(distribution, home, ids)
+            return external_labels(raw, ids, index_labels(config, ids)), None
+        except (OSError, ValueError, TypeError, KeyError, AttributeError) as exc:
+            error = warning(distribution, exc)
+        if error["reason"] != "codex_home_changed":
+            try:
+                if self.backend.home(distribution) == home:
+                    return index_labels(config, ids), error
+                error = warning(distribution, WslError("codex_home_changed"))
+            except (OSError, WslError):
+                pass
+        return {}, error

@@ -300,7 +300,7 @@ class InspectorServer(ThreadingHTTPServer):
                                        cache_path=self.cache_dir / "remote-connections.json")
         ssh_labels = (SshSessionLabels(self.remote_relays, self.connections.codex_home, self.connections.ssh_config)
                       if self.remote_relays is not None else None)
-        self.session_summaries = SessionSummaries(self.token_windows, extra_labels=self.wsl.labels, ssh_labels=ssh_labels)
+        self.session_summaries = SessionSummaries(self.token_windows, wsl_labels=self.wsl.labels, ssh_labels=ssh_labels)
         self.analysis_thread = threading.Thread(target=self._classify_pending, daemon=True)
         self.analysis_thread.start()
 
@@ -1455,7 +1455,7 @@ class Handler(BaseHTTPRequestHandler):
             self._json(400, {"error": "invalid_request_path"})
             return
         shared_client = prefix == urlsplit(self.server.sharing.client_endpoint).path
-        ssh_upstream, ssh_origin = None, None
+        ssh_upstream, ssh_origin, wsl_origin = None, None, None
         if suffix.startswith("/ssh/"):
             access = self.server.remote_relays
             parts = suffix.split("/", 5)
@@ -1489,6 +1489,8 @@ class Handler(BaseHTTPRequestHandler):
                     self._json(404, {"error": "unknown_provider_route"})
                     return
                 upstream = route["upstream"]
+                if not shared_client:
+                    wsl_origin = route.get("wsl_connection_key")
                 suffix = "/" + parts[3]
                 if suffix.startswith("//"):
                     self._json(400, {"error": "invalid_request_path"})
@@ -1538,6 +1540,8 @@ class Handler(BaseHTTPRequestHandler):
                             capture_point="app_exit_before_downstream")
                 if ssh_origin:
                     meta["ssh_connection_key"] = ssh_origin
+                if wsl_origin:
+                    meta["wsl_connection_key"] = wsl_origin
                 packet_id = self.server.store.add(meta, content)
             except Exception:
                 self.server.capture_errors += 1

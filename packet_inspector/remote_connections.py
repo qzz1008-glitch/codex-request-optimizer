@@ -15,7 +15,7 @@ import threading
 import time
 from urllib.parse import quote
 
-from .native_state import managed_remote_connections, read_global_state
+from .native_state import WSL_HOST_ID, managed_remote_connections, read_global_state
 from .network_diagnostics import safe_text
 from .remote_control import SCRIPT, RESULT_PREFIX
 
@@ -123,7 +123,7 @@ def saved_hosts(codex_home, ssh_config, *, config_hash=None):
         identity = "remote-ssh-discovered:" + quote(alias, safe="-_.!~*'()")
         # An SSH config also contains Git hosts and unrelated machines. Only
         # hosts actually saved/used in Codex belong to a bulk Codex operation.
-        if identity not in referenced or alias == "wsl-local":
+        if identity not in referenced or identity == WSL_HOST_ID:
             continue
         hosts.append(Host(identity, alias, alias))
         if len(hosts) >= MAX_TARGETS:
