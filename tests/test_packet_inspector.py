@@ -227,6 +227,19 @@ class AnalyzerTests(unittest.TestCase):
         self.assertEqual(m["encrypted_content_bytes"],10)
         self.assertIn("omitted",v["body"]["input"][0]["content"][0]["image_url"])
 
+    def test_reasoning_ciphertext_uses_original_json_bytes_and_excludes_compaction(self):
+        first = br'{"type":"reasoning","summary":[{"type":"summary_text","text":"visible"}],"encrypted_content":"a\u0062"}'
+        second = encode({"type": "reasoning", "encrypted_content": "加密"})
+        summary_only = b'{"type":"reasoning","summary":[],"encrypted_content":null}'
+        compact = b'{"type":"compaction","encrypted_content":"larger-opaque-state"}'
+        raw = b'{"input":[' + b', '.join((first, second, summary_only, compact)) + b']}'
+        meta, _ = inspect_request(raw, {})
+        self.assertEqual(meta["input_groups"]["reasoning"], len(first) + len(second) + len(summary_only))
+        self.assertEqual(meta["reasoning_encrypted_bytes"], 7 + len("加密".encode("utf-8")))
+        self.assertEqual(meta["input_groups"]["compaction"], len(compact))
+        meta, _ = inspect_request(b'{"input":[' + summary_only + b']}', {})
+        self.assertEqual(meta["reasoning_encrypted_bytes"], 0)
+
     def test_gzip_zstd_and_unreadable_content(self):
         raw=encode({"input":[],"model":"中文模型"})
         for encoding,body in [("gzip",gzip.compress(raw)),("zstd",zstandard.ZstdCompressor().compress(raw))]:

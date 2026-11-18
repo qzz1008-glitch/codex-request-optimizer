@@ -240,6 +240,7 @@ def summarize(decoded: bytes, value, index: JsonBytes):
     calls = Counter()
     outputs = Counter()
     encrypted = 0
+    reasoning_encrypted = 0
     catalog_count = 0
     catalog_hashes = Counter()
     input_value = value.get("input") if isinstance(value, dict) else None
@@ -253,6 +254,9 @@ def summarize(decoded: bytes, value, index: JsonBytes):
         ciphertext = item.get("encrypted_content")
         if isinstance(ciphertext, str):
             encrypted += len(ciphertext.encode())
+            if kind == "reasoning":
+                # Count the bytes inside the string's quotes in the original JSON.
+                reasoning_encrypted += index.sizes[pointer(path, "encrypted_content")] - 2
         if kind in {"additional_tools", "tool_definition"}:
             catalog_count += 1
             catalog_hashes[hashlib.sha256(encode(item.get("tools"))).hexdigest()] += 1
@@ -266,11 +270,14 @@ def summarize(decoded: bytes, value, index: JsonBytes):
     pairing = {"calls": sum(calls.values()), "outputs": sum(outputs.values()),
                "missing_outputs": sum((calls - outputs).values()),
                "orphan_outputs": sum((outputs - calls).values())}
-    return {"decoded_bytes": len(decoded), "top_fields": top,
-            "json_envelope_bytes": len(decoded) - accounted,
-            "input_groups": dict(groups), "input_items": items, "pairing": pairing,
-            "encrypted_content_bytes": encrypted, "catalog_count": catalog_count,
-            "duplicate_catalogs": sum(n - 1 for n in catalog_hashes.values())}
+    stats = {"decoded_bytes": len(decoded), "top_fields": top,
+             "json_envelope_bytes": len(decoded) - accounted,
+             "input_groups": dict(groups), "input_items": items, "pairing": pairing,
+             "encrypted_content_bytes": encrypted, "catalog_count": catalog_count,
+             "duplicate_catalogs": sum(n - 1 for n in catalog_hashes.values())}
+    if "reasoning" in groups:
+        stats["reasoning_encrypted_bytes"] = reasoning_encrypted
+    return stats
 
 
 def thread_identity(headers, value):

@@ -31,11 +31,11 @@ function fixture() {
   };
   vm.createContext(context);
   vm.runInContext(extract('async function loadTree(path)','async function goPath(path)'),context);
-  vm.runInContext(extract('async function ensureJsonView(id,sequence)','function focusJsonPath('),context);
+  vm.runInContext(extract('function retainedReasoningEncryptedBytes(','function focusJsonPath('),context);
   vm.runInContext(source.split(/\r?\n/).filter(line=>/^function compressedBytes\(/.test(line)).join('\n'),context);
   vm.runInContext(extract('function packetDiffRows(','function requestImagePaths('),context);
   vm.runInContext(extract('function packetDetailVersion(','function renderProtectionPanelState('),context);
-  vm.runInContext(extract('function renderOverview(m)','function jsonValueNode('),context);
+  vm.runInContext(extract('function inputBreakdown(','function jsonValueNode('),context);
   return context;
 }
 (async()=>{
@@ -68,12 +68,38 @@ function fixture() {
     const c=fixture(),bars=[];
     c.bars=(title,rows,total,available)=>{bars.push({title,rows,total,available});return {title};};
     c.renderOverview({inspection:'json',details_evicted:true,decoded_bytes:150,top_fields:[{name:'input',bytes:120}],
-      json_envelope_bytes:30,input_groups:{message:120}});
+      json_envelope_bytes:30,input_groups:{reasoning:100,message:18},reasoning_encrypted_bytes:80});
     assert.equal(bars.length,2);
     assert.equal(bars[0].total,150);
     assert.equal(bars[0].rows.find(row=>row.name==='input').bytes,120);
     assert.equal(bars[1].total,120);
+    assert.deepEqual(Object.fromEntries(bars[1].rows.map(row=>[row.name,row.bytes])),
+      {'推理密文':80,'推理非密文':20,message:18});
     assert(bars.every(row=>row.available===false));
+    passed++;
+  }
+  {
+    const c=fixture();let input,reads=0;
+    const metadata={id:'legacy',inspection:'json',decoded_bytes:200,top_fields:[{name:'input',bytes:170}],
+      json_envelope_bytes:30,input_groups:{reasoning:90,compaction:70},encrypted_content_bytes:75};
+    const view={body:{input:[{type:'reasoning',encrypted_content:'opaque'},{type:'reasoning',summary:[]},
+      {type:'compaction',encrypted_content:'compacted'}]},source_sizes:{'/input/0':60,'/input/1':30,
+      '/input/0/encrypted_content':42,'/input/2':70,'/input/2/encrypted_content':37}};
+    c.state.selected=metadata.id;c.state.detail=metadata;
+    c.bars=(title,rows,total)=>{if(title==='input 构成')input={rows,total};return {title};};
+    Object.assign(c,{uiI18n:{language:'zh'},URL:{createObjectURL:()=>''},Blob,
+      jsonValueNode:()=>({}),renderHeaders(){},renderCompression(){}});
+    c.api=async path=>{assert.equal(path,'/api/packets/legacy/export');reads++;return {metadata,view};};
+    c.renderOverview(metadata);
+    assert.equal(input.rows[0].name,'reasoning');
+    await c.loadTree('');
+    assert.equal(input.total,170);
+    assert.deepEqual(Object.fromEntries(input.rows.map(row=>[row.name,row.bytes])),
+      {compaction:70,'推理非密文':50,'推理密文':40});
+    await c.loadTree('');
+    assert.equal(reads,1);
+    c.renderOverview({...metadata,details_evicted:true});
+    assert.equal(input.rows[0].name,'reasoning','Unavailable historical detail keeps the combined number');
     passed++;
   }
   {
