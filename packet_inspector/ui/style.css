@@ -520,6 +520,8 @@ dialog{width:min(760px,calc(var(--desktop-width) - 80px));max-height:calc(var(--
 .header-compression{display:flex;align-items:center;flex-shrink:0}.compression-toggle{flex-shrink:0;padding:2px}.compression-toggle button{min-width:64px;padding:3px 14px}
 .header-compression{anchor-name:--connection-controls}
 .header-compression:focus-visible{outline:2px solid #a3baff;outline-offset:2px;border-radius:9px}
+.connection-local-label{margin-inline-end:8px;visibility:hidden;color:var(--ink);font-size:12px;font-weight:600}
+.header-compression[data-server-panel-open] .connection-local-label{visibility:visible}
 .connection-panel {
   position: fixed;
   inset: auto;
@@ -563,6 +565,13 @@ dialog{width:min(760px,calc(var(--desktop-width) - 80px));max-height:calc(var(--
 .connection-device-state[data-status=pending]::before{outline:1px solid currentColor;outline-offset:2px}
 .connection-device-state[data-status=error]{color:var(--danger)}
 .connection-device-state[data-status=error]::before{border-radius:2px;transform:rotate(45deg)}
+.compression-toggle,.connection-device-actions{border-color:var(--muted)}
+.compression-toggle button:hover{background:transparent;color:var(--muted)}
+:is(.compression-toggle,.connection-device-actions) button:enabled{color:var(--ink)}
+:is(.compression-toggle,.connection-device-actions) button[aria-pressed=true]{background:var(--accent);color:var(--panel);box-shadow:none;opacity:1}
+@media (forced-colors: active) {
+  :is(.compression-toggle,.connection-device-actions) button[aria-pressed=true]{outline:1px solid Highlight;outline-offset:-1px}
+}
 .connection-device-actions{flex-shrink:0;padding:2px}
 .connection-device-actions button {
   min-width: 40px;
@@ -580,10 +589,10 @@ dialog{width:min(760px,calc(var(--desktop-width) - 80px));max-height:calc(var(--
   min-width: 36px;
   min-height: 24px;
   padding: 2px 6px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--muted);
   border-radius: 999px;
-  background: var(--bg);
-  color: var(--muted);
+  background: var(--panel);
+  color: var(--ink);
   font-size: 11px;
   font-weight: 600;
   line-height: 16px;
@@ -591,14 +600,14 @@ dialog{width:min(760px,calc(var(--desktop-width) - 80px));max-height:calc(var(--
 }
 .connection-device-reconnect:not(:disabled, [aria-disabled=true]):hover{border-color:var(--accent);background:var(--soft);color:var(--accent)}
 .connection-device-reconnect.needs-reconnect:not(:disabled, [aria-disabled=true]) {
-  --reconnect-face: #f5faff;
-  --reconnect-rim: #c4d9ef;
+  --reconnect-face: var(--soft);
+  --reconnect-rim: var(--accent);
   border-color: var(--reconnect-rim);
   background: var(--reconnect-face);
-  color: #365d85;
+  color: var(--accent);
 }
 .connection-device-reconnect.needs-reconnect:not(:disabled, [aria-disabled=true]):hover {
-  --reconnect-face: #edf6ff;
+  --reconnect-face: #e7eeff;
 }
 @property --reconnect-sweep-angle {
   syntax: "<angle>";
@@ -615,7 +624,7 @@ dialog{width:min(760px,calc(var(--desktop-width) - 80px));max-height:calc(var(--
       background:
         linear-gradient(var(--reconnect-face), var(--reconnect-face)) padding-box,
         repeating-conic-gradient(from var(--reconnect-sweep-angle, 0turn) in oklab,
-          var(--reconnect-rim) 0deg 65deg, #afd1f6 112deg, #82b7f4 144deg, #dcecfc 169deg,
+          var(--reconnect-rim) 0deg 65deg, #5f7fb5 112deg, #4169a7 144deg, #6f8db8 169deg,
           var(--reconnect-rim) 180deg) border-box;
       animation: reconnect-sweep 2.4s linear 2;
     }
