@@ -1,5 +1,5 @@
-"""Shared proxy selection and private manual settings for Windows and Linux."""
-from base64 import b64decode, b64encode
+"""Shared proxy selection and manual addresses for Windows and Linux."""
+from base64 import b64encode
 from contextlib import closing
 from fnmatch import fnmatchcase
 import ipaddress
@@ -10,15 +10,13 @@ import sqlite3
 import socket
 import ssl
 from urllib import request as urllib_request
-from urllib.parse import quote, unquote, urlsplit, urlunsplit
+from urllib.parse import unquote, urlsplit, urlunsplit
 from urllib.response import addinfourl
-
-from .sharing_credentials import protect
 
 SETTINGS_KEY = "outbound-proxy-settings-v1"
 MAX_PROXY_SETTINGS_BYTES = 64 * 1024
 DEFAULT_BYPASS = "localhost,127.0.0.1,::1"
-EMPTY_MANUAL = {"address": "", "username": "", "password": "", "bypass": DEFAULT_BYPASS}
+EMPTY_MANUAL = {"address": "", "bypass": DEFAULT_BYPASS}
 
 
 def system_proxies():
@@ -57,8 +55,6 @@ def proxy_address(value):
         if (parsed.scheme not in {"http", "https"} or not parsed.hostname or port == 0
                 or parsed.path not in {"", "/"} or parsed.query or parsed.fragment):
             raise ValueError()
-        if parsed.username is not None or parsed.password is not None:
-            raise ValueError("代理账号和密码请填写在认证字段中。")
         hostname = parsed.hostname
         if ":" in hostname:
             ipaddress.IPv6Address(hostname)
@@ -67,25 +63,24 @@ def proxy_address(value):
             hostname = hostname.encode("idna").decode("ascii")
             if any(char in hostname for char in "\\/@#?%"):
                 raise ValueError()
-        return urlunsplit((parsed.scheme, hostname + (":" + str(port) if port else ""), "", "", ""))
-    except (ValueError, UnicodeError) as exc:
-        if str(exc) == "代理账号和密码请填写在认证字段中。":
-            raise ValueError(str(exc)) from None
+    except ValueError:
         raise ValueError("代理地址无效，仅支持 HTTP 或 HTTPS 代理。") from None
+    if parsed.username is not None or parsed.password is not None:
+        raise ValueError("代理地址不能包含账号或密码。")
+    return urlunsplit((parsed.scheme, hostname + (":" + str(port) if port else ""), "", "", ""))
 
 
 def proxy_details(value):
-    """Return editable addresses and account names, never a password."""
+    """Return the proxy address with any environment credentials stripped."""
     try:
         parsed = urlsplit(value if "://" in value else "http://" + value)
         if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.port == 0:
             raise ValueError()
         host = parsed.hostname or ""
         host = "[" + host + "]" if ":" in host else host
-        return {"address": urlunsplit((parsed.scheme, host + (":" + str(parsed.port) if parsed.port else ""), "", "", "")),
-                "username": unquote(parsed.username or ""), "password_saved": parsed.password is not None}
+        return {"address": urlunsplit((parsed.scheme, host + (":" + str(parsed.port) if parsed.port else ""), "", "", ""))}
     except (ValueError, TypeError):
-        return {"address": "", "username": "", "password_saved": False, "invalid": True}
+        return {"address": "", "invalid": True}
 
 
 def bypass_proxy(host, proxies):
@@ -176,45 +171,22 @@ class _TLSProxyResponse(addinfourl):
 class ProxySettings:
     def __init__(self, vault, auto_proxies=system_proxies, system_details=lambda: {}):
         self.vault, self.auto_proxies, self.system_details = vault, auto_proxies, system_details
-        self.windows = os.name == "nt"
-        self.cipher = None
 
-    def _cipher(self):
-        if self.cipher is None:
-            from cryptography.fernet import Fernet
-            path = self.vault.path.with_name("proxy-settings.key")
-            # The vault transaction also serializes key creation across workers.
-            with self.vault.connection():
-                if path.exists():
-                    key = path.read_bytes()
-                else:
-                    key = Fernet.generate_key()
-                    with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "wb") as file:
-                        file.write(key)
-                        file.flush()
-                        os.fsync(file.fileno())
-                path.chmod(0o600)
-                self.cipher = Fernet(key)
-        return self.cipher
-
-    def _protect(self, value, decrypt=False):
-        if self.windows:
-            return protect(value, decrypt)
-        cipher = self._cipher()
-        return cipher.decrypt(value) if decrypt else cipher.encrypt(value)
-
-    def _decode(self, row):
+    @staticmethod
+    def _decode(row):
         if row is None:
             return {"mode": "auto", "manual": dict(EMPTY_MANUAL)}
         try:
             value = json.loads(row[0])
-            if (value["mode"] not in {"auto", "manual"} or not isinstance(value["manual"], dict)
-                    or any(not isinstance(value["manual"].get(k), str) for k in EMPTY_MANUAL)):
+            mode, stored = value["mode"], value["manual"]
+            if (mode not in ("auto", "manual") or not isinstance(stored, dict)
+                    or any(not isinstance(stored.get(key), str) for key in EMPTY_MANUAL)):
                 raise ValueError()
-            password = value["manual"]["password"]
-            value["manual"]["password"] = self._protect(b64decode(password, validate=True), True).decode() if password else ""
-            return value
-        except Exception:
+            manual = {key: stored[key] for key in EMPTY_MANUAL}
+            if mode == "manual" or manual["address"]:
+                manual["address"] = proxy_address(manual["address"])
+            return {"mode": mode, "manual": manual}
+        except (KeyError, TypeError, ValueError):
             raise ValueError("无法读取已保存的代理配置，请重新保存代理设置。") from None
 
     def read(self):
@@ -224,36 +196,27 @@ class ProxySettings:
 
     @staticmethod
     def _candidate(data, saved):
-        if not isinstance(data, dict) or set(data) - {"mode", "address", "username", "password", "bypass"}:
+        if not isinstance(data, dict) or set(data) - {"mode", "address", "bypass"}:
             raise ValueError("代理设置无效。")
-        if data.get("mode") not in {"auto", "manual"}:
+        mode = data.get("mode")
+        if mode not in ("auto", "manual"):
             raise ValueError("请选择自动检测或手动配置。")
         manual = dict(saved["manual"])
-        if data["mode"] == "manual":
+        if mode == "manual":
             manual["address"] = proxy_address(data.get("address", manual["address"]))
-            for key, limit in (("username", 512), ("bypass", 4096)):
-                incoming = data.get(key, manual[key])
-                if not isinstance(incoming, str) or len(incoming) > limit or any(ord(c) < 32 or ord(c) == 127 for c in incoming):
-                    raise ValueError("代理账号或例外列表无效。")
-                manual[key] = incoming.strip() if key == "bypass" else incoming
-            password = data.get("password")
-            if password is not None:
-                if not isinstance(password, str) or len(password) > 4096 or any(ord(c) < 32 or ord(c) == 127 for c in password):
-                    raise ValueError("代理密码无效。")
-                manual["password"] = password
-            if not manual["username"]:
-                manual["password"] = ""
-        return {"mode": data["mode"], "manual": manual}
+            bypass = data.get("bypass", manual["bypass"])
+            if (not isinstance(bypass, str) or len(bypass) > 4096
+                    or any(ord(char) < 32 or ord(char) == 127 for char in bypass)):
+                raise ValueError("代理例外列表无效。")
+            manual["bypass"] = bypass.strip()
+        return {"mode": mode, "manual": manual}
 
     def configure(self, data):
-        # Resolve the Linux key before acquiring the configuration write lock.
-        if not self.windows:
-            self._cipher()
         with self.vault.connection() as db:
             value = self._decode(db.execute("SELECT value FROM meta WHERE key=?", (SETTINGS_KEY,)).fetchone())
             document = self._candidate(data, value)
-            password = document["manual"]["password"]
-            document["manual"]["password"] = b64encode(self._protect(password.encode())).decode("ascii") if password else ""
+            # Older workers still expect both fields when reading the v1 record.
+            document["manual"].update(username="", password="")
             db.execute("INSERT OR REPLACE INTO meta(key,value) VALUES (?,?)",
                        (SETTINGS_KEY, json.dumps(document, ensure_ascii=False).encode()))
         return self.status()
@@ -271,10 +234,7 @@ class ProxySettings:
         if saved["mode"] == "auto":
             return dict(detected), "auto"
         manual = saved["manual"]
-        parsed = urlsplit(manual["address"])
-        authentication = (quote(manual["username"], safe="") + ":" + quote(manual["password"], safe="") + "@"
-                          if manual["username"] else "")
-        address = urlunsplit((parsed.scheme, authentication + parsed.netloc, "", "", ""))
+        address = manual["address"]
         return {"http": address, "https": address, "no": manual["bypass"]}, "manual"
 
     @staticmethod
@@ -291,9 +251,7 @@ class ProxySettings:
                   if os.name == "nt" and (detected.get("http") or detected.get("https")) else "direct")
         system = self.system_details()
         selected, mode = self._selection(saved, detected)
-        manual = saved["manual"]
-        return {"mode": mode, "manual": {k: manual[k] for k in ("address", "username", "bypass")},
-                "password_saved": bool(manual["password"]),
+        return {"mode": mode, "manual": saved["manual"],
                 "detected": {**self._view(detected), "source": source,
                     "pac_url": system.get("windows_pac_url") or system.get("AutoConfigURL") or "",
                     "auto_discovery": bool(system.get("windows_auto_detect") or system.get("AutoDetect")),

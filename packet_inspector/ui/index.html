@@ -275,24 +275,15 @@
           <label><input type="radio" name="proxy-mode" value="auto" checked><span>自动检测</span></label>
           <label><input type="radio" name="proxy-mode" value="manual"><span>手动配置</span></label>
         </fieldset>
-        <div id="proxy-detected" class="proxy-fields">
+        <div id="proxy-detected" class="proxy-address-field">
           <label class="sr-only" for="proxy-detected-address">代理地址</label><input id="proxy-detected-address" type="text" placeholder="直接连接" disabled>
-          <label class="sr-only" for="proxy-detected-username">代理账号</label><input id="proxy-detected-username" type="text" placeholder="账号" disabled>
-          <label class="sr-only" for="proxy-detected-password">代理密码</label><input id="proxy-detected-password" type="password" placeholder="密码" disabled>
         </div>
-        <div id="proxy-manual" class="proxy-fields" hidden>
+        <div id="proxy-manual" class="proxy-address-field" hidden>
           <label class="sr-only" for="proxy-address">代理地址</label><input id="proxy-address" name="proxy-address" type="text" inputmode="url" maxlength="2048" placeholder="http://proxy:8080" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" required disabled>
-          <label class="sr-only" for="proxy-username">代理账号</label><input id="proxy-username" name="proxy-username" type="text" maxlength="512" placeholder="账号" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" disabled>
-          <div class="proxy-password-field">
-            <label class="sr-only" for="proxy-password">代理密码</label><input id="proxy-password" name="proxy-password" type="password" maxlength="4096" placeholder="密码" autocomplete="new-password" aria-describedby="proxy-password-hint" disabled>
-            <label id="proxy-saved-password" class="proxy-clear-password" title="清除已存密码" hidden><input id="proxy-clear-password" name="proxy-clear-password" type="checkbox" aria-label="清除已存密码" disabled><span aria-hidden="true">×</span></label>
-          </div>
         </div>
         <button id="proxy-test" type="button" title="测试当前配置，不保存；不发送对话或 Codex 登录凭据。">测试</button>
       </div>
-      <p id="proxy-password-hint" class="sr-only">密码不回显；已保存时留空保留。</p>
       <p id="proxy-detection-warning" class="help" role="status" hidden></p>
-      <p id="proxy-message" data-feedback-source data-feedback-target="settings-inline-feedback" class="help" role="status" hidden></p>
       <output id="proxy-test-result" class="proxy-test-result" role="status" aria-live="polite" hidden></output>
     </section>
     <section id="sharing-settings"><h3>局域网共享</h3>

@@ -19,7 +19,9 @@ from urllib.error import HTTPError
 from urllib.request import HTTPSHandler, Request, build_opener
 
 from packet_inspector.desktop_ui import DesktopUI
-from packet_inspector.proxy_settings import ProxySettings, SelectedProxyHandler, bypass_proxy, proxy_address, system_proxies
+from packet_inspector.proxy_settings import (
+    SETTINGS_KEY, ProxySettings, SelectedProxyHandler, bypass_proxy, proxy_address, system_proxies,
+)
 from packet_inspector.proxy_test import ProxyTester
 from packet_inspector.server import NoRedirect
 from packet_inspector.shared_egress import physical_tunnel
@@ -30,7 +32,7 @@ from tests import test_outbound_refresh as fixtures
 
 class ProxySettingsBrowserTests(unittest.TestCase):
     @unittest.skipUnless(shutil.which("node"), "Node.js is needed for browser contracts")
-    def test_proxy_settings_save_restore_detection_and_authentication(self):
+    def test_proxy_settings_save_restore_and_detection(self):
         result = subprocess.run([shutil.which("node"), "tests/proxy_settings.cjs"],
             cwd=Path(__file__).resolve().parents[1], capture_output=True, text=True, encoding="utf8", timeout=35)
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -50,50 +52,41 @@ class ProxySettingsTests(unittest.TestCase):
         self.proxies = {"https": "http://auto-user:auto-secret@proxy.invalid:8080", "no": "*.internal"}
         self.config = ProxySettings(self.vault, lambda: dict(self.proxies))
 
-    def test_defaults_display_detection_without_passwords_or_writes(self):
+    def test_detection_displays_only_the_address_and_preserves_the_automatic_route(self):
         with patch("urllib.request.getproxies_environment", return_value=self.proxies):
             status = self.config.status()
         self.assertEqual(status["mode"], "auto")
         self.assertEqual(status["detected"]["source"], "environment")
-        self.assertEqual(status["detected"]["https"]["address"], "http://proxy.invalid:8080")
-        self.assertEqual(status["detected"]["https"]["username"], "auto-user")
-        self.assertTrue(status["detected"]["https"]["password_saved"])
+        self.assertEqual(status["detected"]["https"], {"address": "http://proxy.invalid:8080"})
+        self.assertNotIn("auto-user", json.dumps(status))
         self.assertNotIn("auto-secret", json.dumps(status))
         self.assertEqual(self.config.selection(), (self.proxies, "auto"))
         self.assertFalse((self.root / "proxy-settings.key").exists())
 
     def save_manual(self):
         return self.config.configure({"mode": "manual", "address": "proxy.invalid:8080",
-            "username": "private-user", "password": "secret/@ :测试", "bypass": "internal.test;*.lan"})
+                                      "bypass": "internal.test;*.lan"})
 
-    def test_private_persistence_and_password_keep_replace_clear(self):
-        self.save_manual()
+    def test_legacy_fields_are_ignored_on_read_and_cleared_on_save(self):
+        address, bypass = "http://proxy.invalid:8080", "internal.test;*.lan"
+        manual = {"address": address, "bypass": bypass}
+        # A legacy credential whose encryption key is unavailable on this host.
+        legacy = {"mode": "manual", "manual": {**manual, "username": "old-user", "password": "dW5yZWFkYWJsZQ=="}}
+        with self.vault.connection() as db:
+            db.execute("INSERT INTO meta(key,value) VALUES (?,?)", (SETTINGS_KEY, json.dumps(legacy)))
         reopened = ProxySettings(self.vault, lambda: self.proxies)
-        self.assertEqual(reopened.selection()[0]["https"],
-            "http://private-user:secret%2F%40%20%3A%E6%B5%8B%E8%AF%95@proxy.invalid:8080")
-        self.assertIn(b"private-user", self.vault.path.read_bytes())
-        for secret in (b"secret/@", "测试".encode()):
-            self.assertNotIn(secret, self.vault.path.read_bytes())
-        status = reopened.configure({"mode": "manual", "password": None})
-        self.assertNotIn("secret", json.dumps(status))
-        self.assertTrue(status["password_saved"])
-        reopened.configure({"mode": "manual", "password": "new-secret"})
-        self.assertIn("new-secret@", reopened.selection()[0]["http"])
-        self.assertFalse(reopened.configure({"mode": "manual", "password": ""})["password_saved"])
-        reopened.configure({"mode": "manual", "password": "another", "username": ""})
-        self.assertNotIn("@", reopened.selection()[0]["https"])
-
-    def test_linux_uses_ciphertext_and_a_separate_private_key(self):
-        self.config.windows = False
-        self.save_manual()
-        reopened = ProxySettings(self.vault, lambda: self.proxies)
-        reopened.windows = False
-        self.assertEqual(reopened.read(), self.config.read())
-        self.assertIn(b"private-user", self.vault.path.read_bytes())
-        self.assertNotIn(b"secret/@", self.vault.path.read_bytes())
-        self.assertEqual(len((self.root / "proxy-settings.key").read_bytes()), 44)
-        if os.name != "nt":
-            self.assertEqual((self.root / "proxy-settings.key").stat().st_mode & 0o777, 0o600)
+        self.assertEqual(reopened.status()["manual"], manual)
+        self.assertEqual(reopened.selection(), ({"http": address, "https": address, "no": bypass}, "manual"))
+        with self.vault.connection() as db:
+            stored = db.execute("SELECT value FROM meta WHERE key=?", (SETTINGS_KEY,)).fetchone()[0]
+        self.assertEqual(json.loads(stored), legacy)
+        reopened.configure({"mode": "manual", "address": "new.invalid:8080"})
+        with self.vault.connection() as db:
+            stored = db.execute("SELECT value FROM meta WHERE key=?", (SETTINGS_KEY,)).fetchone()[0]
+        self.assertEqual(json.loads(stored)["manual"], {
+            "address": "http://new.invalid:8080", "bypass": bypass, "username": "", "password": "",
+        })
+        self.assertFalse((self.root / "proxy-settings.key").exists())
 
     def test_automatic_mode_retains_manual_fields_but_uses_current_system_proxy(self):
         self.save_manual()
@@ -101,14 +94,15 @@ class ProxySettingsTests(unittest.TestCase):
         self.proxies = {"https": "http://regional.invalid:8080"}
         self.assertEqual(self.config.selection(), (self.proxies, "auto"))
         self.config.configure({"mode": "manual"})
-        self.assertEqual(self.config.status()["manual"]["username"], "private-user")
+        self.assertEqual(self.config.status()["manual"], {
+            "address": "http://proxy.invalid:8080", "bypass": "internal.test;*.lan",
+        })
 
-    def test_unsaved_proxy_preview_does_not_change_settings_or_store_passwords(self):
+    def test_unsaved_proxy_preview_does_not_change_settings(self):
         before = self.vault.path.read_bytes()
-        selected, mode = self.config.preview({"mode": "manual", "address": "preview.invalid:8080",
-            "username": "preview-user", "password": "preview-secret", "bypass": ""})
+        selected, mode = self.config.preview({"mode": "manual", "address": "preview.invalid:8080", "bypass": ""})
         self.assertEqual(mode, "manual")
-        self.assertIn("preview-user:preview-secret@", selected["https"])
+        self.assertEqual(selected["https"], "http://preview.invalid:8080")
         self.assertEqual(self.vault.path.read_bytes(), before)
         self.assertEqual(self.config.read()["mode"], "auto")
         self.assertFalse((self.root / "proxy-settings.key").exists())
@@ -118,7 +112,7 @@ class ProxySettingsTests(unittest.TestCase):
         before = self.config.read()
         for fields in ({"address": "http://user:leak-me@proxy.invalid"}, {"address": "socks5://proxy.invalid"},
                        {"address": "http://proxy.invalid/path"}, {"address": "http://proxy.invalid:65536"},
-                       {"username": "leak-me\r\n"}, {"password": "leak-me\n"}, {"bypass": 1}):
+                       {"username": "leak-me"}, {"password": "leak-me"}, {"bypass": 1}):
             with self.subTest(fields=tuple(fields)):
                 with self.assertRaises(ValueError) as error:
                     self.config.configure({"mode": "manual", **fields})
@@ -198,55 +192,53 @@ class ProxyRoutingTests(unittest.TestCase):
         physical_tunnel(self.relay, "api.openai.com", 443).close()
         self.assertEqual(self.calls, [("a", "CONNECT", "api.openai.com:443")])
 
-    def test_api_saves_redacted_config_without_request_record_or_restart(self):
+    def test_api_saves_and_tests_an_address_without_a_request_record_or_restart(self):
         threading.Thread(target=self.relay.serve_forever, kwargs={"poll_interval": .02}, daemon=True).start()
         self.addCleanup(self.relay.shutdown)
         ui = DesktopUI(self.relay.port).start()
         self.addCleanup(ui.close)
         address = self.select(0)
-        data = {"mode": "manual", "address": address, "username": "api-user", "password": "api-secret"}
-        def call(method, payload=None):
+        data = {"mode": "manual", "address": address}
+
+        def call(method, payload=None, path="/api/proxy-settings"):
             connection = http.client.HTTPConnection("127.0.0.1", ui.port, timeout=3)
             self.addCleanup(connection.close)
-            connection.request(method, "/api/proxy-settings", json.dumps(payload) if payload is not None else None)
+            connection.request(method, path, json.dumps(payload) if payload is not None else None)
             response = connection.getresponse()
             return response.status, json.loads(response.read())
+
         code, status = call("POST", data)
         self.assertEqual(code, 200)
         self.assertEqual(status["effective"]["https"]["address"], address)
-        self.assertNotIn("api-secret", json.dumps(status))
         self.assertEqual(call("GET")[1], status)
-        self.assertEqual(call("POST", {"mode": "manual", "address": "http://u:leak@proxy.invalid"})[0], 400)
+        for path in ("/api/proxy-settings", "/api/proxy-test"):
+            for fields in ({"username": "private-user"}, {"password": "private-secret"},
+                           {"address": "http://u:private-secret@proxy.invalid"}):
+                code, result = call("POST", {**data, **fields}, path)
+                self.assertEqual(code, 400)
+                self.assertNotIn("private-", json.dumps(result))
         self.assertEqual(self.relay.store.list(limit=1), [])
-        self.assertNotIn("api-secret", self.relay.settings_path.read_text() if self.relay.settings_path.exists() else "")
         self.assertEqual(self.relay.outgoing_opener().inspector_proxy_mode, "manual")
+        preview_address = self.select(1)
         with patch.object(self.relay.proxy_tester, "test", return_value={"state": "ok", "status": 401}) as test:
-            connection = http.client.HTTPConnection("127.0.0.1", ui.port, timeout=3)
-            self.addCleanup(connection.close)
-            connection.request("POST", "/api/proxy-test", json.dumps({"mode": "manual", "address": address,
-                "username": "preview-user", "password": "preview-secret"}))
-            response = connection.getresponse()
-            self.assertEqual(response.status, 200)
-            self.assertEqual(json.loads(response.read())["status"], 401)
-            self.assertIn("preview-secret@", test.call_args.args[0]["https"])
-        self.assertEqual(self.relay.proxy_config.status()["manual"]["username"], "api-user")
+            self.assertEqual(call("POST", {**data, "address": preview_address}, "/api/proxy-test"),
+                             (200, {"state": "ok", "status": 401}))
+            self.assertEqual(test.call_args.args[0]["https"], preview_address)
+        self.assertEqual(call("GET")[1]["manual"]["address"], address)
 
-    def test_manual_error_diagnostics_redact_password_and_keep_route_snapshot(self):
+    def test_manual_error_diagnostics_keep_route_snapshot(self):
         address = self.select(0)
-        self.relay.proxy_config.configure({"mode": "manual", "address": address,
-            "username": "log-user", "password": "log-secret"})
+        self.relay.proxy_config.configure({"mode": "manual", "address": address})
         selected = self.relay.outgoing_opener()
         journal = self.relay.network_diagnostics
         trace = journal.request("https://upstream.invalid/responses", "POST", {}, b"{}", opener=selected)
         self.relay.proxy_config.configure({"mode": "auto"})
         self.relay.outgoing_opener()
         with patch.object(journal, "_save") as save:
-            trace.finish(ConnectionRefusedError("failed log-user:log-secret"))
+            trace.finish(ConnectionRefusedError("connection refused"))
         record = save.call_args.args[0]
         self.assertEqual(record["environment"]["proxy_mode"], "manual")
         self.assertEqual(record["environment"]["proxy_configuration_source_now"], "manual")
-        self.assertNotIn("log-secret", json.dumps(record))
-        self.assertNotIn("log-user", json.dumps(record))
 
 
 class ProxyAuthenticationTests(unittest.TestCase):

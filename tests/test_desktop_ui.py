@@ -110,9 +110,9 @@ class DesktopUITests(unittest.TestCase):
         self.assertEqual((status, data["version"], data["ui_version"]), (200, "0.2.0", VERSION))
         self.assertEqual(data["active_requests"], 1)
 
-    def test_proxy_settings_forward_auth_fields_and_preserve_the_other_body_limits(self):
+    def test_proxy_settings_forward_bypass_rules_and_preserve_the_other_body_limits(self):
         body = json.dumps({"mode": "manual", "address": "http://proxy.invalid:8080",
-                           "username": "user", "password": "测试" * 2000}, ensure_ascii=False).encode()
+                           "bypass": "测试" * 2000}, ensure_ascii=False).encode()
         self.assertGreater(len(body), 8192)
         self.assertEqual(self.request("/api/proxy-settings")[0], 200)
         for path in ("/api/proxy-settings", "/api/proxy-test"):

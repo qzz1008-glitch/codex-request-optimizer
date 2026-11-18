@@ -54,7 +54,7 @@ These previews use the real frontend with fictional sample data.
 
 Includes Chinese/English language switching, tray operation, and start on login. Upgrades preserve records and settings, automatically synchronize existing connections, and clearly prompt when a restart or attention is needed.
 
-On Windows and Linux, choose automatic detection or manual configuration under Outbound proxy in Settings. Automatic mode shows the detected source, HTTP/HTTPS addresses, and bypass list. Manual mode has separate address, username, password, and bypass fields. Saved changes apply to new requests without a restart. Usernames may be stored in plaintext; passwords are encrypted and never shown. Test proxy checks unsaved settings without sending conversations or Codex account credentials.
+On Windows and Linux, choose automatic detection or manual configuration under Outbound proxy in Settings. Automatic mode shows the detected address. In manual mode, enter an HTTP or HTTPS proxy address. Saved changes apply to new requests without a restart. Test checks unsaved settings without sending conversations or Codex account credentials.
 
 Existing Codex configurations in WSL can also be connected as a validation feature. See the [usage guide](https://github.com/qzz1008-glitch/codex-request-optimizer/blob/main/docs/usage.md) for sharing, WSL, and other detailed instructions.
 
