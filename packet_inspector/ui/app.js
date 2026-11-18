@@ -38,7 +38,7 @@ globalThis.InspectorConnections = {
       const tools=element("div","connection-device-controls"),reconnect=element("button","connection-device-reconnect");
       reconnect.type="button";
       reconnect.addEventListener("click",()=>{if(reconnect.getAttribute("aria-disabled")!=="true")confirm("reconnect",[row.id]);});
-      tools.append(buttons,reconnect);info.append(title,state);root.append(info,tools);list.append(root);
+      tools.append(reconnect,buttons);info.append(title,state);root.append(info,tools);list.append(root);
       const value={root,title,state,buttons,actions,reconnect};nodes.set(row.id,value);return value;
     }
     function render() {
@@ -70,8 +70,8 @@ globalThis.InspectorConnections = {
         value.reconnect.hidden=row.kind!=="ssh";
         value.reconnect.disabled=busy(row)||submitting;
         value.reconnect.setAttribute("aria-disabled",String(!row.codex_restart?.supported));
-        text(value.reconnect,tr("重新连接 Codex"));
-        value.reconnect.setAttribute("aria-label",tr("重新连接 Codex")+" · "+name(row));
+        text(value.reconnect,tr("重连"));
+        value.reconnect.setAttribute("aria-label",tr("重连")+" Codex · "+name(row));
         const nativeHint=row.codex_reconnect?.error||row.codex_reconnect?.warning||(!row.codex_restart?.supported?row.codex_restart?.reason:"");
         value.reconnect.title=tr(nativeHint||"重载此服务器当前账号的 Codex 后台，使配置生效。");
         value.reconnect.setAttribute("aria-description",value.reconnect.title);
@@ -191,7 +191,7 @@ globalThis.InspectorConnections = {
       node.addEventListener("focusout",leave);
     }
     controls.addEventListener("keydown",event=>{
-      if(event.key==="ArrowDown"){event.preventDefault();show();panel.querySelector("button:not(:disabled)")?.focus();}
+      if(event.key==="ArrowDown"){event.preventDefault();show();panel.querySelector("button:not(:disabled):not([hidden])")?.focus();}
     });
     document.addEventListener("pointerdown",event=>{if(!controls.contains(event.target)&&!panel.contains(event.target))hide();});
     document.addEventListener("keydown",event=>{if(event.key==="Escape"&&isOpen()){hide();event.stopPropagation();}});
