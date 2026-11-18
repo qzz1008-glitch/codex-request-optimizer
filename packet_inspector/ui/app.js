@@ -85,6 +85,7 @@ globalThis.InspectorConnections = {
         value.reconnect.hidden=row.kind!=="ssh";
         value.reconnect.disabled=busy(row)||submitting;
         value.reconnect.setAttribute("aria-disabled",String(!row.codex_restart?.supported));
+        value.reconnect.classList.toggle("needs-reconnect",row.kind==="ssh"&&!!row.reload_required&&!!row.codex_restart?.supported&&!busy(row)&&!submitting);
         text(value.reconnect,tr("重连"));
         value.reconnect.setAttribute("aria-label",tr("重连")+" Codex · "+name(row));
         const nativeHint=row.codex_reconnect?.error||row.codex_reconnect?.warning||(!row.codex_restart?.supported?row.codex_restart?.reason:"");
