@@ -96,7 +96,7 @@ body{height:100dvh;min-width:0;display:flex;flex-direction:column;overflow-x:hid
 .session-search:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 2px #1d4ed81a}
 .session-empty{margin:0;padding:18px 8px;color:var(--muted);font-size:12px;line-height:1.6}
 .session-list{--session-connection-gutter:9px;display:flex;flex-direction:column;gap:3px;flex:1;min-height:0;overflow-x:hidden;overflow-y:scroll;margin-right:calc(var(--session-edge-gap) - var(--view-inset));padding:2px 2px 8px var(--session-connection-gutter);scrollbar-gutter:stable;overflow-anchor:none}
-.session-items{position:relative;display:flex;flex-direction:column;gap:3px;flex:none;min-width:0}
+.session-items{position:relative;display:flex;flex-direction:column;gap:7px;flex:none;min-width:0}
 .session-items.session-loading{flex:1;align-items:center;justify-content:center;min-height:0}
 .session-spinner{flex:none;width:24px;height:24px;border:2px solid var(--line);border-top-color:var(--accent);border-radius:50%;animation:update-spin .8s linear infinite}
 .session-connections{position:absolute;top:0;left:calc(-1 * var(--session-connection-gutter));z-index:1;overflow:visible;pointer-events:none}
@@ -104,14 +104,14 @@ body{height:100dvh;min-width:0;display:flex;flex-direction:column;overflow-x:hid
 .session-connection-node{fill:var(--panel);stroke:#6c86bd;stroke-width:1.5}
 .session-connection-node.selected{fill:var(--accent);stroke:var(--accent)}
 .session-item.session-linked.selected{box-shadow:none}
-.session-item{display:flex;flex-direction:column;align-items:stretch;justify-content:flex-start;gap:5px;flex-shrink:0;width:100%;min-height:42px;padding:8px 1px 8px 12px;border-color:transparent;background:transparent;text-align:left;white-space:normal;border-radius:7px}
+.session-item{display:flex;flex-direction:column;align-items:stretch;justify-content:flex-start;gap:2px;flex-shrink:0;width:100%;min-height:42px;padding:7px 8px 7px 12px;border-color:var(--line);background:#f7f9fc;text-align:left;white-space:normal;border-radius:7px}
 .session-item,.session-item *{-webkit-user-select:text;user-select:text}
 .session-item:hover{background:#f3f6fc;border-color:var(--line)}
 .session-item.selected{background:var(--soft);border-color:#cad7fa;color:var(--accent);box-shadow:inset 3px 0 var(--accent)}
-.session-id{font-size:12px;line-height:1.65;min-width:0;white-space:nowrap;overflow-wrap:normal}
+.session-id{font-size:12px;line-height:1.3;min-width:0;white-space:nowrap;overflow-wrap:normal}
 code.session-id{font-family:Consolas,"Cascadia Mono",monospace;font-size:11px;word-break:normal}
 .session-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;min-width:0}
-.other-session-group{background:#f5f2fc;border-color:#e7e0f5;padding-block:11px}
+.other-session-group{background:#f5f2fc;border-color:#e7e0f5}
 .other-session-group:hover{background:#eee8fa;border-color:#d8caee}
 .other-session-group.selected{background:#eee8fa;border-color:#cbb9e6;color:#6c469b;box-shadow:inset 3px 0 #8c66bb}
 .other-session-group .session-title{color:#6c469b}
@@ -198,8 +198,8 @@ code.session-id{font-family:Consolas,"Cascadia Mono",monospace;font-size:11px;wo
 @media(prefers-reduced-motion:reduce){.trend-series-line{transition:none}}
 .image-path-item{display:flex;align-items:flex-start;gap:8px;min-width:0;padding:8px 0;border-top:1px solid var(--line)}
 .image-path-name{flex:1;min-width:0;color:var(--ink);font:12px/1.6 Consolas,"Cascadia Mono",monospace;white-space:pre-wrap;overflow-wrap:anywhere;user-select:text}
-.session-title{font-size:13px;font-weight:600;line-height:1.5;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
-.session-meta{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:4px;font-size:10px;line-height:1.6;color:var(--muted);font-variant-numeric:tabular-nums;white-space:nowrap}
+.session-title{font-size:13px;font-weight:600;line-height:1.35;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.session-meta{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:4px;font-size:10px;line-height:1.35;color:var(--muted);font-variant-numeric:tabular-nums;white-space:nowrap}
 .session-origin{overflow:hidden;text-overflow:ellipsis}
 .session-updated{grid-column:2;justify-self:end;text-align:right;white-space:nowrap}
 .session-metadata-note{flex-shrink:0;font-size:11px;line-height:1.5;margin:0 5px 4px}
