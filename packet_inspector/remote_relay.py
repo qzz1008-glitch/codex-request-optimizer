@@ -216,6 +216,7 @@ class RemoteRelays:
         self.start = start or subprocess.Popen
         self.gateway = None
         self.processes = {}
+        self.current_accounts = {}
         self.retry_at = {}
         self.guard = threading.RLock()
         self.closed = False
@@ -242,21 +243,40 @@ class RemoteRelays:
         return record.get("routes", {}).get(identifier) if record else None
 
     def needs_resume(self, host=None):
-        key = self.key(host) if host else None
+        device = self.key(host) if host else None
         now = time.monotonic()
         with self.guard:
-            return not self.closed and any(record.get("enabled") and (key is None or device == key)
-                and self.retry_at.get(device, 0) <= now
-                and (device not in self.processes or self.processes[device].poll() is not None)
-                for device, record in self.records())
+            if self.closed:
+                return False
+            for key, record in self.records():
+                host_key = key.partition("-")[0]
+                if (device is not None and device != host_key) or self.current_accounts.get(host_key, key) != key:
+                    continue
+                if (record.get("enabled") and self.retry_at.get(host_key, 0) <= now
+                        and (key not in self.processes or self.processes[key].poll() is not None)):
+                    return True
+            return False
 
     def _save(self, key, record):
         self.directory.mkdir(parents=True, exist_ok=True)
         atomic_json(self.directory / (key + ".json"), record)
 
+    def _account_record(self, device, account_key, account):
+        records = dict(self.records())
+        if account_key in records:
+            return account_key, records[account_key]
+        legacy = records.get(device, {})
+        if legacy.get("home") == account["home"] and legacy.get("uid", account["uid"]) == account["uid"]:
+            # Pre-account records identified the login by its resolved config directory.
+            if "uid" not in legacy:
+                legacy["uid"] = account["uid"]
+                self._save(device, legacy)
+            return device, legacy
+        return account_key, {}
+
     def _call(self, host, action, **options):
         result = self.ssh(host, "tunnel_" + action, **options)
-        if result.get("error") and action != "reconnect":
+        if result.get("error") and (action != "reconnect" or "state" not in result):
             raise ValueError(result["error"])
         return result
 
@@ -282,10 +302,8 @@ class RemoteRelays:
                 self.gateway = TunnelGateway(self)
             local = self.gateway.server_port
             port = record["port"]
-            arguments = SshControl.arguments(host) + [
-                "-o", "ExitOnForwardFailure=yes", "-o", "StrictHostKeyChecking=yes",
-                "-o", "UpdateHostKeys=no", "-o", "ControlMaster=no", "-o", "ControlPath=none",
-                "-o", "ForkAfterAuthentication=no", "-R", f"127.0.0.1:{port}:127.0.0.1:{local}",
+            arguments = SshControl.arguments(host, fresh=True) + [
+                "-o", "ExitOnForwardFailure=yes", "-R", f"127.0.0.1:{port}:127.0.0.1:{local}",
                 "--", host.destination, "exec cat >/dev/null"]
             # Closing the local stdin also releases the remote forward after an
             # unexpected worker exit. The SSH host runs only its existing sshd.
@@ -293,7 +311,7 @@ class RemoteRelays:
                                  creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
             self.processes[key] = process
         try:
-            probe = self._call(host, "probe", home=record["home"], port=port, token=record["token"])
+            probe = self._call(host, "probe", home=record["home"], uid=record["uid"], port=port, token=record["token"])
             proof = probe.get("proof")
             if not isinstance(proof, str) or not secrets.compare_digest(proof, record["proof"]):
                 raise ValueError("无法建立 SSH 请求转发，请检查 SSH 是否允许远程端口转发。")
@@ -302,7 +320,7 @@ class RemoteRelays:
                 # Confirm the same local proof, then retry taking over shortly.
                 with self.guard:
                     self._drop(key)
-                    self.retry_at[key] = time.monotonic() + 3
+                    self.retry_at[self.key(host)] = time.monotonic() + 3
         except Exception:
             with self.guard:
                 self._drop(key)
@@ -323,15 +341,18 @@ class RemoteRelays:
             gateway.server_close()
 
     def __call__(self, host, action, origin=""):
-        key = self.key(host)
-        record = dict(self.records()).get(key, {})
+        device = self.key(host)
         with self.guard:
             if self.closed:
                 raise ValueError("本机中转正在退出。")
-            if record.get("enabled"):
-                self.retry_at[key] = time.monotonic() + RETRY_SECONDS
-        options = {"home": record["home"]} if record else {}
-        snapshot = self._call(host, "snapshot", **options, native=bool(record.get("reload_required")))
+            self.retry_at[device] = time.monotonic() + RETRY_SECONDS
+        snapshot = self._call(host, "snapshot", native=action != "reconnect")
+        account = {"home": snapshot["home"], "uid": snapshot["uid"]}
+        account_hash = hashlib.sha256(json.dumps(account, sort_keys=True).encode()).hexdigest()[:24]
+        account_key = f"{device}-{account_hash}"
+        with self.guard:
+            key, record = self._account_record(device, account_key, account)
+            self.current_accounts[device] = key
         files = {name: base64.b64decode(raw, validate=True) if raw is not None else None
                  for name, raw in snapshot["files"].items()}
         active = False
@@ -346,7 +367,7 @@ class RemoteRelays:
             if action == "activate":
                 if not record:
                     record = {"token": secrets.token_hex(24), "port": 49152 + secrets.randbelow(16384),
-                              "home": snapshot["home"], "proof": secrets.token_hex(24)}
+                              "proof": secrets.token_hex(24), **account}
                 endpoint = f"http://127.0.0.1:{record['port']}/relay/{record['token']}"
             else:
                 endpoint = ""
@@ -370,9 +391,8 @@ class RemoteRelays:
                 if edits:
                     expected = {name: hashlib.sha256(raw).hexdigest() if raw is not None else None
                                 for name, raw in files.items()}
-                    outcome = self._call(host, "write", home=record["home"], expected=expected,
-                                         updates={name: base64.b64encode(raw).decode("ascii")
-                                                  for name, raw in edits.items()})
+                    updates = {name: base64.b64encode(raw).decode("ascii") for name, raw in edits.items()}
+                    outcome = self._call(host, "write", expected=expected, updates=updates, **account)
                     changed = bool(outcome["changed"])
                 active = bool(endpoint)
                 if endpoint:
@@ -383,17 +403,11 @@ class RemoteRelays:
                 self._save(key, record)
         elif active:
             self._ensure(host, key, record)
-        capability = snapshot.get("codex_restart")
-        if record.get("reload_required") and capability is None:
-            refreshed = self._call(host, "snapshot", home=record["home"], native=True)
-            capability = refreshed.get("codex_restart")
-        result = {"state": "connected" if active else "disconnected", "can_connect": True,
+        result = {"state": "connected" if active else "disconnected", "can_connect": True, "account_key": account_key,
                   "can_disconnect": bool(active), "reload_required": bool(
                       record.get("reload_required") or active and "previous_fields" in record)}
-        if capability is not None:
-            result["codex_restart"] = capability
         if action == "reconnect":
-            reconnect = self._call(host, "reconnect", **options)
+            reconnect = self._call(host, "reconnect", **account)
             result["codex_reconnect"] = reconnect
             result["codex_restart"] = reconnect["codex_restart"]
             if record and reconnect["state"] == "reloaded" and not reconnect.get("warning"):
@@ -404,4 +418,6 @@ class RemoteRelays:
                     with self.guard:
                         self._drop(key)
                     (self.directory / (key + ".json")).unlink(missing_ok=True)
+        else:
+            result["codex_restart"] = snapshot["codex_restart"]
         return result
