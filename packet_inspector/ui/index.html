@@ -269,7 +269,7 @@
         <label for="entry-port">中转入口</label>
         <input id="entry-port" type="number" min="1024" max="65535" step="1" value="47844" required aria-describedby="entry-port-hint link-status">
         <div class="entry-port-details">
-          <small id="entry-port-hint" class="entry-port-hint">接收 Codex 请求</small>
+          <small id="entry-port-hint" class="entry-port-hint">本机 Codex 连接中转服务的端口</small>
           <span id="link-status" class="entry-port-status" role="status" aria-live="polite" hidden></span>
         </div>
       </div>
@@ -278,12 +278,12 @@
         <div class="entry-port-row" data-settings-field="sharing_port">
           <label for="sharing-port">额度共享</label>
           <input id="sharing-port" type="number" min="1" max="65535" step="1" value="47846" required aria-describedby="sharing-port-hint">
-          <small id="sharing-port-hint" class="entry-port-hint">借出本机额度</small>
+          <small id="sharing-port-hint" class="entry-port-hint">局域网设备借用本机 Codex 额度的端口</small>
         </div>
         <div class="entry-port-row" data-settings-field="egress_port">
           <label for="exit-port">出口共享</label>
           <input id="exit-port" type="number" min="1" max="65535" step="1" value="47847" required aria-describedby="exit-port-hint">
-          <small id="exit-port-hint" class="entry-port-hint">共享本机网络出口</small>
+          <small id="exit-port-hint" class="entry-port-hint">局域网设备经本机网络访问 Codex 的端口</small>
         </div>
       </div>
     </section>
