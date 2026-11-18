@@ -517,7 +517,7 @@ dialog{width:min(760px,calc(var(--desktop-width) - 80px));max-height:calc(var(--
 .connection-device-info strong{font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .connection-device-state{font-size:12px;color:var(--muted)}
 .connection-device-actions{flex-shrink:0;padding:2px}.connection-device-actions button{padding:3px 9px;min-width:46px}
-.connection-device-controls{flex-shrink:0;display:flex;flex-direction:column;align-items:stretch;gap:6px}.connection-device-reconnect{font-size:12px;min-height:26px;padding:3px 9px}.connection-device-reconnect[aria-disabled=true]{opacity:.55;cursor:default}
+.connection-device-controls{flex-shrink:0;display:flex;align-items:center;gap:6px}.connection-device-reconnect{font-size:12px;min-height:26px;padding:3px 9px;white-space:nowrap}.connection-device-reconnect[aria-disabled=true]{opacity:.55;cursor:default}
 .connection-error{font-size:12px;color:var(--danger);overflow-wrap:anywhere;white-space:pre-wrap}
 #devices-confirm-dialog{width:min(540px,calc(100vw - 48px))}#devices-confirm-dialog h2{font-size:20px}#devices-confirm-dialog .button-row{justify-content:flex-end}
 .connection-confirm-targets{list-style:none;padding:0;margin:14px 0;max-height:32vh;overflow:auto;scrollbar-gutter:stable}
