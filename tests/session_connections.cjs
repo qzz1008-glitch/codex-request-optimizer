@@ -77,6 +77,16 @@ test('a confirmed image parent remains a group before its name or native record 
   assert.equal(context.otherTaskSessions().length,0);
  }
 });
+test('an unnamed session with a confirmed SSH address displays its own card',()=>{
+ const origin={kind:'remote',address:'192.0.2.25'};
+ const groups=grouped([session('remote',{origin}),
+  session('helper',{origin,parent_thread_id:'remote',session_kind:'title_generation'}),
+  session('unresolved')]);
+ const remote=groups.find(group=>group.thread_id==='remote');
+ assert.deepEqual(remote.origin,origin);
+ assert.deepEqual(remote.members.map(row=>row.thread_id),['remote','helper']);
+ assert.deepEqual(Array.from(context.otherTaskSessions(),row=>row.thread_id),['unresolved']);
+});
 test('image requests belong to their direct subtask or fork without merging unrelated parents',()=>{
  const rows=[session('main',{title:'Main'}),session('child',{parent_thread_id:'main',session_kind:'subagent',title:'Builder'}),
   session('fork',{parent_thread_id:'main',title:null}),session('main-image',{parent_thread_id:'main',session_kind:'image_analysis'}),

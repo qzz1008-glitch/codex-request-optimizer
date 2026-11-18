@@ -609,7 +609,8 @@ function sessionGroups() {
       if(visited.has(current.thread_id))break;
       visited.add(current.thread_id);
       const kind=auxiliarySessionKind(current);
-      if((kind==="subagent"&&sessionTitle(current))||(!kind&&(imageParents.has(current.thread_id)||sessionTitle(current)))) {owner=current;break;}
+      const knownRemote=current.origin?.kind==="remote"&&current.origin.address;
+      if((kind==="subagent"&&sessionTitle(current))||(!kind&&(imageParents.has(current.thread_id)||sessionTitle(current)||knownRemote))) {owner=current;break;}
       current=rows.get(current.parent_thread_id);
     }
     const id=owner?.thread_id||OTHER_SESSION_GROUP;
@@ -982,10 +983,12 @@ function renderSessions() {
     const otherGroup=id===OTHER_SESSION_GROUP;
     const value=otherGroup?OTHER_SESSION_GROUP:id?"thread:"+id:"unknown", data=summaries.get(id)||{};
     const title=data.title;
+    const origin=data.origin?.kind==="local"?t("本机"):data.origin?.address;
     if(query && !(title+"\n"+data.members.map(row=>row.thread_id+" "+(row.title||"")+" "+(auxiliaryLabels[auxiliarySessionKind(row)]?t(auxiliaryLabels[auxiliarySessionKind(row)]):"")).join("\n")).toLowerCase().includes(query))continue;
     const item=el("button","session-item"+(otherGroup?" other-session-group":"")+(value===selected?" selected":""));
     item.type="button";item.dataset.session=value;
     item.title=otherGroup?title:title+"\n"+(id||t("未识别会话"));
+    if(origin)item.title+="\n"+origin;
     if(data.title_cached)item.title+="\n"+t("会话名称暂不可用，显示上次加载的名称");
     for(const link of connections) {
       if(link.child===id)item.title+="\n"+t("父会话名称")+"："+summaries.get(link.parent).title;
@@ -996,16 +999,12 @@ function renderSessions() {
     const heading=el("div","session-heading");heading.append(el("span","session-title",title));
     item.append(heading);
     const updated=Number.isFinite(data.updated_at)?new Date(data.updated_at*1000):null;
-    const meta=el("div","session-meta"), when=el("span","session-updated",t("更新 ")+(updated?dateFormat.format(updated)+" "+clockFormat.format(updated):"—"));
+    const meta=el("div","session-meta");
+    const when=el("span","session-updated",updated?dateFormat.format(updated)+" "+clockFormat.format(updated):"—");
     if(updated)when.title=timestampFormat.format(updated);
     if(!otherGroup) {
       if(id)item.append(el("code","session-id",id));
-      const tokens=data.token_window, estimated=tokens?.estimated, used=tokens?.source==="codex_estimate"?tokens?.input_tokens:estimated?tokens?.used_tokens:tokens?.input_tokens;
-      const available=tokens?.state==="available"&&Number.isFinite(used)&&used>=0;
-      const tokenText=available?(estimated?"≈ ":"")+nf.format(used):"—";
-      const usage=el("span","session-token","Token "+tokenText);
-      usage.title=available?(estimated?t(tokens?.source==="codex_estimate"?"超限摘要前输入 Token（估算）":"压缩后上下文总量估算"):t("最近请求输入 Token"))+(tokens.recorded_at?" · "+timestampFormat.format(new Date(tokens.recorded_at*1000)):""):t("尚无可用的输入 Token 记录");
-      meta.append(usage);
+      meta.append(el("span","session-origin",origin||"—"));
     }
     meta.append(when);item.append(meta);
     bindSelectableRow(item,()=>{
