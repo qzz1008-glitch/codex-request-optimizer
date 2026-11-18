@@ -10,7 +10,8 @@ globalThis.InspectorConnections = {
     const nativePopover="popover" in HTMLElement.prototype;
     const anchorPositioning=CSS.supports("top: anchor(bottom)");
     const nodes=new Map(), confirmNodes=new Map(), pending=new Map(), reconnectPrompts=new Map();
-    let rows=[],loaded=false,loading=false,submitting=false,catalogError="",revision="",timer=null,closeTimer=null,hover=false;
+    let rows=[],hasServers=false,loading=false,submitting=false,catalogError="",revision="",timer=null,closeTimer=null,hover=false;
+    let openRequested=false,focusOnOpen=false;
     let plan=null,finished=false,disposed=false;
     const text=(node,value)=>{if(node.textContent!==value)node.textContent=value;};
     const isOpen=()=>nativePopover?panel.matches(":popover-open"):!panel.hidden;
@@ -59,7 +60,7 @@ globalThis.InspectorConnections = {
       const tools=element("div","connection-device-controls"),reconnect=element("button","connection-device-reconnect");
       reconnect.type="button";
       reconnect.addEventListener("click",()=>{if(reconnect.getAttribute("aria-disabled")!=="true")confirm("reconnect",row.id);});
-      tools.append(reconnect,buttons);info.append(state,label);root.append(info,tools);list.append(root);
+      tools.append(buttons,reconnect);info.append(state,label);root.append(info,tools);list.append(root);
       const value={root,label,state,buttons,actions,reconnect};nodes.set(row.id,value);return value;
     }
     function render() {
@@ -87,10 +88,8 @@ globalThis.InspectorConnections = {
         value.reconnect.title=tr(nativeHint||"重载此服务器当前账号的 Codex 后台，使配置生效。");
         value.reconnect.setAttribute("aria-description",value.reconnect.title);
       }
-      const message=catalogError||(!loaded?"正在读取服务器列表…":rows.length?"":"暂无已保存的服务器");
       const note=get("connection-devices-status");
-      text(note,tr(message));note.hidden=!message;
-      note.classList.toggle("connection-error",!!catalogError);
+      text(note,tr(catalogError));note.hidden=!catalogError;
       renderConfirmation();
       place();
     }
@@ -139,15 +138,32 @@ globalThis.InspectorConnections = {
     }
     function hide() {
       clearTimeout(closeTimer);
+      openRequested=false;focusOnOpen=false;
       if(nativePopover){if(isOpen())panel.hidePopover();}else{panel.hidden=true;}
+      controls.removeAttribute("data-server-panel-open");
     }
-    function show() {
+    function focusFirstAction() {
+      panel.querySelector("button:not(:disabled):not([hidden])")?.focus();
+    }
+    function show(focus=false) {
       clearTimeout(closeTimer);
       if(document.querySelector("dialog[open]"))return;
-      if(!isOpen()) {
-        if(nativePopover)panel.showPopover({source:controls});else{panel.hidden=false;}
+      if(isOpen()) {
+        if(focus)focusFirstAction();
+        return;
       }
-      place();poll();
+      openRequested=true;focusOnOpen ||= focus;
+      poll();
+    }
+    function openAfterPoll() {
+      const focus=focusOnOpen;
+      const shouldOpen=openRequested&&hasServers&&(hover||controls.contains(document.activeElement));
+      openRequested=false;focusOnOpen=false;
+      if(!shouldOpen||disposed||document.querySelector("dialog[open]"))return;
+      if(nativePopover)panel.showPopover({source:controls});else{panel.hidden=false;}
+      controls.setAttribute("data-server-panel-open","");
+      place();
+      if(focus)focusFirstAction();
     }
     function leave() {
       hover=false;clearTimeout(closeTimer);
@@ -167,7 +183,9 @@ globalThis.InspectorConnections = {
       try {
         const value=await request("/api/connections");
         if(!Array.isArray(value.targets))throw Error(tr("无法读取设备接入状态。"));
-        rows=value.targets.filter(row=>row.kind==="ssh");loaded=true;catalogError=value.error||"";revision=value.revision;
+        rows=value.targets.filter(row=>row.kind==="ssh");
+        hasServers=rows.length>0;catalogError=value.error||"";revision=value.revision;
+        if(!hasServers)hide();
         for(const [id,{operationId,action}] of observed) {
           const row=rows.find(target=>target.id===id);
           if(!row||row.operation_id!==operationId){
@@ -179,10 +197,10 @@ globalThis.InspectorConnections = {
         }
         if(plan?.submitted&&!plan.targets.some(row=>pending.has(row.id)))finished=true;
       } catch(error) {
-        if(error.status===404){rows=[];loaded=false;catalogError=tr("当前运行版本不支持设备接入管理，请更新 EXE 后使用。");}
+        if(error.status===404){rows=[];catalogError=tr("当前运行版本不支持设备接入管理，请更新 EXE 后使用。");}
         else catalogError=error.message;
       }
-      finally {loading=false;offerReconnect();render();schedule();}
+      finally {loading=false;offerReconnect();render();openAfterPoll();schedule();}
     }
     function offerReconnect() {
       if(!reconnectPrompts.size||disposed||submitting||catalogError)return;
@@ -239,18 +257,18 @@ globalThis.InspectorConnections = {
       finally {submitting=false;offerReconnect();render();schedule();}
     }
     if(!nativePopover){panel.hidden=true;panel.classList.add("connection-panel-fallback");}
-    else panel.addEventListener("toggle",()=>{if(isOpen()){place();poll();}});
+    else panel.addEventListener("toggle",()=>{if(!isOpen())controls.removeAttribute("data-server-panel-open");});
     for(const node of [controls,panel]) {
       node.addEventListener("pointerenter",event=>{if(event.pointerType==="touch")return;hover=true;show();});
       node.addEventListener("pointerleave",leave);
-      node.addEventListener("focusin",show);
+      node.addEventListener("focusin",()=>show());
       node.addEventListener("focusout",leave);
     }
     controls.addEventListener("keydown",event=>{
-      if(event.key==="ArrowDown"){event.preventDefault();show();panel.querySelector("button:not(:disabled):not([hidden])")?.focus();}
+      if(event.key==="ArrowDown"){event.preventDefault();show(true);}
     });
     document.addEventListener("pointerdown",event=>{if(!controls.contains(event.target)&&!panel.contains(event.target))hide();});
-    document.addEventListener("keydown",event=>{if(event.key==="Escape"&&isOpen()){hide();event.stopPropagation();}});
+    document.addEventListener("keydown",event=>{if(event.key==="Escape"&&(isOpen()||openRequested)){hide();event.stopPropagation();}});
     globalThis.addEventListener("resize",place);
     applyButton.addEventListener("click",apply);
     cancelButton.addEventListener("click",()=>dialog.close());
@@ -1715,7 +1733,6 @@ function renderCompressionMode() {
   $("request-compression").setAttribute("aria-busy",String(busy));
   setText($("compression-hint"),t(connectionResumeBusy()?"正在检查接入配置…":unknown?"本机接入状态暂不可用。":
     connected?"由本软件管理 zstd 压缩，保留完整内容。":"直连原上游，由 Codex 管理原生压缩。"));
-  $("request-compression").title=$("compression-hint").textContent;
   $("compression-confirm-dialog").setAttribute("aria-busy",String(compressionSaving));
   for(const id of ["compression-confirm-cancel","compression-confirm-apply"])$(id).disabled=compressionSaving;
   setText($("compression-confirm-apply"),t(compressionTarget==="disconnected"?(compressionSaving?"正在取消接入…":"确认断开"):(compressionSaving?"正在切换…":"确认断开")));
