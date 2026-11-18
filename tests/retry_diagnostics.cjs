@@ -30,7 +30,7 @@ assert.deepEqual(Array.from(context.events(packet({scheduled_retries:1}))), []);
 
 function node(tag,text='') {
   const classes=new Set();
-  return {tag,tagName:tag,text,textContent:text,children:[],dataset:{},attributes:{},
+  return {tag,tagName:tag,localName:tag,text,textContent:text,children:[],dataset:{},attributes:{},
     classList:{add(...values){values.forEach(value=>classes.add(value));},contains(value){return classes.has(value);},
       toggle(value,enabled){if(enabled)classes.add(value);else classes.delete(value);}},
     append(...children){this.children.push(...children);},setAttribute(name,value){this.attributes[name]=value;},
@@ -46,13 +46,14 @@ Object.assign(context, {
     open_directory_supported:true,open_image_supported:true,reveal_image_supported:true}},
   document:{createDocumentFragment:()=>node('fragment'),createElementNS:(_,tag)=>node(tag)},
   panel:title=>Object.assign(node('section'),{title}),
-  fact:(parent,label,value)=>{const row=node('fact');row.label=label;row.value=value;row.append(node('label',label),node('value',value));parent.append(row);return row;},
   el:(tag,cls,text)=>Object.assign(node(tag,text),{className:cls||''}),
-  originalBytes:()=>100,compressedBytes:()=>50,bytes:value=>value==null?'—':String(value),
+  bytes:value=>value==null?'—':String(value),
   $:id=>id==='packet-protection-panel'?rendered?.children.find(child=>child.id===id):null,
   reconcileContent:(_,root)=>{rendered=root;},api:async(route,data)=>{opened.push([route,data.path]);return {opened:true};},
   fail:error=>{throw error;}
 });
+vm.runInContext(source.split(/\r?\n/).filter(line=>/^function (originalBytes|compressedBytes)\(/.test(line)).join('\n'),context);
+vm.runInContext(source.slice(source.indexOf('function fact('),source.indexOf('function showTab(')),context);
 vm.runInContext(source.slice(source.indexOf('function localImagePath('),source.indexOf('function renderHeaders(')),context);
 vm.runInContext(source.slice(source.indexOf('function renderProtectionPanelState('),source.indexOf('function bars(')),context);
 vm.runInContext(source.slice(source.indexOf('function packetDetailVersion('),source.indexOf('async function selectPacket(')),context);
@@ -83,6 +84,7 @@ assert.deepEqual(uniqueImageRows(repeatedImages),['first','new-image'],'Loading 
 const waitingPacket={id:'pending',state:'captured',status:null};
 for(const fields of [{image_isolation_applied:true},{image_paths:['C:\\image.png']},
   {upstream_usage:{input_tokens:123},reported_usage:{input_tokens:500000}},
+  {inline_image_bytes:123},{transport_input_bytes:1000},{transport_wire_bytes:500},
   {overflow_cache_hit:true,relay_wire_bytes:1000},{image_upload_before_bytes:1200000},{image_upload_images:[{width:1600,height:900}]}])
   assert.notEqual(context.packetDetailVersion({...waitingPacket,...fields}),context.packetDetailVersion(waitingPacket),
     'Protection details must refresh even if request status has not changed');
@@ -90,16 +92,16 @@ const labels=['大小预测','超限压缩','容量重试','解图优化'];
 function rows(){return rendered.children[1].children;}
 function headings(){return rows().map(row=>{
   const heading=row.children[0],status=heading.lastChild;
-  assert.equal(heading.value,row.dataset.triggered==='true'?'✓':'—');
+  assert.equal(heading.lastChild.text,row.dataset.triggered==='true'?'✓':'—');
   assert.equal(status.title,context.t(row.dataset.triggered==='true'?'已触发':'未触发'));
   assert.equal(status.attributes['aria-label'],status.title);
   assert.equal(status.attributes.role,'img');
   assert.equal(row.dataset.mechanism,row.dataset.renderKey.replace('protection:',''));
-  return heading;
+  return {label:heading.children[0].text,value:status.text};
 });}
 function details(key){return rows().find(row=>row.dataset.renderKey==='protection:'+key)?.children[1];}
-function fields(root){return Object.fromEntries(descendants(root).filter(child=>child.tag==='fact').map(row=>[row.label,row.value]));}
-function facts(section){return Object.fromEntries((section===1?headings():rendered.children[section].children).map(row=>[row.label,row.value]));}
+function fields(root){return Object.fromEntries(descendants(root).filter(child=>child.className==='fact-row').map(row=>[row.children[0].text,row.children[1].text]));}
+function facts(section){return section===1?Object.fromEntries(headings().map(row=>[row.label,row.value])):fields(rendered.children[section]);}
 const mechanisms=['predictive','overflow','retry','optimization'];
 for(let mask=0;mask<16;mask++) {
   const active=mechanisms.filter((_,index)=>mask&(1<<index));
@@ -175,6 +177,24 @@ for(const meta of [{},{relay_content_encoding:'identity',relay_zstd_level:1},{re
   context.renderCompression(meta);
   assert.equal(facts(0)['文本压缩'],undefined,'Missing or inactive compression must not add an empty row');
 }
+const historicalImageRequest={decoded_bytes:2806092,image_isolation_removed:3,image_isolation_applied:true,
+  image_isolation_decoded_before:2806092,image_isolation_decoded_after:1931967,
+  transport_content_encoding:'zstd',transport_zstd_level:16,overflow_original_wire_bytes:954743};
+context.renderCompression(historicalImageRequest);
+assert.deepEqual(facts(0),{'原始请求':'2806092','图片大小':'≈ 874125','转发请求':'954743','文本压缩':'zstd · 16级','压缩比例':'49.4%'});
+const sizeList=rendered.children[0].children[0];
+assert.equal(sizeList.tag,'dl');
+assert(sizeList.children.every(row=>row.children[0].tag==='dt'&&row.children[1].tag==='dd'));
+context.renderCompression({...historicalImageRequest,transport_content_encoding:'identity'});
+assert.equal(facts(0)['压缩比例'],undefined,'Image-to-path size changes alone do not qualify as compression');
+const resizedAndCompacted={decoded_bytes:2000000,inline_image_bytes:800000,image_upload_optimized:true,
+  transport_content_encoding:'zstd',transport_input_bytes:1200000,transport_wire_bytes:600000,
+  outbound_wire_bytes:100000,overflow_original_wire_bytes:600000,overflow_cache_hit:true};
+context.renderCompression(resizedAndCompacted);
+assert.equal(facts(0)['图片大小'],'800000');
+assert.equal(facts(0)['压缩比例'],'50.0%','Use only the measured transport stage');
+context.renderCompression({...resizedAndCompacted,transport_input_bytes:undefined});
+assert.equal(facts(0)['压缩比例'],undefined,'A resize with no before-size cannot use the original request size');
 context.renderCompression({relay_content_encoding:'zstd'});
 assert.equal(facts(0)['文本压缩'],'zstd','A missing level must not hide a known compression method');
 context.renderCompression({...interrupted,overflow_compaction_calls:0,overflow_cache_hit:true});
@@ -245,5 +265,5 @@ assert.deepEqual(fields(details('retry')),{'Retry count':'3'});
   const actions=descendants(details('optimization')).filter(child=>child.tag==='button');
   for(const action of actions)await action.onclick({currentTarget:action});
   assert.deepEqual(opened,[['/api/open-directory',folder],['/api/open-image',image],['/api/reveal-image',image]]);
-  console.log('Unique image markers, ordering/pagination, four mechanism symbols, image size fields, file actions, refresh and English labels passed.');
+  console.log('Image markers, request size and compression fields, protection indicators, file actions, refresh and English labels passed.');
 })().catch(error=>{console.error(error);process.exitCode=1;});

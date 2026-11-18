@@ -4,7 +4,7 @@ globalThis.InspectorConnections = {
   create({request}) {
     const get=id=>document.getElementById(id), tr=value=>uiI18n.t(value);
     const panel=get("connection-panel"), controls=get("connection-controls");
-    const headerToggle=get("request-compression");
+    const localLabel=controls.querySelector(".connection-local-label");
     const dialog=get("devices-confirm-dialog"), list=get("connection-devices-list");
     const applyButton=get("devices-confirm-apply"), cancelButton=get("devices-confirm-cancel");
     const nativePopover="popover" in HTMLElement.prototype;
@@ -118,17 +118,13 @@ globalThis.InspectorConnections = {
         text(hint,tr("配置待生效，请在 ChatGPT 中重新连接此服务器的 Codex。"));
       dialog.setAttribute("aria-busy",String(submitting||running));
     }
-    function toggleDivider(toggle) {
-      const [disconnect, connect] = toggle.children;
-      return (disconnect.getBoundingClientRect().right + connect.getBoundingClientRect().left) / 2;
-    }
     function place() {
       if (!isOpen()) return;
       const trigger = controls.getBoundingClientRect();
       const bounds = panel.getBoundingClientRect();
-      const deviceToggle = list.querySelector(".connection-device-actions");
-      const left = deviceToggle
-        ? bounds.left + toggleDivider(headerToggle) - toggleDivider(deviceToggle)
+      const serverLabel = list.querySelector(".connection-device-info strong");
+      const left = serverLabel
+        ? bounds.left + localLabel.getBoundingClientRect().left - serverLabel.getBoundingClientRect().left
         : trigger.right - bounds.width;
       panel.style.left = `${Math.max(12, Math.min(left, innerWidth - bounds.width - 12))}px`;
       if (!anchorPositioning) {
@@ -1122,7 +1118,13 @@ async function loadTokenWindow() {
 function panel(title) { const n = el("section","panel"); n.dataset.renderKey="panel:"+title;n.append(el("h3","",title)); return n; }
 function table(headings, rows) { const wrap = el("div","table-scroll"), t = el("table"), head=el("thead"), tr=el("tr"); for (const h of headings) tr.append(el("th","",h)); head.append(tr); t.append(head); const body=el("tbody"); for (const cells of rows) { const row=el("tr"); for (const cell of cells) {const td=el("td"); if (cell instanceof Node) td.append(cell); else td.textContent = cell; row.append(td);} body.append(row); } t.append(body); wrap.append(t); return wrap; }
 function link(text, fn) { const n=el("button","link-button",text); n.onclick=()=>Promise.resolve().then(fn).catch(fail); return n; }
-function fact(n,label,value) { const r=el("div","fact-row"); r.dataset.renderKey="fact:"+label;r.append(el("span","",label),el("span","",value)); n.append(r); return r; }
+function fact(n,label,value) {
+  const row=el("div","fact-row"),description=n.localName==="dl";
+  row.dataset.renderKey="fact:"+label;
+  row.append(el(description?"dt":"span","",label),el(description?"dd":"span","",value));
+  n.append(row);
+  return row;
+}
 function showTab(tab) {
   const basic=!!state.detail?.details_evicted,search=isToolSearch(state.detail);
   if((basic&&tab==="tree")||(search&&tab==="diff"))tab="headers";
@@ -2260,6 +2262,7 @@ async function openSettings() {
 function packetDetailVersion(p) {
   return JSON.stringify([p.state,p.status,p.duration_ms,p.outbound_wire_bytes,p.outbound_content_encoding,
     p.relay_content_encoding,p.relay_zstd_level,p.transport_content_encoding,p.transport_zstd_level,
+    p.transport_input_bytes,p.transport_wire_bytes,p.inline_image_bytes,p.image_isolation_decoded_before,p.image_isolation_decoded_after,
     p.usage_override_request_bytes,p.usage_override_applied,p.capacity_retry_count,p.bad_request_retry_count,p.native_retry_advised,
     p.native_retry_delay_ms,p.capacity_retry_diagnostic?.updated,p.details_evicted,
     p.upstream_usage,p.reported_usage,p.overflow_compaction_calls,p.overflow_cache_hit,p.overflow_original_wire_bytes,
@@ -2309,8 +2312,19 @@ function renderProtectionPanelState() {
 function renderCompression(m) {
   const root=document.createDocumentFragment();
   const sizes=panel(t("请求处理")), original=originalBytes(m), compressed=compressedBytes(m);
-  fact(sizes,t("原始请求"),bytes(original)).title=t("原始请求大小（图片处理、传输压缩前）");
-  fact(sizes,t("转发请求"),bytes(compressed)).title=t("转发请求大小（图片处理、传输压缩后，超限摘要处理前）");
+  const facts=el("dl","request-processing-facts");
+  sizes.append(facts);
+  fact(facts,t("原始请求"),bytes(original)).title=t("原始请求大小（图片处理、传输压缩前）");
+  const imageSize=m.inline_image_bytes;
+  if(Number.isSafeInteger(imageSize)&&imageSize>0) {
+    fact(facts,t("图片大小"),bytes(imageSize));
+  } else if(imageSize==null&&m.image_isolation_removed>0&&Number.isSafeInteger(m.image_isolation_decoded_before)&&
+      Number.isSafeInteger(m.image_isolation_decoded_after)&&m.image_isolation_decoded_after>=0&&
+      m.image_isolation_decoded_before>m.image_isolation_decoded_after) {
+    // Older records only have the net change from replacing images with paths.
+    fact(facts,t("图片大小"),"≈ "+bytes(m.image_isolation_decoded_before-m.image_isolation_decoded_after));
+  }
+  fact(facts,t("转发请求"),bytes(compressed)).title=t("转发请求大小（图片处理、传输压缩后，超限摘要处理前）");
   const summaryTriggered=m.overflow_compaction_calls>0||m.overflow_cache_hit===true;
   const hasTransport=typeof m.transport_content_encoding==="string";
   // Older summary records only retain the final body's encoding and grade.
@@ -2320,7 +2334,13 @@ function renderCompression(m) {
   const method=typeof encoding==="string"?encoding.trim().toLowerCase():"";
   if(method&&method!=="identity") {
     const grade=method==="zstd"&&Number.isInteger(level)&&level>=1&&level<=22?t("{level}级").replace("{level}",level):"";
-    fact(sizes,t("文本压缩"),grade?`${method} · ${grade}`:method);
+    fact(facts,t("文本压缩"),grade?`${method} · ${grade}`:method);
+    // Older resized requests did not record the uncompressed body of the selected resize.
+    const legacyInput=m.image_upload_optimized?null:m.image_isolation_decoded_after??(m.image_isolation_applied?null:original);
+    const before=m.transport_input_bytes??legacyInput,after=m.transport_wire_bytes??compressed;
+    if(Number.isSafeInteger(before)&&before>0&&Number.isSafeInteger(after)&&after>0) {
+      fact(facts,t("压缩比例"),(100*after/before).toFixed(1)+"%");
+    }
   }
   if(m.image_upload_optimized===true) {
     const images=Array.isArray(m.image_upload_images)?m.image_upload_images.filter(image=>image&&typeof image==="object"&&!Array.isArray(image)):[];
@@ -2331,15 +2351,14 @@ function renderCompression(m) {
       changes.push(`${name}${image.original_width} × ${image.original_height} → ${image.width} × ${image.height}`);
     }
     if(changes.length) {
-      const row=fact(sizes,t("图片压缩"),changes.join("\n"));row.classList.add("image-compression-row");
+      const row=fact(facts,t("图片压缩"),changes.join("\n"));
       row.lastChild.classList.add("image-compression-details");
     }
   }
-  if(original>0 && compressed!==null)fact(sizes,t("减小比例"),(100*(1-compressed/original)).toFixed(1)+"%").title=t("包含图片处理和传输压缩带来的大小变化，按超限摘要处理前的正文计算。");
   if(summaryTriggered) {
     const estimate=requestTokenUsage(m), actual=m.upstream_usage?.input_tokens;
-    fact(sizes,t("输入 Token（估算）"),sortInputTokens(estimate)!==null?"≈ "+nf.format(estimate.input_tokens):"—").title=t("超限摘要前输入 Token（估算）");
-    fact(sizes,t("上游实际输入 Token"),Number.isSafeInteger(actual)&&actual>=0?nf.format(actual):"—");
+    fact(facts,t("输入 Token（估算）"),sortInputTokens(estimate)!==null?"≈ "+nf.format(estimate.input_tokens):"—").title=t("超限摘要前输入 Token（估算）");
+    fact(facts,t("上游实际输入 Token"),Number.isSafeInteger(actual)&&actual>=0?nf.format(actual):"—");
   }
   root.append(sizes);
   const steps=panel(t("请求保护"));steps.id="packet-protection-panel";steps.classList.add("packet-protection-panel");
