@@ -275,13 +275,15 @@
           <label><input type="radio" name="proxy-mode" value="auto" checked><span>自动检测</span></label>
           <label><input type="radio" name="proxy-mode" value="manual"><span>手动配置</span></label>
         </fieldset>
-        <div id="proxy-detected" class="proxy-address-field">
-          <label class="sr-only" for="proxy-detected-address">代理地址</label><input id="proxy-detected-address" type="text" placeholder="直接连接" disabled>
+        <div class="proxy-controls">
+          <div id="proxy-detected" class="proxy-address-field">
+            <label class="sr-only" for="proxy-detected-address">代理地址</label><input id="proxy-detected-address" type="text" placeholder="直接连接" disabled>
+          </div>
+          <div id="proxy-manual" class="proxy-address-field" hidden>
+            <label class="sr-only" for="proxy-address">代理地址</label><input id="proxy-address" name="proxy-address" type="text" inputmode="url" maxlength="2048" placeholder="http://proxy:8080" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" required disabled>
+          </div>
+          <button id="proxy-test" type="button" title="测试当前配置，不保存；不发送对话或 Codex 登录凭据。">测试</button>
         </div>
-        <div id="proxy-manual" class="proxy-address-field" hidden>
-          <label class="sr-only" for="proxy-address">代理地址</label><input id="proxy-address" name="proxy-address" type="text" inputmode="url" maxlength="2048" placeholder="http://proxy:8080" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" required disabled>
-        </div>
-        <button id="proxy-test" type="button" title="测试当前配置，不保存；不发送对话或 Codex 登录凭据。">测试</button>
       </div>
       <p id="proxy-detection-warning" class="help" role="status" hidden></p>
       <output id="proxy-test-result" class="proxy-test-result" role="status" aria-live="polite" hidden></output>
