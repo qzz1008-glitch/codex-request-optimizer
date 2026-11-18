@@ -513,18 +513,24 @@ dialog{width:min(760px,calc(var(--desktop-width) - 80px));max-height:calc(var(--
   inset: auto;
   z-index: 40;
   box-sizing: border-box;
-  width: min(348px, calc(100vw - 24px));
+  width: 312px;
+  max-width: calc(100vw - 24px);
   max-height: calc(100dvh - 80px);
   overflow: auto;
+  scrollbar-width: thin;
   scrollbar-gutter: stable;
   margin: 0;
-  padding: 10px;
+  padding-block: 10px;
+  padding-inline: 8px 5px;
   border: 1px solid var(--line);
   border-radius: 12px;
   background: var(--panel);
   color: var(--ink);
   box-shadow: 0 10px 32px #0003;
   text-align: start;
+}
+.connection-panel:lang(en) {
+  width: 332px;
 }
 .connection-device {
   display: flex;
