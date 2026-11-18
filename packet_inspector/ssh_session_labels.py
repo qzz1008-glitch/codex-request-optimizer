@@ -20,7 +20,8 @@ class SshSessionLabels:
     def __call__(self, origins):
         if not origins or self.relays.closed:
             return {}
-        requests = [(thread, key) for thread, key in origins.items() if thread and session_id(thread) == thread]
+        requests = [(thread, key, host_id) for thread, (key, host_id) in origins.items()
+                    if thread and session_id(thread) == thread]
         now = time.monotonic()
         with self.lock:
             if not self.refreshing:
@@ -47,16 +48,17 @@ class SshSessionLabels:
                     keys = routes.get(self.relays.key(host), {})
                     if not keys:
                         continue
-                    grouped = defaultdict(set)
-                    for thread, key in requests:
-                        if key is None or key in keys:
-                            grouped[key].add(thread)
-                    for key, ids in grouped.items():
+                    grouped = defaultdict(dict)
+                    for request in requests:
+                        thread, key, host_id = request
+                        if key in keys or (key is None and host_id in (None, host.id)):
+                            grouped[key][thread] = request
+                    for key, batch in grouped.items():
                         record = keys.get(key, {})
                         if key and not record.get("home"):
                             continue
                         account = {field: record[field] for field in ("home", "uid") if field in record}
-                        self._query(host, ids, key, account, keys, matches)
+                        self._query(host, batch, key, account, keys, matches)
         except (OSError, ValueError):
             pass
         finally:
@@ -64,8 +66,8 @@ class SshSessionLabels:
             with self.lock:
                 for request in requests:
                     candidates = matches[request]
-                    # Older captures have no route key. If more than one host
-                    # claims a thread ID, keep its name unresolved.
+                    # History without a known host is resolved only when a
+                    # single connected host reports the exact session ID.
                     label = candidates[0] if len(candidates) == 1 else None
                     self.cache[request] = (now + (30 if label else 15), label)
                     self.cache.move_to_end(request)
@@ -73,12 +75,12 @@ class SshSessionLabels:
                     self.cache.popitem(last=False)
                 self.refreshing = False
 
-    def _query(self, host, ids, key, account, routes, matches):
+    def _query(self, host, batch, key, account, routes, matches):
         try:
-            result = self.relays.ssh(host, "tunnel_labels", ids=sorted(ids), **account)
+            result = self.relays.ssh(host, "tunnel_labels", ids=sorted(batch), **account)
             if result.get("error"):
                 return
-            labels = external_labels(result, ids)
+            labels = external_labels(result, batch)
         except (OSError, ValueError, TypeError, AttributeError, KeyError):
             return
         # For older captures, use the authenticated account to constrain any
@@ -87,4 +89,4 @@ class SshSessionLabels:
         origin = key or next((scope for scope, record in routes.items()
                               if home and record.get("home") == home and record.get("uid", uid) == uid), None)
         for thread, label in labels.items():
-            matches[thread, key].append({**label, **({"ssh_connection_key": origin} if origin else {})})
+            matches[batch[thread]].append({**label, **({"ssh_connection_key": origin} if origin else {})})

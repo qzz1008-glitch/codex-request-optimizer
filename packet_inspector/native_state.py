@@ -26,8 +26,8 @@ def managed_remote_connections(state):
     return rows if isinstance(rows, list) else ()
 
 
-def thread_origins(home, ids):
-    """Resolve the saved host for an exact Codex session ID."""
+def thread_origins(home):
+    """Return the native host ID and display metadata keyed by session ID."""
     try:
         state = read_global_state(home)
     except (OSError, ValueError):
@@ -49,16 +49,14 @@ def thread_origins(home, ids):
                     break
 
     origins = {}
-    for thread in ids:
-        if not thread:
-            continue
+    for thread in memberships.keys() | assignments.keys():
         host_id = memberships.get(thread)
         if not isinstance(host_id, str) or not host_id:
             assignment = assignments.get(thread)
             host_id = assignment.get("hostId") if isinstance(assignment, dict) else None
         if isinstance(host_id, str) and host_id:
             # An explicit host ID takes precedence even when the saved host was removed.
-            origins[thread] = hosts.get(host_id)
+            origins[thread] = (host_id, hosts.get(host_id))
     return origins
 
 

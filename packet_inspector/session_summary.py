@@ -96,10 +96,11 @@ class SessionSummaries:
         self._request_labels = OrderedDict()
         self._lock = threading.Lock()
 
-    def _labels(self, ids, ssh_origins=None):
+    def _labels(self, ids, ssh_origins=None, native_origins=None):
         if not ids:
             return {}
         ssh_origins = ssh_origins or {}
+        native_origins = native_origins or {}
         local_ids = [thread for thread in ids if thread not in ssh_origins]
         found, resolved, parent_candidates = {}, set(), {}
         for database in state_databases(self.tokens.home):
@@ -168,10 +169,17 @@ class SessionSummaries:
                 label["updated_at"] = previous["updated_at"]
             found[thread] = {**previous, **label}
         if self.ssh_labels:
-            # Pre-upgrade captures only have the exact thread ID. Local native
-            # indexes keep priority for those records whose route is unknown.
-            requests = {thread: ssh_origins.get(thread) for thread in ids
-                        if thread in ssh_origins or (thread not in found and thread not in resolved)}
+            requests = {}
+            for thread in ids:
+                if thread in ssh_origins:
+                    requests[thread] = (ssh_origins[thread], None)
+                    continue
+                host_id, display = native_origins.get(thread, (None, None))
+                if host_id == "local":
+                    continue
+                known_remote = display and display.get("kind") == "remote"
+                if known_remote or (thread not in found and thread not in resolved):
+                    requests[thread] = (None, host_id)
             found.update(self.ssh_labels(requests))
         return found
 
@@ -203,7 +211,7 @@ class SessionSummaries:
         except OSError:
             return {}
 
-    def _prepare_records(self, database, records, labels, ssh_origins):
+    def _prepare_records(self, database, records, labels, ssh_origins, native_origins):
         unread = 0
         for record in records:
             label = labels.get(record["thread_id"], {})
@@ -246,7 +254,7 @@ class SessionSummaries:
                 if parent in unseen_parents and origin:
                     parent_origins.setdefault(parent, set()).add(origin)
             ssh_origins.update((parent, next(iter(origins))) for parent, origins in parent_origins.items() if len(origins) == 1)
-            parent_labels = self._labels(parents, ssh_origins)
+            parent_labels = self._labels(parents, ssh_origins, native_origins)
             for thread in parents:
                 label = parent_labels.get(thread, {})
                 if label.get("ssh_connection_key"):
@@ -301,9 +309,10 @@ class SessionSummaries:
                                 **({"session_kind": meta["session_kind"]}
                                    if isinstance(meta.get("session_kind"), str) and meta["session_kind"] in
                                       AUXILIARY_KINDS else {})})
-        labels = self._labels([r["thread_id"] for r in records if r["thread_id"]], ssh_origins)
+        native_origins = thread_origins(self.tokens.home)
+        labels = self._labels([r["thread_id"] for r in records if r["thread_id"]], ssh_origins, native_origins)
         with self._lock:
-            self._prepare_records(path, records, labels, ssh_origins)
+            self._prepare_records(path, records, labels, ssh_origins, native_origins)
             ids = [r["thread_id"] for r in records if r["thread_id"]
                    and packet_usage(reported_packets.get(r["thread_id"], {})) is None
                    and not overflow_applied(reported_packets.get(r["thread_id"], {}))
@@ -330,9 +339,9 @@ class SessionSummaries:
                         "usage_override_applied": bool(packet.get("usage_override_applied"))}
                 elif packet.get("usage_override_applied"):
                     record["token_window"] = {"state": "unavailable"}
-        origins = thread_origins(self.tokens.home, (record["thread_id"] for record in records))
         for record in records:
-            record["origin"] = origins.get(record["thread_id"], record["origin"])
+            if record["thread_id"] in native_origins:
+                record["origin"] = native_origins[record["thread_id"]][1]
         records.sort(key=lambda r: (-r["updated_at"], r["thread_id"]))
         return {"state": "available", "sessions": records}
 
