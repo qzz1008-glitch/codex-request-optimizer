@@ -990,6 +990,7 @@ const uiI18n = (() => {
     "加载更多文字":"Load more text",
     "关闭设置":"Close settings",
     "Codex 接入":"Codex connection",
+    "连接与共享":"Connection and sharing",
     "接入 Codex":"Connect Codex",
     "接入或恢复后，重启 ChatGPT App 生效。":"Restart the ChatGPT App after connecting or restoring the configuration.",
     "恢复未完成，请重试。":"The configuration was not restored. Try again.",
