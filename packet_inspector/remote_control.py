@@ -5,7 +5,7 @@ RESULT_PREFIX = "INSPECTOR_CONNECTION_RESULT:"
 
 SCRIPT = r'''
 from contextlib import contextmanager
-import base64, hashlib, json, os, pathlib, re, select, shutil, signal, socket, stat, struct, subprocess, time
+import base64, hashlib, json, os, pathlib, re, select, shutil, signal, socket, stat, struct, subprocess, tempfile, time
 from http.client import HTTPException, HTTPResponse
 from urllib.parse import urlsplit
 from urllib.request import build_opener, ProxyHandler, HTTPRedirectHandler, Request
@@ -177,10 +177,144 @@ def config_digest(config):
         raise ValueError("Codex 配置过大，无法确认重连范围。")
     return hashlib.sha256(value).digest()
 
+def config_bytes(path):
+    try:
+        with path.open("rb") as source:
+            value = source.read(512 * 1024 + 1)
+    except FileNotFoundError:
+        return None
+    if len(value) > 512 * 1024:
+        raise ValueError("远程 Codex 配置过大。")
+    return value
+
+def remote_files(home):
+    paths = [home / "config.toml", *sorted(home.glob("*.config.toml"))]
+    if len(paths) > 32:
+        raise ValueError("远程 Codex 配置文件过多。")
+    files = {path.name: config_bytes(path) for path in paths}
+    if sum(len(raw or b"") for raw in files.values()) > 512 * 1024:
+        raise ValueError("远程 Codex 配置过大。")
+    return files
+
+def remote_settings(home):
+    def load(path):
+        try:
+            value = json.loads(config_bytes(path) or b"{}")
+            return value if isinstance(value, dict) else {}
+        except (OSError, ValueError):
+            return {}
+    auth = load(home / "auth.json")
+    mode = auth.get("auth_mode") or ("apikey" if auth.get("OPENAI_API_KEY") else "chatgpt")
+    old = load(pathlib.Path.home() / ".codex-packet-inspector" / "settings.json")
+    routes = old.get("provider_routes", {})
+    return {"api_key": mode == "apikey", "legacy_token": old.get("relay_token"),
+            "legacy_upstream": old.get("upstream"), "legacy_routes": {
+                key: value.get("upstream") for key, value in routes.items() if isinstance(value, dict)
+            } if isinstance(routes, dict) else {}}
+
+def write_config(path, raw, mode):
+    with tempfile.NamedTemporaryFile(dir=path.parent, prefix=".inspector-", delete=False) as stage:
+        temp = pathlib.Path(stage.name)
+        try:
+            stage.write(raw)
+            stage.flush()
+            os.fsync(stage.fileno())
+            stage.close()
+            temp.chmod(mode)
+            os.replace(temp, path)
+        finally:
+            if temp.exists():
+                temp.unlink()
+
+def write_remote_files(home, options):
+    import fcntl
+    home.mkdir(mode=0o700, parents=True, exist_ok=True)
+    with os.fdopen(os.open(str(home / ".inspector-ssh.lock"), os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600), "rb") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        current = remote_files(home)
+        expected = {name: hashlib.sha256(raw).hexdigest() if raw is not None else None
+                    for name, raw in current.items()}
+        if expected != options["expected"] or not set(options["updates"]) <= set(current):
+            raise ValueError("远程 Codex 配置已变化，请重新尝试。")
+        updates = {name: base64.b64decode(raw, validate=True) for name, raw in options["updates"].items()}
+        paths = {name: (home / name).resolve() for name in updates}
+        if len(set(paths.values())) != len(paths):
+            raise ValueError("多个远程配置指向同一文件，接入已停止。")
+        revision = time.time_ns()
+        applied = []
+        try:
+            for name, raw in updates.items():
+                path, before = paths[name], current[name]
+                if config_bytes(path) != before:
+                    raise ValueError("远程 Codex 配置已变化，请重新尝试。")
+                mode = stat.S_IMODE(path.stat().st_mode) if before is not None else 0o600
+                if before is not None:
+                    write_config(path.with_name(path.name + ".inspector-backup-ssh-" + str(revision)), before, 0o600)
+                write_config(path, raw, mode)
+                applied.append((path, before, raw, mode))
+        except (OSError, ValueError):
+            for path, before, raw, mode in reversed(applied):
+                if config_bytes(path) == raw:
+                    if before is None:
+                        path.unlink()
+                    else:
+                        write_config(path, before, mode)
+            raise
+    return {"changed": bool(updates)}
+
+def tunnel_control(home, config, options):
+    home = home.resolve()
+    action = options["action"]
+    if options.get("home", str(home)) != str(home):
+        raise ValueError("SSH 登录使用的 Codex 配置目录已变化。")
+    if action == "tunnel_snapshot":
+        files = {name: base64.b64encode(raw).decode("ascii") if raw is not None else None
+                 for name, raw in remote_files(home).items()}
+        value = {"home": str(home), "files": files, **remote_settings(home)}
+        if options.get("native"):
+            value["codex_restart"], _ = native_codex(home)
+        return value
+    if action == "tunnel_probe":
+        port, token = options["port"], options["token"]
+        if type(port) is not int or not 1024 <= port <= 65535 or not re.fullmatch(r"[0-9a-f]{48}", token):
+            raise ValueError("SSH 转发地址无效。")
+        url = f"http://127.0.0.1:{port}/relay/{token}/ready"
+        opener = build_opener(ProxyHandler({}), NoRedirect())
+        deadline = time.monotonic() + 6
+        while time.monotonic() < deadline:
+            try:
+                with opener.open(url, timeout=0.5) as response:
+                    answer = response.read(64)
+                    if re.fullmatch(rb"[0-9a-f]{48}", answer):
+                        return {"proof": answer.decode("ascii")}
+            except (OSError, HTTPException):
+                pass
+            time.sleep(0.2)
+        return {}
+    if action == "tunnel_write":
+        return write_remote_files(home, options)
+    if action == "tunnel_reconnect":
+        capability, context = native_codex(home)
+        try:
+            digest = config_digest(config)
+            restart_native(context)
+            warning = "" if config_digest(config) == digest else "Codex 已重载，但配置又有变化，请再次重新连接。"
+            return {"state": "reloaded", "warning": warning, "codex_restart": capability}
+        except (OSError, ValueError, subprocess.SubprocessError) as exc:
+            return {"state": "unconfirmed", "error": str(exc)[:1500], "codex_restart": capability}
+    raise ValueError("无效的远程接入操作。")
+
 def control():
     options = json.loads(INPUT)
     home = pathlib.Path(os.environ.get("CODEX_HOME") or pathlib.Path.home() / ".codex").expanduser()
     config = home / "config.toml"
+    if str(options.get("action", "")).startswith("tunnel_"):
+        try:
+            return tunnel_control(home, config, options)
+        except ValueError as exc:
+            return {"error": str(exc)[:1000]}
+        except OSError as exc:
+            return {"error": "无法读写远程 Codex 配置（" + type(exc).__name__ + "）。"}
     origins = []
     def add(value):
         try:
