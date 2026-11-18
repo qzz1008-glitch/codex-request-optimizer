@@ -562,27 +562,52 @@ dialog{width:min(760px,calc(var(--desktop-width) - 80px));max-height:calc(var(--
 }
 .connection-device-controls{flex-shrink:0;display:flex;align-items:center;gap:8px}
 .connection-device-reconnect {
-  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 42px;
-  min-height: 30px;
-  padding: 4px 8px;
+  min-width: 36px;
+  min-height: 24px;
+  padding: 2px 6px;
   border: 1px solid var(--line);
   border-radius: 999px;
   background: var(--bg);
   color: var(--muted);
   font-size: 11px;
   font-weight: 600;
-  line-height: 18px;
+  line-height: 16px;
   white-space: nowrap;
 }
-.connection-device-reconnect.needs-reconnect{border-color:var(--warn);color:var(--warn)}
-.connection-device-reconnect.needs-reconnect::after{content:"";position:absolute;inset:-4px;border:2px solid var(--warn);border-radius:inherit;opacity:0;pointer-events:none}
-@media(prefers-reduced-motion:no-preference){.connection-device-reconnect.needs-reconnect::after{animation:reconnect-attention 2.2s ease-in-out 2}}
-@keyframes reconnect-attention{0%,100%{opacity:0}50%{opacity:.65}}
-.connection-device-reconnect:not(:disabled):not([aria-disabled=true]):hover{border-color:var(--accent);background:var(--soft);color:var(--accent)}
+.connection-device-reconnect:not(:disabled, [aria-disabled=true]):hover{border-color:var(--accent);background:var(--soft);color:var(--accent)}
+.connection-device-reconnect.needs-reconnect:not(:disabled, [aria-disabled=true]) {
+  --reconnect-face: #f5faff;
+  --reconnect-rim: #c4d9ef;
+  border-color: var(--reconnect-rim);
+  background: var(--reconnect-face);
+  color: #365d85;
+}
+.connection-device-reconnect.needs-reconnect:not(:disabled, [aria-disabled=true]):hover {
+  --reconnect-face: #edf6ff;
+}
+@property --reconnect-sweep-angle {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 0turn;
+}
+@keyframes reconnect-sweep {
+  to { --reconnect-sweep-angle: 1turn; }
+}
+@supports (background-image: conic-gradient(in oklab, white, black)) {
+  @media (prefers-reduced-motion: no-preference) and (forced-colors: none) {
+    .connection-device-reconnect.needs-reconnect:not(:disabled, [aria-disabled=true]) {
+      border-color: transparent;
+      background:
+        linear-gradient(var(--reconnect-face), var(--reconnect-face)) padding-box,
+        conic-gradient(from var(--reconnect-sweep-angle, 0turn) in oklab,
+          var(--reconnect-rim) 68%, #afd1f6 81%, #82b7f4 90%, #dcecfc 97%, var(--reconnect-rim)) border-box;
+      animation: reconnect-sweep 2.4s linear 2;
+    }
+  }
+}
 .connection-device-reconnect:disabled,.connection-device-reconnect[aria-disabled=true]{opacity:.5;cursor:default;border-color:var(--line);background:var(--bg);color:var(--muted)}
 .connection-device-reconnect:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .connection-error{font-size:12px;color:var(--danger);overflow-wrap:anywhere;white-space:pre-wrap}
