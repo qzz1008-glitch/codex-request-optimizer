@@ -225,6 +225,7 @@ class AnalyzerTests(unittest.TestCase):
         self.assertNotIn(b"invalid.example",rendered)
         self.assertEqual(m["wire_bytes"],len(raw))
         self.assertEqual(m["encrypted_content_bytes"],10)
+        self.assertEqual(m["inline_image_bytes"],0)
         self.assertIn("omitted",v["body"]["input"][0]["content"][0]["image_url"])
 
     def test_reasoning_ciphertext_uses_original_json_bytes_and_excludes_compaction(self):
@@ -951,6 +952,8 @@ class RelayTests(unittest.TestCase):
             first, _ = self.latest()
             self.assertEqual(first["relay_zstd_level"], 7)
             self.assertEqual(self.up.requests[-1]["body"], zstandard.ZstdCompressor(level=7).compress(raw))
+            self.assertEqual(first["transport_input_bytes"], len(raw))
+            self.assertEqual(first["transport_wire_bytes"], len(self.up.requests[-1]["body"]))
 
             self.assertEqual(self.api("/api/settings", {"zstd_level": 16})[0], 200)
             self.assertEqual(self.relay(raw)[0], 200)
@@ -968,8 +971,11 @@ class RelayTests(unittest.TestCase):
 
             self.assertEqual(self.api("/api/link", {"action": "restore"})[0], 200)
             incoming = zstandard.ZstdCompressor(level=7).compress(raw)
-            self.assertEqual(self.relay(incoming, headers={"Content-Encoding": "zstd"})[0], 200)
-            self.assertIsNone(self.latest()[0]["relay_zstd_level"])
+            self.assertEqual(self.relay(incoming, headers={"content-encoding": "zstd"})[0], 200)
+            native, _ = self.latest()
+            self.assertIsNone(native["relay_zstd_level"])
+            self.assertEqual(native["transport_input_bytes"], len(raw))
+            self.assertEqual(native["transport_wire_bytes"], len(incoming))
             self.assertEqual(self.up.requests[-1]["body"], incoming)
         finally:
             self.api("/api/settings", previous)
