@@ -51,6 +51,11 @@ assert(connections.includes('globalThis.InspectorConnections ='),'Connection con
       });
       await page.waitForFunction(()=>document.querySelectorAll('.connection-device').length===2);
       const controls=page.locator('#connection-controls'),panel=page.locator('#connection-panel');
+      const reopenPanel=async()=>{
+        await page.mouse.move(0,page.viewportSize().height-1);
+        await page.keyboard.press('Escape');await panel.waitFor({state:'hidden'});
+        await page.locator('#compression-connect').hover();await panel.waitFor({state:'visible'});
+      };
       assert.equal(await page.locator('#connection-devices-open').count(),0,'The extra dropdown triangle must be removed');
       await controls.focus();await page.keyboard.press('Escape');
       for(const id of ['compression-disconnect','compression-connect']){
@@ -104,10 +109,10 @@ assert(connections.includes('globalThis.InspectorConnections ='),'Connection con
       assert.equal(await page.locator('.connection-device').count(),0,'Unavailable device states must not remain actionable');
       assert.equal(await page.locator('#compression-connect').isDisabled(),true);
       await page.evaluate(()=>{fixture.unavailable=false;fixture.networkError=true;});
-      await page.locator('#connection-devices-refresh').click();
+      await reopenPanel();
       await page.waitForFunction(()=>document.getElementById('connection-devices-error').textContent==='forwarding_service_unavailable');
       await page.evaluate(()=>fixture.networkError=false);
-      await page.locator('#connection-devices-refresh').click();
+      await reopenPanel();
       await page.waitForFunction(()=>document.querySelectorAll('.connection-device').length===2);
       assert.equal(await page.locator('#connection-devices-error').isHidden(),true);
       const reconnect=page.getByRole('button',{name:'重新连接 Codex · Server 176',exact:true});
@@ -147,12 +152,11 @@ assert(connections.includes('globalThis.InspectorConnections ='),'Connection con
       await page.locator('#devices-confirm-cancel').click();
       await page.evaluate(()=>fixture.rows[1].codex_restart={supported:false,reason:'该服务器没有可重载的原生后台'});
       await page.locator('#compression-connect').hover();await panel.waitFor({state:'visible'});
-      await page.locator('#connection-devices-refresh').click();
+      await reopenPanel();
       await page.waitForFunction(()=>document.querySelector('.connection-device-reconnect:not([hidden])').getAttribute('aria-disabled')==='true');
       assert.equal(await reconnect.evaluate(node=>node.disabled),false,'Unsupported action remains keyboard discoverable');
       await reconnect.focus();assert.equal(await reconnect.evaluate(node=>node===document.activeElement),true);
-      const description=await reconnect.getAttribute('aria-describedby');
-      assert.equal(await page.locator('#'+description).textContent(),'该服务器没有可重载的原生后台');
+      assert.equal(await reconnect.getAttribute('aria-description'),'该服务器没有可重载的原生后台');
       const unsupportedCalls=await page.evaluate(()=>fixture.calls.length);
       await reconnect.click({force:true});assert.equal(await page.evaluate(()=>fixture.calls.length),unsupportedCalls);
       assert.equal(await page.locator('#devices-confirm-dialog').isVisible(),false);

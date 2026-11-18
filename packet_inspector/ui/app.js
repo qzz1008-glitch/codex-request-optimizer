@@ -8,7 +8,7 @@ globalThis.InspectorConnections = {
     const nativePopover="popover" in HTMLElement.prototype;
     const nodes=new Map(), confirmNodes=new Map(), pending=new Map();
     let rows=[],loaded=false,loading=false,submitting=false,catalogError="",revision="",timer=null,closeTimer=null,hover=false;
-    let plan=null,finished=false,disposed=false,nextNodeId=0;
+    let plan=null,finished=false,disposed=false;
     const text=(node,value)=>{if(node.textContent!==value)node.textContent=value;};
     const name=row=>row.kind==="local"?tr("本机"):row.name;
     const isOpen=()=>nativePopover?panel.matches(":popover-open"):!panel.hidden;
@@ -28,19 +28,18 @@ globalThis.InspectorConnections = {
     function rowNodes(row) {
       if(nodes.has(row.id))return nodes.get(row.id);
       const root=element("div","connection-device"),info=element("div","connection-device-info");
-      const title=element("strong"),state=element("span","connection-device-state"),error=element("span","connection-error");
+      const title=element("strong"),state=element("span","connection-device-state");
       const buttons=element("div","language-toggle connection-device-actions");buttons.setAttribute("role","group");
       const actions={};
       for(const action of ["restore","activate"]) {
         const button=element("button");button.type="button";
         button.addEventListener("click",()=>confirm(action,[row.id]));buttons.append(button);actions[action]=button;
       }
-      const tools=element("div","connection-device-controls"),reconnect=element("button","connection-device-reconnect"),hint=element("span","hint");
-      reconnect.type="button";hint.id="connection-reconnect-hint-"+nextNodeId++;
-      reconnect.setAttribute("aria-describedby",hint.id);
+      const tools=element("div","connection-device-controls"),reconnect=element("button","connection-device-reconnect");
+      reconnect.type="button";
       reconnect.addEventListener("click",()=>{if(reconnect.getAttribute("aria-disabled")!=="true")confirm("reconnect",[row.id]);});
-      tools.append(buttons,reconnect);info.append(title,state,error,hint);root.append(info,tools);list.append(root);
-      const value={root,title,state,error,buttons,actions,reconnect,hint};nodes.set(row.id,value);return value;
+      tools.append(buttons,reconnect);info.append(title,state);root.append(info,tools);list.append(root);
+      const value={root,title,state,buttons,actions,reconnect};nodes.set(row.id,value);return value;
     }
     function render() {
       localActivity(rows.some(row=>row.id==="local"&&row.busy)||pending.has("local"));
@@ -57,11 +56,12 @@ globalThis.InspectorConnections = {
       for(const [id,value] of nodes)if(!rows.some(row=>row.id===id)){value.root.remove();nodes.delete(id);}
       for(const row of rows) {
         const value=rowNodes(row);text(value.title,name(row));value.title.title=name(row);
-        text(value.state,stateText(row));value.root.dataset.state=row.error?"error":row.state;
+        const stateLabel=stateText(row);text(value.state,stateLabel);value.root.dataset.state=row.error?"error":row.state;
         value.root.setAttribute("aria-busy",String(!!row.busy));
-        text(value.error,row.error?tr(row.error):row.warning_count?tr("部分配置未完成，请检查此设备的接入详情。") : "");
-        value.error.hidden=!value.error.textContent;
+        const detail=row.error?tr(row.error):row.warning_count?tr("部分配置未完成，请检查此设备的接入详情。"):"";
+        value.state.title=row.error?stateLabel+"\n"+detail:stateLabel;
         value.buttons.setAttribute("aria-label",name(row));
+        value.buttons.setAttribute("aria-description",detail);
         for(const [action,button] of Object.entries(value.actions)) {
           text(button,tr(action==="activate"?"接入":"断开"));
           button.setAttribute("aria-pressed",String(row.state===desired(action)&&!row.error));
@@ -72,13 +72,12 @@ globalThis.InspectorConnections = {
         value.reconnect.setAttribute("aria-disabled",String(!row.codex_restart?.supported));
         text(value.reconnect,tr("重新连接 Codex"));
         value.reconnect.setAttribute("aria-label",tr("重新连接 Codex")+" · "+name(row));
-        const nativeHint=row.codex_reconnect?.error||row.codex_reconnect?.warning||(!row.codex_restart?.supported?(row.codex_restart?.reason||tr("刷新状态后检查是否支持自动重连。")):"");
-        text(value.hint,row.kind==="ssh"?tr(nativeHint):"");value.hint.hidden=!value.hint.textContent;
+        const nativeHint=row.codex_reconnect?.error||row.codex_reconnect?.warning||(!row.codex_restart?.supported?row.codex_restart?.reason:"");
         value.reconnect.title=tr(nativeHint||"重载此服务器当前账号的 Codex 后台，使配置生效。");
+        value.reconnect.setAttribute("aria-description",value.reconnect.title);
       }
       const message=catalogError||(!loaded?tr("正在读取设备列表…"):"");
       text(get("connection-devices-error"),tr(message));get("connection-devices-error").hidden=!message;
-      get("connection-devices-refresh").disabled=loading||anyBusy();
       renderConfirmation();
     }
     function renderConfirmation() {
@@ -128,11 +127,11 @@ globalThis.InspectorConnections = {
       if(pending.size||rows.some(row=>row.busy))timer=setTimeout(poll,700);
       else if(isOpen()||dialog.open)timer=setTimeout(poll,15000);
     }
-    async function poll(refresh=false) {
+    async function poll() {
       if(loading||disposed)return;
       loading=true;
       try {
-        const value=await request("/api/connections"+(refresh?"?refresh=1":""));
+        const value=await request("/api/connections");
         if(!Array.isArray(value.targets))throw Error(tr("无法读取设备接入状态。"));
         rows=value.targets;loaded=true;catalogError=value.error||"";revision=value.revision;
         let localCompleted=false;
@@ -199,7 +198,6 @@ globalThis.InspectorConnections = {
     globalThis.addEventListener("resize",place);
     get("compression-connect").addEventListener("click",()=>confirm("activate"));
     get("compression-disconnect").addEventListener("click",()=>confirm("restore"));
-    get("connection-devices-refresh").addEventListener("click",()=>poll(true));
     get("devices-confirm-apply").addEventListener("click",apply);
     get("devices-confirm-cancel").addEventListener("click",()=>{dialog.close();schedule();});
     globalThis.addEventListener("pagehide",()=>{disposed=true;clearTimeout(timer);clearTimeout(closeTimer);});
