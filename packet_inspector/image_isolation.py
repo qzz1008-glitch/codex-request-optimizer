@@ -256,18 +256,26 @@ class ImageIsolation:
 
     def prepare(self, raw, headers, path, compression, *, zstd_level=3,
                 auto_zstd_level=False, budget_bytes=None):
+        rewritten = self.rewrite(raw, headers)
+        if rewritten is None:
+            return None
+        changed, meta = rewritten
+        prepared = encode_changed_info(changed, headers, path, compression, zstd_level,
+                                       auto_zstd_level=auto_zstd_level, budget_bytes=budget_bytes)
+        return prepared.body, prepared.encoding, dict(meta, relay_zstd_level=prepared.zstd_level)
+
+    def rewrite(self, raw, headers):
+        """Return the rewritten plaintext and metrics before transport encoding."""
         protected = set()
         with self.lock:
             self.active_references[id(protected)] = protected
         try:
-            return self._prepare(raw, headers, path, compression, protected=protected,
-                                 zstd_level=zstd_level, auto_zstd_level=auto_zstd_level, budget_bytes=budget_bytes)
+            return self._rewrite(raw, headers, protected=protected)
         finally:
             with self.lock:
                 self.active_references.pop(id(protected))
 
-    def _prepare(self, raw, headers, path, compression, *, protected, zstd_level,
-                 auto_zstd_level, budget_bytes):
+    def _rewrite(self, raw, headers, *, protected):
         coding = next((v for k, v in headers.items() if k.lower() == "content-encoding"), "identity")
         try:
             decoded = decode_body(raw, coding)
@@ -390,12 +398,9 @@ class ImageIsolation:
         changed = decoded
         for start, end, replacement in sorted(replacements, reverse=True):
             changed = changed[:start] + replacement + changed[end:]
-        prepared = encode_changed_info(changed, headers, path, compression, zstd_level,
-                                       auto_zstd_level=auto_zstd_level, budget_bytes=budget_bytes)
-        return prepared.body, prepared.encoding, {"image_isolation_applied": True, "image_isolation_removed": images_removed,
-                                "relay_zstd_level": prepared.zstd_level,
-                                "native_image_tools_hidden": hidden_tools,
-                                "image_paths": sorted(str(path.resolve()) for path in image_paths),
-                                "image_path_rewrites": {source: target for source, target in copied.items() if source != target},
-                                "image_isolation_decoded_before": len(decoded),
-                                "image_isolation_decoded_after": len(changed)}
+        return changed, {"image_isolation_applied": True, "image_isolation_removed": images_removed,
+                         "native_image_tools_hidden": hidden_tools,
+                         "image_paths": sorted(str(path.resolve()) for path in image_paths),
+                         "image_path_rewrites": {source: target for source, target in copied.items() if source != target},
+                         "image_isolation_decoded_before": len(decoded),
+                         "image_isolation_decoded_after": len(changed)}
