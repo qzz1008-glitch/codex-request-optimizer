@@ -3,6 +3,7 @@ from contextlib import redirect_stdout
 import io
 import json
 from pathlib import Path
+import stat
 import subprocess
 import tempfile
 import threading
@@ -320,10 +321,24 @@ class RemoteScriptTests(unittest.TestCase):
             value = {"status": "restarted" if action == "restart" else "running" if ready else "notRunning",
                      "managedCodexPath": str(self.native_cli), "socketPath": str(socket)}
             return SimpleNamespace(returncode=0, stdout=json.dumps(value).encode(), stderr=b"")
+        original_resolve = Path.resolve
+        original_stat = Path.stat
+        def resolve_path(path, *args, **kwargs):
+            if path == self.socket and self.native_mode == "linked-socket":
+                return self.root.parent / "native-runtime.sock"
+            return original_resolve(path, *args, **kwargs)
+        def stat_path(path, *args, **kwargs):
+            if path == self.socket:
+                mode = stat.S_IFREG if self.native_mode == "regular-file" else stat.S_IFSOCK
+                uid = 1001 if self.native_mode == "wrong-owner" else 1000
+                return SimpleNamespace(st_mode=mode, st_uid=uid)
+            return original_stat(path, *args, **kwargs)
         output = io.StringIO()
         with patch.dict("os.environ", {"CODEX_HOME": str(self.root)}), \
+             patch("os.getuid", return_value=1000, create=True), \
              patch("pathlib.Path.home", return_value=self.root), \
-             patch("pathlib.Path.is_socket", return_value=True), \
+             patch("pathlib.Path.resolve", new=resolve_path), \
+             patch("pathlib.Path.stat", new=stat_path), \
              patch("shutil.which", return_value=str(self.native_cli) if self.native else None), \
              patch("subprocess.run", side_effect=native_run), \
              patch("urllib.request.build_opener", return_value=Opener()) as build, redirect_stdout(output):
@@ -372,8 +387,16 @@ class RemoteScriptTests(unittest.TestCase):
         self.assertEqual(writes, [("http://127.0.0.1:53111/api/restart-notice", {"target": "chatgpt", "revision": 4})])
         self.assertEqual(self.status["restart_notice"]["items"][0]["target"], "wsl")
 
-    def test_unsupported_or_other_home_daemon_never_restarts_or_acknowledges(self):
-        for mode in ("missing", "wrong-home"):
+    def test_detects_native_socket_link_to_runtime_directory(self):
+        self.enable_native()
+        self.native_mode = "linked-socket"
+        result = self.execute()
+        self.assertTrue(result["codex_restart"]["supported"])
+        self.assertTrue(result["reload_required"])
+        self.assertEqual([args[-1] for args, _ in self.native_calls], ["version"])
+
+    def test_unsupported_daemon_never_restarts_or_acknowledges(self):
+        for mode in ("missing", "wrong-home", "wrong-owner", "regular-file"):
             with self.subTest(mode=mode):
                 self.enable_native()
                 self.native = mode != "missing"

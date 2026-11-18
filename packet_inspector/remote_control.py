@@ -4,7 +4,7 @@ from .entry_port import DEFAULT_PORT
 RESULT_PREFIX = "INSPECTOR_CONNECTION_RESULT:"
 
 SCRIPT = r'''
-import hashlib, json, os, pathlib, re, shutil, subprocess
+import hashlib, json, os, pathlib, re, shutil, stat, subprocess
 from urllib.parse import urlsplit
 from urllib.request import build_opener, ProxyHandler, HTTPRedirectHandler, Request
 from urllib.error import HTTPError
@@ -26,7 +26,15 @@ def native_codex(home):
         socket = pathlib.Path(value.get("socketPath", ""))
         if value.get("status") != "running" or not managed.is_absolute() or not managed.is_file():
             return unsupported, None
-        if not socket.is_absolute() or home.resolve() not in socket.resolve().parents or not socket.is_socket():
+        if not socket.is_absolute():
+            return unsupported, None
+        # Codex can link the control socket to a shorter path outside CODEX_HOME.
+        socket_dir = socket.parent.resolve()
+        resolved_home = home.resolve()
+        if socket_dir != resolved_home and resolved_home not in socket_dir.parents:
+            return unsupported, None
+        endpoint = socket.stat()
+        if not stat.S_ISSOCK(endpoint.st_mode) or endpoint.st_uid != os.getuid():
             return unsupported, None
         return {"supported": True, "reason": ""}, (str(managed), env, str(socket))
     except (OSError, ValueError, subprocess.SubprocessError):
