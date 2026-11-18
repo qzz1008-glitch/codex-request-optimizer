@@ -195,10 +195,10 @@ globalThis.InspectorConnections = {
       const all=identities===null;
       text(get("devices-confirm-title"),tr(action==="reconnect"?"重新连接 Codex":action==="activate"?(all?"接入全部设备":"接入所选设备"):(all?"断开全部设备":"断开所选设备")));
       text(get("devices-confirm-description"),tr(action==="reconnect"?"将重载所选服务器当前账号的 Codex 后台，使配置生效。该账号正在执行或排队的任务可能中断。":action==="activate"?
-        "将修改以下设备的 Codex 配置，请求通过各设备上运行的中转软件发送。":
+        "软件会先验证连接，再备份并更新所选设备的 Codex 配置。":
         "将恢复以下设备的原始出口并开启 Codex 原生压缩，后续请求不再通过对应中转。中转服务保持运行。"));
       const scope=targets.some(row=>row.kind==="local")?tr("本机操作包含已检测到的 WSL 配置。")+" ":"";
-      text(get("devices-confirm-hint"),action==="reconnect"?tr("ChatGPT 将短暂断开该服务器并尝试自动恢复连接。中转服务保持运行。"):scope+tr("配置变化后，本机请重启 ChatGPT App，服务器请重新连接对应的远程 Codex；未变化的设备无需重新加载。"));
+      text(get("devices-confirm-hint"),action==="reconnect"?tr("ChatGPT 将短暂断开该服务器并尝试自动恢复连接。中转服务保持运行。"):scope+tr("本机配置变化后请重启 ChatGPT App。服务器配置变化后，可在对应设备行点击重连。"));
       get("devices-confirm-error").hidden=true;render();dialog.showModal();schedule();
     }
     async function apply() {

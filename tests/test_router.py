@@ -12,11 +12,36 @@ from unittest.mock import patch
 
 from packet_inspector import VERSION
 from packet_inspector.router import RouterServer, atomic_json, ensure_entry
+from packet_inspector.remote_relay import RemoteRelays, TunnelGateway
 from packet_inspector.server import InspectorServer
 from tests.relay_fixture import HTTP_TIMEOUT, wait_for_idle
 
 
 class RouterTests(unittest.TestCase):
+    def test_ssh_gateway_forwards_only_its_scoped_provider_requests(self):
+        relays = RemoteRelays(self.root / "ssh", lambda: self.first.endpoint)
+        self.first.remote_relays = relays
+        token = "a" * 48
+        target = f"http://127.0.0.1:{self.upstream.server_port}"
+        relays._save("remote", {"token": token, "routes": {"provider": target}})
+        relays.gateway = TunnelGateway(relays)
+        self.addCleanup(relays.close)
+        client = http.client.HTTPConnection("127.0.0.1", relays.gateway.server_port, timeout=HTTP_TIMEOUT)
+        self.addCleanup(client.close)
+        prefix = "/relay/" + token
+        for path in ("/api/status", "/__router__/status", "/relay/" + "b" * 48 + "/ready",
+                     prefix + "/p/other/models", prefix + "/p/provider/%2e%2e/api/status"):
+            client.request("GET", path, headers={"Host": f"127.0.0.1:{self.router.port}"})
+            response = client.getresponse()
+            self.assertIn(response.status, {400, 404})
+            response.read()
+        self.assertEqual(self.seen, [])
+        client.request("POST", prefix + "/p/provider/responses", b'{"input":[]}',
+                       {"Content-Type": "application/json", "Authorization": "Bearer remote-fixture"})
+        response = client.getresponse()
+        self.assertEqual((response.status, response.read()), (200, b"ok"))
+        self.assertEqual(self.seen, [("/responses", b'{"input":[]}', "Bearer remote-fixture")])
+
     def setUp(self):
         wsl = patch("packet_inspector.wsl_connection.LocalWsl.running", return_value=[])
         wsl.start()

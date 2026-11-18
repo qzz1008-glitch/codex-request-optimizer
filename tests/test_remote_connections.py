@@ -1,5 +1,6 @@
 """Per-host connection ownership, bounded discovery and SSH control contracts."""
 from contextlib import contextmanager, redirect_stdout
+import base64
 import io
 import json
 from pathlib import Path
@@ -7,6 +8,7 @@ import signal
 import stat
 import struct
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -18,6 +20,7 @@ from urllib.request import Request, build_opener, ProxyHandler
 
 from packet_inspector.remote_connections import Connections, Host, SshControl, saved_hosts
 from packet_inspector.remote_control import SCRIPT, RESULT_PREFIX
+from packet_inspector.remote_relay import RemoteRelays, config_changes
 
 
 class RemoteConnectionsTests(unittest.TestCase):
@@ -602,6 +605,115 @@ class ConnectionApiTests(unittest.TestCase):
                     self.assertFalse(server.connection_profile()["active"])
             finally:
                 server.shutdown();thread.join(timeout=3);server.server_close()
+
+
+class WindowsRemoteRelayTests(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.config = self.root / "config.toml"
+        self.original = b'model_provider = "openai"\nmodel = "fixture"\n'
+        self.config.write_bytes(self.original)
+        self.host = Host("remote-ssh-test", "server", "server", 2222)
+        self.ready = True
+        self.calls, self.forwards = [], []
+        self.relays = self.manager()
+
+    def manager(self):
+        server = RemoteRelays(self.root / "routes", lambda: "http://127.0.0.1:1/relay/main",
+                              ssh=self.ssh, start=self.start)
+        self.addCleanup(server.close)
+        return server
+
+    def start(self, args, **kwargs):
+        self.forwards.append(args[args.index("-R") + 1])
+        self.assertIn("ExitOnForwardFailure=yes", args)
+        self.assertIn("StrictHostKeyChecking=yes", args)
+        self.assertEqual(args[-2], self.host.destination)
+        process = SimpleNamespace(stdin=io.BytesIO(), stderr=io.BytesIO(), status=None)
+        process.poll = lambda: process.status
+        process.terminate = lambda: setattr(process, "status", 0)
+        return process
+
+    def ssh(self, host, action, **options):
+        self.assertEqual(host, self.host)
+        self.calls.append(action)
+        if action == "tunnel_probe":
+            if not self.ready:
+                return {"ready": False}
+            options["port"] = int(self.forwards[-1].rsplit(":", 1)[1])
+        output = io.StringIO()
+        fixture_lock = SimpleNamespace(flock=lambda *_: None, LOCK_EX=1, LOCK_NB=2)
+        with patch.dict(sys.modules, {"fcntl": fixture_lock}), patch("os.O_NOFOLLOW", 0, create=True), \
+             patch.dict("os.environ", {"CODEX_HOME": str(self.root)}), patch("shutil.which", return_value=None), \
+             redirect_stdout(output):
+            exec("INPUT = " + repr(json.dumps({"action": action, **options})) + "\n" + SCRIPT, {})
+        return json.loads(output.getvalue().split(RESULT_PREFIX)[-1])
+
+    def test_failed_probe_does_not_modify_config(self):
+        self.ready = False
+        with self.assertRaisesRegex(ValueError, "无法建立 SSH"):
+            self.relays(self.host, "activate")
+        self.assertEqual(self.config.read_bytes(), self.original)
+        self.assertNotIn("tunnel_write", self.calls)
+        self.assertFalse(self.relays.needs_resume())
+
+    def test_config_connect_restore_and_reconnect_after_optimizer_restart(self):
+        linked = self.relays(self.host, "activate")
+        self.assertEqual(linked["state"], "connected")
+        self.assertTrue(linked["reload_required"])
+        self.assertLess(self.calls.index("tunnel_probe"), self.calls.index("tunnel_write"))
+        connected = self.config.read_bytes()
+        self.assertIn(b'openai_base_url = "http://127.0.0.1:', connected)
+        self.assertIn(b'model_provider = "openai"', connected)
+        self.assertIn(b"enable_request_compression = false", connected)
+        self.assertEqual(list(self.root.glob("config.toml.inspector-backup-ssh-*"))[0].read_bytes(), self.original)
+        self.calls.clear()
+        self.assertEqual(self.relays(self.host, "activate")["state"], "connected")
+        self.assertEqual(self.config.read_bytes(), connected)
+        self.assertNotIn("tunnel_write", self.calls)
+        self.relays.close()
+        restarted = self.manager()
+        self.assertTrue(restarted.needs_resume(self.host))
+        self.assertEqual(restarted(self.host, None)["state"], "connected")
+        self.assertEqual(self.forwards[0].split(":")[1], self.forwards[1].split(":")[1])
+        self.assertEqual(self.config.read_bytes(), connected)
+        self.config.write_bytes(connected.replace(b'model = "fixture"', b'model = "edited"'))
+        self.assertEqual(restarted(self.host, "restore")["state"], "disconnected")
+        restored = self.config.read_bytes()
+        self.assertNotIn(b"/relay/", restored)
+        self.assertNotIn(b"enable_request_compression", restored)
+        self.assertIn(b'model = "edited"', restored)
+        self.assertFalse(restarted.needs_resume(self.host))
+
+    def test_legacy_route_recovers_upstream_after_remote_uninstall(self):
+        endpoint = "http://127.0.0.1:50500/relay/new"
+        existing = b'openai_base_url = "http://127.0.0.1:47844/relay/old/p/one"\n'
+        legacy = {"legacy_token": "old", "legacy_routes": {"one": "https://example.invalid/v1"}}
+        updated, routes, fields = config_changes({"config.toml": existing}, legacy, {}, endpoint)
+        self.assertEqual(set(routes.values()), {"https://example.invalid/v1"})
+        restored, _, _ = config_changes(updated, legacy, {"fields": fields, "routes": routes}, "")
+        self.assertIn(b'https://example.invalid/v1', restored["config.toml"])
+        self.assertNotIn(b"127.0.0.1:47844", restored["config.toml"])
+        with self.assertRaises(ValueError):
+            config_changes({"config.toml": existing}, {}, {}, endpoint)
+
+    def test_inactive_server_local_provider_does_not_block_builtin_connection(self):
+        original = (self.original + b'\n[model_providers.private]\n'
+                    b'base_url = "http://127.0.0.1:8000/v1"\nsupports_websockets = true\n')
+        self.config.write_bytes(original)
+        self.assertEqual(self.relays(self.host, "activate")["state"], "connected")
+        self.assertIn(b'base_url = "http://127.0.0.1:8000/v1"', self.config.read_bytes())
+        self.assertEqual(self.relays(self.host, "restore")["state"], "disconnected")
+        self.assertEqual(self.config.read_bytes().rstrip(), original.rstrip())
+
+    def test_remote_writer_rejects_a_concurrent_edit(self):
+        encoded = base64.b64encode(b'model = "new"\n').decode("ascii")
+        value = self.ssh(self.host, "tunnel_write", home=str(self.root.resolve()),
+                         expected={"config.toml": "old"}, updates={"config.toml": encoded})
+        self.assertIn("配置已变化", value["error"])
+        self.assertEqual(self.config.read_bytes(), self.original)
 
 
 if __name__ == "__main__":

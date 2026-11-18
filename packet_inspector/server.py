@@ -30,6 +30,7 @@ from .providers import ProviderManager, config_paths
 from .wsl_connection import WslConnection
 from .connection_resume import ConnectionResume
 from .remote_connections import Connections
+from .remote_relay import RemoteRelays
 from .entry_port import ConfiguredPortParser, port_status, save_port, validate_port
 from .restart_notice import RestartNotices
 from .updates import Updates
@@ -286,7 +287,9 @@ class InspectorServer(ThreadingHTTPServer):
         self._startup_step("background.initialize")
         self.analysis_stop = threading.Event()
         self.connection_resume = ConnectionResume(self)
+        self.remote_relays = RemoteRelays(self.data_dir / "ssh-connections", lambda: self.endpoint) if os.name == "nt" else None
         self.connections = Connections(self.link.config.parent, self.connection_profile, self.set_connection,
+                                       transport=self.remote_relays,
                                        cache_path=self.cache_dir / "remote-connections.json")
         self.analysis_thread = threading.Thread(target=self._classify_pending, daemon=True)
         self.analysis_thread.start()
@@ -325,6 +328,8 @@ class InspectorServer(ThreadingHTTPServer):
                 self.sharing_handover.poll()
                 processed = self._maintenance_step() if self.maintenance_enabled else 0
             self.connection_resume.step()
+            if self.worker_state == "active" and self.connection_resume.ready:
+                self.connections.resume()
             self.analysis_stop.wait(0.02 if processed else 2)
 
     def service_actions(self):
@@ -865,7 +870,8 @@ class Handler(BaseHTTPRequestHandler):
                 elif data.get("action") == "stop":
                     with self.server.guard:
                         if (self.server.active_requests or self.server.sharing_handover.connections()
-                                or self.server.sharing_handover.pending):
+                                or self.server.sharing_handover.pending
+                                or self.server.remote_relays is not None and not self.server.remote_relays.drain()):
                             self._json(409, {"error": "requests_in_flight"})
                             return
                         self.server.upgrade_draining = True
@@ -1438,6 +1444,16 @@ class Handler(BaseHTTPRequestHandler):
             self._json(400, {"error": "invalid_request_path"})
             return
         shared_client = prefix == urlsplit(self.server.sharing.client_endpoint).path
+        ssh_upstream = None
+        if suffix.startswith("/ssh/"):
+            access = self.server.remote_relays
+            parts = suffix.split("/", 5)
+            if access and not shared_client and len(parts) == 6 and parts[3] == "p":
+                ssh_upstream = access.route(parts[2], parts[4])
+            if not ssh_upstream:
+                self._json(404, {"error": "unknown_ssh_route"})
+                return
+            suffix = "/" + parts[5]
         remote = None
         if shared_client:
             if not sharing_request_allowed(self.command, suffix):
@@ -1454,8 +1470,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(503, {"error": {"code": "sharing_unavailable", "message": str(exc)}})
                 return
         with self.server.guard:
-            upstream = self.server.settings["upstream"]
-            if suffix.startswith("/p/"):
+            upstream = ssh_upstream or self.server.settings["upstream"]
+            if not ssh_upstream and suffix.startswith("/p/"):
                 parts = suffix.split("/", 3)
                 route = self.server.settings["provider_routes"].get(parts[2])
                 if len(parts) != 4 or not route:
@@ -1481,15 +1497,15 @@ class Handler(BaseHTTPRequestHandler):
         with self.server.guard:
             # Disconnected clients may briefly retain an old relay URL until
             # ChatGPT restarts. Keep forwarding them without extra zstd work.
-            compression = "zstd" if self.server.settings["auto_detect_providers"] or shared_client else "off"
+            compression = "zstd" if self.server.settings["auto_detect_providers"] or shared_client or ssh_upstream else "off"
             json_image = is_json_image_request(suffix, self.headers)
             zstd_level = self.server.settings["image_zstd_level" if json_image else "zstd_level"]
             protection_enabled = self.server.settings["packet_size_protection_enabled"]
             budget = self.server.settings["budget_bytes"]
-            image_enabled = self.server.settings["image_isolation_enabled"]
+            image_enabled = self.server.settings["image_isolation_enabled"] and not ssh_upstream
             image_isolation = self.server.image_isolation
             image_configured = self.server.image_config.state.get("enabled", False)
-            image_worker = self.server.image_config.is_worker(self.headers.get(WORKER_HEADER, ""))
+            image_worker = not ssh_upstream and self.server.image_config.is_worker(self.headers.get(WORKER_HEADER, ""))
             auto_zstd_level = (protection_enabled and self.server.settings["auto_zstd_level_enabled"]
                                and compression == "zstd" and not image_worker)
             auto_eligible = (auto_zstd_level and self.command == "POST"

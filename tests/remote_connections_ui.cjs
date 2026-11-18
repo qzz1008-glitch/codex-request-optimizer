@@ -71,7 +71,7 @@ assert(connections.includes('globalThis.InspectorConnections ='),'Connection con
       await page.locator('#devices-confirm-dialog').waitFor({state:'visible'});
       assert.equal(await page.locator('#devices-confirm-targets li').count(),1);
       assert.equal(await page.evaluate(()=>fixture.calls.length),0,'No changes before confirmation');
-      assert.match(await page.locator('#devices-confirm-description').textContent(),/各设备/);
+      assert.match(await page.locator('#devices-confirm-description').textContent(),/先验证连接，再备份/);
       await page.locator('#devices-confirm-apply').click();
       await page.waitForFunction(()=>document.querySelector('#devices-confirm-apply').hidden);
       assert.deepEqual(await page.evaluate(()=>fixture.calls[0]),{targets:['remote-a'],action:'activate',revision:'fixture-revision'});

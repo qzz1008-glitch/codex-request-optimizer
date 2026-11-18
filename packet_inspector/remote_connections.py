@@ -1,8 +1,4 @@
-"""Control saved SSH hosts through each host's existing loopback relay API.
-
-Discovery is read-only. Probes and config changes run off the request threads;
-the Windows relay never becomes a forwarding dependency of a remote host.
-"""
+"""Discover and control Codex's saved SSH hosts off the UI request threads."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -141,7 +137,8 @@ def saved_hosts(codex_home, ssh_config):
 
 
 class SshControl:
-    def __call__(self, host, action, origin=""):
+    @staticmethod
+    def arguments(host):
         executable = shutil.which("ssh")
         if not executable:
             raise ValueError("未找到 OpenSSH 客户端。")
@@ -151,12 +148,19 @@ class SshControl:
             arguments += ["-p", str(host.port)]
         if host.identity:
             arguments += ["-i", str(Path(host.identity).expanduser())]
+        return arguments
+
+    def __call__(self, host, action, origin="", **options):
+        arguments = self.arguments(host)
+        if action and action.startswith("tunnel_"):
+            arguments += ["-o", "StrictHostKeyChecking=yes", "-o", "UpdateHostKeys=no", "-o", "ClearAllForwardings=yes"]
         arguments += ["--", host.destination, "exec \"${SHELL:-/bin/sh}\" -lc 'cd / && exec python3 -I -'"]
-        payload = json.dumps({"action": action, "origin": origin}, ensure_ascii=True)
+        payload = json.dumps({"action": action, "origin": origin, **options}, ensure_ascii=True)
         script = "INPUT = " + repr(payload) + "\n" + SCRIPT
         try:
             result = subprocess.run(arguments, input=script.encode(), capture_output=True,
-                timeout=240 if action == "reconnect" else 90 if action else 30, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                timeout=240 if action in {"reconnect", "tunnel_reconnect"} else 90 if action else 30,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         except subprocess.TimeoutExpired:
             raise ValueError("操作结果未确认，请刷新状态后检查。" if action else "SSH 状态检查超时。") from None
         except OSError:
@@ -170,7 +174,7 @@ class SshControl:
         try:
             value = json.loads(next(line[len(RESULT_PREFIX):] for line in reversed(lines) if line.startswith(RESULT_PREFIX)))
         except (StopIteration, ValueError):
-            raise ValueError("服务器未返回接入状态，请确认已安装中转软件和 Python 3。") from None
+            raise ValueError("服务器未返回接入状态，请检查 SSH 登录及系统的 Python 3。") from None
         if not isinstance(value, dict):
             raise ValueError("服务器返回的接入状态无效。")
         return value
@@ -186,6 +190,7 @@ class Connections:
         self.slots = threading.Semaphore(4)
         self.entries = {}
         self.closed = False
+        self.resume_after = 0
         self.revision = ""
         self.cache_path = Path(cache_path) if cache_path else None
         self.origins = {}
@@ -201,6 +206,29 @@ class Connections:
     def close(self):
         with self.guard:
             self.closed = True
+        close = getattr(self.transport, "close", None)
+        if close:
+            close()
+
+    def resume(self):
+        needs_resume = getattr(self.transport, "needs_resume", None)
+        if not needs_resume:
+            return
+        with self.guard:
+            now = time.monotonic()
+            if self.closed or now < self.resume_after:
+                return
+            self.resume_after = now + 3
+            if not needs_resume():
+                return
+            try:
+                self._discover()
+            except ValueError:
+                return
+            for entry in self.entries.values():
+                host = entry["host"]
+                if host and not entry.get("busy") and needs_resume(host):
+                    self._launch(entry)
 
     def _local(self):
         try:
@@ -284,7 +312,7 @@ class Connections:
                     if action == "reconnect" and not isinstance(result.get("codex_reconnect"), dict):
                         result["codex_reconnect"] = {"state": "unconfirmed", "error": "服务器未确认 Codex 重载结果，请刷新状态后检查。"}
                     if action in {"activate", "restore"} and result["state"] != ("connected" if action == "activate" else "disconnected"):
-                        result["error"] = result.get("error") or "接入配置未完全更新，请检查设备上的中转软件。"
+                        result["error"] = result.get("error") or "接入配置未完全更新，请查看设备状态。"
             except Exception as exc:
                 detail = safe_text(str(exc), (), 1500)
                 result = {"codex_reconnect": {"state": "unconfirmed", "error": detail}} if action == "reconnect" else {"state": "error", "error": detail}
