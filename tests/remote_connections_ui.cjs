@@ -265,12 +265,12 @@ const localControls=[
       assert.equal(await page.locator('#devices-confirm-title').textContent(),'接入服务器','No prompt when no reload is pending');
       assert.equal(await page.locator('#devices-confirm-hint').isHidden(),true);
       await page.locator('#devices-confirm-cancel').click();
-      const nativeUnavailable='远程 Codex 不支持原生后台重载，请在 ChatGPT 中重新连接此服务器。';
+      const reconnectError='远程 Codex 后台进程刚发生变化，请等 ChatGPT 恢复连接后再试。';
       await page.evaluate(error=>{
         fixture.needsReload=true;
-        fixture.rows[1].codex_restart={supported:false,reason:error};
+        fixture.rows[1].codex_restart={supported:false,reason:'远程 Codex 不支持原生后台重载，请在 ChatGPT 中重新连接此服务器。'};
         fixture.reconnectError=error;
-      },nativeUnavailable);
+      },reconnectError);
       await reopenPanel();
       await page.locator('.connection-device').getByRole('button',{name:'断开',exact:true}).click();
       await page.locator('#devices-confirm-apply').click();
@@ -279,7 +279,7 @@ const localControls=[
       await page.locator('#devices-confirm-apply').click();
       await page.waitForFunction(()=>document.querySelector('#devices-confirm-apply').textContent==='重试');
       assert.equal(await page.evaluate(()=>fixture.calls.at(-1).action),'reconnect');
-      assert.match(await page.locator('#devices-confirm-targets').textContent(),/请在 ChatGPT 中重新连接此服务器/);
+      assert.match(await page.locator('#devices-confirm-targets').textContent(),/后台进程刚发生变化/);
       assert.equal(await page.evaluate(()=>fixture.rows[1].reload_required),true);
       await page.locator('#devices-confirm-cancel').click();
       await page.evaluate(()=>fixture.reconnectError='');

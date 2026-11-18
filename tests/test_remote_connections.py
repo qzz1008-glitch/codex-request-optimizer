@@ -335,7 +335,7 @@ class RemoteScriptTests(unittest.TestCase):
         self.native_cli.write_text("fixture", encoding="utf8")
         self.socket = self.root / "app-server-control" / "control.sock"
 
-    def execute(self, action=None):
+    def execute(self, action=None, **options):
         test = self
         class Response(io.BytesIO):
             def __enter__(self): return self
@@ -356,6 +356,8 @@ class RemoteScriptTests(unittest.TestCase):
         def native_run(args, **kwargs):
             self.native_calls.append((args, kwargs))
             action = args[-1]
+            if action == "version" and self.native_mode == "status-error":
+                return SimpleNamespace(returncode=2, stdout=b"", stderr=b"secret configuration detail")
             if action == "restart":
                 if self.native_mode == "timeout":
                     raise subprocess.TimeoutExpired(args, 120)
@@ -367,7 +369,7 @@ class RemoteScriptTests(unittest.TestCase):
                     with (self.root / "config.toml").open("a") as stream:
                         stream.write('# changed while restarting\n')
             restart_started = any(call[0][-1] == "restart" for call in self.native_calls)
-            ready = not (self.native_mode == "not-ready" and restart_started)
+            ready = self.native_mode != "not-started" and not (self.native_mode == "not-ready" and restart_started)
             socket = self.root.parent / "other-home.sock" if self.native_mode == "wrong-home" else self.socket
             value = {"status": "restarted" if action == "restart" else "running" if ready else "notRunning",
                      "managedCodexPath": str(self.native_cli), "socketPath": str(socket)}
@@ -396,8 +398,11 @@ class RemoteScriptTests(unittest.TestCase):
              patch("shutil.which", return_value=str(self.native_cli) if self.native else None), \
              patch("subprocess.run", side_effect=native_run), \
              patch("urllib.request.build_opener", return_value=Opener()) as build, redirect_stdout(output):
-            exec("INPUT = " + repr(json.dumps({"action": action})) + "\n" + SCRIPT, {})
-        self.assertEqual(build.call_args.args[0].proxies, {})
+            exec("INPUT = " + repr(json.dumps({"action": action, **options})) + "\n" + SCRIPT, {})
+        if action == "tunnel_reconnect":
+            build.assert_not_called()
+        else:
+            self.assertEqual(build.call_args.args[0].proxies, {})
         self.assertNotIn("secret", output.getvalue())
         return json.loads(output.getvalue().split(RESULT_PREFIX)[-1])
 
@@ -435,6 +440,7 @@ class RemoteScriptTests(unittest.TestCase):
         self.socket.touch()
         old_pid, new_pid = 2100, 2200
         peer_pid = old_pid
+        peer_checks = 0
         proc = Path("/proc")
         original_open = Path.open
         home = self.root.parent if invalid == "home" else self.root
@@ -459,7 +465,10 @@ class RemoteScriptTests(unittest.TestCase):
                 if peer_pid is None:
                     raise ConnectionRefusedError()
             def getsockopt(self, *args):
-                return struct.pack("iII", peer_pid, 1001 if invalid == "uid" else 1000, 1000)
+                nonlocal peer_checks
+                peer_checks += 1
+                pid = new_pid if invalid == "changed" and peer_checks > 1 else peer_pid
+                return struct.pack("iII", pid, 1001 if invalid == "uid" else 1000, 1000)
             def sendall(self, data): pass
             def makefile(self, mode):
                 return io.BytesIO(b"HTTP/1.1 101 Switching Protocols\r\n\r\n")
@@ -539,15 +548,34 @@ class RemoteScriptTests(unittest.TestCase):
         self.assertEqual(self.status["restart_notice"]["items"][0]["target"], "wsl")
 
     def test_ssh_reconnect_rejects_an_unrelated_or_unverifiable_listener(self):
-        for invalid in ("uid", "exe", "home", "transport", "signal"):
+        reasons = {
+            "uid": "属于当前 SSH 账号",
+            "exe": "Codex 命令不一致",
+            "home": "配置目录与当前连接不匹配",
+            "transport": "启动参数检查",
+            "signal": "SIGHUP",
+        }
+        for invalid, reason in reasons.items():
             with self.subTest(invalid=invalid), self.ssh_app_server(invalid=invalid) as (send_signal, _):
                 self.calls.clear()
                 result = self.execute("reconnect")
                 send_signal.assert_not_called()
                 self.assertFalse(result["codex_restart"]["supported"])
                 self.assertEqual(result["codex_reconnect"]["state"], "unconfirmed")
+                self.assertIn(reason, result["codex_reconnect"]["error"])
+                self.assertEqual(result["codex_reconnect"]["error"], result["codex_restart"]["reason"])
                 self.assertTrue(result["reload_required"])
                 self.assertFalse(any(body for _, body in self.calls))
+
+    def test_tunnel_reconnect_reports_a_changing_backend_without_signalling_it(self):
+        with self.ssh_app_server(invalid="changed") as (send_signal, _):
+            result = self.execute("tunnel_reconnect", home=str(self.root.resolve()), uid=1000)
+            send_signal.assert_not_called()
+        self.assertEqual(result["state"], "unconfirmed")
+        self.assertFalse(result["codex_restart"]["supported"])
+        self.assertIn("后台进程刚发生变化", result["error"])
+        self.assertEqual(result["error"], result["codex_restart"]["reason"])
+        self.assertEqual([args[-1] for args, _ in self.native_calls], ["version"])
 
     def test_ssh_reconnect_timeout_preserves_pending_configuration(self):
         for exits in (False, True):
@@ -561,7 +589,15 @@ class RemoteScriptTests(unittest.TestCase):
                 self.assertFalse(any(body for _, body in self.calls))
 
     def test_unsupported_daemon_never_restarts_or_acknowledges(self):
-        for mode in ("missing", "wrong-home", "wrong-owner", "regular-file"):
+        reasons = {
+            "missing": "找不到 Codex 命令",
+            "not-started": "后台尚未就绪",
+            "status-error": "无法读取远程 Codex 后台状态",
+            "wrong-home": "控制套接字属于",
+            "wrong-owner": "控制套接字属于",
+            "regular-file": "控制套接字属于",
+        }
+        for mode, reason in reasons.items():
             with self.subTest(mode=mode):
                 self.enable_native()
                 self.native = mode != "missing"
@@ -570,6 +606,7 @@ class RemoteScriptTests(unittest.TestCase):
                 result = self.execute("reconnect")
                 self.assertFalse(result["codex_restart"]["supported"])
                 self.assertEqual(result["codex_reconnect"]["state"], "unconfirmed")
+                self.assertIn(reason, result["codex_reconnect"]["error"])
                 self.assertTrue(result["reload_required"])
                 self.assertFalse(any(args[-1] == "restart" for args, _ in self.native_calls))
                 self.assertFalse(any(body for _, body in self.calls))
