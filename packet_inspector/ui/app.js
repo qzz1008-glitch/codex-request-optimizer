@@ -983,7 +983,7 @@ function renderSessions() {
     const otherGroup=id===OTHER_SESSION_GROUP;
     const value=otherGroup?OTHER_SESSION_GROUP:id?"thread:"+id:"unknown", data=summaries.get(id)||{};
     const title=data.title;
-    const origin=data.origin?.kind==="local"?t("本机"):data.origin?.address;
+    const origin=data.origin?.address;
     if(query && !(title+"\n"+data.members.map(row=>row.thread_id+" "+(row.title||"")+" "+(auxiliaryLabels[auxiliarySessionKind(row)]?t(auxiliaryLabels[auxiliarySessionKind(row)]):"")).join("\n")).toLowerCase().includes(query))continue;
     const item=el("button","session-item"+(otherGroup?" other-session-group":"")+(value===selected?" selected":""));
     item.type="button";item.dataset.session=value;
@@ -1004,7 +1004,7 @@ function renderSessions() {
     if(updated)when.title=timestampFormat.format(updated);
     if(!otherGroup) {
       if(id)item.append(el("code","session-id",id));
-      meta.append(el("span","session-origin",origin||"—"));
+      if(origin||data.origin===null)meta.append(el("span","session-origin",origin||"—"));
     }
     meta.append(when);item.append(meta);
     bindSelectableRow(item,()=>{
