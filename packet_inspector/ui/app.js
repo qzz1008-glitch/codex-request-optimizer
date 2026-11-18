@@ -1505,18 +1505,18 @@ function renderStatus(fill=false) {
   renderConnectPrompt();
 }
 function storageLimitSettings(status) {
-  const precise=Number.isSafeInteger(status.max_storage_bytes),legacyUnit=1048576;
-  const size=precise?status.max_storage_bytes:status.storage?.max_bytes??status.max_storage_mb*legacyUnit;
-  return {value:size/1000000,min:(status.storage_limit_min_bytes??16*legacyUnit)/1000000,
-    max:(status.storage_limit_max_bytes??8192*legacyUnit)/1000000,step:precise?"any":String(legacyUnit/1000000),
-    key:precise?"max_storage_bytes":"max_storage_mb",toBackend:value=>Math.round(Number(value)*1000000/(precise?1:legacyUnit))};
+  const bytesPerMB=1_000_000;
+  const min=Math.ceil((status.storage_limit_min_bytes??17*bytesPerMB)/bytesPerMB);
+  const max=Math.floor((status.storage_limit_max_bytes??8590*bytesPerMB)/bytesPerMB);
+  const size=status.max_storage_bytes??status.storage?.max_bytes??500*bytesPerMB;
+  const value=Math.min(max,Math.max(min,Math.ceil(size/bytesPerMB)));
+  return {value,min,max,toBackend:value=>Number(value)*bytesPerMB};
 }
 function fillSettings() {
   const s=state.status,p=s.profile;
   const storage=storageLimitSettings(s),storageInput=$("storage-limit");
-  storageInput.min=storage.min;storageInput.max=storage.max;storageInput.step=storage.step;
+  storageInput.min=storage.min;storageInput.max=storage.max;
   $("packet-limit").max=s.packet_limit_max??20000;
-  storageInput.title=storage.key==="max_storage_bytes"?"":t("当前后台的存储上限步长为 1.048576 MB；更新后台后支持精确设置。");
   fillEntryPort();
   if(!settingsEditing) {
     storageInput.value=storage.value;$("packet-limit").value=s.max_packets;
@@ -2126,7 +2126,7 @@ async function saveSettings() {
       "image_analysis_mode" in s?draft.image_analysis_mode:draft.image_analysis_mode==="optimized",
       s.image_isolation_supported||["native","disabled","optimized"].includes(s.image_analysis_mode)],
     ["storage_dir","storage_dir",draft.storage_dir===s.data_dir?"":draft.storage_dir,s.storage_dir_supported],
-    ["max_storage_mb",storage.key,storage.toBackend(draft.max_storage_mb),true],
+    ["max_storage_mb","max_storage_bytes",storage.toBackend(draft.max_storage_mb),true],
     ["max_packets","max_packets",Number(draft.max_packets),true]
   ].filter(([field,,,supported])=>supported&&changed.has(field));
   const contextChanged=contextSettings&&["context_tokens","compact_tokens"].some(key=>changed.has(key));

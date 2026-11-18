@@ -25,7 +25,7 @@ let browser,cases=0;
       detected:{source:'environment',http:{address:'http://alternate.invalid:8080'},
         https:{address:'http://regional.invalid:8080'},bypass:'localhost'},
       effective:{}}}};
-    window.selectedImageAnalysisMode=()=>'native';window.storageLimitSettings=()=>({key:'max_storage_bytes',toBackend:Number});
+    window.selectedImageAnalysisMode=()=>'native';window.storageLimitSettings=()=>({toBackend:Number});
     window.fillSettings=()=>fillProxySettings();window.renderContextPlaceholders=()=>{};window.renderUpdates=()=>{};
     window.renderStatus=()=>{};window.renderSettingsSaveProgress=()=>{};window.resetSettingsSaveProgress=()=>{};
     window.renderLanguageSelection=()=>{};window.renderConnectionActions=()=>{};window.updateSettingsSaveState=()=>{};

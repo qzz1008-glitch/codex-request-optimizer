@@ -49,7 +49,7 @@ class InstallationSettingsTests(unittest.TestCase):
                                                             "auto_detect_providers": False}), encoding="utf8")
         server = self.server()
         self.assertEqual(server.settings["max_packets"], 1234)
-        self.assertEqual(server.settings["max_storage_mb"], 97)
+        self.assertEqual(server.settings["max_storage_bytes"], 102_000_000)
         self.assertEqual(server.settings["max_detail_packets"], 1234)
         saved = json.loads(server.settings_path.read_text(encoding="utf8"))
         self.assertEqual(saved["max_detail_packets"], 1234)
@@ -63,7 +63,7 @@ class InstallationSettingsTests(unittest.TestCase):
                           "packet_size_protection_enabled": enabled, "image_isolation_enabled": enabled,
                           "capacity_retry_enabled": enabled, "capacity_retry_max_retries": 7,
                           "start_on_login": enabled, "auto_detect_providers": False,
-                          "budget_bytes": 777000, "max_storage_mb": 97, "max_packets": 1234, "max_detail_packets": 321,
+                          "budget_bytes": 777000, "max_storage_bytes": 102_000_000, "max_packets": 1234, "max_detail_packets": 321,
                           "image_save_dir": str(self.root / "custom-images"), "ui_language": "en",
                           "custom_future_setting": {"keep": True}}
                 (self.data / "settings.json").write_text(json.dumps(values), encoding="utf8")
@@ -105,10 +105,17 @@ class InstallationSettingsTests(unittest.TestCase):
                 self.assertEqual(server.settings["max_detail_packets"], 1234)
                 self.assertEqual(server.settings["retention_policy"], "records_first")
                 self.assertIsNone(server.store.max_detail_count)
-                server.save_settings({**server.settings, "max_storage_bytes": 512 * 1048576,
-                                      "max_storage_mb": 512})
+                old_custom = {**server.settings, "max_storage_bytes": 512 * 1048576, "max_storage_mb": 512}
+                server.settings_path.write_text(json.dumps(old_custom), encoding="utf8")
+                candidate = self.server(worker_id="a" * 32)
+                self.assertEqual(json.loads(server.settings_path.read_text(encoding="utf8")), old_custom)
+                candidate.worker_control({"action": "activate", "public_port": 48765})
+                self.assertEqual(candidate.status()["storage"]["max_bytes"], 537_000_000)
+                saved = json.loads(candidate.settings_path.read_text(encoding="utf8"))
+                self.assertEqual(saved["max_storage_bytes"], 537_000_000)
+                self.assertEqual(saved["max_packets"], 1234)
                 reopened = self.server()
-                self.assertEqual(reopened.settings["max_storage_bytes"], 512 * 1048576)
+                self.assertEqual(reopened.settings["max_storage_bytes"], 537_000_000)
 
     def test_old_zero_detail_limit_is_replaced_by_storage_budget_retention(self):
         self.data.mkdir()

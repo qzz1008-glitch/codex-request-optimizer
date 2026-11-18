@@ -318,6 +318,7 @@ const uiI18n = (() => {
     "不能小于 {value}。":"Must be at least {value}.",
     "不能大于 {value}。":"Must be at most {value}.",
     "请输入符合步长要求的值。":"Please enter a value that matches the required step.",
+    "请输入整数。":"Please enter a whole number.",
     "输入长度不符合要求。":"The input length does not meet the requirements.",
     "输入格式不正确。":"The input format is invalid.",
     "已复制，仅供一台机器使用":"Copied. For use on one machine only.",
@@ -1042,7 +1043,6 @@ const uiI18n = (() => {
     "观察设置":"Capture settings",
     "上传预算（字节）":"Upload budget (bytes)",
     "存储上限（MB）":"Storage limit (MB)",
-    "当前后台的存储上限步长为 1.048576 MB；更新后台后支持精确设置。":"This backend supports storage-limit steps of 1.048576 MB. Update the backend for exact limits.",
     "记录上限（条）":"Request limit",
     "详情上限不能大于记录上限":"The detail limit cannot exceed the request limit",
     "超出预算时标记超额，记录满后自动清理旧记录。":"Flag uploads over budget and remove older records when storage is full.",
@@ -1445,7 +1445,7 @@ const uiI18n = (() => {
       if(value.valueMissing)return t("请填写此项。");
       if(value.rangeUnderflow)return t("不能小于 {value}。").replace("{value}",input.min);
       if(value.rangeOverflow)return t("不能大于 {value}。").replace("{value}",input.max);
-      if(value.stepMismatch)return t("请输入符合步长要求的值。");
+      if(value.stepMismatch)return t(input.id==="storage-limit"?"请输入整数。":"请输入符合步长要求的值。");
       if(value.tooShort||value.tooLong)return t("输入长度不符合要求。");
       if(value.patternMismatch)return t("输入格式不正确。");
       return t("请输入有效值。");
