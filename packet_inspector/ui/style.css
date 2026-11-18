@@ -543,7 +543,7 @@ dialog{width:min(760px,calc(var(--desktop-width) - 80px));max-height:calc(var(--
 .connection-device:first-child{border-top:0;padding-top:0}
 .connection-device-info{display:flex;align-items:center;gap:4px;min-width:0}
 .connection-device-info strong{min-width:0;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.connection-device-state{display:inline-flex;align-items:center;justify-content:center;flex:0 0 20px;width:20px;height:20px;color:var(--muted);cursor:help}
+.connection-device-state{display:inline-flex;align-items:center;justify-content:center;flex:0 0 20px;width:20px;height:20px;color:var(--muted)}
 .connection-device-state::before{content:"";box-sizing:border-box;width:8px;height:8px;border:1.5px solid currentColor;border-radius:50%;background:currentColor}
 .connection-device-state[data-status=connected]{color:var(--green)}
 .connection-device-state:is([data-status=disconnected],[data-status=unknown])::before{background:transparent}
