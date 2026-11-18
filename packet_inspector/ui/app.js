@@ -2361,14 +2361,29 @@ function bars(title, rows, total,bodyAvailable=true) {
   for(const r of rows) { const row=el("div","bar-row"), label=el("div","bar-label");row.dataset.renderKey="bar:"+r.name; label.append(bodyAvailable?link(r.name,()=>goPath(r.path)):el("span","",r.name),el("span","",bytes(r.bytes)+" · "+(r.bytes/(total||1)*100).toFixed(1)+"%")); const progress=el("progress");progress.max=total||1;progress.value=r.bytes;row.append(label,progress);p.append(row); }
   return p;
 }
+function inputBreakdown(m) {
+  const legacy=requestBodyView&&requestBodyView.id===m.id&&!m.details_evicted
+    ?requestBodyView.reasoningEncryptedBytes:null;
+  const encrypted=m.reasoning_encrypted_bytes??(m.encrypted_content_bytes===0?0:legacy);
+  const groups=[];
+  for(const [name,size] of Object.entries(m.input_groups||{})) {
+    if(name==="reasoning"&&Number.isSafeInteger(encrypted)&&encrypted>=0&&encrypted<=size) {
+      groups.push({name:t("推理密文"),bytes:encrypted,path:"/input"},
+                  {name:t("推理非密文"),bytes:size-encrypted,path:"/input"});
+    } else {
+      groups.push({name:kind(name),bytes:size,path:"/input"});
+    }
+  }
+  return groups.sort((a,b)=>b.bytes-a.bytes);
+}
 function renderOverview(m) {
   const root=document.createDocumentFragment();
   if(m.inspection!=="json") {reconcileContent($("overview"),el("p","muted",t("正文未展开：")+(t(m.inspection_error)||t("正文为空"))+t("。转发仍按原始正文进行。")));return;}
   const cols=el("div","two-columns");
   const fields=[...(m.top_fields||[]).map(r=>({...r,path:"/"+r.name.replaceAll("~","~0").replaceAll("/","~1")})),{name:t("字段名、标点及空白"),bytes:m.json_envelope_bytes,path:""}].sort((a,b)=>b.bytes-a.bytes);
   cols.append(bars(t("字段构成"),fields,m.decoded_bytes,!m.details_evicted));
-  const groups=Object.entries(m.input_groups||{}).map(([name,size])=>({name:kind(name),bytes:size,path:"/input"})).sort((a,b)=>b.bytes-a.bytes);
-  cols.append(bars(t("input 构成"),groups,(m.top_fields.find(r=>r.name==="input")||{}).bytes,!m.details_evicted));root.append(cols);reconcileContent($("overview"),root);
+  const inputSize=m.top_fields?.find(r=>r.name==="input")?.bytes;
+  cols.append(bars(t("input 构成"),inputBreakdown(m),inputSize,!m.details_evicted));root.append(cols);reconcileContent($("overview"),root);
 }
 function jsonValueNode(value,key=null,comma=false,root=false,path="",nodes=new Map()) {
   const object=value!==null&&typeof value==="object", array=Array.isArray(value);
@@ -2433,6 +2448,21 @@ function clearJsonDownload() {
 function clearJsonFocus() {
   requestBodyHighlight?.classList.remove("json-focused");requestBodyHighlight=null;
 }
+function retainedReasoningEncryptedBytes({body,source_sizes:sizes},reasoningBytes) {
+  if(!Array.isArray(body?.input)||!sizes)return null;
+  let total=0,encrypted=0;
+  for(const [index,item] of body.input.entries()) {
+    if(item?.type!=="reasoning")continue;
+    const path=`/input/${index}`,size=sizes[path];
+    if(!Number.isSafeInteger(size)||size<=0)return null;
+    total+=size;
+    if(typeof item.encrypted_content!=="string")continue;
+    const ciphertext=sizes[`${path}/encrypted_content`];
+    if(!Number.isSafeInteger(ciphertext)||ciphertext<2||ciphertext>size)return null;
+    encrypted+=ciphertext-2;
+  }
+  return total===reasoningBytes?encrypted:null;
+}
 async function ensureJsonView(id,sequence) {
   if(state.detail?.id===id&&state.detail.details_evicted)throw new Error("请求详情已回收，仅保留基本信息。");
   if(requestBodyView?.id===id&&requestBodyView.language===uiI18n.language)return requestBodyView;
@@ -2441,16 +2471,22 @@ async function ensureJsonView(id,sequence) {
     const pending={id,promise:null};
     pending.promise=api("/api/packets/"+id+"/export").then(data=>{
       if(!data.view||!Object.prototype.hasOwnProperty.call(data.view,"body"))throw new Error("此请求没有可解析的 JSON 正文");
-      return data.view.body;
+      const reasoningBytes=data.metadata?.input_groups?.reasoning;
+      const reasoningEncryptedBytes=data.metadata?.reasoning_encrypted_bytes==null&&reasoningBytes>0
+        ?retainedReasoningEncryptedBytes(data.view,reasoningBytes):null;
+      return {body:data.view.body,reasoningEncryptedBytes};
     }).catch(error=>{if(requestBodyCache===pending)requestBodyCache=null;throw error;});
     requestBodyCache=pending;
   }
-  const body=await requestBodyCache.promise;
+  const {body,reasoningEncryptedBytes}=await requestBodyCache.promise;
   if(state.selected!==id||sequence!==requestBodySequence)return null;
   const nodes=new Map(),node=jsonValueNode(body,null,false,true,"",nodes);
   root.replaceChildren(node);root.scrollTop=0;root.scrollLeft=0;
-  requestBodyView={id,body,nodes,root:node,language:uiI18n.language};
-  if(state.detail?.id===id) {renderHeaders(state.detail);renderCompression(state.detail);}
+  requestBodyView={id,body,nodes,root:node,language:uiI18n.language,reasoningEncryptedBytes};
+  if(state.detail?.id===id) {
+    if(reasoningEncryptedBytes!==null&&state.detail.reasoning_encrypted_bytes==null)renderOverview(state.detail);
+    renderHeaders(state.detail);renderCompression(state.detail);
+  }
   const text=JSON.stringify(body,null,2);
   requestBodyDownloadUrl=URL.createObjectURL(new Blob([text+"\n"],{type:"application/json;charset=utf-8"}));
   const download=$("json-download");download.href=requestBodyDownloadUrl;download.download="codex-request-"+id+".json";download.hidden=false;
