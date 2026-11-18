@@ -148,6 +148,7 @@ def optimize_image_request(raw, headers, path, prepared, *, budget_bytes, zstd_l
             raise UnsupportedImage("non_image_body_exceeds_target")
         scale = min(.98, math.sqrt((target-fixed_bytes)/max(1, len(prepared.body)-fixed_bytes))*.92)
         best, details = prepared, []
+        best_input_bytes = None
         previous_sizes = None
         for attempt in range(1, MAX_PASSES+1):
             replacements, current_details = {}, []
@@ -169,6 +170,7 @@ def optimize_image_request(raw, headers, path, prepared, *, budget_bytes, zstd_l
             metrics["image_upload_iterations"] = attempt
             if len(candidate.body) < len(best.body):
                 best, details = candidate, current_details
+                best_input_bytes = len(changed)
             if len(best.body) <= target:
                 break
             # One measured correction, with a margin for non-linear image
@@ -177,6 +179,8 @@ def optimize_image_request(raw, headers, path, prepared, *, budget_bytes, zstd_l
         changed = best is not prepared
         metrics.update(image_upload_optimized=changed, image_upload_after_bytes=len(best.body), image_upload_images=details,
                        image_upload_outcome="within_budget" if len(best.body) <= budget_bytes else "over_budget")
+        if changed:
+            metrics["transport_input_bytes"] = best_input_bytes
         return best, metrics
     except UnsupportedImage as exc:
         metrics.update(image_upload_outcome=str(exc), image_upload_after_bytes=len(prepared.body))

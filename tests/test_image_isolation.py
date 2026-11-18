@@ -763,10 +763,14 @@ class ImageRelayTests(unittest.TestCase):
         self.assertTrue(result["image_isolation_enabled"])
         self.assertIs(tomllib.loads(self.config.read_text(encoding="utf8"))["features"]["view_image"], False)
         self.assertEqual(self.relay(raw)[0], 200)
-        outgoing = json.loads(self.up.requests[-1]["body"])
+        forwarded = self.up.requests[-1]["body"]
+        outgoing = json.loads(forwarded)
         self.assertEqual(outgoing["input"][-1]["content"][1]["type"], "input_text")
         meta, inbound = self.latest()
         self.assertEqual(meta["image_isolation_removed"], 1)
+        self.assertEqual(meta["inline_image_bytes"], len(image_part()["image_url"]))
+        self.assertEqual(meta["transport_input_bytes"], len(forwarded))
+        self.assertEqual(meta["transport_wire_bytes"], len(forwarded))
         self.assertEqual(inbound["body"]["input"][-1]["content"][1]["type"], "input_image")
 
     def test_clipboard_relay_uses_one_stable_cache_before_and_after_source_cleanup(self):
