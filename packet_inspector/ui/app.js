@@ -1540,32 +1540,22 @@ function fillProxySettings(force=false) {
   for(const input of $("proxy-mode").querySelectorAll("input"))input.disabled=settingsSaving;
   for(const input of $("proxy-manual").querySelectorAll("input"))input.disabled=settingsSaving||!manual;
   $("proxy-password").disabled=settingsSaving||!manual||$("proxy-clear-password").checked;
-  $("proxy-detect").hidden=manual;
-  $("proxy-detect").disabled=settingsSaving||$("proxy-detect").getAttribute("aria-busy")==="true";
   const testing=$("proxy-test").getAttribute("aria-busy")==="true";
-  $("proxy-test").disabled=settingsSaving||testing;$("proxy-test").textContent=t(testing?"测试中…":"测试代理");
+  $("proxy-test").disabled=settingsSaving||testing;$("proxy-test").textContent=t(testing?"测试中…":"测试");
   $("proxy-saved-password").hidden=!proxy.password_saved;
   $("proxy-clear-password").disabled=settingsSaving||!manual||!proxy.password_saved;
-  $("proxy-password").placeholder=proxy.password_saved?t("已保存，留空保留"):t("无需认证可留空");
+  $("proxy-password").placeholder=t(proxy.password_saved?"已存密码":"密码");
+  $("proxy-password").title=t("密码不回显；已保存时留空保留。");
   const scheme=s.profile?.upstream?.toLowerCase().startsWith("http://")?"http":"https";
   const value=detected[scheme]??detected.https??detected.http;
-  const parts=[value?.invalid?t("代理地址无效"):value?.address||t("直接连接")];
-  if(value?.username)parts.push(t("账号：{name}").replace("{name}",value.username));
-  if(value?.password_saved)parts.push(t("密码已配置"));
-  $("proxy-detected-address").textContent=parts.join(" · ");
+  const address=value?.invalid?t("代理地址无效"):value?.address||t("直接连接");
+  $("proxy-detected-address").value=address;$("proxy-detected-address").title=address;
+  $("proxy-detected-username").value=value?.username||"";
+  $("proxy-detected-password").placeholder=t(value?.password_saved?"已配置":"密码");
   const warnings=[];
   if(detected.pac_url||detected.auto_discovery)warnings.push(t("检测到 PAC/自动发现。转发依照 HTTP/HTTPS 代理配置。")+(detected.pac_url?" "+detected.pac_url:""));
   if(detected.unsupported_all_proxy)warnings.push(t("ALL_PROXY 未用于转发，请配置 HTTP/HTTPS 代理。"));
-  $("proxy-detection-warning").textContent=warnings.join(" ");$("proxy-detection-warning").hidden=!warnings.length;
-}
-async function detectProxySettings() {
-  const button=$("proxy-detect"),message=$("proxy-message");
-  if(settingsSaving||button.getAttribute("aria-busy")==="true")return;
-  button.disabled=true;button.setAttribute("aria-busy","true");
-  message.hidden=true;
-  try {state.status.proxy_settings=await api("/api/proxy-settings");fillProxySettings();}
-  catch(error){message.textContent=t("代理检测失败：")+t(error.message);message.hidden=false;}
-  finally{button.disabled=settingsSaving;button.setAttribute("aria-busy","false");}
+  $("proxy-detection-warning").textContent=warnings.join(" ");$("proxy-detection-warning").hidden=manual||!warnings.length;
 }
 async function testProxySettings() {
   const button=$("proxy-test"),output=$("proxy-test-result");
@@ -2889,7 +2879,6 @@ function closeSettings() {
   $("settings-dialog").close();return discardSettingsDraft();
 }
 action("settings-close",closeSettings);action("settings-restore",restoreSettings);
-action("proxy-detect",detectProxySettings);
 action("proxy-test",testProxySettings);
 $("proxy-mode").addEventListener("change",()=>{fillProxySettings();updateSettingsSaveState();});
 $("proxy-clear-password").addEventListener("change",()=>{fillProxySettings();updateSettingsSaveState();});

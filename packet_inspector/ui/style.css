@@ -402,12 +402,18 @@ code.session-id{font-family:Consolas,"Cascadia Mono",monospace;font-size:11px;wo
 #settings-dialog .runtime-setting-row+.runtime-setting-row{margin-top:12px}
 #settings-dialog #request-protection-settings .runtime-setting-row{margin-top:12px}
 #settings-dialog .runtime-inline-hint{min-width:0;margin:0}
-#settings-dialog .proxy-mode-actions{display:flex;align-items:center;flex-wrap:wrap;gap:8px;min-width:0}
-#settings-dialog .proxy-fields{margin-top:12px}
-#settings-dialog .proxy-fields input:not([type=checkbox]){width:100%;max-width:var(--settings-path-width);min-width:0;text-align:left}
-#settings-dialog .proxy-fields output{min-width:0;font-size:13px;line-height:20px;overflow-wrap:anywhere;white-space:pre-wrap}
-#settings-dialog .proxy-clear-password{display:flex;align-items:center;gap:8px;margin:0;color:var(--muted);font-size:13px}
-#settings-dialog #proxy-password-hint{margin:4px 0 12px calc(var(--settings-label-width) + 16px)}
+#settings-dialog .proxy-inline-row{display:grid;grid-template-columns:max-content minmax(0,1fr) 76px;align-items:center;gap:8px;min-width:0}
+#settings-dialog .proxy-fields{display:grid;grid-template-columns:minmax(0,1fr) 80px 104px;align-items:center;gap:8px;min-width:0}
+#settings-dialog .proxy-fields input:not([type=checkbox]){width:100%;min-width:0;text-align:left}
+#settings-dialog .proxy-password-field{position:relative;min-width:0}
+#settings-dialog .proxy-password-field:has(.proxy-clear-password:not([hidden]))>input{padding-inline-end:30px}
+#settings-dialog .proxy-clear-password{position:absolute;inset-inline-end:4px;top:6px;width:24px;height:24px;color:var(--muted);cursor:pointer}
+#settings-dialog .proxy-clear-password input{position:absolute;inset:0;width:100%;height:100%;opacity:0}
+#settings-dialog .proxy-clear-password span{display:grid;place-items:center;width:100%;height:100%;border-radius:4px;font-size:16px;line-height:1}
+#settings-dialog .proxy-clear-password input:checked+span{background:var(--soft);color:var(--danger)}
+#settings-dialog .proxy-clear-password input:focus-visible+span{outline:2px solid var(--accent);outline-offset:1px}
+#settings-dialog .proxy-clear-password input:disabled+span{opacity:.55;cursor:default}
+#settings-dialog #proxy-test{width:76px;padding-inline:6px;white-space:nowrap}
 #settings-dialog #proxy-settings>.help{margin:12px 0 0}
 #settings-dialog .proxy-test-result{display:block;margin-top:12px;font-size:13px;line-height:20px;white-space:pre-wrap;overflow-wrap:anywhere}
 #settings-dialog .capacity-retry-limit{display:grid;grid-template-columns:var(--settings-inline-label-width) 68px minmax(0,1fr);align-items:center;gap:8px;min-width:0;color:var(--muted);font-size:13px;line-height:20px}
@@ -476,6 +482,8 @@ code.session-id{font-family:Consolas,"Cascadia Mono",monospace;font-size:11px;wo
   #settings-dialog .capacity-retry-limit{grid-template-columns:var(--settings-label-width) 68px minmax(0,1fr);gap:16px}
   #settings-dialog .runtime-inline-hint{padding-inline-start:22px}
   #settings-dialog .image-mode-row .runtime-inline-hint{padding-inline-start:0}
+  #settings-dialog .proxy-inline-row{grid-template-columns:minmax(0,1fr) 76px}
+  #settings-dialog #proxy-mode{grid-column:1/-1}
 }
 @container settings-dialog (max-width:500px){
   #settings-dialog>.settings-content{--settings-section-indent:12px}
@@ -490,6 +498,10 @@ code.session-id{font-family:Consolas,"Cascadia Mono",monospace;font-size:11px;wo
   #settings-dialog .context-label{grid-column:1/-1}
   #settings-dialog .context-default{justify-self:end}
   #settings-dialog .settings-feedback{grid-column:1/-1}
+  #settings-dialog .proxy-inline-row{grid-template-columns:minmax(0,1fr)}
+  #settings-dialog .proxy-fields{grid-template-columns:minmax(0,1fr) minmax(104px,1fr)}
+  #settings-dialog .proxy-fields>input:first-of-type{grid-column:1/-1}
+  #settings-dialog #proxy-test{justify-self:end}
   #settings-dialog #settings-restore{grid-column:2}
 }
 @container settings-dialog (max-width:380px){
