@@ -66,10 +66,11 @@ class ProviderPlan:
 
 
 class ProviderManager:
-    def __init__(self, link, endpoint, default_upstream):
+    def __init__(self, link, endpoint, default_upstream, *, wsl_connection_key=None):
         self.link = link
         self.endpoint = endpoint.rstrip("/")
         self.default_upstream = default_upstream
+        self.wsl_connection_key = wsl_connection_key
 
     def sync(self, saved_routes, publish, *, retry_limit=None, session_migrator=None):
         """Publish routes/recovery first, then atomically update each TOML file.
@@ -178,6 +179,8 @@ class ProviderManager:
                 if route_id is None:
                     route_id = secrets.token_hex(12)
                 routes[route_id] = {"identity": identity, "provider": provider_id, "upstream": upstream}
+                if self.wsl_connection_key:
+                    routes[route_id]["wsl_connection_key"] = self.wsl_connection_key
                 applied = self.endpoint + "/p/" + route_id
                 self._record(records, data, keys, applied, original=upstream if upstream != current else None)
                 _put(document, keys, applied)

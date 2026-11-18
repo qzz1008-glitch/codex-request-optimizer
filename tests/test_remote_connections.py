@@ -765,13 +765,15 @@ class WindowsRemoteRelayTests(unittest.TestCase):
             return {"index": {thread: host.name}}
         with patch("packet_inspector.ssh_session_labels.saved_hosts", return_value=[self.host, second]), \
              patch.object(self.relays, "ssh", side_effect=ssh) as read:
-            labels._refresh([(thread, None, None)])
+            labels._refresh([(thread, None, None)], labels.generation)
             self.assertEqual(read.call_count, 2)
-            self.assertEqual(labels({thread: (None, None)}), {})
+            sidebar = SessionSummaries(TokenWindows(self.root), ssh_labels=labels)
+            self.assertEqual(sidebar._labels([thread]), {})
 
-            labels._refresh([(thread, None, self.host.id)])
+            labels._refresh([(thread, None, self.host.id)], labels.generation)
             self.assertEqual(read.call_count, 3)
-            self.assertEqual(labels({thread: (None, self.host.id)})[thread]["title"], self.host.name)
+            resolved = sidebar._labels([thread], native_origins={thread: (self.host.id, None)})
+            self.assertEqual(resolved[thread]["title"], self.host.name)
 
     def test_failed_probe_does_not_modify_config(self):
         self.ready = False
