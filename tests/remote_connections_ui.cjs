@@ -223,6 +223,8 @@ const localControls=[
       await page.waitForFunction(()=>document.querySelectorAll('.connection-device').length===1);
       assert.equal(await page.locator('#connection-devices-status').isHidden(),true);
       assert.equal(await reconnect.getAttribute('aria-label'),'重连 Codex · '+address);
+      assert.equal(await reconnect.textContent(),'','Reconnect displays an icon without visible text');
+      assert.equal(await reconnect.locator('svg[aria-hidden="true"]:visible').count(),1,'The named button has a visible decorative reconnect icon');
       assert.equal(await page.locator('.connection-device-reconnect:visible').count(),1,'Only SSH devices offer daemon reconnect');
       const beforeReconnect=await page.evaluate(()=>({calls:fixture.calls.length,states:fixture.rows.map(row=>row.state)}));
       await reconnect.click();

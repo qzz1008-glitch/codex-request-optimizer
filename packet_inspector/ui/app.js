@@ -29,7 +29,7 @@ globalThis.InspectorConnections = {
       return value+(row.warning_count?" · "+tr("部分配置未完成，请检查此设备的接入详情。"):"");
     }
     function statusIndicator(row) {
-      const reload=row.reload_required?tr("配置待生效，请点击“重连”重新加载此服务器的 Codex。"):"";
+      const reload=row.reload_required?tr("配置待生效，请点击重连图标重新加载此服务器的 Codex。"):"";
       const error=row.error||row.codex_reconnect?.error;
       if(error||row.state==="error")return {kind:"error",message:[
         tr(row.error||row.state==="error"?"接入异常":"重连结果未确认"),error?tr(error):"",reload].filter(Boolean).join("\n")};
@@ -59,6 +59,14 @@ globalThis.InspectorConnections = {
       }
       const tools=element("div","connection-device-controls"),reconnect=element("button","connection-device-reconnect");
       reconnect.type="button";
+      const icon=document.createElementNS("http://www.w3.org/2000/svg","svg");
+      const arrows=document.createElementNS(icon.namespaceURI,"path");
+      icon.setAttribute("viewBox","0 0 24 24");
+      icon.setAttribute("aria-hidden","true");
+      icon.setAttribute("focusable","false");
+      arrows.setAttribute("d","M4.5 10a7.75 7.75 0 0 1 13.1-3.5L20 9m0-5v5h-5M19.5 14a7.75 7.75 0 0 1-13.1 3.5L4 15m0 5v-5h5");
+      icon.append(arrows);
+      reconnect.append(icon);
       reconnect.addEventListener("click",()=>confirm("reconnect",row.id));
       tools.append(buttons,reconnect);info.append(state,label);root.append(info,tools);list.append(root);
       const value={root,label,state,buttons,actions,reconnect};nodes.set(row.id,value);return value;
@@ -80,7 +88,6 @@ globalThis.InspectorConnections = {
           button.disabled=busy(row)||submitting||(row.state===desired(action)&&!row.error);
         }
         value.reconnect.classList.toggle("needs-reconnect",!!row.reload_required&&!busy(row)&&!submitting);
-        text(value.reconnect,tr("重连"));
         value.reconnect.setAttribute("aria-label",tr("重连")+" Codex · "+row.name);
         const nativeHint=row.codex_reconnect?.error||row.codex_reconnect?.warning;
         value.reconnect.title=tr(nativeHint||"重载此服务器当前账号的 Codex 后台，使配置生效。");
