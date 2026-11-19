@@ -1012,27 +1012,31 @@ function sessionCopy(field,text,previousFeedback) {
   button.type="button";button.setAttribute("aria-label",label);
   button.dataset.sessionCopy=field;
   const icon=document.createElementNS("http://www.w3.org/2000/svg","svg"),path=document.createElementNS(icon.namespaceURI,"path");
+  const check=document.createElementNS(icon.namespaceURI,"path");
   icon.setAttribute("viewBox","0 0 24 24");icon.setAttribute("aria-hidden","true");
-  path.setAttribute("d","M9 9h11v11H9zM15 6V4H4v11h2");icon.append(path);button.append(icon);
+  path.setAttribute("d","M9 9h11v11H9zM15 6V4H4v11h2");
+  check.setAttribute("d","M5 12l4 4L19 6");
+  check.classList.add("session-copy-check");
+  icon.append(path,check);button.append(icon);
   const feedback=el("span","session-copy-feedback");
   feedback.setAttribute("role","status");
-  if(previousFeedback) {
-    feedback.dataset.copyFeedback=previousFeedback;
-    feedback.textContent=t(previousFeedback);
-  }
+  const showFeedback=(status,result)=>{
+    status.dataset.copyFeedback=result;
+    status.textContent=t(result==="success"?"已复制":"复制失败");
+  };
+  if(previousFeedback)showFeedback(feedback,previousFeedback);
   button.onclick=async event=>{
     const status=event.currentTarget.nextElementSibling;
-    let result="已复制";
+    let result="success";
     try {await navigator.clipboard.writeText(text);}
-    catch(_) {result="复制失败";}
+    catch(_) {result="error";}
     if(!status.isConnected)return;
     clearTimeout(status.copyFeedbackTimer);
-    status.dataset.copyFeedback=result;
-    status.textContent=t(result);
+    showFeedback(status,result);
     status.copyFeedbackTimer=setTimeout(()=>{
       delete status.dataset.copyFeedback;
       status.textContent="";
-    },1600);
+    },result==="success"?900:1600);
   };
   return [button,feedback];
 }
