@@ -347,6 +347,7 @@ button.other-session-group{background:#f5f2fc;border-color:#e7e0f5}
 .detail-content .detail-section{min-width:0}
 .detail-content .fact-row{margin:0;padding-block:4px;gap:12px;align-items:baseline;line-height:1.5}
 .detail-content .fact-row>:last-child{min-width:0;text-align:end;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}
+#diff-content>.detail-section>.fact-row{padding-inline-start:8px}
 #headers-content>.detail-section+.detail-section,
 #diff-content>.detail-section+.detail-section,
 .request-overview-facts>.request-transport-start{
