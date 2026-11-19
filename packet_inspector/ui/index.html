@@ -345,28 +345,26 @@
           <small id="exit-port-hint" class="entry-port-hint">局域网设备经本机网络访问 Codex 的端口</small>
         </div>
       </div>
-      <fieldset id="proxy-settings" data-settings-field="proxy_settings" hidden>
-        <legend>出口代理</legend>
+      <fieldset id="proxy-settings" data-settings-field="proxy_settings" aria-labelledby="proxy-settings-label" hidden>
         <div class="proxy-inline-row">
+          <span id="proxy-settings-label">出口代理</span>
           <fieldset id="proxy-mode" class="image-mode-pills">
             <legend class="sr-only">代理模式</legend>
-            <label><input type="radio" name="proxy-mode" value="auto" checked><span>自动检测</span></label>
-            <label><input type="radio" name="proxy-mode" value="manual"><span>手动配置</span></label>
+            <label><input type="radio" name="proxy-mode" value="auto" checked><span>自动</span></label>
+            <label><input type="radio" name="proxy-mode" value="manual"><span>手动</span></label>
           </fieldset>
-          <div class="proxy-controls">
-            <div id="proxy-detected" class="proxy-address-field">
-              <label class="sr-only" for="proxy-detected-address">代理地址</label><input id="proxy-detected-address" type="text" placeholder="直接连接" disabled>
-            </div>
-            <div id="proxy-manual" class="proxy-address-field" hidden>
-              <label class="sr-only" for="proxy-address">代理地址</label><input id="proxy-address" name="proxy-address" type="text" inputmode="url" maxlength="2048" placeholder="http://proxy:8080" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" required disabled>
-            </div>
-            <div class="proxy-test-actions">
-              <button id="proxy-test" type="button" title="测试当前配置，不保存；不发送对话或 Codex 登录凭据。">测试</button>
-              <output id="proxy-test-result" class="proxy-test-result" role="status" aria-live="polite" aria-atomic="true">
-                <span id="proxy-test-state"></span>
-                <span id="proxy-test-elapsed" hidden></span>
-              </output>
-            </div>
+          <div id="proxy-detected" class="proxy-address-field">
+            <label class="sr-only" for="proxy-detected-address">代理地址</label><input id="proxy-detected-address" type="text" placeholder="直接连接" disabled>
+          </div>
+          <div id="proxy-manual" class="proxy-address-field" hidden>
+            <label class="sr-only" for="proxy-address">代理地址</label><input id="proxy-address" name="proxy-address" type="text" inputmode="url" maxlength="2048" placeholder="http://proxy:8080" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" required disabled>
+          </div>
+          <div class="proxy-test-actions">
+            <button id="proxy-test" type="button" title="测试当前配置，不保存；不发送对话或 Codex 登录凭据。">测试</button>
+            <output id="proxy-test-result" class="proxy-test-result" role="status" aria-live="polite" aria-atomic="true">
+              <span id="proxy-test-state"></span>
+              <span id="proxy-test-elapsed" hidden></span>
+            </output>
           </div>
         </div>
         <p id="proxy-detection-warning" class="help" role="status" hidden></p>
