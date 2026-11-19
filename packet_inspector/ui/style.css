@@ -592,6 +592,7 @@ button.other-session-group{background:#f5f2fc;border-color:#e7e0f5}
 #settings-dialog>.settings-content::-webkit-scrollbar-thumb:hover{background:#9aa9c5}
 #settings-dialog .settings-content>section{margin:0;padding:20px 0;padding-inline-start:var(--settings-section-indent);border-top:1px solid var(--line)}
 #settings-dialog .settings-content>section>:is(h3,.context-heading){margin-inline-start:calc(-1 * var(--settings-section-indent))}
+#settings-dialog .settings-content>section:first-child{border-top:0}
 #settings-dialog .settings-content>section:last-child{padding-bottom:0}
 #settings-dialog label{margin:0;color:var(--ink);font-size:14px;line-height:22px;font-weight:400}
 #settings-dialog :is(button,input,select){font:inherit;font-size:14px}
@@ -605,7 +606,7 @@ button.other-session-group{background:#f5f2fc;border-color:#e7e0f5}
 #settings-dialog .help{margin:10px 0 0;color:var(--muted);font-size:13px;line-height:20px;overflow-wrap:anywhere}
 #settings-dialog .help.error{color:var(--danger)}
 #settings-dialog .settings-dirty{border-radius:8px;outline:2px solid var(--accent);outline-offset:3px;background-color:var(--soft)}
-#settings-dialog .settings-language-row{display:grid;grid-template-columns:var(--settings-label-width) minmax(0,1fr);align-items:center;gap:var(--settings-column-gap);margin:20px 0;padding-inline-start:var(--settings-section-indent)}
+#settings-dialog .settings-language-row{display:grid;grid-template-columns:var(--settings-label-width) minmax(0,1fr);align-items:center;gap:var(--settings-column-gap)}
 #settings-dialog :is(.language-toggle,.image-mode-pills){display:inline-flex;justify-self:start;gap:2px;width:max-content;min-width:0;max-width:100%;margin:0;padding:2px;border:1px solid var(--line);border-radius:var(--settings-control-radius);background:var(--bg)}
 #settings-dialog :is(.language-toggle button,.image-mode-pills span){display:block;height:var(--settings-segment-height);min-height:var(--settings-segment-height);padding:3px 7px;border:0;border-radius:var(--settings-segment-radius);font-size:13px;font-weight:400;line-height:20px;text-align:center;white-space:nowrap}
 #settings-dialog .language-toggle button{min-width:66px}
@@ -626,13 +627,14 @@ button.other-session-group{background:#f5f2fc;border-color:#e7e0f5}
 #settings-dialog .entry-port-status[data-state=error]{color:var(--danger)}
 #settings-dialog .zstd-level-control{display:grid;grid-template-columns:var(--settings-label-width) minmax(0,1fr);align-items:center;gap:var(--settings-column-gap);margin:0}
 #settings-dialog .zstd-level-control~.zstd-level-control{margin-block-start:var(--settings-row-gap)}
-#settings-dialog #compression-settings.is-automatic{--ink:var(--muted);position:relative;isolation:isolate;color:var(--muted)}
-#settings-dialog #compression-settings.is-automatic::before{content:"";position:absolute;inset:8px -12px;border:1px solid #d8dee7;border-radius:10px;background:#eef0f3;pointer-events:none;z-index:-1}
-#settings-dialog #compression-settings.is-automatic :is(h3,.zstd-level-control){opacity:.65}
-#settings-dialog #compression-settings.is-automatic .zstd-level-trigger:disabled{background:#e3e7ed;border-color:#cbd2dc;opacity:1}
+#settings-dialog :is(#manual-compression-levels,#proxy-settings){min-inline-size:0;margin:var(--settings-row-gap) 0 0;padding:0;border:0}
+#settings-dialog #manual-compression-levels:disabled{--ink:var(--muted);position:relative;isolation:isolate;color:var(--muted)}
+#settings-dialog #manual-compression-levels:disabled::before{content:"";position:absolute;inset:-4px -8px;border:1px solid #d8dee7;border-radius:10px;background:#eef0f3;pointer-events:none;z-index:-1}
+#settings-dialog #manual-compression-levels:disabled .zstd-level-control{opacity:.65}
+#settings-dialog #manual-compression-levels:disabled .zstd-level-trigger{background:#e3e7ed;border-color:#cbd2dc;opacity:1}
 #settings-dialog .runtime-setting-row.auto-zstd-row{margin-inline-start:-8px;padding-inline-start:8px}
 #settings-dialog .auto-zstd-row:is(:hover,:focus-within),
-#settings-dialog .settings-content:has(#compression-settings.is-automatic:hover) .auto-zstd-row{border-radius:8px;background:var(--soft);box-shadow:0 0 0 1px #b9c9ed}
+#settings-dialog #compression-settings:has(#manual-compression-levels:disabled:hover) .auto-zstd-row{border-radius:8px;background:var(--soft);box-shadow:0 0 0 1px #b9c9ed}
 #settings-dialog :is(.zstd-level-trigger,.record-limit-grid input){inline-size:96px;max-inline-size:100%;justify-self:start}
 #settings-dialog .zstd-level-trigger{font-variant-numeric:tabular-nums;display:flex;align-items:center;justify-content:flex-end;gap:8px;padding-inline:10px;text-align:right}
 #zstd-level-dialog{width:min(640px,calc(100vw - 32px));max-height:min(640px,calc(100vh - 40px));padding:20px;overflow:hidden}
@@ -685,9 +687,11 @@ button.other-session-group{background:#f5f2fc;border-color:#e7e0f5}
 #settings-dialog .packet-size-limit input{width:68px}
 #settings-dialog :is(.packet-size-unit,.record-limit-unit){color:var(--muted);font-size:13px;white-space:nowrap}
 #settings-dialog .runtime-setting-row{display:grid;grid-template-columns:var(--settings-label-width) minmax(0,1fr);align-items:center;gap:var(--settings-column-gap);margin:0}
+#settings-dialog .settings-language-row+.runtime-setting-row,
 #settings-dialog .runtime-setting-row+.runtime-setting-row,
 #settings-dialog #request-protection-settings .runtime-setting-row{margin-block-start:var(--settings-row-gap)}
 #settings-dialog .runtime-inline-hint{min-width:0;margin:0}
+#settings-dialog #proxy-settings>legend{margin-block-end:8px;padding:0;font-weight:500}
 #settings-dialog .proxy-address-field{min-width:0}
 #settings-dialog .proxy-test-actions{display:flex;align-items:center;gap:8px}
 #settings-dialog #proxy-test{flex:none;width:72px;padding-inline:6px;white-space:nowrap}
@@ -702,7 +706,6 @@ button.other-session-group{background:#f5f2fc;border-color:#e7e0f5}
 #settings-dialog .capacity-retry-limit input{width:68px}
 #settings-dialog .capacity-retry-limit>span{font-size:12px}
 #settings-dialog :is(.image-directory-settings,.proxy-inline-row){display:grid;grid-template-columns:var(--settings-label-width) minmax(0,1fr);align-items:center;gap:8px var(--settings-column-gap)}
-#settings-dialog .image-directory-settings{margin:16px 0 0}
 #settings-dialog :is(.image-directory-row,.proxy-controls){display:grid;grid-template-columns:minmax(0,var(--settings-path-width)) var(--settings-path-actions-width);justify-content:start;align-items:center;gap:8px;min-width:0}
 #settings-dialog :is(.image-directory-row,.proxy-address-field) input{width:100%;min-width:0;text-align:left}
 #settings-dialog .image-directory-actions{display:flex;align-items:center;gap:8px}
@@ -723,6 +726,7 @@ button.other-session-group{background:#f5f2fc;border-color:#e7e0f5}
   --record-limit-columns:var(--settings-label-width) max-content minmax(0,1fr);
   display:grid;
   grid-template-columns:var(--record-limit-columns);
+  margin-block-start:var(--settings-row-gap);
   gap:var(--settings-row-gap) var(--settings-column-gap);
 }
 #settings-dialog .record-limit-row{

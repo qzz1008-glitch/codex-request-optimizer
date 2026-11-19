@@ -93,6 +93,7 @@ assert.equal(context.$('zstd-level-value').textContent,'22级');
 context.state.status.image_zstd_level=12;
 context.state.status.auto_image_zstd_level=6;
 context.fillZstdLevel();
+assert.equal(context.$('manual-compression-levels').disabled,true);
 assert.equal(context.$('image-zstd-level').value,'12');
 assert.equal(context.$('image-zstd-level').disabled,true);
 assert.equal(context.$('image-zstd-level-open').disabled,true);
@@ -100,6 +101,7 @@ assert.equal(context.$('image-zstd-level-value').textContent,'6级');
 context.settingsEditing=true;
 context.$('auto-zstd-level').checked=false;
 context.fillZstdLevel();
+assert.equal(context.$('manual-compression-levels').disabled,false);
 assert.equal(context.$('image-zstd-level').disabled,false);
 assert.equal(context.$('image-zstd-level-open').disabled,false);
 assert.equal(context.$('image-zstd-level-value').textContent,'12级');
@@ -151,7 +153,7 @@ assert(html.includes('data-settings-field="image_zstd_level"'));
 assert(!html.includes('image-upload-optimization'));
 const translations=fs.readFileSync('packet_inspector/ui/i18n.js','utf8');
 const dictionary=vm.runInNewContext(translations.slice(translations.indexOf('const english = {'),translations.indexOf('\n  };')+5)+'\nenglish;');
-for(const label of ['原始请求＜1.5 MB','原始请求≥1.5 MB','对话压缩等级','图片压缩等级','压缩耗时']) {
+for(const label of ['原始请求＜1.5 MB','原始请求≥1.5 MB','手动压缩等级','对话压缩等级','图片压缩等级','压缩耗时']) {
   assert(html.includes(label));
   assert(dictionary[label]);
 }

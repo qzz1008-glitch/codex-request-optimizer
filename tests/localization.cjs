@@ -59,7 +59,7 @@ Object.assign(context,{
 for(const name of ['renderStatus','renderContextPlaceholders','renderSettingsSaveProgress','renderUpdates',
   'renderConnectPrompt','renderExitRequest','showTab','renderOverview','renderHeaders',
   'renderLanguageSelection','updateSettingsSaveState','resetSettingsSaveProgress','fillSettings',
-  'fillContextSettings','setSettingsMessage'])context[name]=(...args)=>calls.push([name,...args]);
+  'fillContextSettings','setSettingsMessage','setProxyTestStatus'])context[name]=(...args)=>calls.push([name,...args]);
 function extract(start,end) {
   const first=app.indexOf(start),last=app.indexOf(end,first);
   assert(first>=0&&last>first);return app.slice(first,last);
