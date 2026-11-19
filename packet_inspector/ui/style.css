@@ -242,21 +242,33 @@ button.other-session-group{background:#f5f2fc;border-color:#e7e0f5}
 .storage-summary{display:flex;align-items:center;flex:none;gap:12px;margin-left:auto;color:var(--muted);font-size:10px;line-height:18px;font-variant-numeric:tabular-nums}
 .storage-summary>span{white-space:nowrap}
 .packet-table{min-width:345px}
-.detail{display:flex;flex-direction:column;min-height:0;padding:var(--view-inset);background:#fafbfd;overflow:hidden}
+.detail{
+  --detail-frame-line:#d7e0ec;
+  --detail-content-inset:8px;
+  --detail-tab-inset:4px;
+  display:flex;
+  flex-direction:column;
+  min-height:0;
+  padding:var(--view-inset);
+  background:#fafbfd;
+  overflow:hidden;
+}
 .sessions-sidebar,.requests-sidebar,.detail{padding-top:8px}
 .detail-title{gap:12px}
 .detail-title h1{flex:none;white-space:nowrap}
 .detail-title>.tabs{
-  height:28px;
+  position:relative;
+  z-index:1;
+  align-self:flex-end;
+  height:var(--records-heading-height);
   min-width:0;
   gap:1px;
   margin:0;
-  /* Match the label inset to the 10px scrollbar gutter below. */
-  margin-inline:auto 1px;
-  padding:1px 2px;
-  border:1px solid var(--line);
-  border-radius:8px;
-  background:#eef2f6;
+  /* Let the active tab cover the panel's top border. */
+  margin-block-end:-1px;
+  /* Align the last label with the cards inside the 10px scrollbar gutter. */
+  margin-inline:auto calc(10px + var(--detail-content-inset) - var(--detail-tab-inset));
+  border:0;
   overflow-x:auto;
   scrollbar-width:thin;
 }
@@ -266,21 +278,47 @@ button.other-session-group{background:#f5f2fc;border-color:#e7e0f5}
   flex:none;
   align-items:center;
   height:100%;
-  padding:0 5px;
+  padding:0 var(--detail-tab-inset);
   border:1px solid transparent;
-  border-radius:5px;
+  border-radius:8px 8px 0 0;
   background:transparent;
   color:#526174;
   font-size:12px;
   line-height:22px;
   white-space:nowrap;
 }
-.detail-title>.tabs button:hover{background:#e3eaf4;color:var(--ink)}
-.detail-title>.tabs button[aria-pressed="true"]{background:var(--panel);border-color:#c7d5e7;color:#274776}
+.detail-title>.tabs button:hover{background:#edf2f8;color:var(--ink)}
+.detail-title>.tabs button[aria-pressed="true"]{
+  background:var(--panel);
+  border-color:var(--detail-frame-line);
+  border-block-end-color:var(--panel);
+  color:#274776;
+}
 .detail-title>.tabs button:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
-@media (forced-colors:active){.detail-title>.tabs button[aria-pressed="true"]{border-color:Highlight}}
-#packet-detail:not([hidden]){display:flex;flex:1;flex-direction:column;min-height:0;min-width:0}
-.detail-content{flex:1;min-height:0;min-width:0;overflow-x:auto;overflow-y:scroll;scrollbar-gutter:stable;overscroll-behavior:contain;margin-top:var(--records-heading-gap)}
+@media (forced-colors:active){
+  .detail-title>.tabs button[aria-pressed="true"]{border-color:Highlight;border-block-end-color:Canvas}
+}
+#packet-detail:not([hidden]){
+  display:flex;
+  flex:1;
+  flex-direction:column;
+  min-height:0;
+  min-width:0;
+  border:1px solid var(--detail-frame-line);
+  border-radius:8px;
+  background:var(--panel);
+  overflow:hidden;
+}
+.detail-content{
+  flex:1;
+  min-height:0;
+  min-width:0;
+  padding:var(--detail-content-inset);
+  overflow-x:auto;
+  overflow-y:scroll;
+  scrollbar-gutter:stable;
+  overscroll-behavior:contain;
+}
 .detail-content .panel{padding:14px 16px;margin-bottom:12px}
 .detail-content .panel>h3{margin-bottom:10px}
 .detail-content .panel>.fact-row{margin:8px 0}
