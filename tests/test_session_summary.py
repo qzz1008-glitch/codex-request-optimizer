@@ -253,6 +253,54 @@ class SessionSummaryTests(unittest.TestCase):
                     db.commit()
                     self.assertEqual(self.reader.read(self.capture)["sessions"][0]["token_window"], {"state": "unavailable"})
 
+    def test_sidebar_uses_last_captured_tokens_until_new_usage_is_available(self):
+        generation = {"path": "/v1/responses", "status": 200, "state": "complete"}
+        prior = {**generation, "overflow_cache_hit": True, "request_token_estimate": {
+            "state": "available", "source": "codex_estimate", "estimated": True, "input_tokens": 260000}}
+        prediction = {**generation, "usage_override_applied": True,
+                      "reported_usage": {"input_tokens": 500000, "output_tokens": 2, "total_tokens": 500002}}
+        with closing(sqlite3.connect(self.capture / "packets.sqlite")) as db:
+            db.execute("UPDATE packet_summaries SET meta=? WHERE id='b'", (json.dumps(prior),))
+            db.executemany("INSERT INTO packet_summaries VALUES (?,?,?,?,?)", [
+                ("prediction", 108, THREAD, "POST", json.dumps(prediction)),
+                ("next", 110, THREAD, "POST", json.dumps({**generation, "state": "streaming"})),
+                ("other", 109, "other-session", "POST", json.dumps({**generation,
+                    "upstream_usage": {"input_tokens": 700, "output_tokens": 2, "total_tokens": 702}})),
+            ])
+            db.commit()
+            summary = self.reader.read(self.capture)
+            row = next(row for row in summary["sessions"] if row["thread_id"] == THREAD)
+            self.assertEqual(row["latest_packet"]["id"], "next")
+            self.assertEqual(row["token_window"], {**prior["request_token_estimate"], "recorded_at": 105})
+
+            generation["upstream_usage"] = {"input_tokens": 175000, "output_tokens": 3, "total_tokens": 175003}
+            db.execute("UPDATE packet_summaries SET meta=? WHERE id='next'", (json.dumps(generation),))
+            db.commit()
+        row = next(row for row in self.reader.read(self.capture)["sessions"] if row["thread_id"] == THREAD)
+        self.assertEqual((row["token_window"]["input_tokens"], row["token_window"]["recorded_at"]), (175000, 110))
+
+    def test_sidebar_keeps_previous_attributed_native_tokens_when_compact_has_no_usage(self):
+        with self.rollout.open("a", encoding="utf8") as stream:
+            stream.write(json.dumps(event(at=107, inputs=127000, outputs=6)) + "\n")
+        generation = {"path": "/v1/responses", "status": 200, "state": "complete", "duration_ms": 1000}
+        with closing(sqlite3.connect(self.capture / "packets.sqlite")) as db:
+            db.execute("UPDATE packet_summaries SET meta=? WHERE id='b'", (json.dumps(generation),))
+            db.commit()
+            previous = self.reader.read(self.capture)["sessions"][0]["token_window"]
+            self.assertEqual((previous["input_tokens"], previous["source"]), (127000, "codex_history"))
+            db.execute("INSERT INTO packet_summaries VALUES (?,?,?,?,?)",
+                       ("compact", 109, THREAD, "POST", '{"path":"/v1/responses/compact","status":200,"state":"complete"}'))
+            db.commit()
+        row = self.reader.read(self.capture)["sessions"][0]
+        self.assertEqual(row["latest_packet"]["id"], "compact")
+        self.assertEqual(row["token_window"], previous)
+
+        with closing(sqlite3.connect(self.capture / "packets.sqlite")) as db:
+            db.execute("UPDATE packet_summaries SET created=106 WHERE id='compact'")
+            db.commit()
+        row = self.reader.read(self.capture)["sessions"][0]
+        self.assertEqual(row["token_window"], {"state": "unavailable"})
+
     def test_renames_and_updated_packet_values_refresh_without_history_writes(self):
         before = self.rollout.read_bytes(), self.rollout.stat().st_mtime_ns
         self.reader.read(self.capture)
