@@ -51,7 +51,8 @@ Object.assign(context, {
   reconcileContent:(_,root)=>{rendered=root;},api:async(route,data)=>{opened.push([route,data.path]);return {opened:true};},
   fail:error=>{throw error;}
 });
-vm.runInContext(source.split(/\r?\n/).filter(line=>/^function (originalBytes|compressedBytes|panel|auxiliarySessionKind)\(|^const (states|auxiliaryLabels)\b/.test(line)).join('\n'),context);
+vm.runInContext(source.split(/\r?\n/).filter(line=>/^function (originalBytes|compressedBytes|auxiliarySessionKind)\(|^const (states|auxiliaryLabels)\b/.test(line)).join('\n'),context);
+vm.runInContext(source.slice(source.indexOf('function panel('),source.indexOf('function table(')),context);
 vm.runInContext(source.slice(source.indexOf('function fact('),source.indexOf('function showTab(')),context);
 vm.runInContext(source.slice(source.indexOf('function purposeFromMetadata('),source.indexOf('function cacheRequestPurpose(')),context);
 vm.runInContext(source.slice(source.indexOf('function localImagePath('),source.indexOf('function renderHeaders(')),context);
@@ -190,8 +191,9 @@ const historicalImageRequest={source:'live',model:'example',state:'complete',sta
 context.renderHeaders(historicalImageRequest);
 assert.deepEqual(facts(0),{'模型':'example','结果':'完成 · HTTP 200','总耗时':'1.3 秒',
   '原始请求':'2806092','图片大小':'≈ 874125','转发请求':'954743','请求压缩':'zstd · 16 级','压缩比例':'49.4%'});
-assert.deepEqual(descendants(rendered).filter(child=>child.tag==='h3').map(child=>child.text),['请求概况','请求保护']);
-const sizeList=rendered.children[0].children[1];
+assert.deepEqual(descendants(rendered).filter(child=>child.tag==='h3'),[]);
+assert.deepEqual(rendered.children.map(child=>child.attributes['aria-label']),['请求概况','请求保护']);
+const sizeList=rendered.children[0].children[0];
 assert.equal(sizeList.tag,'dl');
 assert(sizeList.children.every(row=>row.children[0].tag==='dt'&&row.children[1].tag==='dd'));
 context.renderHeaders({...historicalImageRequest,transport_content_encoding:'identity'});
@@ -222,7 +224,7 @@ let codes=descendants(details('optimization')).filter(child=>child.tag==='code')
 assert.deepEqual(codes.map(child=>child.text),[folder,'example.png']);
 assert.equal(descendants(details('optimization')).filter(child=>child.tag==='button').length,3);
 context.renderHeaders({source:'live',request_kind:'image_analysis',image_paths:[image]});
-assert.deepEqual(descendants(rendered).filter(child=>child.tag==='h3').map(child=>child.text),['请求概况','子会话信息','图片信息','请求保护']);
+assert.deepEqual(descendants(rendered).filter(child=>child.tag==='h3').map(child=>child.text),['子会话信息','图片信息']);
 context.renderHeaders({source:'live',image_paths:[image]});
 assert.equal(facts(1)['解图优化'],'—','A path in a request does not prove that this request optimized an image');
 assert.equal(details('optimization'),undefined);
@@ -261,7 +263,8 @@ context.renderHeaders({source:'live',transport_content_encoding:'zstd',transport
   image_upload_images:[{original_width:2560,original_height:1440,width:1600,height:900}]});
 assert.equal(facts(0)['Request compression'],'zstd · Level 1');
 assert.equal(facts(0)['Image compression'],'2560 × 1440 → 1600 × 900');
-assert.deepEqual(descendants(rendered).filter(child=>child.tag==='h3').map(child=>child.text),['Request overview','Request protection']);
+assert.deepEqual(descendants(rendered).filter(child=>child.tag==='h3'),[]);
+assert.deepEqual(rendered.children.map(child=>child.attributes['aria-label']),['Overview','Request protection']);
 context.renderHeaders({transport_content_encoding:'identity'});
 assert.equal(facts(0)['Request compression'],'-');
 context.renderHeaders(interrupted);

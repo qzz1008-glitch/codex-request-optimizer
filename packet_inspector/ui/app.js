@@ -1219,7 +1219,13 @@ async function loadTokenWindow() {
     }
   }
 }
-function panel(title) { const n = el("section","panel"); n.dataset.renderKey="panel:"+title;n.append(el("h3","",title)); return n; }
+function panel(title,{showTitle=true}={}) {
+  const n=el("section","panel");
+  n.dataset.renderKey="panel:"+title;
+  if(showTitle)n.append(el("h3","",title));
+  else n.setAttribute("aria-label",title);
+  return n;
+}
 function table(headings, rows) { const wrap = el("div","table-scroll"), t = el("table"), head=el("thead"), tr=el("tr"); for (const h of headings) tr.append(el("th","",h)); head.append(tr); t.append(head); const body=el("tbody"); for (const cells of rows) { const row=el("tr"); for (const cell of cells) {const td=el("td"); if (cell instanceof Node) td.append(cell); else td.textContent = cell; row.append(td);} body.append(row); } t.append(body); wrap.append(t); return wrap; }
 function link(text, fn) { const n=el("button","link-button",text); n.onclick=()=>Promise.resolve().then(fn).catch(fail); return n; }
 function fact(n,label,value) {
@@ -1235,7 +1241,9 @@ function showTab(tab) {
   state.tab=tab;
   for(const b of document.querySelectorAll("[data-tab]")) {
     b.hidden=(basic&&b.dataset.tab==="tree")||(search&&b.dataset.tab==="diff");
-    b.classList.toggle("active",b.dataset.tab===tab);
+    const active=b.dataset.tab===tab;
+    b.classList.toggle("active",active);
+    b.setAttribute("aria-pressed",String(active));
   }
   for(const t of ["headers","overview","tree","diff"])$("tab-"+t).hidden=t!==tab;
 }
@@ -2465,7 +2473,7 @@ function appendRequestProcessingFacts(facts,m) {
   }
 }
 function requestProtectionPanel(m) {
-  const steps=panel(t("请求保护"));steps.id="packet-protection-panel";steps.classList.add("packet-protection-panel");
+  const steps=panel(t("请求保护"),{showTitle:false});steps.id="packet-protection-panel";steps.classList.add("packet-protection-panel");
   const flags=packetProtection(m);
   const item=(key,category)=>{
     const triggered=flags[key];
@@ -2919,7 +2927,7 @@ function renderImagePaths(paths) {
   return images;
 }
 function renderHeaders(m) {
-  const root=document.createDocumentFragment(),p=panel(t("请求概况"));
+  const root=document.createDocumentFragment(),p=panel(t("请求概况"),{showTitle:false});
   const facts=el("dl","request-overview-facts");
   if(m.source!=="live")fact(facts,t("数据来源"),t("历史重建（大小为估算）"));
   fact(facts,t("模型"),m.model||t("未标记"));
