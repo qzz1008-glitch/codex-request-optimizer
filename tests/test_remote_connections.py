@@ -762,6 +762,7 @@ class WindowsRemoteRelayTests(unittest.TestCase):
         return json.loads(output.getvalue().split(RESULT_PREFIX)[-1])
 
     def test_session_sidebar_resolves_existing_history_and_scopes_new_captures_to_the_ssh_account(self):
+        self.host = Host("remote-ssh-test", "server", "server")
         root_key = self.relays.key(self.host)
         self.relays._save(root_key, {"enabled": True, "home": str(self.root), "uid": 0, "token": "1" * 48})
         self.remote_home, self.uid = self.root / "personal", 1001
@@ -790,39 +791,41 @@ class WindowsRemoteRelayTests(unittest.TestCase):
         for session, owner in ((thread, personal), (legacy, None), (other_account, root_key),
                                (local_thread, None), (unknown, "f" * 64)):
             store.add({"method": "POST", "path": "/responses", "thread_id": session, "source": "live",
-                       **({"ssh_connection_key": owner} if owner else {})})
+                       **({"ssh_connection_key": owner} if owner else {}),
+                       **({"local_connection": True} if session == local_thread else {})})
         local = self.root / "local"
         local.mkdir()
         (local / ".codex-global-state.json").write_text(json.dumps({
             "thread-project-membership-host-ids": {legacy: self.host.id, other_account: "local", local_thread: "local"},
-            "codex-managed-remote-connections": [{"hostId": self.host.id, "hostname": "198.51.100.176"}],
+            "codex-managed-remote-connections": [{"hostId": self.host.id, "alias": self.host.destination,
+                                                   "hostname": "198.51.100.176"}],
         }), encoding="utf8")
         labels = SshSessionLabels(self.relays, local, self.root / "ssh-config")
         sidebar = SessionSummaries(TokenWindows(local), ssh_labels=labels, ssh_origins=labels.route_origins)
-        with patch("packet_inspector.ssh_session_labels.saved_hosts", return_value=[self.host]):
-            def rows():
-                return {row["thread_id"]: row for row in sidebar.read(capture)["sessions"]}
 
-            revision = labels.updates.revision()
-            first = rows()
-            origin = {"kind": "remote", "address": self.host.destination}
-            self.assertIsNone(first[thread]["title"])
-            self.assertEqual(first[thread]["origin"], origin)
-            self.assertEqual(first[other_account]["origin"], origin)
-            self.assertEqual(first[local_thread]["origin"], {"kind": "local"})
-            self.assertIsNone(first[unknown]["origin"])
-            self.assertTrue(labels.updates.wait(revision, timeout=2)["changed"])
-            parent_revision = labels.updates.revision()
-            rows()  # The first lookup exposes the child-to-parent relationship.
-            self.assertTrue(labels.updates.wait(parent_revision, timeout=2)["changed"])
-            sessions = rows()
-            self.assertEqual(sessions[legacy]["title"], "Saved remote chat")
-            self.assertEqual(sessions[legacy]["origin"], {"kind": "remote", "address": "198.51.100.176"})
-            self.assertEqual(sessions[thread]["title"], "Remote child")
-            self.assertEqual(sessions[thread]["parent_thread_id"], parent)
-            self.assertEqual(sessions[parent]["title"], "Remote parent")
-            self.assertEqual(sessions[parent]["origin"], origin)
-            self.assertIsNone(sessions[other_account]["title"])
+        def rows():
+            return {row["thread_id"]: row for row in sidebar.read(capture)["sessions"]}
+
+        revision = labels.updates.revision()
+        first = rows()
+        origin = {"kind": "remote", "address": "198.51.100.176"}
+        self.assertIsNone(first[thread]["title"])
+        self.assertEqual(first[thread]["origin"], origin)
+        self.assertEqual(first[other_account]["origin"], origin)
+        self.assertEqual(first[local_thread]["origin"], {"kind": "local"})
+        self.assertIsNone(first[unknown]["origin"])
+        self.assertTrue(labels.updates.wait(revision, timeout=2)["changed"])
+        parent_revision = labels.updates.revision()
+        rows()  # The first lookup exposes the child-to-parent relationship.
+        self.assertTrue(labels.updates.wait(parent_revision, timeout=2)["changed"])
+        sessions = rows()
+        self.assertEqual(sessions[legacy]["title"], "Saved remote chat")
+        self.assertIsNone(sessions[legacy]["origin"])
+        self.assertEqual(sessions[thread]["title"], "Remote child")
+        self.assertEqual(sessions[thread]["parent_thread_id"], parent)
+        self.assertEqual(sessions[parent]["title"], "Remote parent")
+        self.assertIsNone(sessions[parent]["origin"])
+        self.assertIsNone(sessions[other_account]["title"])
         self.assertEqual({path: path.read_bytes() for path in before}, before)
 
     def test_legacy_history_does_not_pick_a_name_when_two_ssh_hosts_match(self):

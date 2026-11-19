@@ -445,8 +445,11 @@ class ProviderRelayTests(unittest.TestCase):
                 if server is self.server:
                     server.analysis_thread.join(timeout=HTTP_TIMEOUT)
 
-    def post(self, url, auth="Bearer test"):
-        request = Request(url, data=b'{"input":[]}', headers={"Authorization": auth, "Content-Type": "application/json"})
+    def post(self, url, auth="Bearer test", *, thread=None):
+        headers = {"Authorization": auth, "Content-Type": "application/json"}
+        if thread:
+            headers["session_id"] = thread
+        request = Request(url, data=b'{"input":[]}', headers=headers)
         with self.opener.open(request, timeout=HTTP_TIMEOUT) as response:
             response.read()
             status = response.status
@@ -455,13 +458,19 @@ class ProviderRelayTests(unittest.TestCase):
 
     def test_routes_generation_compaction_query_and_legacy_to_correct_upstream(self):
         providers = tomllib.loads(self.config.read_text())["model_providers"]
-        self.assertEqual(self.post(providers["a"]["base_url"] + "/responses?api-version=2026", "Bearer a"), 200)
+        self.assertEqual(self.post(providers["a"]["base_url"] + "/responses?api-version=2026", "Bearer a", thread="local"), 200)
         self.assertEqual(self.post(providers["b"]["base_url"] + "/responses/compact", "Bearer b"), 200)
-        self.assertEqual(self.post(self.server.endpoint + "/responses", "Bearer legacy"), 200)
+        self.assertEqual(self.post(self.server.endpoint + "/responses", "Bearer legacy", thread="legacy"), 200)
         self.assertEqual([(row[0], row[1]) for row in self.observed[0]],
                          [("/a/responses?api-version=2026", "Bearer a"), ("/legacy/responses", "Bearer legacy")])
         self.assertEqual([(row[0], row[1]) for row in self.observed[1]], [("/b/responses/compact", "Bearer b")])
         self.assertTrue(all(row[2] == b'{"input":[]}' for rows in self.observed for row in rows))
+        self.assertIs(self.server.store.list(thread="local")[0]["local_connection"], True)
+        self.assertNotIn("local_connection", self.server.store.list(thread="legacy")[0])
+        with self.opener.open(self.server.ui_url + "api/session-summaries", timeout=HTTP_TIMEOUT) as response:
+            summaries = {row["thread_id"]: row for row in json.load(response)["sessions"]}
+        self.assertEqual(summaries["local"]["origin"], {"kind": "local"})
+        self.assertIsNone(summaries["legacy"]["origin"])
 
     def test_unknown_route_does_not_fall_through_to_default(self):
         with self.assertRaises(HTTPError) as failure:
