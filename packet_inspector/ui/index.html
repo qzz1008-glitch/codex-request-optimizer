@@ -95,6 +95,7 @@
             <div id="body-results" class="search-results" hidden></div>
             <div id="request-body-view" class="json-viewer">
               <div id="json-actions" class="json-actions" hidden>
+                <button id="json-text-toggle" class="json-action" type="button" title="文本视图" aria-label="文本视图" aria-pressed="false" aria-controls="request-body-text">T</button>
                 <button id="json-copy" class="json-action" type="button" title="复制 JSON" aria-label="复制 JSON">
                   <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
                     <path d="M9 9h11v11H9zM15 6V4H4v11h2"/>
@@ -109,6 +110,7 @@
                 </a>
               </div>
               <div id="json-tree" class="json-content" role="region" aria-label="请求正文"></div>
+              <div id="request-body-text" class="json-content request-body-text" role="region" aria-label="对话文本" tabindex="0" hidden></div>
             </div>
           </div>
           <div id="tab-diff" class="tab-panel" role="tabpanel" aria-labelledby="request-tab-diff" tabindex="0" hidden><div id="diff-content"></div></div>
