@@ -640,7 +640,7 @@ function sessionGroups() {
     if(!owner&&memberId)owner=member;
     const id=owner?.thread_id||OTHER_SESSION_GROUP;
     if(!groups.has(id)) {
-      const title=owner?sessionTitle(owner)||id:t("其他");
+      const title=owner?sessionTitle(owner)||owner.input_title||id:t("其他");
       groups.set(id,{...(owner||{}),thread_id:id,title,members:[],packet_count:0,updated_at:owner?.updated_at||0});
     }
     const group=groups.get(id);group.members.push(member);

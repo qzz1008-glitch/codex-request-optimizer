@@ -322,6 +322,59 @@ class SessionSummaryTests(unittest.TestCase):
         self.assertEqual(row["updated_at"], 105)
         self.assertEqual(row["latest_packet"]["wire_bytes"], 4000)
 
+    def test_input_title_uses_first_retained_user_text_and_yields_to_native_name(self):
+        path = self.native / "state_5.sqlite"
+        path.unlink()
+        capture = self.root / "input-title-capture"
+        store = Store(capture)
+
+        def add(at, inputs, route="/responses"):
+            meta, content = inspect_request(json.dumps({"input": inputs}).encode(), {"x-codex-thread-id": THREAD}, route)
+            with patch("packet_inspector.storage.time.time", return_value=at):
+                store.add({**meta, "method": "POST", "path": route}, content)
+
+        add(101, [{"role": "user", "content": "Summarize the context"}], "/responses/compact")
+        add(102, [{"role": "user", "content": "<environment_context>\n" + "x" * 200 + "\n</environment_context>"}])
+        add(103, [{"role": "developer", "content": "Instructions from the application"},
+                  {"role": "user", "content": "# AGENTS.md instructions\n<INSTRUCTIONS>\nLocal rules\n</INSTRUCTIONS>"},
+                  {"role": "user", "content": [{"type": "input_text", "text":
+                   '<image name="sample" path="C:/sample.png"></image>\n  检查  \n sk-0123456789abcdefghijklm  ' + "文" * 50}]}])
+        add(104, [{"role": "user", "content": "Later follow-up"}])
+
+        before = (capture / "packets.sqlite").read_bytes()
+        with patch("packet_inspector.session_summary.zlib.decompressobj", side_effect=AssertionError("body read")):
+            row = self.reader.read(capture)["sessions"][0]
+        self.assertIsNone(row["title"])
+        prefix = "检查 [credential redacted] "
+        self.assertEqual(row["input_title"], prefix + "文" * (48 - len(prefix)) + "…")
+        self.assertEqual((capture / "packets.sqlite").read_bytes(), before)
+
+        with closing(sqlite3.connect(path)) as db:
+            db.execute("CREATE TABLE threads(id TEXT,title TEXT)")
+            db.execute("INSERT INTO threads VALUES (?,?)", (THREAD, "Native name"))
+            db.commit()
+        row = self.reader.read(capture)["sessions"][0]
+        self.assertEqual(row["title"], "Native name")
+        self.assertNotIn("input_title", row)
+
+    def test_input_title_covers_older_retained_details_and_respects_pruning(self):
+        older = "00000000-0000-0000-0000-000000000001"
+        capture = self.root / "older-input-title-capture"
+        store = Store(capture)
+        body = json.dumps({"input": [{"role": "user", "content": "First request"}]}).encode()
+        for at, thread in enumerate((older, THREAD), start=100):
+            meta, content = inspect_request(body, {"x-codex-thread-id": thread}, "/responses")
+            with patch("packet_inspector.storage.time.time", return_value=at):
+                store.add({**meta, "method": "POST", "path": "/responses"}, content)
+        with patch("packet_inspector.session_summary.MAX_SESSIONS", 1):
+            sessions = self.reader.read(capture)["sessions"]
+        self.assertEqual([(row["thread_id"], row.get("input_title")) for row in sessions],
+                         [(THREAD, None), (older, "First request")])
+        store.configure_limits(1_000_000, 10, 0)
+        unnamed = next(row for row in self.reader.read(capture)["sessions"] if row["thread_id"] == older)
+        self.assertIsNone(unnamed["title"])
+        self.assertNotIn("input_title", unnamed)
+
     def test_explicit_ssh_membership_overrides_local_index_for_sidebar_origin(self):
         path = self.native / ".codex-global-state.json"
         host = "remote-ssh-fixture"

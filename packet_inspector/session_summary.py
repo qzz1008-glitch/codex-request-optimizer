@@ -9,8 +9,9 @@ import sqlite3
 import threading
 import zlib
 
-from .request_context import (AUXILIARY_KINDS, IMAGE_ANALYST_PREFIXES, last_user_text, temporary_kind_from_metadata,
-                              temporary_request_kind, request_session_context, session_id)
+from .request_context import (AUXILIARY_KINDS, IMAGE_ANALYST_PREFIXES, NEXT_MESSAGE_PREFIX, TITLE_REQUEST_PREFIX,
+                              last_user_text, temporary_kind_from_metadata, temporary_request_kind,
+                              request_session_context, session_id)
 from .response_usage import packet_usage
 from .native_state import WSL_HOST_ID, read_state, state_databases, thread_origins
 from .token_estimate import estimate_usage, overflow_applied
@@ -19,6 +20,52 @@ from .usage_trigger import REPORTED_INPUT_TOKENS
 
 MAX_SESSIONS = 300
 INDEX_TASK_PREFIX = "You are in a fork of an existing Codex thread.\nFill the structured description field"
+INPUT_TITLE_LENGTH = 48
+INPUT_CONTEXT_WRAPPERS = (
+    ("# AGENTS.md instructions", "</INSTRUCTIONS>"),
+    ("<environment_context>", "</environment_context>"),
+    ("<image name=", "</image>"),
+)
+
+
+def _input_title(label):
+    if not isinstance(label, str):
+        return None
+    text = label.lstrip()
+    while text:
+        end = next((end for start, end in INPUT_CONTEXT_WRAPPERS if text.startswith(start)), None)
+        if end is None:
+            break
+        text = text.partition(end)[2].lstrip()
+    if not text or text.startswith((INDEX_TASK_PREFIX, NEXT_MESSAGE_PREFIX, TITLE_REQUEST_PREFIX, *IMAGE_ANALYST_PREFIXES)):
+        return None
+    title = " ".join(text.split())
+    return title if len(title) <= INPUT_TITLE_LENGTH else title[:INPUT_TITLE_LENGTH].rstrip() + "…"
+
+
+def _add_input_titles(database, records):
+    pending = [record for record in records if record["thread_id"] and
+               not (isinstance(record.get("title"), str) and record["title"].strip())]
+    if not pending:
+        return
+    # Use only retained, redacted user labels. Basic records contain no input excerpts.
+    try:
+        with closing(sqlite3.connect(database.as_uri() + "?mode=ro", uri=True, timeout=.2)) as db:
+            for record in pending:
+                labels = db.execute("""SELECT json_extract(item.value,'$.label')
+                    FROM packet_summaries s JOIN packets p ON p.id=s.id
+                    JOIN json_each(p.meta,'$.input_items') item
+                    WHERE s.thread=? AND s.method='POST' AND coalesce(json_extract(s.meta,'$.is_compaction'),0)=0
+                      AND item.type='object' AND json_extract(item.value,'$.kind')='message:user'
+                    ORDER BY s.created,s.id,item.key""", (record["thread_id"],))
+                for (label,) in labels:
+                    title = _input_title(label)
+                    if title:
+                        record["input_title"] = title
+                        break
+    except sqlite3.Error:
+        # Legacy or temporarily unavailable details still allow the native name or ID.
+        return
 
 
 def index_task_title(body):
@@ -394,8 +441,8 @@ class SessionSummaries:
             db.execute("BEGIN")
             groups = db.execute("SELECT coalesce(thread,''),count(*),max(created) FROM packet_summaries "
                                 "WHERE method!='GET' GROUP BY coalesce(thread,'') "
-                                "ORDER BY max(created) DESC,coalesce(thread,'') LIMIT ?", (MAX_SESSIONS,)).fetchall()
-            for thread, count, created in groups:
+                                "ORDER BY max(created) DESC,coalesce(thread,'')").fetchall()
+            for thread, count, created in groups[:MAX_SESSIONS]:
                 # Keep known IDs searchable by the existing thread/time index.
                 # Older stores may use either NULL or '' for an unknown ID.
                 condition = "thread=?" if thread else "coalesce(thread,'')=?"
@@ -460,6 +507,12 @@ class SessionSummaries:
                         previous = _previous_token_window(db, model_packets[thread], self._last_native_tokens.get(thread))
                         if previous is not None:
                             record["token_window"] = previous
+        # Older sessions are still in the sidebar even when recent metadata is capped.
+        known = {record["thread_id"] for record in records}
+        older = [{"thread_id": thread, "packet_count": count, "updated_at": created, "title": None}
+                 for thread, count, created in groups[MAX_SESSIONS:] if thread and thread not in known]
+        _add_input_titles(path, records + older)
+        records.extend(record for record in older if record.get("input_title"))
         for record in records:
             if record["thread_id"] in native_origins:
                 record["origin"] = native_origins[record["thread_id"]][1]
