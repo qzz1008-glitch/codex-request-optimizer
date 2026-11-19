@@ -1332,6 +1332,7 @@ function showTab(tab) {
     button.tabIndex=active?0:-1;
     $("tab-"+key).hidden=!active;
   }
+  if(tab==="tree")scrollRequestTextOnFirstShow();
   if(refocus)$("request-tab-headers").focus();
 }
 function packetStatus(p) {
@@ -2753,6 +2754,15 @@ function requestTextMessages(body) {
   }
   return messages;
 }
+function scrollRequestTextOnFirstShow() {
+  const view=requestBodyView;
+  if(!view?.messages||view.id!==state.selected||view.textScrollInitialized)return;
+  const root=$("request-body-text");
+  // The body can finish loading while its tab is hidden.
+  if(root.hidden||!root.clientHeight)return;
+  root.scrollTop=root.scrollHeight;
+  view.textScrollInitialized=true;
+}
 function setRequestBodyTextMode(enabled) {
   requestBodyTextMode=enabled;
   const view=requestBodyView,root=$("request-body-text"),available=view?.id===state.selected;
@@ -2775,11 +2785,12 @@ function setRequestBodyTextMode(enabled) {
       fragment.append(message);
     }
     if(!fragment.firstChild)fragment.append(el("p","muted",t("没有可显示的对话文本。")));
-    root.replaceChildren(fragment);root.scrollTop=0;
+    root.replaceChildren(fragment);
   }
   $("json-text-toggle").setAttribute("aria-pressed",String(showText));
   $("json-tree").hidden=showText;
   root.hidden=!showText;
+  if(showText)scrollRequestTextOnFirstShow();
   if(available)setRequestBodyActions(view,showText);
 }
 function clearRequestBodyExport() {
@@ -4042,6 +4053,7 @@ function setWorkspaceView(view) {
   const workspace=$("records-view"),trends=workspaceView==="trends";
   workspace.hidden=workspaceView==="sharing";
   workspace.dataset.view=workspaceView;
+  if(workspaceView==="records"&&state.tab==="tree")scrollRequestTextOnFirstShow();
   $("token-trend-view").inert=!trends;
   for(const pane of workspace.querySelectorAll(":scope > .requests-sidebar, :scope > .detail"))pane.inert=trends;
   if($("sharing-view"))$("sharing-view").hidden=workspaceView!=="sharing";
