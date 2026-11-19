@@ -362,7 +362,10 @@
             </div>
             <div class="proxy-test-actions">
               <button id="proxy-test" type="button" title="测试当前配置，不保存；不发送对话或 Codex 登录凭据。">测试</button>
-              <output id="proxy-test-result" class="proxy-test-result" role="status" aria-live="polite"></output>
+              <output id="proxy-test-result" class="proxy-test-result" role="status" aria-live="polite" aria-atomic="true">
+                <span id="proxy-test-state"></span>
+                <span id="proxy-test-elapsed" hidden></span>
+              </output>
             </div>
           </div>
         </div>

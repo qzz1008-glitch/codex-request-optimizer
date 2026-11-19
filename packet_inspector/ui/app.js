@@ -1807,12 +1807,16 @@ function fillProxySettings(force=false) {
   if(detected.unsupported_all_proxy)warnings.push(t("ALL_PROXY 未用于转发，请配置 HTTP/HTTPS 代理。"));
   $("proxy-detection-warning").textContent=warnings.join(" ");$("proxy-detection-warning").hidden=manual||!warnings.length;
 }
-function setProxyTestStatus(status="") {
+function setProxyTestStatus(status="",elapsedMs) {
   const labels={ok:"已连通",rejected:"响应异常",failed:"连接失败",timeout:"测试超时",stale:"需重测",error:"测试失败"};
   const output=$("proxy-test-result");
+  const elapsed=$("proxy-test-elapsed");
+  const showElapsed=status==="ok"&&Number.isFinite(elapsedMs)&&elapsedMs>=0;
   output.classList.toggle("success",status==="ok");
   output.classList.toggle("error",Boolean(status)&&status!=="ok"&&status!=="stale");
-  uiI18n.text(output,status?labels[status]??labels.error:"");
+  uiI18n.text($("proxy-test-state"),status?labels[status]??labels.error:"");
+  elapsed.textContent=showElapsed?`${elapsedMs.toLocaleString()} ms`:"";
+  elapsed.hidden=!showElapsed;
 }
 async function testProxySettings() {
   const button=$("proxy-test");
@@ -1822,17 +1826,18 @@ async function testProxySettings() {
   button.setAttribute("aria-busy","true");
   setProxyTestStatus();
   fillProxySettings();
-  let status;
+  let status,elapsedMs;
   try {
     const result=await api("/api/proxy-test",JSON.parse(draft),AbortSignal.timeout(15000));
     status=result.state??"error";
+    elapsedMs=result.elapsed_ms;
   } catch(error) {
     status=error?.name==="TimeoutError"?"timeout":"error";
   } finally {
     button.setAttribute("aria-busy","false");
     fillProxySettings();
   }
-  if($("settings-dialog").open)setProxyTestStatus(draft===proxySettingsDraft()?status:"stale");
+  if($("settings-dialog").open)setProxyTestStatus(draft===proxySettingsDraft()?status:"stale",elapsedMs);
 }
 function imageAnalysisMode(status=state.status) {
   return ["native","disabled","optimized"].includes(status?.image_analysis_mode)?status.image_analysis_mode:
