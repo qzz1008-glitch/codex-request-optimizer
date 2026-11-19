@@ -260,61 +260,51 @@ button.other-session-group{background:#f5f2fc;border-color:#e7e0f5}
 .detail-title{gap:6px}
 .detail-title h1{flex:none;white-space:nowrap}
 .detail-title>.tabs{
+  /* Leave space above the detail frame for the selected tab to bridge. */
+  --tab-track-height:calc(100% - 5px);
   position:relative;
   z-index:1;
   align-self:flex-end;
   block-size:var(--records-heading-height);
   min-width:0;
-  gap:3px;
+  gap:0;
   margin:0;
   /* Bridge the shared heading gap and cover the detail frame's top border. */
   margin-block-end:calc(-1px - var(--records-heading-gap));
   margin-inline-start:auto;
   border:0;
+  border-radius:8px 8px 0 0;
+  background:linear-gradient(#e9eef5 0 0) top/100% var(--tab-track-height) no-repeat;
   overflow-x:auto;
   scrollbar-width:thin;
 }
 .detail:has(>#packet-detail[hidden]) .detail-title>.tabs{display:none}
 .detail-title>.tabs button{
-  position:relative;
-  isolation:isolate;
   display:flex;
   flex:none;
   align-items:center;
   height:100%;
-  padding:0 6px 6px;
-  border:1px solid transparent;
-  border-radius:8px 8px 0 0;
+  padding:0 8px 6px;
+  border:0;
+  border-radius:7px 7px 0 0;
   background:transparent;
-  color:#43556d;
+  color:#50627a;
   font-size:12px;
   line-height:22px;
   white-space:nowrap;
 }
-.detail-title>.tabs button:lang(zh){padding-inline:9px;letter-spacing:.035em}
-/* Keep inactive surfaces clear of the frame without moving the button or label. */
-.detail-title>.tabs button[aria-selected="false"]::before{
-  content:"";
-  position:absolute;
-  z-index:-1;
-  inset:0 0 5px;
-  border:1px solid #d3deeb;
-  border-radius:6px;
-  background:#eaf0f7;
-}
-.detail-title>.tabs button[aria-selected="false"]:is(:hover,:focus-visible)::before{
-  border-color:#becde0;
-  background:#dfe9f7;
+.detail-title>.tabs button:lang(zh){padding-inline:11px;letter-spacing:.035em}
+.detail-title>.tabs button[aria-selected="false"]:hover{
+  background:linear-gradient(#dfe7f2 0 0) top/100% var(--tab-track-height) no-repeat;
+  color:var(--ink);
 }
 .detail-title>.tabs button[aria-selected="true"]{
   background:var(--panel);
-  border-color:var(--detail-frame-line);
-  border-block-end-color:var(--panel);
   color:#274776;
 }
 .detail-title>.tabs button:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
 @media (forced-colors:active){
-  .detail-title>.tabs button[aria-selected="true"]{border-color:Highlight;border-block-end-color:Canvas}
+  .detail-title>.tabs button[aria-selected="true"]{text-decoration:underline;text-underline-offset:3px}
 }
 #packet-detail:not([hidden]){
   display:flex;
