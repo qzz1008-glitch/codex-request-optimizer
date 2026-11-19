@@ -10,7 +10,7 @@ import threading
 import zlib
 
 from .request_context import (AUTOMATED_REQUEST_KINDS, CODEX_EXEC_ORIGINATOR, INDEX_TASK_PREFIX, codex_exec_generation,
-                              input_title, last_user_text, request_session_context, session_id,
+                              input_title_from_labels, last_user_text, request_session_context, session_id,
                               temporary_kind_from_metadata, temporary_request_kind)
 from .response_usage import packet_usage
 from .native_state import WSL_HOST_ID, read_state, state_databases, thread_origins
@@ -59,9 +59,7 @@ def _add_capture_labels(database, records):
                     ORDER BY s.created,s.id""", (thread, *AUTOMATED_REQUEST_KINDS))
                 for title, source, labels in candidates:
                     if not title and labels:
-                        title = next((candidate for item in json.loads(labels)
-                                      if isinstance(item, dict) and item.get("kind") == "message:user"
-                                      and (candidate := input_title(item.get("label")))), None)
+                        title = input_title_from_labels(json.loads(labels))
                     if isinstance(title, str) and title.strip():
                         record.update(title=title, title_source="manual" if source == "manual" else "input")
                         break

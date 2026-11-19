@@ -400,7 +400,8 @@ class SessionSummaryTests(unittest.TestCase):
             headers = {"Originator": origin, "x-codex-thread-id": thread}
             if context:
                 headers["x-codex-turn-metadata"] = json.dumps(context)
-            meta, content = inspect_request(b'{"input":"First request"}', headers, path)
+            raw = b'{"input":[{"role":"user","content":"First request"}]}'
+            meta, content = inspect_request(raw, headers, path)
             return store.add({**meta, "method": "POST", "path": path}, content)
 
         first = add(standalone)
@@ -411,7 +412,7 @@ class SessionSummaryTests(unittest.TestCase):
         add(prewarm, context={"request_kind": "prewarm"})
         add(terminal, origin="codex_cli_rs")
         with store.connect() as db:
-            db.execute("UPDATE packets SET meta=json_remove(meta,'$.codex_exec') WHERE id=?", (previous,))
+            db.execute("UPDATE packets SET meta=json_remove(meta,'$.codex_exec','$.title') WHERE id=?", (previous,))
         sessions = {row["thread_id"]: row for row in self.reader.read(capture)["sessions"]}
         self.assertEqual({thread for thread, row in sessions.items() if row.get("codex_exec")}, {standalone, legacy})
         self.assertEqual(sessions[title]["session_kind"], "title_generation")
@@ -419,8 +420,13 @@ class SessionSummaryTests(unittest.TestCase):
         saved, body = store.get(first, content=True)
         self.assertIsNone(body)
         self.assertNotIn("headers", saved)
+        saved, body = store.get(previous, content=True)
+        self.assertIsNone(body)
+        self.assertNotIn("headers", saved)
+        self.assertTrue(saved["codex_exec"])
+        self.assertEqual(saved["title"], "First request")
         sessions = {row["thread_id"]: row for row in self.reader.read(capture)["sessions"]}
-        self.assertEqual({thread for thread, row in sessions.items() if row.get("codex_exec")}, {standalone})
+        self.assertEqual({thread for thread, row in sessions.items() if row.get("codex_exec")}, {standalone, legacy})
         self.assertEqual(sessions[standalone]["title"], "First request")
 
     def test_sidebar_origin_uses_only_the_recorded_entry(self):

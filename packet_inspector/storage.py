@@ -14,8 +14,8 @@ import zlib
 
 from .analyzer import CLASSIFICATION_VERSION, classify_request, encode, compare_packets
 from .maintenance import SQLiteReclaimer
-from .request_context import (AUTOMATED_REQUEST_KINDS, codex_exec_generation, packet_metadata, request_input_title,
-                              request_session_context, temporary_request_kind, trend_packet_metadata)
+from .request_context import (AUTOMATED_REQUEST_KINDS, codex_exec_generation, input_title_from_labels, packet_metadata,
+                              request_input_title, request_session_context, temporary_request_kind, trend_packet_metadata)
 from .response_usage import compact_packet_usage, packet_usage
 from .token_estimate import SOURCE, request_basis, calibrate, overflow_applied, unavailable
 from .token_window import is_token_request
@@ -172,8 +172,17 @@ class Store:
 
     @staticmethod
     def _basic_metadata(meta):
-        return {**{key: value for key, value in compact_packet_usage(meta).items() if key not in DETAIL_META_FIELDS},
-                "details_evicted": True}
+        meta = compact_packet_usage(packet_metadata(meta))
+        basic = {key: value for key, value in meta.items() if key not in DETAIL_META_FIELDS}
+        basic["details_evicted"] = True
+        # An older capture can still have the headers and labels needed for grouping.
+        if meta.get("thread_id") and codex_exec_generation(meta):
+            basic["codex_exec"] = True
+            if not basic.get("title"):
+                title = input_title_from_labels(meta.get("input_items"))
+                if title:
+                    basic["title"] = title
+        return basic
 
     @staticmethod
     def _compact_usage(c, limit):
