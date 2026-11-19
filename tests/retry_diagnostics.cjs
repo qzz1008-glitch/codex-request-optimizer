@@ -220,11 +220,14 @@ context.renderHeaders({source:'live',request_kind:'turn',image_isolation_applied
 assert.equal(facts(1)['解图优化'],'✓');
 assert.equal(facts(1)['缩图保护'],undefined);
 assert.equal(details('resize'),undefined);
-let codes=descendants(details('optimization')).filter(child=>child.tag==='code');
-assert.deepEqual(codes.map(child=>child.text),[folder,'example.png']);
-assert.equal(descendants(details('optimization')).filter(child=>child.tag==='button').length,3);
+const codes=descendants(details('optimization')).filter(child=>child.tag==='code');
+assert.deepEqual(codes.map(child=>child.text),['example.png']);
+assert.deepEqual(descendants(details('optimization')).filter(child=>child.tag==='button')
+  .map(button=>button.attributes['aria-label']),['查看图片','在文件夹中显示']);
 context.renderHeaders({source:'live',request_kind:'image_analysis',image_paths:[image]});
 assert.deepEqual(descendants(rendered).filter(child=>child.tag==='h3').map(child=>child.text),['子会话信息','图片信息']);
+const imageInfo=rendered.children.find(child=>child.id==='request-image-info');
+assert.deepEqual(descendants(imageInfo).filter(child=>child.tag==='code').map(child=>child.text),[folder,'example.png']);
 context.renderHeaders({source:'live',image_paths:[image]});
 assert.equal(facts(1)['解图优化'],'—','A path in a request does not prove that this request optimized an image');
 assert.equal(details('optimization'),undefined);
@@ -282,6 +285,6 @@ assert.deepEqual(fields(details('retry')),{'Retry count':'3'});
   context.renderHeaders({source:'live',image_isolation_applied:true,image_paths:[image]});
   const actions=descendants(details('optimization')).filter(child=>child.tag==='button');
   for(const action of actions)await action.onclick({currentTarget:action});
-  assert.deepEqual(opened,[['/api/open-directory',folder],['/api/open-image',image],['/api/reveal-image',image]]);
+  assert.deepEqual(opened,[['/api/open-image',image],['/api/reveal-image',image]]);
   console.log('Image markers, request size and compression fields, protection indicators, file actions, refresh and English labels passed.');
 })().catch(error=>{console.error(error);process.exitCode=1;});
