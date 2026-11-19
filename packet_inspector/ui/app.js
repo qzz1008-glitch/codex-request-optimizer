@@ -1011,7 +1011,7 @@ function renderSessionConnections() {
   // The incoming parent uses the outer rail; this session's children use the inner rail.
   parents.sort((a,b)=>Number("thread:"+a===state.filters.thread)-Number("thread:"+b===state.filters.thread));
   for(const id of new Set(connections.flatMap(link=>[link.parent,link.child]))) {
-    const item=nodes.get("thread:"+id),heading=item.querySelector(".session-heading").getBoundingClientRect();
+    const item=nodes.get("thread:"+id),heading=item.querySelector(".session-heading,.session-id").getBoundingClientRect();
     positions.set(id,Math.round((heading.top-bounds.top+Math.min(heading.height,20)/2)*2)/2);
     item.classList.add("session-linked");
   }
@@ -1094,6 +1094,7 @@ function renderSessions() {
     const origin=data.origin?.address;
     if(query&&!sessionGroupMatchesQuery(data,query))continue;
     const row=el("div",idOnly?"session-row session-row-id-only":"session-row");row.dataset.session=value;
+    tokenTrendView?.styleSessionRow(row);
     const item=el("button","session-item"+(otherGroup?" other-session-group":"")+(value===selected?" selected":""));
     item.type="button";item.dataset.session=value;
     const label=[title];
@@ -2692,7 +2693,10 @@ function requestTextMessages(body) {
       const trimmed=part.trim();
       return trimmed!==""&&(role!=="user"||!nativeUserContext.test(trimmed));
     }).join("\n");
-    if(text)messages.push({role,text});
+    if(text) {
+      const created=item.internal_chat_message_metadata_passthrough?.create_time;
+      messages.push({role,text,created:Number.isFinite(created)&&created>0?created:null});
+    }
   }
   return messages;
 }
@@ -2701,11 +2705,20 @@ function setRequestBodyTextMode(enabled) {
   const view=requestBodyView,root=$("request-body-text"),available=view?.id===state.selected;
   const showText=enabled&&available;
   if(showText&&!view.messages) {
-    view.messages=requestTextMessages(view.body).map(({role,text})=>({author:t(role==="user"?"用户":"模型"),text}));
+    view.messages=requestTextMessages(view.body).map(message=>({...message,author:t(message.role==="user"?"用户":"模型")}));
     const fragment=document.createDocumentFragment();
-    for(const {author,text} of view.messages) {
+    for(const {role,author,text,created} of view.messages) {
       const message=el("div","request-message");
-      message.append(el("strong","request-message-author",author),el("p","request-message-text",text));
+      message.setAttribute("data-role",role);
+      const meta=el("div","request-message-meta");
+      const date=created===null?null:new Date(created*1000),hasTime=date&&Number.isFinite(date.getTime());
+      const time=hasTime
+        ?el("time","request-message-time",dateFormat.format(date)+" "+clockFormat.format(date))
+        :el("span","request-message-time","—");
+      if(hasTime)time.setAttribute("datetime",date.toISOString());
+      time.title=hasTime?timestampFormat.format(date):t("未记录消息时间");
+      meta.append(el("strong","request-message-author",author),time);
+      message.append(meta,el("p","request-message-text",text));
       fragment.append(message);
     }
     if(!fragment.firstChild)fragment.append(el("p","muted",t("没有可显示的对话文本。")));
@@ -3319,7 +3332,9 @@ class TokenTrendView {
     this.services=services;this.active=false;this.loading=false;this.hydrating=false;
     this.packets=new Map();this.native=new Map();this.hours=1;this.windowEnd=null;this.loadedBounds=null;this.requestBounds=null;this.windowTimer=null;this.previewPackets=null;this.oldestCreated=null;this.boundsReady=false;this.paintRefresh=null;
     this.revision=null;this.lastFull=0;this.query="";this.error=false;this.limited=false;
-    this.series=[];this.hover=null;this.hoverChart=null;this.hoverSeries=null;this.hoverEvent=null;this.focusEvent=null;this.frame=null;this.legendVersion="";
+    this.series=[];this.hover=null;this.hoverChart=null;this.hoverSeries=null;this.hoverEvent=null;this.focusEvent=null;this.frame=null;
+    this.emphasis=null;this.focusSeries=null;this.highlightedSeries=null;this.sidebarColors=new Map();
+    this.sessionList=$("session-list");
     this.charts=[{key:"size",field:"size",prefix:"trend-size"},{key:"token",field:"input",prefix:"trend"}].map(chart=>({
       ...chart,svg:$(chart.prefix+"-chart"),plot:$(chart.prefix+"-plot"),tooltip:$(chart.prefix+"-tooltip"),empty:$(chart.prefix+"-empty"),points:[],eventNodes:[],eventKey:null,bounds:null,focusLayer:null
     }));
@@ -3340,7 +3355,15 @@ class TokenTrendView {
     this.range.oninput=()=>this.seek(Number(this.range.value));
     this.tooltipHost.addEventListener("wheel",event=>this.navigateWheel(event),{passive:false});
     $("trend-range").addEventListener("wheel",event=>this.navigateWheel(event,true),{passive:false});
-    $("trend-search").oninput=event=>{this.query=event.currentTarget.value.trim().toLowerCase();this.hover=null;this.hoverChart=null;this.hoverSeries=null;this.emphasis=null;this.render();};
+    $("session-search").addEventListener("input",event=>{
+      this.query=event.currentTarget.value.trim().toLowerCase();
+      this.hover=null;this.hoverChart=null;this.hoverSeries=null;this.emphasis=null;
+      this.scheduleRender();
+    });
+    this.sessionList.addEventListener("pointerover",event=>this.setSidebarEmphasis("emphasis",event.target));
+    this.sessionList.addEventListener("pointerleave",()=>this.setSidebarEmphasis("emphasis",null));
+    this.sessionList.addEventListener("focusin",event=>this.setSidebarEmphasis("focusSeries",event.target.matches(":focus-visible")?event.target:null));
+    this.sessionList.addEventListener("focusout",()=>this.setSidebarEmphasis("focusSeries",null));
     this.resize=new ResizeObserver(()=>this.scheduleRender());
     for(const chart of this.charts) {
       this.resize.observe(chart.plot);
@@ -3598,8 +3621,8 @@ class TokenTrendView {
   }
   cancelPending() {this.controller?.abort();this.nativeController?.abort();clearTimeout(this.windowTimer);this.windowTimer=null;this.controller=null;this.nativeController=null;this.requestBounds=null;this.paintRefresh=null;this.previewPackets=null;this.loading=false;this.hydrating=false;}
   setActive(active) {
-    this.active=active;this.hover=null;this.hoverChart=null;this.hoverSeries=null;this.hoverEvent=null;this.focusEvent=null;this.emphasis=null;
-    if(!active){this.cancelPending();this.guide.replaceChildren();this.timeTooltip.hidden=true;for(const chart of this.charts)chart.tooltip.hidden=true;}
+    this.active=active;this.hover=null;this.hoverChart=null;this.hoverSeries=null;this.hoverEvent=null;this.focusEvent=null;this.emphasis=null;this.focusSeries=null;
+    if(!active){this.cancelPending();this.highlightSidebar(null);this.guide.replaceChildren();this.timeTooltip.hidden=true;for(const chart of this.charts)chart.tooltip.hidden=true;}
     else {
       this.render();const ticket={};this.paintRefresh=ticket;
       requestAnimationFrame(()=>setTimeout(()=>{if(this.active&&this.paintRefresh===ticket){this.paintRefresh=null;this.refresh();}},0));
@@ -3744,18 +3767,28 @@ class TokenTrendView {
     const date=new Date(value*1000),locale=uiI18n.language==="en"?"en-GB":"zh-CN";
     return date.toLocaleString(locale,{month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit",...(withSeconds?{second:"2-digit"}:{})});
   }
-  renderLegend(model) {
-    const signature=JSON.stringify([uiI18n.language,this.query,model.matched.map(group=>[group.id,group.title,group.color])]);
-    if(signature===this.legendVersion)return;this.legendVersion=signature;
-    const fragment=document.createDocumentFragment();
-    for(const group of model.matched) {
-      const item=el("div","trend-series-item"),swatch=el("span","trend-series-swatch"),label=el("span","",group.title);
-      item.dataset.renderKey="trend-series:"+group.id;item.style.setProperty("--series-color",group.color);
-      item.setAttribute("role","listitem");item.title=group.title===group.id?group.id:group.title+"\n"+group.id;
-      item.onpointerenter=()=>{this.emphasis=group.id;this.renderFocus();};item.onpointerleave=()=>{this.emphasis=null;this.renderFocus();};
-      item.append(swatch,label);fragment.append(item);
+  setSidebarEmphasis(field,target) {
+    if(!this.active)return;
+    const session=target?.closest(".session-row")?.dataset.session;
+    const series=this.sidebarColors.has(session)?session.slice(7):null;
+    if(this[field]===series)return;
+    this[field]=series;
+    this.renderFocus();
+  }
+  styleSessionRow(row) {
+    const color=this.active?this.sidebarColors.get(row.dataset.session):null;
+    if(color)row.style.setProperty("--trend-series-color",color);
+    else row.style.removeProperty("--trend-series-color");
+    row.toggleAttribute("data-trend-series",!!color);
+    row.toggleAttribute("data-trend-highlight",!!color&&row.dataset.session==="thread:"+this.highlightedSeries);
+  }
+  highlightSidebar(series) {
+    if(series===this.highlightedSeries)return;
+    this.highlightedSeries=series;
+    this.sessionList.toggleAttribute("data-trend-emphasis",!!series);
+    for(const row of this.sessionList.querySelectorAll(".session-row[data-trend-series]")) {
+      row.toggleAttribute("data-trend-highlight",!!series&&row.dataset.session==="thread:"+series);
     }
-    reconcileContent($("trend-series"),fragment);
   }
   eventKey() {return this.hoverEvent||this.focusEvent||null;}
   marker(point,layer) {
@@ -3770,9 +3803,14 @@ class TokenTrendView {
   }
   render() {
     if(!this.active)return;
-    this.updateRange();const model=this.model();this.assignSeriesColors(model.series);this.series=model.series;this.renderLegend(model);
+    this.updateRange();const model=this.model();this.assignSeriesColors(model.series);this.series=model.series;
+    this.sidebarColors=new Map(model.visible.map(group=>["thread:"+group.id,group.color]));
+    for(const row of this.sessionList.querySelectorAll(".session-row"))this.styleSessionRow(row);
     if(!model.visible.some(group=>group.id===this.hoverSeries&&(group.lines.input.length||group.lines.size.length)))this.hoverSeries=null;
-    const emphasis=this.eventKey()?null:this.emphasis||this.hoverSeries||(this.hover?model.visible.find(group=>group.points.some(point=>point.packet.id===this.hover&&(point.input!==null||point.size!==null)))?.id:null);
+    if(!this.sidebarColors.has("thread:"+this.emphasis))this.emphasis=null;
+    if(!this.sidebarColors.has("thread:"+this.focusSeries))this.focusSeries=null;
+    const pointSeries=this.hover?model.visible.find(group=>group.points.some(point=>point.packet.id===this.hover&&(point.input!==null||point.size!==null)))?.id:null;
+    const emphasis=this.eventKey()?null:this.emphasis||this.hoverSeries||pointSeries||this.focusSeries;
     const {start,end}=model.view;
     const axis=this.chartAxis(model.view,Math.max(1,this.charts[0].plot.clientWidth-132));
     for(const chart of this.charts)this.renderChart(chart,model,start,end,emphasis,axis);
@@ -3818,7 +3856,8 @@ class TokenTrendView {
     chart.points=[];chart.linePoints=[];
     for(const group of model.visible) {
       // Set brightness before attachment: layout reads can otherwise start a fade from full opacity.
-      const layer=this.svgNode("g",{class:"trend-series-line"+(emphasis&&group.id!==emphasis?" dimmed":""),"data-series":group.id,"clip-path":`url(#${clipId})`}),events=this.svgNode("g");let path="",pen=false,lastDot=null,lastPoint=null;
+      const highlight=emphasis?(group.id===emphasis?" emphasized":" dimmed"):"";
+      const layer=this.svgNode("g",{class:"trend-series-line"+highlight,"data-series":group.id,"clip-path":`url(#${clipId})`}),events=this.svgNode("g");let path="",pen=false,lastDot=null,lastPoint=null;
       for(const source of group.lines[chart.field]) {
         const value=source[chart.field],inView=source.packet.created>=start&&source.packet.created<=end;
         const point={...source,value,series:group,inView,x:x(source.packet.created),y:y(value)};
@@ -3890,12 +3929,9 @@ class TokenTrendView {
   }
   renderFocus() {
     if(!this.active)return;
-    const event=this.eventKey(),anchor=event?null:this.charts.map(chart=>chart.points.find(value=>value.packet.id===this.hover)).find(Boolean),emphasis=event?null:this.emphasis||this.hoverSeries||anchor?.series.id;
+    const event=this.eventKey(),anchor=event?null:this.charts.map(chart=>chart.points.find(value=>value.packet.id===this.hover)).find(Boolean),emphasis=event?null:this.emphasis||this.hoverSeries||anchor?.series.id||this.focusSeries;
     for(const {key,button} of this.eventLegend)button.classList.toggle("highlighted",key===event);
-    for(const item of $("trend-series").children) {
-      const active=!!emphasis&&item.dataset.renderKey==="trend-series:"+emphasis;
-      item.classList.toggle("active",active);item.setAttribute("aria-current",String(active));
-    }
+    this.highlightSidebar(emphasis||null);
     this.guide.replaceChildren();
     this.timeTooltip.hidden=true;
     const host=this.tooltipHost.getBoundingClientRect(),originX=host.left+(this.tooltipHost.clientLeft||0),originY=host.top+(this.tooltipHost.clientTop||0);
@@ -3922,12 +3958,16 @@ class TokenTrendView {
         }
         chart.eventKey=event;
       }
-      for(const line of chart.svg.querySelectorAll("[data-series]"))line.classList.toggle("dimmed",!!emphasis&&line.dataset.series!==emphasis);
+      for(const line of chart.svg.querySelectorAll("[data-series]")) {
+        line.classList.toggle("dimmed",!!emphasis&&line.dataset.series!==emphasis);
+        line.classList.toggle("emphasized",line.dataset.series===emphasis);
+      }
       chart.hoverNode?.classList.toggle("trend-hover-node",false);chart.hoverNode=null;
       chart.focusLayer.replaceChildren();if(!anchor)continue;
       const point=chart.points.find(value=>value.packet.id===this.hover);
       if(point?.node){chart.hoverNode=point.node;point.node.classList.toggle("trend-hover-node",true);}
       else if(point)chart.focusLayer.append(this.svgNode("circle",{cx:point.x,cy:point.y,r:3.6,fill:point.series.color,class:"trend-sample trend-hover-node"}));
+      if(point)chart.focusLayer.append(this.svgNode("circle",{cx:point.x,cy:point.y,r:7,stroke:point.series.color,class:"trend-focus-ring"}));
       chart.tooltip.hidden=false;
       const estimated=chart.key!=="size"&&requestTokenUsage(anchor.packet,this.tokenData(anchor.packet))?.estimated===true;
       chart.tooltip.replaceChildren(el("span","",t(chart.key==="size"?"转发请求":estimated?"输入 Token（估算）":"输入 Token")),el("strong","",point?(chart.key==="size"?TokenTrendView.sizeLabel(point.value):(estimated?"≈ ":"")+nf.format(point.value)):"—"));
@@ -3944,12 +3984,16 @@ class TokenTrendView {
 tokenTrendView=new TokenTrendView({api,status:()=>state.status,sessions:sessionGroups,peek:listTokens,read:readListTokens,isGeneration:isTrendGeneration});
 function setWorkspaceView(view) {
   workspaceView=["trends","sharing"].includes(view)?view:"records";
-  $("records-view").hidden=workspaceView!=="records";$("token-trend-view").hidden=workspaceView!=="trends";
+  const workspace=$("records-view"),trends=workspaceView==="trends";
+  workspace.hidden=workspaceView==="sharing";
+  workspace.dataset.view=workspaceView;
+  $("token-trend-view").inert=!trends;
+  for(const pane of workspace.querySelectorAll(":scope > .requests-sidebar, :scope > .detail"))pane.inert=trends;
   if($("sharing-view"))$("sharing-view").hidden=workspaceView!=="sharing";
   $("view-records").setAttribute("aria-pressed",String(workspaceView==="records"));$("view-trends").setAttribute("aria-pressed",String(workspaceView==="trends"));
   $("view-sharing")?.setAttribute("aria-pressed",String(workspaceView==="sharing"));
   try {localStorage.setItem("packet-inspector-view",workspaceView);} catch(_) {}
-  tokenTrendView.setActive(workspaceView==="trends");
+  tokenTrendView.setActive(trends);
   globalThis.InspectorSharing?.setActive(workspaceView==="sharing");
   if(workspaceView==="sharing"&&!globalThis.InspectorSharing&&$("sharing-message")) {
     $("sharing-message").textContent=t("当前后台不支持共享，请更新软件后使用。");$("sharing-message").hidden=false;

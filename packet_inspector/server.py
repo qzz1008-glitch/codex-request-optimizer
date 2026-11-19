@@ -1472,6 +1472,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         shared_client = prefix == urlsplit(self.server.sharing.client_endpoint).path
         ssh_upstream, ssh_origin, wsl_origin = None, None, None
+        local_origin = shared_client
         if suffix.startswith("/ssh/"):
             access = self.server.remote_relays
             parts = suffix.split("/", 5)
@@ -1507,6 +1508,7 @@ class Handler(BaseHTTPRequestHandler):
                 upstream = route["upstream"]
                 if not shared_client:
                     wsl_origin = route.get("wsl_connection_key")
+                    local_origin = route.get("local_connection") is True
                 suffix = "/" + parts[3]
                 if suffix.startswith("//"):
                     self._json(400, {"error": "invalid_request_path"})
@@ -1556,8 +1558,10 @@ class Handler(BaseHTTPRequestHandler):
                             capture_point="app_exit_before_downstream")
                 if ssh_origin:
                     meta["ssh_connection_key"] = ssh_origin
-                if wsl_origin:
+                elif wsl_origin:
                     meta["wsl_connection_key"] = wsl_origin
+                elif local_origin:
+                    meta["local_connection"] = True
                 packet_id = self.server.store.add(meta, content)
             except Exception:
                 self.server.capture_errors += 1

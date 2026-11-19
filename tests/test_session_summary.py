@@ -94,7 +94,7 @@ class SessionSummaryTests(unittest.TestCase):
     def test_recent_packet_title_native_update_and_token_window(self):
         rows = self.reader.read(self.capture)["sessions"]
         self.assertEqual(rows[0]["title"], "会话名称")
-        self.assertEqual(rows[0]["origin"], {"kind": "local"})
+        self.assertIsNone(rows[0]["origin"])
         self.assertEqual(rows[0]["updated_at"], 110.5)
         self.assertEqual(rows[0]["packet_count"], 2)
         self.assertEqual(rows[0]["latest_packet"], {"id": "b", "created": 105, "wire_bytes": 4000})
@@ -378,7 +378,7 @@ class SessionSummaryTests(unittest.TestCase):
             if thread == older:
                 older_packet = packet
         with patch("packet_inspector.session_summary.MAX_SESSIONS", 1), \
-             patch.object(self.reader, "ssh_origins", return_value={route: ("remote-ssh-fixture", origin)}) as resolve:
+             patch.object(self.reader, "ssh_origins", return_value={route: origin}) as resolve:
             sessions = self.reader.read(capture)["sessions"]
         resolve.assert_called_once_with({route})
         self.assertEqual(sessions[1]["origin"], origin)
@@ -423,28 +423,37 @@ class SessionSummaryTests(unittest.TestCase):
         self.assertEqual({thread for thread, row in sessions.items() if row.get("codex_exec")}, {standalone})
         self.assertEqual(sessions[standalone]["title"], "First request")
 
-    def test_explicit_ssh_membership_overrides_local_index_for_sidebar_origin(self):
-        path = self.native / ".codex-global-state.json"
-        host = "remote-ssh-fixture"
-        membership = {THREAD: host}
-        state = {
-            "thread-project-membership-host-ids": membership,
-            "thread-project-assignments": {THREAD: {"hostId": host}},
-            "codex-managed-remote-connections": {host: {"hostId": host, "alias": "dev-box",
-                                                       "hostname": "codex@[2001:db8::7]"}},
-        }
-        expected = {"kind": "remote", "address": "2001:db8::7"}
-        with path.open("w", encoding="utf-8") as stream:
-            json.dump(state, stream)
-        self.assertEqual(self.reader.read(self.capture)["sessions"][0]["origin"], expected)
+    def test_sidebar_origin_uses_only_the_recorded_entry(self):
+        capture = self.root / "session-origin"
+        store = Store(capture)
+        (self.native / ".codex-global-state.json").write_text(json.dumps({
+            "thread-project-membership-host-ids": {THREAD: "remote-ssh-other"},
+            "codex-managed-remote-connections": [{"hostId": "remote-ssh-other", "hostname": "192.0.2.50"}],
+        }), encoding="utf8")
+        ssh_origin = {"kind": "remote", "address": "198.51.100.176"}
 
-        membership[THREAD] = "remote-ssh-removed"
-        path.write_text(json.dumps(state), encoding="utf-8")
-        self.assertIsNone(self.reader.read(self.capture)["sessions"][0]["origin"])
+        def add(at, source="live", **connection):
+            with patch("packet_inspector.storage.time.time", return_value=at):
+                store.add({"method": "POST", "path": "/responses", "thread_id": THREAD,
+                           "source": source, **connection})
 
-        membership.clear()
-        path.write_text(json.dumps(state), encoding="utf-8")
-        self.assertEqual(self.reader.read(self.capture)["sessions"][0]["origin"], expected)
+        with patch.object(self.reader, "ssh_origins", side_effect=lambda keys: {
+                "known": ssh_origin} if "known" in keys else {}):
+            def origin():
+                return self.reader.read(capture)["sessions"][0]["origin"]
+
+            add(100)
+            self.assertIsNone(origin())
+            add(101, source="imported", ssh_connection_key="known")
+            self.assertIsNone(origin())
+            add(102, ssh_connection_key="known")
+            self.assertEqual(origin(), ssh_origin)
+            add(103, wsl_connection_key="distribution")
+            self.assertEqual(origin(), {"kind": "wsl"})
+            add(104, local_connection=True)
+            self.assertEqual(origin(), {"kind": "local"})
+            add(105, ssh_connection_key="unknown")
+            self.assertIsNone(origin())
 
     def test_catalog_reads_do_not_modify_databases(self):
         paths = [self.native / "state_5.sqlite", self.capture / "packets.sqlite"]

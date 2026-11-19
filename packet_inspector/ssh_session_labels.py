@@ -2,6 +2,7 @@
 from collections import defaultdict
 
 from .background_session_labels import BackgroundSessionLabels
+from .native_state import remote_address
 from .remote_connections import saved_hosts
 from .remote_control import SSH_LABEL_BATCH
 from .session_summary import external_labels
@@ -24,9 +25,9 @@ class SshSessionLabels(BackgroundSessionLabels):
             return {}
         by_host = {}
         for host in hosts:
-            address = host.destination.rsplit("@", 1)[-1].removeprefix("[").removesuffix("]")
+            address = host.address or remote_address(host.destination)
             if address:
-                by_host[self.relays.key(host)] = (host.id, {"kind": "remote", "address": address})
+                by_host[self.relays.key(host)] = {"kind": "remote", "address": address}
         origins = {}
         for key in keys:
             # Older routes used the host key alone. Newer routes append an account hash.

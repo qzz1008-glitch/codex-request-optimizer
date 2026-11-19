@@ -40,7 +40,7 @@
     </div>
   </header>
   <div id="notice" data-feedback-source data-feedback-target="app-inline-feedback" class="notice" role="alert" hidden><span id="notice-text"></span><button id="notice-dismiss" data-notice-dismiss type="button" aria-label="关闭提示" title="关闭提示">×</button></div>
-  <main id="records-view" class="workspace">
+  <main id="records-view" class="workspace" data-view="records">
     <aside class="sessions-sidebar" aria-label="会话">
       <search class="sidebar-title sessions-title">
         <h1>会话</h1>
@@ -117,13 +117,7 @@
         </div>
       </div>
     </section>
-  </main>
-  <main id="token-trend-view" class="token-trend-view" aria-label="会话请求趋势" hidden>
-    <aside class="trend-sidebar" aria-label="会话">
-      <div class="trend-sidebar-controls"><input id="trend-search" type="search" placeholder="搜索会话" aria-label="筛选图表会话" autocomplete="off"></div>
-      <div id="trend-series" class="trend-series" role="list" aria-label="会话"></div>
-    </aside>
-    <section class="trend-main">
+    <section id="token-trend-view" class="trend-main" aria-label="会话请求趋势" inert>
       <div class="trend-toolbar">
         <div class="trend-event-legend" aria-label="机制标记"><button id="trend-event-predictive" type="button" class="trend-predictive"><svg class="trend-legend-marker" data-trend-marker="predictive" viewBox="-10 -10 20 20" aria-hidden="true"></svg><span>大小预测</span></button><button id="trend-event-overflow" type="button" class="trend-overflow"><svg class="trend-legend-marker" data-trend-marker="overflow" viewBox="-10 -10 20 20" aria-hidden="true"></svg><span>超限压缩</span></button><button id="trend-event-retry" type="button" class="trend-retry"><svg class="trend-legend-marker" data-trend-marker="retry" viewBox="-10 -10 20 20" aria-hidden="true"></svg><span>容量重试</span></button><button id="trend-event-compact" type="button" class="trend-compact"><svg class="trend-legend-marker" data-trend-marker="compact" viewBox="-10 -10 20 20" aria-hidden="true"></svg><span>上下文压缩</span></button></div>
         <div id="trend-range" class="trend-range-control"><input id="trend-range-slider" type="range" min="0" max="1" step="any" value="1" disabled aria-label="时间位置" title="拖动浏览时间；滚轮前后移动，Ctrl + 滚轮缩放，最短 1 小时，最长 12 小时"></div>
