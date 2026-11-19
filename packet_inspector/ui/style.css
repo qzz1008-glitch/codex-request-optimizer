@@ -298,7 +298,6 @@ button.other-session-group{background:#f5f2fc;border-color:#e7e0f5}
   border-block-end-color:var(--panel);
   color:#274776;
 }
-.detail-title>.tabs button[aria-selected="true"]::after{content:"";position:absolute;inset:0 6px auto;border-block-start:2px solid currentColor}
 .detail-title>.tabs button:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
 @media (forced-colors:active){
   .detail-title>.tabs button[aria-selected="true"]{border-color:Highlight;border-block-end-color:Canvas}
