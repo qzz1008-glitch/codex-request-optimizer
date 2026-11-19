@@ -2500,9 +2500,22 @@ function requestProtectionPanel(m) {
   }
   return steps;
 }
-function bars(title, rows, total,bodyAvailable=true) {
-  const p=panel(title);
-  for(const r of rows) { const row=el("div","bar-row"), label=el("div","bar-label");row.dataset.renderKey="bar:"+r.name; label.append(bodyAvailable?link(r.name,()=>goPath(r.path)):el("span","",r.name),el("span","",bytes(r.bytes)+" · "+(r.bytes/(total||1)*100).toFixed(1)+"%")); const progress=el("progress");progress.max=total||1;progress.value=r.bytes;row.append(label,progress);p.append(row); }
+function bars(title, rows, total, bodyAvailable) {
+  const p=panel(title), max=total||1;
+  for(const r of rows) {
+    const row=el("div","bar-row");
+    row.dataset.renderKey="bar:"+r.name;
+    const label=bodyAvailable?link(r.name,()=>goPath(r.path)):el("span","",r.name);
+    label.classList.add("bar-label");
+    label.title=r.name;
+    const progress=el("progress");
+    progress.max=max;
+    progress.value=r.bytes;
+    progress.setAttribute("aria-hidden","true");
+    const value=el("span","bar-value",bytes(r.bytes)+" · "+(r.bytes/max*100).toFixed(1)+"%");
+    row.append(label,progress,value);
+    p.append(row);
+  }
   return p;
 }
 function inputBreakdown(m) {
@@ -2521,13 +2534,14 @@ function inputBreakdown(m) {
   return groups.sort((a,b)=>b.bytes-a.bytes);
 }
 function renderOverview(m) {
-  const root=document.createDocumentFragment();
-  if(m.inspection!=="json") {reconcileContent($("overview"),el("p","muted",t("正文未展开：")+(t(m.inspection_error)||t("正文为空"))+t("。转发仍按原始正文进行。")));return;}
-  const cols=el("div","two-columns");
+  const root=$("overview");
+  if(m.inspection!=="json") {reconcileContent(root,el("p","muted",t("正文未展开：")+(t(m.inspection_error)||t("正文为空"))+t("。转发仍按原始正文进行。")));return;}
+  const breakdown=el("div","size-breakdown");
   const fields=[...(m.top_fields||[]).map(r=>({...r,path:"/"+r.name.replaceAll("~","~0").replaceAll("/","~1")})),{name:t("字段名、标点及空白"),bytes:m.json_envelope_bytes,path:""}].sort((a,b)=>b.bytes-a.bytes);
-  cols.append(bars(t("字段构成"),fields,m.decoded_bytes,!m.details_evicted));
   const inputSize=m.top_fields?.find(r=>r.name==="input")?.bytes;
-  cols.append(bars(t("input 构成"),inputBreakdown(m),inputSize,!m.details_evicted));root.append(cols);reconcileContent($("overview"),root);
+  breakdown.append(bars(t("字段构成"),fields,m.decoded_bytes,!m.details_evicted),
+                   bars(t("input 构成"),inputBreakdown(m),inputSize,!m.details_evicted));
+  reconcileContent(root,breakdown);
 }
 function jsonValueNode(value,key=null,comma=false,root=false,path="",nodes=new Map()) {
   const object=value!==null&&typeof value==="object", array=Array.isArray(value);
