@@ -2521,7 +2521,7 @@ function bars(title, rows, total, bodyAvailable) {
     progress.value=r.bytes;
     progress.setAttribute("aria-hidden","true");
     const value=el("span","bar-value",bytes(r.bytes)+" · "+(r.bytes/max*100).toFixed(1)+"%");
-    row.append(label,progress,value);
+    row.append(label,value,progress);
     p.append(row);
   }
   return p;

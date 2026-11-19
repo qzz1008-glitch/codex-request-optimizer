@@ -293,7 +293,7 @@ button.other-session-group{background:#f5f2fc;border-color:#e7e0f5}
 .detail-content .panel>:last-child{margin-bottom:0}
 #headers-content>:last-child,#overview>:last-child,#diff-content>:last-child,.size-breakdown>.panel:last-child{margin-bottom:0}
 .size-breakdown{
-  --breakdown-columns:minmax(0,1fr) minmax(0,1fr) max-content;
+  --breakdown-columns:minmax(0,1fr) max-content minmax(0,1fr);
   display:grid;
   grid-template-columns:var(--breakdown-columns);
   column-gap:10px;
