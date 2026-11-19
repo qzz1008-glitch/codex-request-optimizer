@@ -1063,6 +1063,56 @@ function sessionCopy(field,text,previousFeedback) {
   button.onclick=event=>copyWithFeedback(text,event.currentTarget.nextElementSibling);
   return [button,feedback];
 }
+function bindSessionTitleTooltip(list,popup) {
+  const titleSelector=".session-title[data-full-title]",popover=typeof popup.showPopover==="function";
+  const sidebar=list.closest(".sessions-sidebar");
+  if(!popover)popup.removeAttribute("popover");
+  let title=null,timer=null;
+  function hide() {
+    clearTimeout(timer);title=null;
+    if(popover&&popup.matches(":popover-open"))popup.hidePopover();
+    popup.hidden=true;
+  }
+  function show(label) {
+    clearTimeout(timer);
+    if(label===title&&!popup.hidden&&(!popover||popup.matches(":popover-open")))return;
+    hide();
+    title=label;
+    timer=setTimeout(()=>{
+      if(!label.dataset.fullTitle||!label.getClientRects().length){hide();return;}
+      popup.textContent=label.dataset.fullTitle;
+      popup.hidden=false;
+      if(popover)popup.showPopover();
+      const margin=8;
+      const left=Math.max(margin,Math.min(sidebar.getBoundingClientRect().right+4,innerWidth-popup.offsetWidth-margin));
+      const top=Math.max(margin,Math.min(label.getBoundingClientRect().top-2,innerHeight-popup.offsetHeight-margin));
+      popup.style.inset=`${top}px auto auto ${left}px`;
+    },300);
+  }
+  function leave() {
+    clearTimeout(timer);
+    timer=setTimeout(hide,180);
+  }
+  list.addEventListener("pointerover",event=>{
+    const label=event.target.closest(titleSelector);
+    if(label&&event.pointerType!=="touch")show(label);
+  });
+  list.addEventListener("pointerout",event=>{
+    if(event.target===title&&!popup.contains(event.relatedTarget))leave();
+  });
+  popup.addEventListener("pointerenter",()=>clearTimeout(timer));
+  popup.addEventListener("pointerleave",leave);
+  list.addEventListener("focusin",event=>{
+    const label=event.target.matches(".session-item:focus-visible")&&event.target.querySelector(titleSelector);
+    if(label)show(label);
+  });
+  list.addEventListener("focusout",event=>{if(title&&event.target.contains(title))hide();});
+  list.addEventListener("scroll",hide,{passive:true});
+  window.addEventListener("resize",hide);
+  document.addEventListener("keydown",event=>{if(event.key==="Escape"&&title)hide();});
+  return hide;
+}
+const hideSessionTitleTooltip=bindSessionTitleTooltip($("session-list"),$("session-title-tooltip"));
 function renderSessions() {
   const list=$("session-list");
   if(!state.status)return;
@@ -1108,7 +1158,9 @@ function renderSessions() {
     item.setAttribute("aria-label",label.join("\n"));
     if(value===selected)item.setAttribute("aria-current","page");
     if(!idOnly) {
-      const heading=el("div","session-heading");heading.append(el("span","session-title",sidebarSessionTitle(title)));
+      const heading=el("div","session-heading"),name=el("span","session-title",sidebarSessionTitle(title));
+      if(!otherGroup)name.dataset.fullTitle=title;
+      heading.append(name);
       item.append(heading);
     }
     if(!otherGroup&&id)item.append(el("code","session-id",id));
@@ -3983,6 +4035,7 @@ class TokenTrendView {
 }
 tokenTrendView=new TokenTrendView({api,status:()=>state.status,sessions:sessionGroups,peek:listTokens,read:readListTokens,isGeneration:isTrendGeneration});
 function setWorkspaceView(view) {
+  hideSessionTitleTooltip();
   workspaceView=["trends","sharing"].includes(view)?view:"records";
   const workspace=$("records-view"),trends=workspaceView==="trends";
   workspace.hidden=workspaceView==="sharing";
