@@ -19,6 +19,14 @@ const grouped=rows=>{
 let passed=0;
 function test(name,fn){try{fn();passed++;}catch(error){error.message=name+': '+error.message;throw error;}}
 
+test('sidebar titles fit one line and keep their full text searchable',()=>{
+ const prefix='会'.repeat(30)+'👩‍💻';
+ const title=prefix+'\n'+'议'.repeat(460)+'\nsearchable tail';
+ assert.equal(context.sidebarSessionTitle(title),prefix+'…');
+ assert.equal(context.sidebarSessionTitle('短标题\n第二行'),'短标题 第二行');
+ assert.equal(context.sidebarSessionTitle('A'.repeat(32)),'A'.repeat(32));
+ assert.equal(context.sessionGroupMatchesQuery(group('long',{title}),'searchable tail'),true);
+});
 test('ordinary fork provenance never creates subagent links',()=>{
  const rows=[group('main',{title:'UI work'}),group('fork',{title:'Feature work',parent_thread_id:'main',session_kind:null})];
  for(const selected of ['thread:main','thread:fork'])assert.deepEqual(links(rows,selected),[]);
