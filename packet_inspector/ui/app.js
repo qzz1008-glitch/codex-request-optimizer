@@ -587,6 +587,17 @@ const auxiliaryLabels={image_analysis:"图片解析",next_message_suggestion:"�
 const requestPurposeCache=new Map();
 function auxiliarySessionKind(row) {return Object.hasOwn(auxiliaryLabels,row?.session_kind)?row.session_kind:row?.title_source==="index_task"?"session_index":row?.title_source==="subagent"?"subagent":null;}
 function sessionTitle(row) {return typeof row?.title==="string"&&row.title.trim()?row.title:null;}
+const SIDEBAR_SESSION_TITLE_LIMIT = 32;
+const sidebarTitleSegmenter = typeof Intl.Segmenter === "function" ? new Intl.Segmenter() : null;
+function sidebarSessionTitle(title) {
+  const oneLine = title.replace(/\s+/g, " ").trim();
+  if (oneLine.length <= SIDEBAR_SESSION_TITLE_LIMIT) return oneLine;
+  const characters = sidebarTitleSegmenter
+    ? Array.from(sidebarTitleSegmenter.segment(oneLine), ({segment}) => segment)
+    : Array.from(oneLine);
+  if (characters.length <= SIDEBAR_SESSION_TITLE_LIMIT) return oneLine;
+  return characters.slice(0, SIDEBAR_SESSION_TITLE_LIMIT - 1).join("").trimEnd() + "…";
+}
 function sessionIdentifier(row) {
   const id=row?.thread_id;
   return typeof id==="string"&&id.trim()&&id!==OTHER_SESSION_GROUP?id:null;
@@ -1093,7 +1104,7 @@ function renderSessions() {
     item.setAttribute("aria-label",label.join("\n"));
     if(value===selected)item.setAttribute("aria-current","page");
     if(!idOnly) {
-      const heading=el("div","session-heading");heading.append(el("span","session-title",title));
+      const heading=el("div","session-heading");heading.append(el("span","session-title",sidebarSessionTitle(title)));
       item.append(heading);
     }
     if(!otherGroup&&id)item.append(el("code","session-id",id));
