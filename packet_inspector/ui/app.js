@@ -1103,7 +1103,7 @@ function renderSessions() {
       const tokens=data.token_window, input=sortInputTokens(tokens);
       const tokenText=input===null?"—":(tokens.estimated?"≈ ":"")+nf.format(input);
       meta.append(el("span","session-token","Token "+tokenText));
-      if(origin||data.origin===null)meta.append(el("span",origin?"session-origin has-address":"session-origin",origin||"—"));
+      if(origin)meta.append(el("span","session-origin has-address",origin));
     }
     meta.append(el("span","session-updated",updated?dateFormat.format(updated)+" "+clockFormat.format(updated):"—"));
     item.append(meta);
