@@ -20,7 +20,8 @@ function fixture() {
     requestBodyCache:{id:'basic',promise:Promise.resolve({input:'cached private body'})},
     requestBodySequence:0,treeQueryTimer:0,tokenWindow:{input_tokens:123},
     $:element,t:value=>value,clearTimeout(){},URLSearchParams,
-    clearJsonFocus(){calls.push('focus-cleared');},clearJsonDownload(){calls.push('download-cleared');},
+    clearJsonFocus(){calls.push('focus-cleared');},clearJsonActions(){calls.push('actions-cleared');},
+    fail(error){throw error;},
     cancelTokenRead(){calls.push('token-cancelled');},renderList(){calls.push('list-rendered');},
     el:(tag,cls,text)=>({...element(Symbol(tag)),tag,cls,text}),
     reconcileContent:(node,content)=>node.replaceChildren(content),
@@ -48,7 +49,7 @@ function fixture() {
     assert.equal(c.requestBodyCache,null);
     assert.equal(c.$('tree-query').disabled,true);
     assert(c.$('json-tree').textContent.includes('仅保留基本信息'));
-    assert(c.calls.includes('download-cleared'));
+    assert(c.calls.includes('actions-cleared'));
     await assert.rejects(c.ensureJsonView('basic',c.requestBodySequence),/仅保留基本信息/);
     c.state.selected='full';c.state.detail={id:'full'};
     c.ensureJsonView=async()=>({root:{},body:{input:'new detail'}});
@@ -125,14 +126,14 @@ function fixture() {
     assert.equal(paths.length,3);const query=new URL(paths[1],'http://fixture').searchParams;
     assert.equal(query.get('thread'),'session');assert.equal(query.get('before'),'30');assert.equal(query.get('include_get'),'1');
     assert.equal(c.tables.length,1);assert.equal(c.tables[0].rows[0][1],'20');assert.equal(c.tables[0].rows[0][2],'90');
-    const panels=c.$('diff-content').children[0].children;assert(panels.some(node=>node.title==='变化明细'));
-    assert(panels.some(node=>node.text?.includes('以下显示统计变化')));passed++;
+    const panels=c.$('diff-content').children[0].children,changes=panels.find(node=>node.title==='变化明细');
+    assert(changes?.children.some(node=>node.text?.includes('以下显示统计变化')));passed++;
   }
   {
     const c=fixture();c.compressedDelta=async data=>data.compressed_delta;
     c.api=async path=>{assert(path.endsWith('/diff'));return {state:'summary_only',previous_id:'old',fields:[],fields_available:true,decoded_delta:0,compressed_delta:0};};
     await c.loadDiff();const panels=c.$('diff-content').children[0].children;
-    assert(panels.find(node=>node.title==='变化明细').children[0].text.includes('字段大小未变化'));
+    assert(panels.find(node=>node.title==='变化明细').children.some(node=>node.text?.includes('字段大小未变化')));
     const missing=c.summaryPacketDiff({id:'old',top_fields:null,decoded_bytes:null},{top_fields:[{name:'input',bytes:100}]});
     assert.equal(missing.fields_available,false);assert.equal(missing.fields.length,0);assert.equal(missing.decoded_delta,null);assert.equal(missing.compressed_delta,null);passed++;
   }
