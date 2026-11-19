@@ -1009,7 +1009,7 @@ function renderSessionConnections() {
 }
 function sessionCopy(field,text,previousFeedback) {
   const button=el("button","session-copy"),label=t(field==="id"?"复制会话 ID":"复制会话名称");
-  button.type="button";button.title=label;button.setAttribute("aria-label",label);
+  button.type="button";button.setAttribute("aria-label",label);
   button.dataset.sessionCopy=field;
   const icon=document.createElementNS("http://www.w3.org/2000/svg","svg"),path=document.createElementNS(icon.namespaceURI,"path");
   icon.setAttribute("viewBox","0 0 24 24");icon.setAttribute("aria-hidden","true");
@@ -1069,40 +1069,29 @@ function renderSessions() {
     const row=el("div","session-row");row.dataset.session=value;
     const item=el("button","session-item"+(otherGroup?" other-session-group":"")+(value===selected?" selected":""));
     item.type="button";item.dataset.session=value;
-    item.title=title;
-    if(!otherGroup&&id)item.title+="\n"+id;
-    if(origin)item.title+="\n"+origin;
-    if(data.title_cached)item.title+="\n"+t("会话名称暂不可用，显示上次加载的名称");
+    const label=[title];
+    if(!otherGroup&&id)label.push(id);
+    if(origin)label.push(origin);
+    if(data.title_cached)label.push(t("会话名称暂不可用，显示上次加载的名称"));
     for(const link of connections) {
-      if(link.child===id)item.title+="\n"+t("父会话名称")+"："+summaries.get(link.parent).title;
-      if(link.parent===id)item.title+="\n"+t("子任务")+"："+summaries.get(link.child).title;
+      if(link.child===id)label.push(t("父会话名称")+"："+summaries.get(link.parent).title);
+      if(link.parent===id)label.push(t("子任务")+"："+summaries.get(link.child).title);
     }
-    item.setAttribute("aria-label",item.title);
+    item.setAttribute("aria-label",label.join("\n"));
     if(value===selected)item.setAttribute("aria-current","page");
     const heading=el("div","session-heading");heading.append(el("span","session-title",title));
     item.append(heading);
-    if(!otherGroup&&id) {
-      const identifier=el("code","session-id",id);identifier.title=id;
-      item.append(identifier);
-    }
+    if(!otherGroup&&id)item.append(el("code","session-id",id));
     const updated=Number.isFinite(data.updated_at)?new Date(data.updated_at*1000):null;
     const meta=el("div","session-meta");
-    const when=el("span","session-updated",updated?dateFormat.format(updated)+" "+clockFormat.format(updated):"—");
-    if(updated)when.title=timestampFormat.format(updated);
     if(!otherGroup) {
       const tokens=data.token_window, input=sortInputTokens(tokens);
       const tokenText=input===null?"—":(tokens.estimated?"≈ ":"")+nf.format(input);
-      const usage=el("span","session-token","Token "+tokenText);
-      usage.title=input===null?t("暂无对应的输入 Token 记录"):t(tokens.estimated?"超限摘要前输入 Token（估算）":"输入 Token")+" "+tokenText;
-      if(input!==null&&Number.isFinite(tokens.recorded_at))usage.title+=" · "+timestampFormat.format(new Date(tokens.recorded_at*1000));
-      meta.append(usage);
-      if(origin||data.origin===null) {
-        const address=el("span","session-origin",origin||"—");
-        if(origin)address.title=origin;
-        meta.append(address);
-      }
+      meta.append(el("span","session-token","Token "+tokenText));
+      if(origin||data.origin===null)meta.append(el("span",origin?"session-origin has-address":"session-origin",origin||"—"));
     }
-    meta.append(when);item.append(meta);
+    meta.append(el("span","session-updated",updated?dateFormat.format(updated)+" "+clockFormat.format(updated):"—"));
+    item.append(meta);
     bindSelectableRow(item,()=>{
       if(hasTextSelectionWithin($("session-list")))window.getSelection().removeAllRanges();
       return selectSession(value);
