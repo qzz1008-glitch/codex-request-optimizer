@@ -122,6 +122,8 @@ button.session-copy{position:absolute;top:7px;right:4px;display:grid;place-items
 .session-copy:has(+ [data-copy-feedback="success"]) .session-copy-check{display:inline}
 .session-copy-feedback{position:absolute;top:6px;right:30px;pointer-events:none}
 .session-copy[data-session-copy="id"] + .session-copy-feedback{top:25px}
+.session-row-id-only .session-copy[data-session-copy="id"]{top:7px}
+.session-row-id-only .session-copy[data-session-copy="id"] + .session-copy-feedback{top:6px}
 .session-copy-feedback[data-copy-feedback="success"]{width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
 .session-copy-feedback[data-copy-feedback="error"]{padding:2px 6px;border-radius:4px;background:var(--panel);color:var(--muted);font-size:11px;line-height:16px;white-space:nowrap}
 @media (hover:hover){

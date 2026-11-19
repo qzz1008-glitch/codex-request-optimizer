@@ -72,7 +72,7 @@ test('image requests join their named parent while keeping their own request ide
 test('a confirmed image parent remains a group before its name or native record loads',()=>{
  for(const parents of [[],[session('main',{title:null,packet_count:0})]]){
   const groups=grouped([...parents,session('image',{parent_thread_id:'main',session_kind:'image_analysis'})]);
-  assert.equal(groups.length,1);assert.equal(groups[0].thread_id,'main');assert.equal(groups[0].title,'会话');
+  assert.equal(groups.length,1);assert.equal(groups[0].thread_id,'main');assert.equal(groups[0].title,'main');
   assert.deepEqual(groups[0].members.map(row=>row.thread_id),['image']);assert.equal(groups[0].packet_count,1);
   assert.equal(context.otherTaskSessions().length,0);
  }
@@ -80,9 +80,9 @@ test('a confirmed image parent remains a group before its name or native record 
 test('an SSH session can be found by IP before and after its native title arrives',()=>{
  const origin={kind:'remote',address:'192.0.2.25'};
  const pending=[session('remote',{origin}),session('helper',{origin,parent_thread_id:'remote',session_kind:'title_generation'}),
-  session('unresolved')];
+  session('unresolved'),session('')];
  const untitled=grouped(pending);
- assert.deepEqual(untitled.map(group=>group.title),['其他']);
+ assert.deepEqual(untitled.map(group=>group.title),['remote','unresolved','其他']);
  assert.equal(context.sessionGroupMatchesQuery(untitled[0],'192.0.2.25'),true);
  const groups=grouped([{...pending[0],title:'Real SSH title'},...pending.slice(1),
   session('remote-v6',{title:'IPv6 session',origin:{kind:'remote',address:'2001:DB8::25'}})]);
@@ -90,7 +90,7 @@ test('an SSH session can be found by IP before and after its native title arrive
  assert.equal(remote.title,'Real SSH title');
  assert.deepEqual(remote.origin,origin);
  assert.deepEqual(remote.members.map(row=>row.thread_id),['remote','helper']);
- assert.deepEqual(Array.from(context.otherTaskSessions(),row=>row.thread_id),['unresolved']);
+ assert.deepEqual(Array.from(context.otherTaskSessions(),row=>row.thread_id),['']);
  const matches=query=>groups.filter(group=>context.sessionGroupMatchesQuery(group,query)).map(group=>group.thread_id);
  assert.deepEqual(matches('192.0.2.25'),['remote']);
  assert.deepEqual(matches('0.2.25'),['remote']);
@@ -113,39 +113,53 @@ test('missing or cyclic image parent metadata never assigns a request to an arbi
   session('self',{parent_thread_id:'self',session_kind:'image_analysis'}),
   session('a',{parent_thread_id:'b',session_kind:'image_analysis'}),session('b',{parent_thread_id:'a',session_kind:'image_analysis'})]);
  assert.deepEqual(groups.find(group=>group.thread_id==='main').members.map(row=>row.thread_id),['main']);
- assert.deepEqual(groups.find(group=>group.thread_id==='group:other').members.map(row=>row.thread_id),['orphan','self','a','b']);
+ assert.deepEqual(groups.slice(1).map(group=>[group.thread_id,...group.members.map(row=>row.thread_id)]),
+  [['orphan','orphan'],['self','self'],['a','a'],['b','b']]);
 });
 
-test('unparented title and recommendation requests stay in other even when a temporary title exists',()=>{
+test('unparented title and recommendation requests retain their own session ID and title',()=>{
   for(const kind of ['ambient_suggestions','title_generation']){
     const groups=grouped([session('main',{title:'Main'}),
       session('temporary',{session_kind:kind,title:'Temporary task'})]);
-    assert.deepEqual(groups.find(group=>group.thread_id==='group:other').members.map(row=>row.thread_id),['temporary']);
+    const temporary=groups.find(group=>group.thread_id==='temporary');
+    assert.equal(temporary.title,'Temporary task');
+    assert.deepEqual(temporary.members.map(row=>row.thread_id),['temporary']);
     assert.deepEqual(groups.find(group=>group.thread_id==='main').members.map(row=>row.thread_id),['main']);
   }
 });
-test('parent metadata refresh moves an image out of other and resolves child selections to the owner',()=>{
+test('parent metadata refresh moves an independent image into its parent and resolves child selections to the owner',()=>{
  const rows=[session('main',{title:'Frontend'}),session('image',{session_kind:'image_analysis'})];
- assert.equal(grouped(rows).find(group=>group.thread_id==='group:other').members[0].thread_id,'image');
+ assert.equal(grouped(rows).find(group=>group.thread_id==='image').members[0].thread_id,'image');
  rows[1]={...rows[1],parent_thread_id:'main'};
  const groups=grouped(rows);context.state.filters.thread='thread:image';
  assert.equal(groups.length,1);assert.equal(context.selectedSessionGroup().thread_id,'main');
  assert.equal(context.otherTaskSessions().length,0);
  rows[0].title='Renamed frontend';assert.equal(grouped(rows)[0].title,'Renamed frontend');
 });
-test('unnamed subagents join their known named parent or other instead of appearing as identical subtask rows',()=>{
+test('unnamed subagents with a known parent join it, and unparented ones keep their own ID',()=>{
  const rows=[session('main',{title:'Main'}),session('child',{parent_thread_id:'main',session_kind:'subagent',title:null}),
   session('unparented',{session_kind:'subagent',title:'  '}),session('named-child',{parent_thread_id:'main',session_kind:'subagent',title:'Builder'})];
  const groups=grouped(rows);
  assert.deepEqual(groups.map(group=>[group.title,group.members.map(row=>row.thread_id)]),[
-  ['Main',['main','child']],['其他',['unparented']],['Builder',['named-child']]]);
+  ['Main',['main','child']],['unparented',['unparented']],['Builder',['named-child']]]);
  assert.deepEqual(links(groups,'thread:main'),[{parent:'main',child:'named-child'}]);
 });
-test('a cold start without names never presents generic subagent rows as loaded conversations',()=>{
+test('unnamed sessions use their IDs and requests without an ID use Other',()=>{
  const groups=grouped([session('main',{title:null}),session('child',{title:null,session_kind:'subagent',parent_thread_id:'main'}),
-  session('orphan',{session_kind:'subagent',parent_thread_id:'absent'})]);
- assert.deepEqual(groups.map(group=>[group.thread_id,group.title]),[['group:other','其他']]);
- assert.deepEqual(groups[0].members.map(row=>row.thread_id),['main','child','orphan']);
+  session('orphan',{session_kind:'subagent',parent_thread_id:'absent'}),
+  session('',{session_kind:'title_generation',parent_thread_id:'main'})]);
+ assert.deepEqual(groups.map(group=>[group.thread_id,group.title,group.members.map(row=>row.thread_id)]),
+  [['main','main',['main','child']],['orphan','orphan',['orphan']],['group:other','其他',['']]]);
+});
+test('standalone CLI sessions keep captured counts and filter-only IDs have independent rows',()=>{
+ grouped([session('cli-resumed',{packet_count:3})]);
+ context.state.sessions.push('cli-filter-only');
+ context.state.status={storage:{threads:[{thread:'cli-filter-only',count:2}]}};
+ const groups=context.sessionGroups();
+ assert.deepEqual(Array.from(groups,group=>[group.thread_id,group.title,group.packet_count]),
+  [['cli-resumed','cli-resumed',3],['cli-filter-only','cli-filter-only',2]]);
+ context.state.filters.thread='thread:cli-resumed';
+ assert.equal(context.selectedSessionGroup(groups).thread_id,'cli-resumed');
 });
 test('temporarily missing native names retain the last loaded title without retaining old request metrics',()=>{
  context.sessionSummaries=[session('main',{title:'Frontend',updated_at:100,latest_packet:{id:'old',created:100}})];
@@ -242,7 +256,7 @@ test('title retention does not invent names for new or unidentified sessions or 
         return {state:'available',sessions:[session(id,{title,origin})],...(title?{}:{label_revision:0})};
       }});
     await context.refreshSessionSummaries();
-    assert.deepEqual(renders.at(-1).map(group=>group.title),['其他']);
+    assert.deepEqual(renders.at(-1).map(group=>[group.thread_id,group.title]),[['remote','remote']]);
     assert.deepEqual(labelRequests,['/api/session-summaries','/api/session-labels/wait?after=0']);
     title='Actual remote chat';resolveNotice({changed:true,pending:false});
     await new Promise(resolve=>setImmediate(resolve));
