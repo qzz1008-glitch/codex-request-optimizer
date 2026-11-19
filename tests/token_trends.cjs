@@ -31,15 +31,22 @@ function view(services={}) {
 }
 class Node {
  constructor(tag){this.tag=tag;this.attrs={};this.children=[];this.dataset={};this.textContent='';this.hidden=true;this.clientWidth=640;this.clientHeight=240;this.offsetWidth=260;this.offsetHeight=150;
-  this.style={setProperty:(key,value)=>{this.style[key]=value;}};this.events=new Map();
+  this.style={setProperty:(key,value)=>{this.style[key]=value;},removeProperty:key=>{delete this.style[key];}};this.events=new Map();
   this.classList={toggle:(key,on)=>{const names=new Set((this.attrs.class||'').split(' ').filter(Boolean));on?names.add(key):names.delete(key);this.attrs.class=[...names].join(' ');}};}
  setAttribute(key,value){this.attrs[key]=String(value);if(key.startsWith('data-'))this.dataset[key.slice(5).replace(/-([a-z])/g,(_,char)=>char.toUpperCase())]=String(value);}
+ toggleAttribute(key,on){if(on)this.setAttribute(key,'');else delete this.attrs[key];}
+ closest(selector){return selector==='.session-row'&&this.attrs.class==='session-row'?this:null;}
+ matches(selector){return selector===':focus-visible'&&this.focusVisible===true;}
  addEventListener(type,callback,options){this.events.set(type,{callback,options});}
  append(...nodes){for(const node of nodes)this.children.push(...(node.tag==='#fragment'?node.children:[node]));}
  prepend(node){this.children.unshift(node);}
  replaceChildren(...nodes){this.children=[];this.append(...nodes);}
  all(test){return this.children.flatMap(child=>[...(test(child)?[child]:[]),...child.all(test)]);}
- querySelectorAll(){return this.all(node=>node.attrs['data-series']!==undefined);}
+ querySelectorAll(selector){
+  if(selector==='.session-row')return this.all(node=>node.attrs.class==='session-row');
+  if(selector==='.session-row[data-trend-series]')return this.all(node=>node.attrs.class==='session-row'&&Object.hasOwn(node.attrs,'data-trend-series'));
+  return this.all(node=>node.attrs['data-series']!==undefined);
+ }
  contains(node){return this===node||this.children.some(child=>child.contains(node));}
  getBoundingClientRect(){return {left:this.left||0,top:this.top||0,width:this.clientWidth,height:this.clientHeight};}
 }
@@ -61,8 +68,15 @@ function rendered(rows,services={}){
  context.requestAnimationFrame=callback=>{frames.push(callback);return frames.length;};
  const result=new View(view(services).services);result.active=true;result.loadedBounds={since:now-12*3600-1,before:null};result.packets=new Map(rows.map(row=>[row.id,row]));
  if(!services.sessions)result.services.sessions=()=>fixtureSessions(result);
+ for(const group of result.services.sessions()) {
+  const row=context.el('div','session-row');
+  row.setAttribute('data-session',group.thread_id==='group:other'?group.thread_id:'thread:'+group.thread_id);
+  ids.get('session-list').append(row);
+ }
  result.render();return {result,ids,frames,events};
 }
+function coloredRows(ids){return ids.get('session-list').querySelectorAll('.session-row[data-trend-series]');}
+function highlightedRows(ids){return coloredRows(ids).filter(row=>Object.hasOwn(row.attrs,'data-trend-highlight'));}
 function chartNodes(chart,cls){return chart.svg.all(node=>(node.attrs.class||'').split(' ').includes(cls));}
 function focusLines(result){return chartNodes({svg:result.guide},'trend-focus-line');}
 function nodeText(node){return node.textContent+node.children.map(nodeText).join(' ');}
@@ -231,14 +245,14 @@ function eventRows(){return [
    assert.deepEqual(Array.from(model.series[0].points,point=>point.packet.id).sort(),[id(201),id(202)]);
    assert.ok(model.series[0].points.some(point=>point.events.includes('compact')));
    assert.ok(result.charts.every(chart=>chart.points.length>0&&chart.points.every(point=>point.series.id==='session-a')));
-   assert.deepEqual(ids.get('trend-series').children.filter(node=>node.dataset.renderKey).map(node=>node.dataset.renderKey),['trend-series:session-a']);
+   assert.deepEqual(coloredRows(ids).map(node=>node.dataset.session),['thread:session-a']);
   });
-  await test('auxiliary-only history produces no points or session legend entries',()=>{
+  await test('auxiliary-only history produces no points or session colors',()=>{
    const {result,ids}=rendered(['image_analysis','title_generation','next_message_suggestion','ambient_suggestions','session_index','prewarm'].map((kind,i)=>
     packet(210+i,{thread_id:'auxiliary-'+i,request_kind:kind,upstream_usage:{input_tokens:100},outbound_wire_bytes:1000})));
    assert.equal(result.model().series.length,0);
    assert.ok(result.charts.every(chart=>chart.points.length===0));
-   assert.equal(ids.get('trend-series').children.filter(node=>node.dataset.renderKey).length,0);
+   assert.equal(coloredRows(ids).length,0);
   });
  await test('scale includes all values',()=>{
   for(const n of [0,1,999,500000,10000000]){const scale=View.scale(n);assert.ok(scale.max>=n&&scale.step>0&&Number.isFinite(scale.max));}
@@ -246,7 +260,7 @@ function eventRows(){return [
  await test('visible sessions use well separated colors that survive updates and search',()=>{
   const sample=(n,thread_id)=>packet(n,{thread_id,outbound_wire_bytes:10000,upstream_usage:{input_tokens:10000}});
   const rows=Array.from({length:7},(_,index)=>sample(100+index,'session-color-'+index));
-  const {result,ids}=rendered(rows),legend=ids.get('trend-series');
+  const {result,ids}=rendered(rows);
   const colors=()=>new Map(result.series.map(group=>[group.id,group.color]));
   const initial=colors(),labs=result.series.map(group=>View.seriesPalette[group.colorSlot].lab);
   assert.equal(new Set(initial.values()).size,7);
@@ -267,7 +281,7 @@ function eventRows(){return [
   assert.equal(new Set(refreshed.values()).size,8);
   result.query=rows[6].thread_id;result.render();
   const color=initial.get(result.query);
-  assert.equal(legend.children.length,1);assert.equal(legend.children[0].style['--series-color'],color);
+  assert.equal(coloredRows(ids).length,1);assert.equal(coloredRows(ids)[0].style['--trend-series-color'],color);
   for(const chart of result.charts) {
    const curves=chartNodes(chart,'trend-curve');assert.equal(curves.length,1);assert.equal(curves[0].attrs.stroke,color);
   }
@@ -304,8 +318,7 @@ function eventRows(){return [
   assert.deepEqual(curves(),sidebar());
   assert.deepEqual(Array.from(result.series.find(series=>series.id==='parent').points,point=>point.packet.thread_id),['child','parent']);
   for(const chart of result.charts)assert.deepEqual(chartNodes(chart,'trend-series-line').map(node=>node.dataset.series).sort(),['parent','standalone']);
-  const legend=ids.get('trend-series');
-  assert.deepEqual(legend.children.map(node=>node.children[1].textContent).sort(),['<b>First CLI input</b>','Parent task']);
+  assert.deepEqual(coloredRows(ids).map(row=>row.dataset.session).sort(),['thread:parent','thread:standalone']);
   for(const query of ['child','192.0.2.8']) {
    result.query=query;
    assert.deepEqual(Array.from(result.model().matched,series=>series.id),['parent']);
@@ -318,7 +331,7 @@ function eventRows(){return [
   result.render();
   assert.deepEqual(curves(),sidebar());
   assert.equal(result.series.find(series=>series.id==='standalone').color,standaloneColor);
-  assert.deepEqual(legend.children.map(node=>node.children[1].textContent).sort(),['CLI session','Parent task']);
+  assert.deepEqual(coloredRows(ids).map(row=>row.dataset.session).sort(),['thread:parent','thread:standalone']);
  });
  await test('full snapshot pages without duplicates, and deltas stop on overlap',async()=>{
   const rows=Array.from({length:303},(_,i)=>packet(i+1)),queries=[];let revision=1;
@@ -533,7 +546,8 @@ function eventRows(){return [
   let lines=focusLines(result);assert.equal(lines.length,1);assert.equal(lines[0].attrs.y1,'30');assert.equal(lines[0].attrs.y2,'485');
   for(const chart of result.charts){
    assert.equal(chartNodes(chart,'trend-focus-line').length,0);const nodes=chartNodes(chart,'trend-hover-node');assert.equal(nodes.length,1);
-   const point=chart.points.find(point=>point.packet.id===id(101));assert.equal(nodes[0],point.node);assert.equal(nodes[0].tag,'circle');assert.equal(nodes[0].attrs.fill,point.series.color);assert.equal(chart.focusLayer.children.length,0);
+   const point=chart.points.find(point=>point.packet.id===id(101));assert.equal(nodes[0],point.node);assert.equal(nodes[0].tag,'circle');assert.equal(nodes[0].attrs.fill,point.series.color);
+   assert.equal(chartNodes(chart,'trend-focus-ring')[0].attrs.stroke,point.series.color);
   }
   for(const chart of result.charts){chart.plot.clientWidth=900;chart.svg.clientWidth=900;chart.plot.clientHeight=300;chart.svg.clientHeight=300;}
   ids.get('trend-chart').top=300;ids.get('trend-time-axis').top=600;result.guide.clientWidth=900;result.guide.clientHeight=632;
@@ -559,7 +573,7 @@ function eventRows(){return [
   assert.equal(token.tooltip.children.length,2);assert.match(nodeText(token.tooltip),/输入 Token（估算）\s*≈\s*300/);
   assert.equal(result.timeTooltip.textContent,result.time(next.packet.created,true));assert.ok(nodeText(size.tooltip).includes('400 KB'));
   assert.equal(chartNodes(size,'trend-hover-node').length,1);
-  for(const chart of result.charts){const node=chartNodes(chart,'trend-hover-node')[0];assert.equal(node.dataset.packet,id(103));assert.equal(node.children[0].tag,'path');assert.equal(chart.focusLayer.children.length,0);}
+  for(const chart of result.charts){const node=chartNodes(chart,'trend-hover-node')[0];assert.equal(node.dataset.packet,id(103));assert.equal(node.children[0].tag,'path');assert.equal(chartNodes(chart,'trend-focus-ring').length,1);}
   token.svg.onpointerleave();assert.equal(result.hover,null);assert.equal(result.hoverChart,null);
   for(const chart of result.charts){assert.equal(chart.tooltip.hidden,true);assert.equal(chartNodes(chart,'trend-focus-line').length,0);assert.equal(chartNodes(chart,'trend-hover-node').length,0);}
   assert.equal(focusLines(result).length,0);
@@ -592,22 +606,28 @@ function eventRows(){return [
   assert.equal(size.tooltip.children[1].textContent,'0 B');assert.equal(chartNodes(size,'trend-hover-node').length,1);
  });
  await test('a shared sidebar searches and highlights both metrics together',()=>{
-  const {result,ids}=rendered([...dualRows(),packet(105,{thread_id:'session-b',created:now-10,upstream_usage:{input_tokens:900},outbound_wire_bytes:900000})]);
-  const list=ids.get('trend-series'),a=list.children.find(node=>node.dataset.renderKey==='trend-series:session-a'),b=list.children.find(node=>node.dataset.renderKey==='trend-series:session-b');
-  const selected=()=>list.children.filter(node=>node.attrs.class.split(' ').includes('active'));
+  const {result,ids,frames}=rendered([...dualRows(),packet(105,{thread_id:'session-b',created:now-10,upstream_usage:{input_tokens:900},outbound_wire_bytes:900000})]);
+  const list=ids.get('session-list'),[a,b]=['session-a','session-b'].map(id=>list.children.find(row=>row.dataset.session==='thread:'+id));
+  const selected=()=>highlightedRows(ids);
   const [size,token]=result.charts,first=size.points.find(point=>point.series.id==='session-a'),next=token.points.find(point=>point.series.id==='session-b');
-  size.svg.onpointermove({clientX:first.x,clientY:first.y});assert.deepEqual(selected(),[a]);assert.equal(a.attrs['aria-current'],'true');
-  token.svg.onpointermove({clientX:next.x,clientY:next.y});assert.deepEqual(selected(),[b]);assert.equal(a.attrs['aria-current'],'false');
+  size.svg.onpointermove({clientX:first.x,clientY:first.y});assert.deepEqual(selected(),[a]);
+  assert.equal(chartNodes(size,'trend-focus-ring')[0].attrs.stroke,a.style['--trend-series-color']);
+  token.svg.onpointermove({clientX:next.x,clientY:next.y});assert.deepEqual(selected(),[b]);
   token.svg.onpointerleave();assert.deepEqual(selected(),[]);
-  assert.equal(a.onclick,undefined);a.onpointerenter();
+  list.events.get('pointerover').callback({target:a});
   assert.deepEqual(selected(),[a]);
-  for(const chart of result.charts){const b=chart.svg.querySelectorAll('[data-series]').find(node=>node.dataset.series==='session-b');assert.ok(b.attrs.class.includes('dimmed'));}
-  a.onpointerleave();assert.deepEqual(selected(),[]);for(const chart of result.charts)assert.equal(new Set(chart.points.map(point=>point.series.id)).size,2);
-  ids.get('trend-search').oninput({currentTarget:{value:'session-a'}});
+  for(const chart of result.charts){assert.equal(chartNodes(chart,'dimmed')[0].dataset.series,'session-b');assert.equal(chartNodes(chart,'emphasized')[0].dataset.series,'session-a');}
+  result.render();assert.deepEqual(selected(),[a]);
+  list.events.get('pointerleave').callback();assert.deepEqual(selected(),[]);
+  for(const chart of result.charts)assert.equal(new Set(chart.points.map(point=>point.series.id)).size,2);
+  a.focusVisible=true;list.events.get('focusin').callback({target:a});assert.deepEqual(selected(),[a]);
+  list.events.get('focusout').callback();assert.deepEqual(selected(),[]);
+  const query=value=>{ids.get('session-search').events.get('input').callback({currentTarget:{value}});frames.shift()();};
+  query('session-a');
   for(const chart of result.charts)assert.ok(chart.points.every(point=>point.series.id==='session-a'));
-  ids.get('trend-search').oninput({currentTarget:{value:'missing'}});
+  query('missing');
   for(const chart of result.charts){assert.equal(chart.points.length,0);assert.equal(chart.empty.hidden,false);}
-  ids.get('trend-search').oninput({currentTarget:{value:''}});assert.equal(result.query,'');
+  query('');assert.equal(result.query,'');
   for(const chart of result.charts)assert.equal(new Set(chart.points.map(point=>point.series.id)).size,2);
  });
  await test('all mechanism markers retain their session color and existing priority shapes',()=>{
@@ -746,7 +766,7 @@ function eventRows(){return [
   const x=(a.x+b.x)/2,y=(a.y+b.y)/2;assert.ok(Math.hypot(x-a.x,y-a.y)>28);
   token.svg.onpointermove({clientX:x,clientY:y});
   assert.equal(result.hover,null);assert.equal(result.hoverSeries,'session-a');
-  assert.deepEqual(ids.get('trend-series').children.filter(n=>n.attrs.class.split(' ').includes('active')).map(n=>n.dataset.renderKey),['trend-series:session-a']);
+  assert.deepEqual(highlightedRows(ids).map(row=>row.dataset.session),['thread:session-a']);
   for(const chart of result.charts){assert.equal(chart.tooltip.hidden,true);assert.equal(chartNodes(chart,'dimmed').length,1);}
   assert.equal(result.timeTooltip.hidden,true);assert.equal(focusLines(result).length,0);
   for(const chart of result.charts){const replace=chart.svg.replaceChildren.bind(chart.svg);chart.svg.replaceChildren=fragment=>{
