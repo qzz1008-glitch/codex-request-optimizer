@@ -173,6 +173,7 @@ class WslConnectionTests(unittest.TestCase):
         key = self.routes[route_id].pop("wsl_connection_key")
         self.assertEqual(key, next(self.wsl._targets())[0].name)
         self.assertNotIn("wsl_connection_key", self.routes["windows"])
+        self.assertNotIn("local_connection", self.routes[route_id])
         backups = list(self.backend.config_path.parent.glob("*.inspector-backup-*"))
         self.assertTrue(any(path.read_bytes() == before for path in backups))
         self.assertFalse(self.apply()["reload_required"])
@@ -567,6 +568,7 @@ class WslConnectionTests(unittest.TestCase):
             try:
                 first = get("api/session-summaries")
                 self.assertIsNone(first["sessions"][0]["title"])
+                self.assertEqual(first["sessions"][0]["origin"], {"kind": "wsl"})
                 self.assertTrue(entered.wait(2))
                 self.assertEqual(wait(first["label_revision"], timeout=0), {"changed": False, "pending": True})
                 path = f"api/session-labels/wait?after={first['label_revision']}"

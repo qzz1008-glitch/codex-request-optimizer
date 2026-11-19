@@ -181,6 +181,8 @@ class ProviderManager:
                 routes[route_id] = {"identity": identity, "provider": provider_id, "upstream": upstream}
                 if self.wsl_connection_key:
                     routes[route_id]["wsl_connection_key"] = self.wsl_connection_key
+                else:
+                    routes[route_id]["local_connection"] = True
                 applied = self.endpoint + "/p/" + route_id
                 self._record(records, data, keys, applied, original=upstream if upstream != current else None)
                 _put(document, keys, applied)
