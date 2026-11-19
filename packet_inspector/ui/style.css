@@ -680,9 +680,9 @@ button.other-session-group{background:#f5f2fc;border-color:#e7e0f5}
 #settings-dialog .packet-size-controls{display:grid;grid-template-columns:var(--settings-label-width) minmax(0,1fr);align-items:center;gap:var(--settings-row-gap) 16px;margin:0}
 #settings-dialog :is(.runtime-toggle,.overflow-toggle){display:flex;align-items:center;gap:8px;min-width:0;min-block-size:var(--settings-field-height);margin:0;color:var(--ink);font-size:14px;line-height:22px}
 #settings-dialog .packet-size-limit{display:grid;grid-template-columns:var(--settings-inline-label-width) max-content;align-items:center;justify-self:start;gap:8px;margin:0}
-#settings-dialog .packet-size-value{display:inline-flex;align-items:center;gap:8px}
+#settings-dialog :is(.packet-size-value,.record-limit-value){display:inline-flex;align-items:center;gap:8px}
 #settings-dialog .packet-size-limit input{width:68px}
-#settings-dialog .packet-size-unit{color:var(--muted);font-size:13px;white-space:nowrap}
+#settings-dialog :is(.packet-size-unit,.record-limit-unit){color:var(--muted);font-size:13px;white-space:nowrap}
 #settings-dialog .runtime-setting-row{display:grid;grid-template-columns:var(--settings-label-width) minmax(0,1fr);align-items:center;gap:16px;margin:0}
 #settings-dialog .runtime-setting-row+.runtime-setting-row,
 #settings-dialog #request-protection-settings .runtime-setting-row{margin-block-start:var(--settings-row-gap)}
