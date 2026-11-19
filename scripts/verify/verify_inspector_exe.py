@@ -110,7 +110,7 @@ def main():
             compressed_results.append({"kind":"compaction" if compact else "generation","input_bytes":len(raw),"wire_bytes":len(sent["body"])})
         image_status=api("/api/status")
         assert image_status["image_save_dir_supported"]
-        assert image_status["image_save_dir"]==str((folder/"image-attachments").resolve())
+        assert image_status["image_save_dir"]==str((folder/"images").resolve())
         custom_image_folder=folder/"图片目录 with spaces"
         selected=api("/api/settings",{"image_save_dir":str(custom_image_folder)})
         assert selected["image_save_dir"]==str(custom_image_folder.resolve())

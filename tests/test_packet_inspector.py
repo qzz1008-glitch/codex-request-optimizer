@@ -34,6 +34,8 @@ class ProxyTests(unittest.TestCase):
     def test_no_proxy_alone_keeps_windows_system_proxy(self):
         with patch("packet_inspector.server.urllib_request.getproxies",
                    return_value={"no": "localhost,127.0.0.1"}), \
+                patch("packet_inspector.server.urllib_request.getproxies_environment",
+                      return_value={"no": "localhost,127.0.0.1"}), \
                 patch("packet_inspector.server.urllib_request.getproxies_registry",
                       return_value={"https": "http://system-proxy.invalid:8080"}, create=True):
             self.assertEqual(outbound_proxies(), {
@@ -42,6 +44,7 @@ class ProxyTests(unittest.TestCase):
     def test_explicit_proxy_retains_environment_precedence(self):
         proxies = {"https": "http://environment-proxy.invalid:8080", "no": "localhost"}
         with patch("packet_inspector.server.urllib_request.getproxies", return_value=proxies), \
+                patch("packet_inspector.server.urllib_request.getproxies_environment", return_value=proxies), \
                 patch("packet_inspector.server.urllib_request.getproxies_registry", create=True) as registry:
             self.assertEqual(outbound_proxies(), proxies)
             registry.assert_not_called()
@@ -813,7 +816,7 @@ class RelayTests(unittest.TestCase):
             cls.up.server_close()
         cls.temp.cleanup()
 
-    def relay(self,raw,path="/responses",headers=None,chunked=False,*,timeout=HTTP_TIMEOUT):
+    def relay(self,raw,path="/responses",headers=None,chunked=False,*,timeout=HTTP_TIMEOUT,wait=True):
         c=http.client.HTTPConnection("127.0.0.1",self.server.port,timeout=timeout)
         try:
             h={"Content-Type":"application/json","session_id":"test-thread",**(headers or {})}
@@ -821,7 +824,8 @@ class RelayTests(unittest.TestCase):
             c.request("POST",self.server.endpoint.split(str(self.server.port),1)[1]+path,[raw[:4],raw[4:]] if chunked else raw,h,encode_chunked=chunked)
             r=c.getresponse()
             result = r.status, r.read()
-            wait_for_idle(self.server)
+            if wait:
+                wait_for_idle(self.server)
             return result
         finally:
             c.close()
@@ -1158,8 +1162,11 @@ class RelayTests(unittest.TestCase):
         # Check isolation, with a bounded I/O guard rather than a CI latency limit.
         # Futures also surface every worker exception in the test thread.
         with ThreadPoolExecutor(max_workers=len(bodies)) as pool:
-            futures=[pool.submit(self.relay,body,timeout=30) for body in bodies]
+            # Each client waits only for its response; shared bookkeeping is
+            # joined once after every concurrent response has arrived.
+            futures=[pool.submit(self.relay,body,timeout=30,wait=False) for body in bodies]
             results=[future.result(timeout=35)[0] for future in futures]
+        wait_for_idle(self.server)
         self.assertEqual(results,[200]*8)
         received=[r["body"] for r in self.up.requests[-8:]]
         self.assertCountEqual(received,bodies)
