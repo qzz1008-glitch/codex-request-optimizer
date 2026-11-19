@@ -401,27 +401,42 @@ button.other-session-group{background:#f5f2fc;border-color:#e7e0f5}
 }
 #tab-tree>.tree-tools{flex-wrap:nowrap;align-items:center;padding-block-end:8px}
 #tab-tree>.tree-tools>input{flex:1;min-width:0;padding:6px 9px}
-#tab-tree>.tree-tools>.request-body-modes{position:relative;flex:none;padding:2px}
+.request-body-modes{
+  --view-slant:10px;
+  position:relative;
+  display:flex;
+  flex:none;
+  gap:2px;
+}
 .request-body-modes>input{padding:0;border:0;clip-path:inset(50%)}
 .request-body-modes>label{
-  min-inline-size:44px;
-  padding:1px 8px;
-  border:1px solid transparent;
-  border-radius:999px;
+  display:grid;
+  place-items:center;
+  min-inline-size:48px;
+  padding:4px 10px;
+  background:var(--bg);
   font-size:12px;
   font-weight:600;
   line-height:20px;
-  text-align:center;
   white-space:nowrap;
   cursor:pointer;
   user-select:none;
 }
-.request-body-modes>input:enabled:not(:checked)+label:hover{background:var(--panel)}
-.request-body-modes>input:checked+label{background:var(--soft);border-color:var(--line);color:var(--accent)}
-.request-body-modes>input:focus-visible+label{outline:2px solid var(--accent);outline-offset:1px}
+.request-body-modes>label:first-of-type{
+  padding-inline-end:calc(10px + var(--view-slant) / 2);
+  clip-path:polygon(0 0,100% 0,calc(100% - var(--view-slant)) 100%,0 100%);
+}
+.request-body-modes>label:last-of-type{
+  margin-inline-start:calc(-1 * var(--view-slant));
+  padding-inline-start:calc(10px + var(--view-slant) / 2);
+  clip-path:polygon(var(--view-slant) 0,100% 0,100% 100%,0 100%);
+}
+.request-body-modes>input:enabled:not(:checked)+label:hover{background:var(--line)}
+.request-body-modes>input:checked+label{background:var(--soft);color:var(--accent)}
+.request-body-modes>input:focus-visible+label>span{outline:2px solid currentColor;outline-offset:1px}
 .request-body-modes>input:disabled+label{opacity:.55;cursor:default}
 @media (forced-colors:active){
-  .request-body-modes>input:checked+label{border-color:Highlight}
+  .request-body-modes>input:checked+label{forced-color-adjust:none;background:Highlight;color:HighlightText}
 }
 #tab-tree>.search-results{max-height:min(260px,40%);padding:7px 0;border-radius:0}
 .json-viewer{position:relative;flex:1;min-width:0;min-height:0;overflow:hidden;margin-inline-start:calc(-1 * var(--detail-content-inset))}
