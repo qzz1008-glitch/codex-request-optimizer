@@ -120,7 +120,14 @@ button.session-copy{position:absolute;top:7px;right:4px;display:grid;place-items
 .session-copy-feedback{position:absolute;top:6px;right:30px;pointer-events:none}
 .session-copy[data-session-copy="id"] + .session-copy-feedback{top:25px}
 .session-copy-feedback:not(:empty){padding:2px 6px;border-radius:4px;background:var(--panel);color:var(--muted);font-size:11px;line-height:16px;white-space:nowrap}
-.session-item:not(.selected) ~ :is(.session-copy,.session-copy-feedback){display:none}
+@media (hover:hover){
+  .session-copy{opacity:0;pointer-events:none}
+  .session-copy:is(:hover,:focus-visible),
+  .session-copy:has(+ .session-copy-feedback:not(:empty)),
+  .session-row:has(.session-item:focus-visible) .session-copy,
+  .session-row:has(.session-heading:hover) .session-copy[data-session-copy="title"],
+  .session-row:has(.session-id:hover) .session-copy[data-session-copy="id"]{opacity:1;pointer-events:auto}
+}
 button.other-session-group{background:#f5f2fc;border-color:#e7e0f5}
 .other-session-group.selected{background:#eee8fa;border-color:#cbb9e6;color:#6c469b;box-shadow:inset 3px 0 #8c66bb}
 .other-session-group .session-title{color:#6c469b}
