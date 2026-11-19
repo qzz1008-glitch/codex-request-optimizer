@@ -225,6 +225,7 @@ button.other-session-group{background:#f5f2fc;border-color:#e7e0f5}
 .image-path-name{flex:1;min-width:0;color:var(--ink);font:12px/1.6 Consolas,"Cascadia Mono",monospace;white-space:pre-wrap;overflow-wrap:anywhere;user-select:text}
 .session-title,.session-meta>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .session-title{font-size:13px;font-weight:600;line-height:1.35}
+.session-title-tooltip{position:fixed;z-index:20;inset:auto;margin:0;width:max-content;max-width:min(440px,calc(100% - 16px));max-height:calc(100dvh - 16px);overflow:auto;padding:7px 10px;border:1px solid #cdd7e4;border-radius:7px;background:var(--panel);color:var(--ink);box-shadow:0 2px 10px #16284214;font-size:12px;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere}
 .session-id{min-width:0;overflow-wrap:anywhere;font:calc(11rem / 14)/1.35 Consolas,"Cascadia Mono",monospace;color:var(--muted)}
 .session-meta{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));align-items:center;gap:4px;font-size:10px;line-height:1.35;color:var(--muted);font-variant-numeric:tabular-nums;block-size:1.35em;margin-block-start:2px;overflow:hidden;transition:block-size var(--workspace-switch-time) var(--workspace-switch-easing),margin-block-start var(--workspace-switch-time) var(--workspace-switch-easing),opacity .16s,visibility 0s}
 .workspace[data-view="trends"] .session-meta{block-size:0;margin-block-start:0;opacity:0;visibility:hidden;transition-delay:0s,0s,0s,var(--workspace-switch-time)}
