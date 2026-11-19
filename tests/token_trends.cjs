@@ -291,17 +291,19 @@ function eventRows(){return [
  });
  await test('both charts use sidebar IDs, titles and associated request groups',()=>{
   context.sessionMetadataAt=1;
-  context.state={sessions:['parent','child','standalone','']};
+  context.state={sessions:['parent','child','standalone','auto-title','']};
   context.sessionSummaries=[{thread_id:'parent',title:'Parent task'},
    {thread_id:'child',session_kind:'subagent',parent_thread_id:'parent',origin:{kind:'remote',address:'192.0.2.8'}},
-   {thread_id:'standalone',input_title:'<b>First CLI input</b>'}];
-  const rows=['parent','child','standalone','','chart-only'].map((thread_id,i)=>packet(i+1,{
+   {thread_id:'standalone',title:'<b>First CLI input</b>',title_source:'input',codex_exec:true},
+   {thread_id:'auto-title',session_kind:'title_generation',title:'Title task',codex_exec:true}];
+  const rows=['parent','child','standalone','auto-title','','chart-only'].map((thread_id,i)=>packet(i+1,{
    thread_id,upstream_usage:{input_tokens:100},outbound_wire_bytes:1000
   }));
   const {result,ids}=rendered(rows,{sessions:context.sessionGroups});
   const curves=()=>Array.from(result.series,series=>[series.id,series.title]).sort();
   const sidebar=()=>Array.from(context.sessionGroups(),group=>[group.thread_id,group.title]).filter(([id])=>id!=='group:other').sort();
   assert.deepEqual(curves(),sidebar());
+  assert.ok(context.otherTaskSessions().some(row=>row.thread_id==='auto-title'));
   assert.deepEqual(Array.from(result.series.find(series=>series.id==='parent').points,point=>point.packet.thread_id),['child','parent']);
   for(const chart of result.charts)assert.deepEqual(chartNodes(chart,'trend-series-line').map(node=>node.dataset.series).sort(),['parent','standalone']);
   const legend=ids.get('trend-series');
@@ -315,6 +317,7 @@ function eventRows(){return [
   result.query='';
   const standaloneColor=result.series.find(series=>series.id==='standalone').color;
   context.sessionSummaries[2].title='CLI session';
+  delete context.sessionSummaries[2].title_source;
   result.render();
   assert.deepEqual(curves(),sidebar());
   assert.equal(result.series.find(series=>series.id==='standalone').color,standaloneColor);

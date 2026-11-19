@@ -9,9 +9,9 @@ import sqlite3
 import threading
 import zlib
 
-from .request_context import (AUXILIARY_KINDS, IMAGE_ANALYST_PREFIXES, NEXT_MESSAGE_PREFIX, TITLE_REQUEST_PREFIX,
-                              last_user_text, temporary_kind_from_metadata, temporary_request_kind,
-                              request_session_context, session_id)
+from .request_context import (AUTOMATED_REQUEST_KINDS, CODEX_EXEC_ORIGINATOR, INDEX_TASK_PREFIX, codex_exec_generation,
+                              input_title, last_user_text, request_session_context, session_id,
+                              temporary_kind_from_metadata, temporary_request_kind)
 from .response_usage import packet_usage
 from .native_state import WSL_HOST_ID, read_state, state_databases, thread_origins
 from .token_estimate import estimate_usage, overflow_applied
@@ -19,49 +19,51 @@ from .token_window import is_token_request
 from .usage_trigger import REPORTED_INPUT_TOKENS
 
 MAX_SESSIONS = 300
-INDEX_TASK_PREFIX = "You are in a fork of an existing Codex thread.\nFill the structured description field"
-INPUT_TITLE_LENGTH = 48
-INPUT_CONTEXT_WRAPPERS = (
-    ("# AGENTS.md instructions", "</INSTRUCTIONS>"),
-    ("<environment_context>", "</environment_context>"),
-    ("<image name=", "</image>"),
-)
 
 
-def _input_title(label):
-    if not isinstance(label, str):
-        return None
-    text = label.lstrip()
-    while text:
-        end = next((end for start, end in INPUT_CONTEXT_WRAPPERS if text.startswith(start)), None)
-        if end is None:
-            break
-        text = text.partition(end)[2].lstrip()
-    if not text or text.startswith((INDEX_TASK_PREFIX, NEXT_MESSAGE_PREFIX, TITLE_REQUEST_PREFIX, *IMAGE_ANALYST_PREFIXES)):
-        return None
-    title = " ".join(text.split())
-    return title if len(title) <= INPUT_TITLE_LENGTH else title[:INPUT_TITLE_LENGTH].rstrip() + "…"
+def _has_exec_generation(db, thread):
+    candidates = db.execute("""SELECT CASE WHEN json_extract(s.meta,'$.codex_exec')=1 THEN s.meta ELSE p.meta END
+        FROM packet_summaries s LEFT JOIN packets p ON p.id=s.id
+        WHERE s.thread=? AND s.method='POST'
+          AND (json_extract(s.meta,'$.codex_exec')=1 OR
+               (coalesce(json_extract(s.meta,'$.details_evicted'),0)=0 AND EXISTS (
+                    SELECT 1 FROM json_each(p.meta,'$.headers') header
+                    WHERE lower(header.key)='originator' AND header.value=?)))
+        ORDER BY s.created DESC,s.id DESC""", (thread, CODEX_EXEC_ORIGINATOR))
+    return any(codex_exec_generation(json.loads(raw)) for (raw,) in candidates)
 
 
-def _add_input_titles(database, records):
+def _add_capture_labels(database, records):
     pending = [record for record in records if record["thread_id"] and
+               record.get("session_kind") not in AUTOMATED_REQUEST_KINDS and
                not (isinstance(record.get("title"), str) and record["title"].strip())]
     if not pending:
         return
-    # Use only retained, redacted user labels. Basic records contain no input excerpts.
+    automated = ",".join("?" for _ in AUTOMATED_REQUEST_KINDS)
+    # Older captures can still provide a redacted user label if details remain.
     try:
         with closing(sqlite3.connect(database.as_uri() + "?mode=ro", uri=True, timeout=.2)) as db:
             for record in pending:
-                labels = db.execute("""SELECT json_extract(item.value,'$.label')
-                    FROM packet_summaries s JOIN packets p ON p.id=s.id
-                    JOIN json_each(p.meta,'$.input_items') item
+                thread = record["thread_id"]
+                if not record.get("session_kind") and _has_exec_generation(db, thread):
+                    record["codex_exec"] = True
+                candidates = db.execute(f"""SELECT json_extract(s.meta,'$.title'),json_extract(s.meta,'$.title_source'),
+                    CASE WHEN json_extract(s.meta,'$.title') IS NULL AND json_type(p.meta,'$.input_items')='array'
+                         THEN json_extract(p.meta,'$.input_items') END
+                    FROM packet_summaries s LEFT JOIN packets p ON p.id=s.id
                     WHERE s.thread=? AND s.method='POST' AND coalesce(json_extract(s.meta,'$.is_compaction'),0)=0
-                      AND item.type='object' AND json_extract(item.value,'$.kind')='message:user'
-                    ORDER BY s.created,s.id,item.key""", (record["thread_id"],))
-                for (label,) in labels:
-                    title = _input_title(label)
-                    if title:
-                        record["input_title"] = title
+                      AND coalesce(json_extract(s.meta,'$.request_purpose'),json_extract(s.meta,'$.session_kind'),
+                                   json_extract(s.meta,'$.request_kind'),'') NOT IN ({automated})
+                      AND (json_extract(s.meta,'$.title') IS NOT NULL
+                           OR coalesce(json_extract(s.meta,'$.details_evicted'),0)=0)
+                    ORDER BY s.created,s.id""", (thread, *AUTOMATED_REQUEST_KINDS))
+                for title, source, labels in candidates:
+                    if not title and labels:
+                        title = next((candidate for item in json.loads(labels)
+                                      if isinstance(item, dict) and item.get("kind") == "message:user"
+                                      and (candidate := input_title(item.get("label")))), None)
+                    if isinstance(title, str) and title.strip():
+                        record.update(title=title, title_source="manual" if source == "manual" else "input")
                         break
     except sqlite3.Error:
         # Legacy or temporarily unavailable details still allow the native name or ID.
@@ -466,14 +468,13 @@ class SessionSummaries:
                 if thread and scope:
                     captured_origins[thread] = scope
                 model_packets[thread] = _latest_model_packet(db, meta)
+                kind = temporary_kind_from_metadata(meta)
                 records.append({"thread_id": thread, "packet_count": count, "updated_at": created,
                                 "title": None, "latest_packet": {"id": meta["id"], "created": meta["created"],
                                 "wire_bytes": size if number(size) and size >= 0 else None},
                                 **({"parent_thread_id": session_id(meta.get("parent_thread_id"))}
                                    if session_id(meta.get("parent_thread_id")) else {}),
-                                **({"session_kind": meta["session_kind"]}
-                                   if isinstance(meta.get("session_kind"), str) and meta["session_kind"] in
-                                      AUXILIARY_KINDS else {})})
+                                **({"session_kind": kind} if kind else {})})
         native_origins = thread_origins(self.tokens.home)
         labels = self._labels([r["thread_id"] for r in records if r["thread_id"]], captured_origins, native_origins)
         with self._lock:
@@ -520,8 +521,8 @@ class SessionSummaries:
         known = {record["thread_id"] for record in records}
         older = [{"thread_id": thread, "packet_count": count, "updated_at": created, "title": None, "origin": None}
                  for thread, count, created in groups[MAX_SESSIONS:] if thread and thread not in known]
-        _add_input_titles(path, records + older)
-        older = [record for record in older if record.get("input_title")]
+        _add_capture_labels(path, records + older)
+        older = [record for record in older if record.get("title") or record.get("codex_exec")]
         if older and self.ssh_origins:
             with read_state(path) as db:
                 for record in older:
