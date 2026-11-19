@@ -247,8 +247,7 @@ button.other-session-group{background:#f5f2fc;border-color:#e7e0f5}
 .requests-sidebar{position:relative;height:auto;max-height:none;min-height:0;border-bottom:0;gap:var(--records-heading-gap);padding:var(--view-inset)}
 .requests-sidebar .packet-list{margin-inline:0}
 .sessions-sidebar .sidebar-footer,.requests-sidebar .sidebar-footer{padding-top:6px;flex-shrink:0}
-.storage-summary{display:flex;align-items:center;flex:none;gap:12px;margin-left:auto;color:var(--muted);font-size:10px;line-height:18px;font-variant-numeric:tabular-nums}
-.storage-summary>span{white-space:nowrap}
+.record-summary{display:flex;align-items:center;flex:none;gap:12px;margin-left:auto;color:var(--muted);font-size:10px;line-height:18px;font-variant-numeric:tabular-nums;white-space:nowrap}
 .packet-table{min-width:345px}
 .detail{
   --detail-frame-line:#d7e0ec;
@@ -700,7 +699,9 @@ button.other-session-group{background:#f5f2fc;border-color:#e7e0f5}
 #settings-dialog .context-default{display:flex;align-items:center;gap:8px;justify-self:start;min-width:0;min-height:var(--settings-control-height);margin:0;color:var(--muted);font-size:13px;line-height:20px}
 #settings-dialog .context-default input{display:block;width:14px;height:14px;margin:0}
 #settings-dialog .settings-grid{display:grid;grid-template-columns:minmax(0,1fr);gap:12px}
-#settings-dialog .settings-grid label{display:grid;grid-template-columns:var(--settings-label-width) minmax(0,1fr);align-items:center;gap:16px;margin:0}
+#settings-dialog .record-limit-row{display:grid;grid-template-columns:var(--settings-label-width) minmax(0,1fr);align-items:center;gap:16px}
+#settings-dialog .record-limit-control{display:flex;align-items:center;flex-wrap:wrap;gap:4px 12px;min-width:0}
+#settings-dialog .record-limit-usage{color:var(--muted);font-size:13px;line-height:20px;font-variant-numeric:tabular-nums}
 #settings-dialog .updates-heading{display:flex;align-items:center;gap:8px}
 #settings-dialog .repository-link{display:inline-flex;align-items:center;justify-content:center;flex:none;width:24px;height:24px;border-radius:6px;color:var(--muted)}
 #settings-dialog .repository-link:hover{color:var(--ink);background:var(--bg)}
@@ -747,7 +748,7 @@ button.other-session-group{background:#f5f2fc;border-color:#e7e0f5}
   #settings-dialog .proxy-inline-row{grid-template-columns:max-content minmax(0,1fr);column-gap:8px}
   #settings-dialog :is(.image-directory-row,.proxy-controls){grid-template-columns:minmax(0,var(--settings-path-width)) auto}
   #settings-dialog .settings-language-row{grid-template-columns:minmax(0,1fr) auto}
-  #settings-dialog :is(.zstd-level-control,.packet-size-limit,.runtime-setting-row,.image-directory-settings,.settings-grid label){grid-template-columns:minmax(0,1fr);gap:8px}
+  #settings-dialog :is(.zstd-level-control,.packet-size-limit,.runtime-setting-row,.image-directory-settings,.record-limit-row){grid-template-columns:minmax(0,1fr);gap:8px}
   #settings-dialog .entry-port-row{grid-template-columns:max-content minmax(0,1fr);gap:8px}
   #settings-dialog .entry-port-row>label{grid-column:1/-1}
   #settings-dialog .runtime-inline-hint{padding-inline-start:22px}
