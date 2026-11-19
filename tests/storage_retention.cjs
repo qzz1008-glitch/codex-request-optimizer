@@ -10,7 +10,8 @@ function fixture() {
   const elements=new Map();
   const element=id=>{
     if(!elements.has(id))elements.set(id,{id,hidden:false,disabled:false,textContent:'',value:'',children:[],
-      classList:{add(){}},querySelectorAll:()=>[],append(...values){this.children.push(...values);},replaceChildren(...values){this.children=values;}});
+      get firstChild(){return this.children[0];},classList:{add(){}},querySelectorAll:()=>[],
+      setAttribute(){},removeAttribute(){},append(...values){this.children.push(...values);},replaceChildren(...values){this.children=values;}});
     return elements.get(id);
   };
   const calls=[];
@@ -18,19 +19,21 @@ function fixture() {
     state:{selected:'basic',detail:{id:'basic',details_evicted:true},tab:'headers',diffAvailable:null,detailRequest:0,listRequest:0},
     requestBodyView:{id:'basic',body:{input:'cached private body'}},
     requestBodyCache:{id:'basic',promise:Promise.resolve({input:'cached private body'})},
+    requestBodyTextMode:false,requestBodyExportUrl:"",
     requestBodySequence:0,treeQueryTimer:0,tokenWindow:{input_tokens:123},
     $:element,t:value=>value,clearTimeout(){},URLSearchParams,
-    clearJsonFocus(){calls.push('focus-cleared');},clearJsonActions(){calls.push('actions-cleared');},
+    clearJsonFocus(){calls.push('focus-cleared');},clearCopyFeedback(){},
     fail(error){throw error;},
     cancelTokenRead(){calls.push('token-cancelled');},renderList(){calls.push('list-rendered');},showTab(){},
     el:(tag,cls,text)=>({...element(Symbol(tag)),tag,cls,text}),
     reconcileContent:(node,content)=>node.replaceChildren(content),
-    document:{createDocumentFragment:()=>({...element(Symbol('fragment'))})},
+    document:{createDocumentFragment:()=>element(Symbol('fragment'))},
     kind:value=>value,signed:value=>String(value),bytes:value=>String(value),calls,elements,tables:[],
     panel:title=>({...element(Symbol('panel')),title}),fact(node,label,value){node.append({label,value});},
     table(headers,rows){const result={...element(Symbol('table')),headers,rows};context.tables.push(result);return result;}
   };
   vm.createContext(context);
+  vm.runInContext(extract('function requestTextMessages(','function copyRequestJson('),context);
   vm.runInContext(extract('async function loadTree(path)','async function goPath(path)'),context);
   vm.runInContext(extract('function retainedReasoningEncryptedBytes(','function focusJsonPath('),context);
   vm.runInContext(source.split(/\r?\n/).filter(line=>/^function compressedBytes\(/.test(line)).join('\n'),context);
@@ -43,13 +46,19 @@ function fixture() {
   let passed=0;
   {
     const c=fixture();
+    c.setRequestBodyTextMode(true);
+    assert.equal(c.$('request-body-text').hidden,false);
+    assert(c.$('request-body-text').firstChild);
     c.api=async()=>{throw Error('Removed body must not be fetched');};
     await c.loadTree('');
     assert.equal(c.requestBodyView,null);
     assert.equal(c.requestBodyCache,null);
     assert.equal(c.$('tree-query').disabled,true);
     assert(c.$('json-tree').textContent.includes('仅保留基本信息'));
-    assert(c.calls.includes('actions-cleared'));
+    assert.equal(c.$('json-tree').hidden,false);
+    assert.equal(c.$('request-body-text').hidden,true);
+    assert.equal(c.$('request-body-text').children.length,0);
+    assert.equal(c.$('json-actions').hidden,true);
     await assert.rejects(c.ensureJsonView('basic',c.requestBodySequence),/仅保留基本信息/);
     c.state.selected='full';c.state.detail={id:'full'};
     c.ensureJsonView=async()=>({root:{},body:{input:'new detail'}});
