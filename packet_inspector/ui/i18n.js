@@ -1123,7 +1123,7 @@ const uiI18n = (() => {
     "趋势":"Trends",
     "会话请求趋势":"Session request trends",
     "请求大小":"Request size",
-    "已跳过无请求时段：{start} – {end}":"Idle interval skipped: {start} – {end}",
+    "无请求时间段：{start} – {end}":"No requests: {start} – {end}",
     "已跳过空档":"Idle periods skipped",
     "阈值 {size}":"Limit {size}",
     "实际上传":"Uploaded size",
