@@ -2445,6 +2445,17 @@ function requestBasicsPanel(m) {
   if(m.source!=="live")fact(facts,t("数据来源"),t("历史重建（大小为估算）"));
   if(m.details_evicted)fact(facts,t("请求详情"),t("已回收"));
   section.append(facts);
+  const session=sessionSummaries.find(row=>row.thread_id===m.thread_id);
+  const specialKind=[purposeFromMetadata(m),auxiliarySessionKind(session)].find(kind=>kind&&kind!=="subagent");
+  if(specialKind) {
+    const name=["index_task","subagent"].includes(session?.title_source)?null:sessionTitle(session);
+    if(name)fact(facts,t("独立会话名称"),name);
+    fact(facts,t("独立会话 ID"),m.thread_id||"—");
+    if(specialKind==="image_analysis") {
+      const body=requestBodyView&&requestBodyView.id===m.id?requestBodyView.body:null;
+      section.append(renderImageInfo(requestImagePaths(m,body)));
+    }
+  }
   return section;
 }
 function requestForwardingPanel(m) {
@@ -2994,25 +3005,7 @@ function renderImagePaths(paths,{showDirectoryRow=true}={}) {
 }
 function renderHeaders(m) {
   const root=document.createDocumentFragment();
-  root.append(requestBasicsPanel(m),requestForwardingPanel(m));
-  const session=sessionSummaries.find(row=>row.thread_id===m.thread_id);
-  const auxiliary=auxiliarySessionKind(session),purpose=purposeFromMetadata(m);
-  const specialKind=[purpose,m.request_kind,auxiliary].find(kind=>kind&&kind!=="subagent"&&Object.hasOwn(auxiliaryLabels,kind));
-  if(specialKind) {
-    const context=panel(t("独立会话"),{headingTag:"h2"}),facts=el("dl","request-overview-facts");
-    context.id="request-session-info";
-    fact(facts,t("任务类型"),t(auxiliaryLabels[specialKind]));
-    const nativeTitle=session?.title_source==="index_task"||session?.title_source==="subagent"?null:session?.title;
-    fact(facts,t("会话名称"),nativeTitle||"—");
-    fact(facts,"session_id",m.thread_id||"—");
-    context.append(facts);
-    if(specialKind==="image_analysis") {
-      const body=requestBodyView&&requestBodyView.id===m.id?requestBodyView.body:null;
-      context.append(renderImageInfo(requestImagePaths(m,body)));
-    }
-    root.append(context);
-  }
-  root.append(requestProtectionPanel(m));
+  root.append(requestBasicsPanel(m),requestForwardingPanel(m),requestProtectionPanel(m));
   reconcileContent($("headers-content"),root);renderProtectionPanelState();
 }
 async function setInterfaceLanguage(language,{persist=true}={}) {
