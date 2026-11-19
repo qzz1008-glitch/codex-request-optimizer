@@ -696,9 +696,13 @@ button.other-session-group{background:#f5f2fc;border-color:#e7e0f5}
 #settings-dialog .proxy-test-actions{display:flex;align-items:center;gap:8px}
 #settings-dialog #proxy-test{flex:none;width:72px;padding-inline:6px;white-space:nowrap}
 #settings-dialog #proxy-settings>.help{margin:12px 0 0}
-#settings-dialog .proxy-test-result{color:var(--muted);font-size:13px;line-height:20px;white-space:nowrap}
+#settings-dialog .proxy-test-result{
+  display:flex;flex-wrap:wrap;align-items:baseline;min-inline-size:0;gap:0 6px;
+  color:var(--muted);font-size:13px;line-height:16px;white-space:nowrap
+}
 #settings-dialog .proxy-test-result.success{color:var(--green)}
 #settings-dialog .proxy-test-result.error{color:var(--danger)}
+#settings-dialog #proxy-test-elapsed{color:var(--muted);font-size:12px;font-variant-numeric:tabular-nums}
 #settings-dialog .capacity-retry-limit{display:grid;grid-template-columns:var(--settings-inline-label-width) 68px minmax(0,1fr);align-items:center;gap:8px;min-width:0;color:var(--muted);font-size:13px;line-height:20px}
 #settings-dialog .capacity-retry-options{display:flex;flex-wrap:wrap;gap:var(--settings-row-gap) 20px}
 #settings-dialog .capacity-retry-options .capacity-retry-limit{grid-template-columns:auto 68px auto}
