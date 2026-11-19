@@ -699,6 +699,7 @@ async function enrichSessionPurposes(rows) {
 }
 let sessionLegacyCursor = 0;
 const dateFormat = new Intl.DateTimeFormat("zh-CN",{month:"2-digit",day:"2-digit"});
+const minuteFormat = new Intl.DateTimeFormat("zh-CN",{hour:"2-digit",minute:"2-digit",hourCycle:"h23"});
 const clockFormat = new Intl.DateTimeFormat("zh-CN",{hour:"2-digit",minute:"2-digit",second:"2-digit",hour12:false});
 const timestampFormat = new Intl.DateTimeFormat("zh-CN",{year:"numeric",month:"numeric",day:"numeric",hour:"2-digit",minute:"2-digit",second:"2-digit",hour12:false});
 const names = uiI18n.labels({"message:user":"用户消息","message:assistant":"助手消息","message:developer":"开发者指令","message:system":"系统指令",reasoning:"推理（含密文）",function_call_output:"函数工具返回",custom_tool_call_output:"自定义工具返回",function_call:"函数工具调用",custom_tool_call:"自定义工具调用",additional_tools:"增量工具目录",tool_definition:"工具定义",compaction_trigger:"压缩触发项",compaction:"压缩状态",context_compaction:"压缩内容"});
@@ -843,12 +844,49 @@ async function compressedDelta(data,current) {
 }
 function originalBytes(p) { return Number.isFinite(p.decoded_bytes) && p.decoded_bytes >= 0 ? p.decoded_bytes : null; }
 function compact(n) { if (n === undefined || n === null) return "—"; return n >= 1000000 ? (n/1000000).toFixed(2)+" MB" : n >= 1000 ? (n/1000).toFixed(1)+" KB" : n+" B"; }
+let recordScope = null, recordScopePending = false;
+function renderRecordScope() {
+  const empty = state.status?.storage?.count === 0;
+  const scope = empty ? null : recordScope;
+  const count = empty ? 0 : scope?.recorded_sessions;
+  setText($("recorded-session-count"), count === undefined ? "—" : t("{count} 个会话").replace("{count}", nf.format(count)));
+  const range = $("recorded-time-range");
+  const first = scope?.first_recorded_at, last = scope?.last_recorded_at;
+  const title = t("记录时间范围");
+  if (!Number.isFinite(first) || !Number.isFinite(last) || first < 0 || last < first || last > 8.64e12) {
+    setText(range, "—");
+    range.title = title;
+    return;
+  }
+  const start = new Date(first * 1000), end = new Date(last * 1000);
+  const startLabel = dateFormat.format(start) + " " + minuteFormat.format(start);
+  const endLabel = dateFormat.format(end) + " " + minuteFormat.format(end);
+  setText(range, startLabel === endLabel ? startLabel : startLabel + " – " + endLabel);
+  range.title = title + " · " + timestampFormat.format(start) + (first === last ? "" : " – " + timestampFormat.format(end));
+}
+async function refreshRecordScope(storage) {
+  const revision = storage?.revision;
+  if (!storage?.count || recordScopePending || (Number.isSafeInteger(revision) && recordScope?.revision === revision)) return;
+  recordScopePending = true;
+  try {
+    const summary = await api("/api/tray-status", undefined, AbortSignal.timeout(2500));
+    const {recorded_sessions, first_recorded_at, last_recorded_at} = summary;
+    if (!Number.isSafeInteger(recorded_sessions) || recorded_sessions < 0) return;
+    recordScope = {revision, recorded_sessions, first_recorded_at, last_recorded_at};
+    renderRecordScope();
+  } catch {
+    // Keep the last known scope during brief relay outages.
+  } finally {
+    recordScopePending = false;
+  }
+}
 function renderStorageInfo() {
-  const storage=state.status?.storage;if(!storage)return;
-  reconcileContent($("storage-info"),
-    el("span","",compact(storage.stored)+"/"+compact(storage.max_bytes)),
-    el("span","",t("{count} 请求").replace("{count}",nf.format(storage.count)))
-  );
+  const {count, stored} = state.status?.storage ?? {};
+  setText($("packet-limit-usage"), Number.isSafeInteger(count) && count >= 0
+    ? t("已记录 {count} 条").replace("{count}", nf.format(count)) : "—");
+  setText($("storage-limit-usage"), Number.isFinite(stored) && stored >= 0
+    ? t("已用 {size}").replace("{size}", compact(stored)) : "—");
+  renderRecordScope();
 }
 function signed(n) { return (n > 0 ? "+" : "") + bytes(n); }
 function kind(n) { return names[n] || n; }
@@ -1676,6 +1714,7 @@ async function refreshStatus(fill=false) {
   if(!settingsEditing&&["zh","en"].includes(status.ui_language)&&uiI18n.language!==status.ui_language)
     await setInterfaceLanguage(status.ui_language);
   renderStatus(fill);
+  void refreshRecordScope(status.storage);
 }
 function renderConnectionActions() {
   const s=state.status;if(!s)return;
