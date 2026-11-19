@@ -498,6 +498,7 @@ const nf = new Intl.NumberFormat("zh-CN");
 let workspaceView="records",tokenTrendView=null;
 let requestBodyCache=null, requestBodyExportUrl="", requestBodySequence=0;
 let treeQueryTimer=null,requestBodyView=null,requestBodyHighlight=null;
+let requestBodyTextMode=false;
 let contextSettings = null;
 const contextCustomValues = new Map();
 let settingsEditing = false, settingsSaving = false, settingsOpening = false, settingsRevision = 0;
@@ -640,7 +641,7 @@ function sessionGroups() {
     if(!owner&&memberId)owner=member;
     const id=owner?.thread_id||OTHER_SESSION_GROUP;
     if(!groups.has(id)) {
-      const title=owner?sessionTitle(owner)||id:t("其他");
+      const title=owner?sessionTitle(owner)||owner.input_title||id:t("其他");
       groups.set(id,{...(owner||{}),thread_id:id,title,members:[],packet_count:0,updated_at:owner?.updated_at||0});
     }
     const group=groups.get(id);group.members.push(member);
@@ -2670,12 +2671,54 @@ function jsonValueNode(value,key=null,comma=false,root=false,path="",nodes=new M
   else node.addEventListener("toggle",expand);
   return node;
 }
+function requestTextMessages(body) {
+  const input=body?.input??body?.messages;
+  const items=typeof input==="string"?[{role:"user",content:input}]:input;
+  if(!Array.isArray(items))return [];
+  // Codex can send workspace context and image markers as standalone user text parts.
+  const nativeUserContext=/^(?:# AGENTS\.md instructions[^\r\n]*\s+<INSTRUCTIONS>[\s\S]*<\/INSTRUCTIONS>|<environment_context>[\s\S]*<\/environment_context>|<image(?: name=[^<>\r\n]+)? path="[^"\r\n]+">(?:\s*<\/image>)?|<\/image>)$/u;
+  const messages=[];
+  for(const item of items) {
+    const role=item?.role;
+    if((role!=="user"&&role!=="assistant")||(item.type!=null&&item.type!=="message"))continue;
+    const content=item.content,parts=Array.isArray(content)?content.map(part=>{
+      if(role==="assistant"&&part?.type==="refusal")return part.refusal;
+      if(["input_text","output_text","text"].includes(part?.type))return part.text;
+    }):[content];
+    const text=parts.filter(part=>{
+      if(typeof part!=="string")return false;
+      const trimmed=part.trim();
+      return trimmed!==""&&(role!=="user"||!nativeUserContext.test(trimmed));
+    }).join("\n");
+    if(text)messages.push({role,text});
+  }
+  return messages;
+}
+function setRequestBodyTextMode(enabled) {
+  requestBodyTextMode=enabled;
+  const view=requestBodyView,root=$("request-body-text"),showText=enabled&&view?.id===state.selected;
+  if(showText&&!root.firstChild) {
+    const fragment=document.createDocumentFragment();
+    for(const {role,text} of requestTextMessages(view.body)) {
+      const message=el("div","request-message");
+      message.append(el("strong","request-message-author",t(role==="user"?"用户":"模型")),el("p","request-message-text",text));
+      fragment.append(message);
+    }
+    if(!fragment.firstChild)fragment.append(el("p","muted",t("没有可显示的对话文本。")));
+    root.replaceChildren(fragment);root.scrollTop=0;
+  }
+  $("json-text-toggle").setAttribute("aria-pressed",String(showText));
+  $("json-tree").hidden=showText;
+  root.hidden=!showText;
+}
 function clearJsonActions() {
   if(requestBodyExportUrl)URL.revokeObjectURL(requestBodyExportUrl);
   requestBodyExportUrl="";
   $("json-actions").hidden=true;
   $("json-export").removeAttribute("href");
   const feedback=$("json-copy-feedback");delete feedback.copyRequest;clearCopyFeedback(feedback);
+  $("request-body-text").replaceChildren();
+  setRequestBodyTextMode(requestBodyTextMode);
 }
 function copyRequestJson() {
   const view=requestBodyView;
@@ -2728,6 +2771,7 @@ async function ensureJsonView(id,sequence) {
   requestBodyExportUrl=URL.createObjectURL(new Blob([requestJsonText(body)],{type:"application/json;charset=utf-8"}));
   const exportLink=$("json-export");exportLink.href=requestBodyExportUrl;exportLink.download="codex-request-"+id+".json";
   $("json-actions").hidden=false;
+  setRequestBodyTextMode(requestBodyTextMode);
   return requestBodyView;
 }
 function focusJsonPath(view,path) {
@@ -2768,7 +2812,7 @@ async function loadTree(path) {
     }
   }
 }
-async function goPath(path) {showTab("tree");await loadTree(path);}
+async function goPath(path) {setRequestBodyTextMode(false);showTab("tree");await loadTree(path);}
 function scheduleTreeQuery(event) {
   clearTimeout(treeQueryTimer);requestBodySequence++;
   $("body-results").hidden=true;clearJsonFocus();
@@ -3210,6 +3254,7 @@ for(const select of document.querySelectorAll("[data-filter]")) select.addEventL
 $("tree-query").addEventListener("input",scheduleTreeQuery);
 $("tree-query").addEventListener("compositionend",scheduleTreeQuery);
 $("tree-query").addEventListener("keydown",e=>{if(e.key==="Enter" && !e.isComposing){e.preventDefault();Promise.resolve().then(submitTreeQuery).catch(fail);}});
+$("json-text-toggle").addEventListener("click",()=>setRequestBodyTextMode(!requestBodyTextMode));
 $("json-copy").addEventListener("click",copyRequestJson);
 function isTrendGeneration(packet) {
   const kinds=[purposeFromMetadata(packet),packet.request_purpose,packet.request_kind,packet.session_kind];

@@ -9,8 +9,9 @@ import sqlite3
 import threading
 import zlib
 
-from .request_context import (AUXILIARY_KINDS, IMAGE_ANALYST_PREFIXES, last_user_text, temporary_kind_from_metadata,
-                              temporary_request_kind, request_session_context, session_id)
+from .request_context import (AUXILIARY_KINDS, IMAGE_ANALYST_PREFIXES, NEXT_MESSAGE_PREFIX, TITLE_REQUEST_PREFIX,
+                              last_user_text, temporary_kind_from_metadata, temporary_request_kind,
+                              request_session_context, session_id)
 from .response_usage import packet_usage
 from .native_state import WSL_HOST_ID, read_state, state_databases, thread_origins
 from .token_estimate import estimate_usage, overflow_applied
@@ -19,6 +20,52 @@ from .usage_trigger import REPORTED_INPUT_TOKENS
 
 MAX_SESSIONS = 300
 INDEX_TASK_PREFIX = "You are in a fork of an existing Codex thread.\nFill the structured description field"
+INPUT_TITLE_LENGTH = 48
+INPUT_CONTEXT_WRAPPERS = (
+    ("# AGENTS.md instructions", "</INSTRUCTIONS>"),
+    ("<environment_context>", "</environment_context>"),
+    ("<image name=", "</image>"),
+)
+
+
+def _input_title(label):
+    if not isinstance(label, str):
+        return None
+    text = label.lstrip()
+    while text:
+        end = next((end for start, end in INPUT_CONTEXT_WRAPPERS if text.startswith(start)), None)
+        if end is None:
+            break
+        text = text.partition(end)[2].lstrip()
+    if not text or text.startswith((INDEX_TASK_PREFIX, NEXT_MESSAGE_PREFIX, TITLE_REQUEST_PREFIX, *IMAGE_ANALYST_PREFIXES)):
+        return None
+    title = " ".join(text.split())
+    return title if len(title) <= INPUT_TITLE_LENGTH else title[:INPUT_TITLE_LENGTH].rstrip() + "…"
+
+
+def _add_input_titles(database, records):
+    pending = [record for record in records if record["thread_id"] and
+               not (isinstance(record.get("title"), str) and record["title"].strip())]
+    if not pending:
+        return
+    # Use only retained, redacted user labels. Basic records contain no input excerpts.
+    try:
+        with closing(sqlite3.connect(database.as_uri() + "?mode=ro", uri=True, timeout=.2)) as db:
+            for record in pending:
+                labels = db.execute("""SELECT json_extract(item.value,'$.label')
+                    FROM packet_summaries s JOIN packets p ON p.id=s.id
+                    JOIN json_each(p.meta,'$.input_items') item
+                    WHERE s.thread=? AND s.method='POST' AND coalesce(json_extract(s.meta,'$.is_compaction'),0)=0
+                      AND item.type='object' AND json_extract(item.value,'$.kind')='message:user'
+                    ORDER BY s.created,s.id,item.key""", (record["thread_id"],))
+                for (label,) in labels:
+                    title = _input_title(label)
+                    if title:
+                        record["input_title"] = title
+                        break
+    except sqlite3.Error:
+        # Legacy or temporarily unavailable details still allow the native name or ID.
+        return
 
 
 def index_task_title(body):
@@ -105,6 +152,20 @@ def _packet_summary(thread, row):
     packet = meta if isinstance(meta, dict) else {}
     packet.update(id=packet_id, created=created, method=method, thread_id=thread)
     return packet
+
+
+def _latest_session_packet(db, thread):
+    # Keep known IDs searchable by the existing thread/time index. Older stores
+    # may use either NULL or an empty string for an unknown ID.
+    condition = "thread=?" if thread else "coalesce(thread,'')=?"
+    row = db.execute("SELECT id,created,method,meta FROM packet_summaries "
+                     "WHERE " + condition + " AND method!='GET' "
+                     "ORDER BY created DESC,id DESC LIMIT 1", (thread,)).fetchone()
+    return _packet_summary(thread, row) if row else None
+
+
+def _captured_connection_scope(packet):
+    return connection_scope(packet) if packet and packet.get("source") == "live" else None
 
 
 def _earlier_model_packets(db, latest):
@@ -395,24 +456,18 @@ class SessionSummaries:
             db.execute("BEGIN")
             groups = db.execute("SELECT coalesce(thread,''),count(*),max(created) FROM packet_summaries "
                                 "WHERE method!='GET' GROUP BY coalesce(thread,'') "
-                                "ORDER BY max(created) DESC,coalesce(thread,'') LIMIT ?", (MAX_SESSIONS,)).fetchall()
-            for thread, count, created in groups:
-                # Keep known IDs searchable by the existing thread/time index.
-                # Older stores may use either NULL or '' for an unknown ID.
-                condition = "thread=?" if thread else "coalesce(thread,'')=?"
-                row = db.execute("SELECT id,created,method,meta FROM packet_summaries "
-                                 "WHERE " + condition + " AND method!='GET' "
-                                 "ORDER BY created DESC,id DESC LIMIT 1", (thread,)).fetchone()
-                if not row:
+                                "ORDER BY max(created) DESC,coalesce(thread,'')").fetchall()
+            for thread, count, created in groups[:MAX_SESSIONS]:
+                meta = _latest_session_packet(db, thread)
+                if meta is None:
                     continue
-                meta = _packet_summary(thread, row)
                 size = meta.get("outbound_wire_bytes")
-                scope = connection_scope(meta)
-                if thread and meta.get("source") == "live" and scope:
+                scope = _captured_connection_scope(meta)
+                if thread and scope:
                     captured_origins[thread] = scope
                 model_packets[thread] = _latest_model_packet(db, meta)
                 records.append({"thread_id": thread, "packet_count": count, "updated_at": created,
-                                "title": None, "latest_packet": {"id": row[0], "created": row[1],
+                                "title": None, "latest_packet": {"id": meta["id"], "created": meta["created"],
                                 "wire_bytes": size if number(size) and size >= 0 else None},
                                 **({"parent_thread_id": session_id(meta.get("parent_thread_id"))}
                                    if session_id(meta.get("parent_thread_id")) else {}),
@@ -461,6 +516,20 @@ class SessionSummaries:
                         previous = _previous_token_window(db, model_packets[thread], self._last_native_tokens.get(thread))
                         if previous is not None:
                             record["token_window"] = previous
+        # Older sessions are still in the sidebar even when recent metadata is capped.
+        known = {record["thread_id"] for record in records}
+        older = [{"thread_id": thread, "packet_count": count, "updated_at": created, "title": None, "origin": None}
+                 for thread, count, created in groups[MAX_SESSIONS:] if thread and thread not in known]
+        _add_input_titles(path, records + older)
+        older = [record for record in older if record.get("input_title")]
+        if older and self.ssh_origins:
+            with read_state(path) as db:
+                for record in older:
+                    thread = record["thread_id"]
+                    scope = _captured_connection_scope(_latest_session_packet(db, thread))
+                    if scope and scope[0] == "ssh":
+                        captured_origins[thread] = scope
+        records.extend(older)
         ssh_keys = {key for kind, key in captured_origins.values() if kind == "ssh"}
         ssh_origins = self.ssh_origins(ssh_keys) if ssh_keys and self.ssh_origins else {}
         for record in records:

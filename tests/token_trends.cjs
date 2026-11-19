@@ -293,7 +293,8 @@ function eventRows(){return [
   context.sessionMetadataAt=1;
   context.state={sessions:['parent','child','standalone','']};
   context.sessionSummaries=[{thread_id:'parent',title:'Parent task'},
-   {thread_id:'child',session_kind:'subagent',parent_thread_id:'parent',origin:{kind:'remote',address:'192.0.2.8'}}];
+   {thread_id:'child',session_kind:'subagent',parent_thread_id:'parent',origin:{kind:'remote',address:'192.0.2.8'}},
+   {thread_id:'standalone',input_title:'<b>First CLI input</b>'}];
   const rows=['parent','child','standalone','','chart-only'].map((thread_id,i)=>packet(i+1,{
    thread_id,upstream_usage:{input_tokens:100},outbound_wire_bytes:1000
   }));
@@ -304,14 +305,16 @@ function eventRows(){return [
   assert.deepEqual(Array.from(result.series.find(series=>series.id==='parent').points,point=>point.packet.thread_id),['child','parent']);
   for(const chart of result.charts)assert.deepEqual(chartNodes(chart,'trend-series-line').map(node=>node.dataset.series).sort(),['parent','standalone']);
   const legend=ids.get('trend-series');
-  assert.deepEqual(legend.children.map(node=>node.children[1].textContent).sort(),['Parent task','standalone']);
+  assert.deepEqual(legend.children.map(node=>node.children[1].textContent).sort(),['<b>First CLI input</b>','Parent task']);
   for(const query of ['child','192.0.2.8']) {
    result.query=query;
    assert.deepEqual(Array.from(result.model().matched,series=>series.id),['parent']);
   }
+  result.query='first cli input';
+  assert.deepEqual(Array.from(result.model().matched,series=>series.id),['standalone']);
   result.query='';
   const standaloneColor=result.series.find(series=>series.id==='standalone').color;
-  context.sessionSummaries.push({thread_id:'standalone',title:'CLI session'});
+  context.sessionSummaries[2].title='CLI session';
   result.render();
   assert.deepEqual(curves(),sidebar());
   assert.equal(result.series.find(series=>series.id==='standalone').color,standaloneColor);
