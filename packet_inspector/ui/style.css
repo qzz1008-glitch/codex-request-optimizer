@@ -219,7 +219,7 @@ body{height:100dvh;min-width:0;display:flex;flex-direction:column;overflow-x:hid
 .image-path-name{flex:1;min-width:0;color:var(--ink);font:12px/1.6 Consolas,"Cascadia Mono",monospace;white-space:pre-wrap;overflow-wrap:anywhere;user-select:text}
 .session-title,.session-meta>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .session-title{font-size:13px;font-weight:600;line-height:1.35}
-.session-id{min-width:0;overflow-wrap:anywhere;font:.6875rem/1.35 Consolas,"Cascadia Mono",monospace;color:var(--muted)}
+.session-id{min-width:0;overflow-wrap:anywhere;font:calc(11rem / 14)/1.35 Consolas,"Cascadia Mono",monospace;color:var(--muted)}
 .session-meta{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));align-items:center;gap:4px;font-size:10px;line-height:1.35;color:var(--muted);font-variant-numeric:tabular-nums}
 .session-token{grid-column:1}
 .session-origin{grid-column:2;text-align:center}
