@@ -248,7 +248,6 @@ button.other-session-group{background:#f5f2fc;border-color:#e7e0f5}
   --detail-divider:#e6ebf2;
   --detail-content-inset:14px;
   --detail-scrollbar-size:10px;
-  --detail-tab-inset:3px;
   display:flex;
   flex-direction:column;
   row-gap:var(--records-heading-gap);
@@ -266,7 +265,7 @@ button.other-session-group{background:#f5f2fc;border-color:#e7e0f5}
   align-self:flex-end;
   block-size:var(--records-heading-height);
   min-width:0;
-  gap:1px;
+  gap:3px;
   margin:0;
   /* Bridge the shared heading gap and cover the detail frame's top border. */
   margin-block-end:calc(-1px - var(--records-heading-gap));
@@ -278,20 +277,35 @@ button.other-session-group{background:#f5f2fc;border-color:#e7e0f5}
 .detail:has(>#packet-detail[hidden]) .detail-title>.tabs{display:none}
 .detail-title>.tabs button{
   position:relative;
+  isolation:isolate;
   display:flex;
   flex:none;
   align-items:center;
   height:100%;
-  padding:0 var(--detail-tab-inset) 6px;
+  padding:0 6px 6px;
   border:1px solid transparent;
   border-radius:8px 8px 0 0;
   background:transparent;
-  color:#526174;
+  color:#43556d;
   font-size:12px;
   line-height:22px;
   white-space:nowrap;
 }
-.detail-title>.tabs button:hover{background:#edf2f8;color:var(--ink)}
+.detail-title>.tabs button:lang(zh){padding-inline:9px;letter-spacing:.035em}
+/* Keep inactive surfaces clear of the frame without moving the button or label. */
+.detail-title>.tabs button[aria-selected="false"]::before{
+  content:"";
+  position:absolute;
+  z-index:-1;
+  inset:0 0 5px;
+  border:1px solid #d3deeb;
+  border-radius:6px;
+  background:#eaf0f7;
+}
+.detail-title>.tabs button[aria-selected="false"]:is(:hover,:focus-visible)::before{
+  border-color:#becde0;
+  background:#dfe9f7;
+}
 .detail-title>.tabs button[aria-selected="true"]{
   background:var(--panel);
   border-color:var(--detail-frame-line);
