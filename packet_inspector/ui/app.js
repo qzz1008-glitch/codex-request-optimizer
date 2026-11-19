@@ -885,7 +885,7 @@ function renderStorageInfo() {
   setText($("packet-limit-usage"), Number.isSafeInteger(count) && count >= 0
     ? t("已记录 {count} 条").replace("{count}", nf.format(count)) : "—");
   setText($("storage-limit-usage"), Number.isFinite(stored) && stored >= 0
-    ? t("已用 {size}").replace("{size}", compact(stored)) : "—");
+    ? t("已使用 {size}").replace("{size}", compact(stored)) : "—");
   renderRecordScope();
 }
 function signed(n) { return (n > 0 ? "+" : "") + bytes(n); }
