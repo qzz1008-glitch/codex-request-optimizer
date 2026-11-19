@@ -264,7 +264,7 @@ button.other-session-group{background:#f5f2fc;border-color:#e7e0f5}
   position:relative;
   z-index:1;
   align-self:flex-end;
-  block-size:calc(var(--records-heading-height) + var(--records-heading-gap) - 6px);
+  block-size:var(--records-heading-height);
   min-width:0;
   gap:1px;
   margin:0;
@@ -282,7 +282,7 @@ button.other-session-group{background:#f5f2fc;border-color:#e7e0f5}
   flex:none;
   align-items:center;
   height:100%;
-  padding:0 var(--detail-tab-inset) var(--records-heading-gap);
+  padding:0 var(--detail-tab-inset) 6px;
   border:1px solid transparent;
   border-radius:8px 8px 0 0;
   background:transparent;
