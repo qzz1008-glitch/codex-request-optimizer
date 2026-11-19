@@ -742,7 +742,7 @@ const uiI18n = (() => {
     "压缩比例":"Compression ratio",
     "生成摘要 ":"Summaries generated: ",
     "\n已触发请求保护：":"\nRequest protection triggered: ",
-    "请求大小上限":"Request size limit",
+    "大小上限":"Size limit",
     "记录与存储":"Records and storage",
     "记录设置":"Record settings",
     "保存记录设置":"Save record settings",
