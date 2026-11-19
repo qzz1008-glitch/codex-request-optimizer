@@ -101,6 +101,16 @@ def input_title(text):
     return title if len(title) <= INPUT_TITLE_LENGTH else title[:INPUT_TITLE_LENGTH].rstrip() + "…"
 
 
+def input_title_from_labels(items):
+    if isinstance(items, list):
+        for item in items:
+            if isinstance(item, dict) and item.get("kind") == "message:user":
+                title = input_title(item.get("label"))
+                if title:
+                    return title
+    return None
+
+
 def request_input_title(body):
     """Take a short title from the first meaningful, already redacted user message."""
     inputs = body.get("input") if isinstance(body, dict) else None
