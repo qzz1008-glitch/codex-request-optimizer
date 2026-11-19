@@ -107,9 +107,7 @@ def _packet_summary(thread, row):
     return packet
 
 
-def _latest_model_packet(db, latest):
-    if is_token_request(latest, include_compaction=True):
-        return latest
+def _earlier_model_packets(db, latest):
     thread = latest["thread_id"]
     if thread:
         rows = db.execute("""SELECT id,created,method,meta FROM packet_summaries
@@ -118,8 +116,13 @@ def _latest_model_packet(db, latest):
         for row in rows:
             packet = _packet_summary(thread, row)
             if is_token_request(packet, include_compaction=True):
-                return packet
-    return None
+                yield packet
+
+
+def _latest_model_packet(db, latest):
+    if is_token_request(latest, include_compaction=True):
+        return latest
+    return next(_earlier_model_packets(db, latest), None)
 
 
 def _captured_token_window(packet):
@@ -138,12 +141,33 @@ def _captured_token_window(packet):
     return None
 
 
+def _has_input_tokens(window):
+    return (window is not None and window["state"] == "available"
+            and (not window.get("estimated") or window.get("source") == "codex_estimate"))
+
+
+def _previous_token_window(db, latest, last_native):
+    next_created = latest["created"]
+    for packet in _earlier_model_packets(db, latest):
+        window = _captured_token_window(packet)
+        if _has_input_tokens(window):
+            return window
+        if window is None and last_native:
+            # Keep the original native attribution within the next model request's boundary.
+            order, native = last_native
+            if order == (packet["created"], packet["id"]) and native["recorded_at"] < next_created:
+                return native
+        next_created = packet["created"]
+    return None
+
+
 class SessionSummaries:
     def __init__(self, token_windows, *, wsl_labels=None, ssh_labels=None):
         self.tokens = token_windows
         self.connection_labels = {kind: reader for kind, reader in (("wsl", wsl_labels), ("ssh", ssh_labels)) if reader}
         self._cursor = 0
         self._token_states = {}
+        self._last_native_tokens = {}
         self._request_labels = OrderedDict()
         self._lock = threading.Lock()
 
@@ -409,13 +433,33 @@ class SessionSummaries:
                     record["token_window"] = window or {"state": "unavailable"}
             ids = {packet["id"] for _, packet in fallback}
             self._token_states = {k: v for k, v in self._token_states.items() if k in ids}
+            self._last_native_tokens = {thread: value for thread, value in self._last_native_tokens.items()
+                                        if model_packets.get(thread)}
             # At most eight bounded history reads per refresh, rotating through larger lists.
             for offset in range(min(8, len(fallback))):
                 _, packet = fallback[(self._cursor + offset) % len(fallback)]
-                self._token_states[packet["id"]] = self._native_token_window(path, packet)
+                window = self._native_token_window(path, packet)
+                self._token_states[packet["id"]] = window
+                thread = packet["thread_id"]
+                order = (packet["created"], packet["id"])
+                last_native = self._last_native_tokens.get(thread)
+                if _has_input_tokens(window):
+                    if last_native is None or order >= last_native[0]:
+                        self._last_native_tokens[thread] = (order, window)
+                elif last_native and order == last_native[0]:
+                    del self._last_native_tokens[thread]
             self._cursor = (self._cursor + min(8, len(fallback))) % len(fallback) if fallback else 0
             for record, packet in fallback:
                 record["token_window"] = self._token_states.get(packet["id"], {"state": "loading"})
+            missing = [record for record in records if record["thread_id"] and model_packets.get(record["thread_id"])
+                       and not _has_input_tokens(record["token_window"])]
+            if missing:
+                with closing(sqlite3.connect(path.as_uri() + "?mode=ro", uri=True, timeout=.2)) as db:
+                    for record in missing:
+                        thread = record["thread_id"]
+                        previous = _previous_token_window(db, model_packets[thread], self._last_native_tokens.get(thread))
+                        if previous is not None:
+                            record["token_window"] = previous
         for record in records:
             if record["thread_id"] in native_origins:
                 record["origin"] = native_origins[record["thread_id"]][1]
