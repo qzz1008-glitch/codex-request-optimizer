@@ -185,7 +185,7 @@ def main():
         seed.close()
         historic = wait_for(lambda: next((p for p in api("/api/packets?limit=5") if p["state"] == "complete"), None))
         historic_view = api("/api/packets/" + historic["id"] + "/export")["view"]
-        database = Path(api("/api/status")["active_log_dir"]) / "packets.sqlite"
+        database = Path(api("/api/status")["active_cache_dir"]) / "packets.sqlite"
         database_identity = (database.stat().st_dev, database.stat().st_ino)
         # A direct legacy relay cannot transfer its listening port without an
         # outage. Verify refusal preserves it, then explicitly stop this idle,
