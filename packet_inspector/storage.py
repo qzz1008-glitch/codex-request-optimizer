@@ -14,7 +14,8 @@ import zlib
 
 from .analyzer import CLASSIFICATION_VERSION, classify_request, encode, compare_packets
 from .maintenance import SQLiteReclaimer
-from .request_context import packet_metadata, request_session_context, temporary_request_kind, trend_packet_metadata
+from .request_context import (AUTOMATED_REQUEST_KINDS, codex_exec_generation, packet_metadata, request_input_title,
+                              request_session_context, temporary_request_kind, trend_packet_metadata)
 from .response_usage import compact_packet_usage, packet_usage
 from .token_estimate import SOURCE, request_basis, calibrate, overflow_applied, unavailable
 from .token_window import is_token_request
@@ -147,9 +148,17 @@ class Store:
                 "state": "captured", "source": meta.get("source", "live"),
                 "capture_owner": self.capture_owner}
         meta = compact_packet_usage(packet_metadata(meta))
-        if (meta.get("source") == "live" and meta.get("method") == "POST" and is_token_request(meta, include_compaction=True)
-                and isinstance(content, dict) and isinstance(content.get("body"), dict)):
-            meta["request_token_estimate"] = self._input_estimate(meta, content["body"])
+        if meta.get("thread_id") and codex_exec_generation(meta):
+            meta["codex_exec"] = True
+        body = content.get("body") if isinstance(content, dict) else None
+        if meta.get("method") == "POST" and isinstance(body, dict):
+            if (meta.get("thread_id") and is_token_request(meta) and not meta.get("title")
+                    and meta.get("request_purpose") not in AUTOMATED_REQUEST_KINDS):
+                title = request_input_title(body)
+                if title:
+                    meta["title"] = title
+            if meta.get("source") == "live" and is_token_request(meta, include_compaction=True):
+                meta["request_token_estimate"] = self._input_estimate(meta, body)
         if self.max_detail_count == 0:
             meta = self._basic_metadata(meta)
             content = None

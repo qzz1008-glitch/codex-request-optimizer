@@ -7,10 +7,10 @@ import unittest
 from unittest.mock import patch
 import zlib
 
-from packet_inspector.session_summary import IMAGE_ANALYST_PREFIXES, INDEX_TASK_PREFIX, SessionSummaries, image_analysis_request
+from packet_inspector.session_summary import SessionSummaries, image_analysis_request
 from packet_inspector.token_window import TokenWindows
 from packet_inspector.analyzer import inspect_request
-from packet_inspector.request_context import NEXT_MESSAGE_PREFIX, TITLE_REQUEST_PREFIX
+from packet_inspector.request_context import IMAGE_ANALYST_PREFIXES, INDEX_TASK_PREFIX, NEXT_MESSAGE_PREFIX, TITLE_REQUEST_PREFIX
 from packet_inspector.storage import Store
 from tests.test_token_window import THREAD, event
 
@@ -322,7 +322,7 @@ class SessionSummaryTests(unittest.TestCase):
         self.assertEqual(row["updated_at"], 105)
         self.assertEqual(row["latest_packet"]["wire_bytes"], 4000)
 
-    def test_input_title_uses_first_retained_user_text_and_yields_to_native_name(self):
+    def test_first_input_title_supports_older_details_and_yields_to_native_name(self):
         path = self.native / "state_5.sqlite"
         path.unlink()
         capture = self.root / "input-title-capture"
@@ -331,22 +331,27 @@ class SessionSummaryTests(unittest.TestCase):
         def add(at, inputs, route="/responses"):
             meta, content = inspect_request(json.dumps({"input": inputs}).encode(), {"x-codex-thread-id": THREAD}, route)
             with patch("packet_inspector.storage.time.time", return_value=at):
-                store.add({**meta, "method": "POST", "path": route}, content)
+                return store.add({**meta, "method": "POST", "path": route}, content)
 
         add(101, [{"role": "user", "content": "Summarize the context"}], "/responses/compact")
         add(102, [{"role": "user", "content": "<environment_context>\n" + "x" * 200 + "\n</environment_context>"}])
-        add(103, [{"role": "developer", "content": "Instructions from the application"},
-                  {"role": "user", "content": "# AGENTS.md instructions\n<INSTRUCTIONS>\nLocal rules\n</INSTRUCTIONS>"},
-                  {"role": "user", "content": [{"type": "input_text", "text":
-                   '<image name="sample" path="C:/sample.png"></image>\n  检查  \n sk-0123456789abcdefghijklm  ' + "文" * 50}]}])
+        first = add(103, [{"role": "developer", "content": "Instructions from the application"},
+                          {"role": "user", "content": "# AGENTS.md instructions\n<INSTRUCTIONS>\nLocal rules\n</INSTRUCTIONS>"},
+                          {"role": "user", "content": [{"type": "input_text", "text":
+                           '<image name="sample" path="C:/sample.png"></image>\n  检查  \n sk-0123456789abcdefghijklm  ' + "文" * 50}]}])
         add(104, [{"role": "user", "content": "Later follow-up"}])
+        prefix = "检查 [credential redacted] "
+        title = prefix + "文" * (48 - len(prefix)) + "…"
+        self.assertEqual(store.get(first)[0]["title"], title)
+        with store.connect() as db:
+            db.execute("UPDATE packets SET meta=json_remove(meta,'$.title') WHERE id=?", (first,))
 
         before = (capture / "packets.sqlite").read_bytes()
         with patch("packet_inspector.session_summary.zlib.decompressobj", side_effect=AssertionError("body read")):
             row = self.reader.read(capture)["sessions"][0]
-        self.assertIsNone(row["title"])
-        prefix = "检查 [credential redacted] "
-        self.assertEqual(row["input_title"], prefix + "文" * (48 - len(prefix)) + "…")
+        self.assertEqual(row["title"], title)
+        self.assertEqual(row["title_source"], "input")
+        self.assertNotIn("input_title", row)
         self.assertEqual((capture / "packets.sqlite").read_bytes(), before)
 
         with closing(sqlite3.connect(path)) as db:
@@ -355,13 +360,13 @@ class SessionSummaryTests(unittest.TestCase):
             db.commit()
         row = self.reader.read(capture)["sessions"][0]
         self.assertEqual(row["title"], "Native name")
-        self.assertNotIn("input_title", row)
+        self.assertNotIn("title_source", row)
 
-    def test_input_title_covers_older_retained_details_and_respects_pruning(self):
+    def test_input_title_covers_older_sessions_after_details_are_pruned(self):
         older = "00000000-0000-0000-0000-000000000001"
         capture = self.root / "older-input-title-capture"
         store = Store(capture)
-        body = json.dumps({"input": [{"role": "user", "content": "First request"}]}).encode()
+        body = json.dumps({"input": "First request"}).encode()
         route = "a" * 64
         origin = {"kind": "remote", "address": "198.51.100.176"}
         for at, thread in enumerate((older, THREAD), start=100):
@@ -369,18 +374,54 @@ class SessionSummaryTests(unittest.TestCase):
             if thread == older:
                 meta.update(source="live", ssh_connection_key=route)
             with patch("packet_inspector.storage.time.time", return_value=at):
-                store.add({**meta, "method": "POST", "path": "/responses"}, content)
+                packet = store.add({**meta, "method": "POST", "path": "/responses"}, content)
+            if thread == older:
+                older_packet = packet
         with patch("packet_inspector.session_summary.MAX_SESSIONS", 1), \
              patch.object(self.reader, "ssh_origins", return_value={route: ("remote-ssh-fixture", origin)}) as resolve:
             sessions = self.reader.read(capture)["sessions"]
         resolve.assert_called_once_with({route})
         self.assertEqual(sessions[1]["origin"], origin)
-        self.assertEqual([(row["thread_id"], row.get("input_title")) for row in sessions],
-                         [(THREAD, None), (older, "First request")])
+        self.assertEqual([(row["thread_id"], row.get("title_source")) for row in sessions],
+                         [(THREAD, None), (older, "input")])
+        self.assertEqual(sessions[1]["title"], "First request")
         store.configure_limits(1_000_000, 10, 0)
-        unnamed = next(row for row in self.reader.read(capture)["sessions"] if row["thread_id"] == older)
-        self.assertIsNone(unnamed["title"])
-        self.assertNotIn("input_title", unnamed)
+        self.assertIsNone(store.get(older_packet, content=True)[1])
+        saved = next(row for row in self.reader.read(capture)["sessions"] if row["thread_id"] == older)
+        self.assertEqual(saved["title"], "First request")
+
+    def test_exec_sessions_require_a_generation_and_keep_their_identity_after_compaction(self):
+        capture = self.root / "exec-capture"
+        store = Store(capture)
+        standalone, legacy, title, compact, prewarm, terminal = [
+            f"00000000-0000-0000-0000-{number:012d}" for number in range(1, 7)]
+
+        def add(thread, *, origin="codex_exec", path="/responses", context=None):
+            headers = {"Originator": origin, "x-codex-thread-id": thread}
+            if context:
+                headers["x-codex-turn-metadata"] = json.dumps(context)
+            meta, content = inspect_request(b'{"input":"First request"}', headers, path)
+            return store.add({**meta, "method": "POST", "path": path}, content)
+
+        first = add(standalone)
+        add(standalone, path="/responses/compact")
+        previous = add(legacy)
+        add(title, context={"thread_source": "thread_title"})
+        add(compact, path="/responses/compact")
+        add(prewarm, context={"request_kind": "prewarm"})
+        add(terminal, origin="codex_cli_rs")
+        with store.connect() as db:
+            db.execute("UPDATE packets SET meta=json_remove(meta,'$.codex_exec') WHERE id=?", (previous,))
+        sessions = {row["thread_id"]: row for row in self.reader.read(capture)["sessions"]}
+        self.assertEqual({thread for thread, row in sessions.items() if row.get("codex_exec")}, {standalone, legacy})
+        self.assertEqual(sessions[title]["session_kind"], "title_generation")
+        store.configure_limits(1_000_000, 25, 0)
+        saved, body = store.get(first, content=True)
+        self.assertIsNone(body)
+        self.assertNotIn("headers", saved)
+        sessions = {row["thread_id"]: row for row in self.reader.read(capture)["sessions"]}
+        self.assertEqual({thread for thread, row in sessions.items() if row.get("codex_exec")}, {standalone})
+        self.assertEqual(sessions[standalone]["title"], "First request")
 
     def test_explicit_ssh_membership_overrides_local_index_for_sidebar_origin(self):
         path = self.native / ".codex-global-state.json"
@@ -673,10 +714,11 @@ class SessionSummaryTests(unittest.TestCase):
         self.assertNotIn("parent_thread_id", row)
         self.assertEqual((self.capture / "packets.sqlite").read_bytes(), before)
 
-    def test_ordinary_image_request_keeps_missing_name_state(self):
+    def test_ordinary_image_request_uses_user_text_after_the_attachment(self):
         self.image_request(text='<image name=[Image #1] path="C:\\example.png">\n</image>\n帮我看看这张图')
         row = next(r for r in self.reader.read(self.capture)["sessions"] if r["thread_id"] == THREAD)
-        self.assertIsNone(row["title"])
+        self.assertEqual(row["title"], "帮我看看这张图")
+        self.assertEqual(row["title_source"], "input")
         self.assertNotIn("session_kind", row)
 
     def test_auxiliary_metadata_is_classified_without_decompressing_body(self):

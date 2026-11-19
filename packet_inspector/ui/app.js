@@ -588,6 +588,7 @@ const auxiliaryLabels={image_analysis:"图片解析",next_message_suggestion:"�
 const requestPurposeCache=new Map();
 function auxiliarySessionKind(row) {return Object.hasOwn(auxiliaryLabels,row?.session_kind)?row.session_kind:row?.title_source==="index_task"?"session_index":row?.title_source==="subagent"?"subagent":null;}
 function sessionTitle(row) {return typeof row?.title==="string"&&row.title.trim()?row.title:null;}
+function knownSessionTitle(row) {return row?.title_source==="input"?null:sessionTitle(row);}
 const SIDEBAR_SESSION_TITLE_LIMIT = 32;
 const sidebarTitleSegmenter = typeof Intl.Segmenter === "function" ? new Intl.Segmenter() : null;
 function sidebarSessionTitle(title) {
@@ -609,8 +610,8 @@ function preserveSessionTitles(rows) {
   const previous=new Map(sessionSummaries.map(row=>[row.thread_id,row]));
   return rows.map(row=>{
     if(typeof row.thread_id!=="string"||!row.thread_id)return row;
-    const known=previous.get(row.thread_id),title=sessionTitle(row);
-    if(!sessionTitle(known))return row;
+    const known=previous.get(row.thread_id),title=knownSessionTitle(row);
+    if(!knownSessionTitle(known))return row;
     if(title&&!(row.title_source==="subagent"&&!["subagent","index_task"].includes(known.title_source)))return row;
     const merged={...row,title:known.title,title_cached:true};
     const kind=auxiliarySessionKind(row);if(kind)merged.session_kind=kind;
@@ -635,13 +636,14 @@ function sessionGroups() {
       if(visited.has(current.thread_id))break;
       visited.add(current.thread_id);
       const kind=auxiliarySessionKind(current);
-      if(sessionIdentifier(current)&&(!kind||(kind==="subagent"&&sessionTitle(current)))) {owner=current;break;}
+      const named=knownSessionTitle(current);
+      if(sessionIdentifier(current)&&((kind==="subagent"&&named)||
+        (!kind&&(named||current.codex_exec===true||imageParents.has(current.thread_id))))) {owner=current;break;}
       current=rows.get(current.parent_thread_id);
     }
-    if(!owner&&memberId)owner=member;
     const id=owner?.thread_id||OTHER_SESSION_GROUP;
     if(!groups.has(id)) {
-      const title=owner?sessionTitle(owner)||owner.input_title||id:t("其他");
+      const title=owner?sessionTitle(owner)||id:t("其他");
       groups.set(id,{...(owner||{}),thread_id:id,title,members:[],packet_count:0,updated_at:owner?.updated_at||0});
     }
     const group=groups.get(id);group.members.push(member);
@@ -679,7 +681,7 @@ function cacheRequestPurpose(meta) {
 }
 async function enrichSessionPurposes(rows) {
   // Older relays expose the latest user label only in packet metadata. Never fetch images or bodies here.
-  const jobs=rows.filter(row=>!row.title&&!auxiliarySessionKind(row)&&row.latest_packet?.id&&!requestPurposeCache.has(row.latest_packet.id)).slice(0,8);
+  const jobs=rows.filter(row=>!knownSessionTitle(row)&&!auxiliarySessionKind(row)&&row.latest_packet?.id&&!requestPurposeCache.has(row.latest_packet.id)).slice(0,8);
   let cursor=0;
   async function read() {
     while(cursor<jobs.length) {
@@ -690,7 +692,7 @@ async function enrichSessionPurposes(rows) {
   }
   await Promise.all(Array.from({length:Math.min(3,jobs.length)},read));
   return rows.map(row=>{
-    const purpose=!row.title&&requestPurposeCache.get(row.latest_packet?.id);
+    const purpose=!knownSessionTitle(row)&&requestPurposeCache.get(row.latest_packet?.id);
     return purpose?{...row,session_kind:purpose}:row;
   });
 }
@@ -952,7 +954,7 @@ async function refreshSessionSummaries(fromLabels=false) {
       }
     }
     await Promise.all(Array.from({length:Math.min(3,ids.length)},()=>worker()));
-    sessionSummaries=(await enrichSessionPurposes(results)).map(row=>sessionTitle(row)?{...row,title_cached:true}:row);
+    sessionSummaries=(await enrichSessionPurposes(results)).map(row=>knownSessionTitle(row)?{...row,title_cached:true}:row);
   } finally {
     sessionMetadataAt=Date.now();sessionMetadataLoading=false;
     if(sessionMetadataRefreshQueued) {
@@ -2468,7 +2470,7 @@ function requestBasicsPanel(m) {
   const session=sessionSummaries.find(row=>row.thread_id===m.thread_id);
   const specialKind=[purposeFromMetadata(m),auxiliarySessionKind(session)].find(kind=>kind&&kind!=="subagent");
   if(specialKind) {
-    const name=["index_task","subagent"].includes(session?.title_source)?null:sessionTitle(session);
+    const name=["index_task","subagent","input"].includes(session?.title_source)?null:sessionTitle(session);
     if(name)fact(facts,t("独立会话名称"),name);
     fact(facts,t("独立会话 ID"),m.thread_id||"—");
     if(specialKind==="image_analysis") {

@@ -45,7 +45,7 @@ class TieredRetentionTests(unittest.TestCase):
         store.configure_limits(1, 2, 0)
         self.assertIsNone(store.stats()["oldest_created"])
 
-    def test_basic_records_keep_all_frontend_statistics_without_body_or_snippets(self):
+    def test_basic_records_keep_the_short_title_and_statistics_after_details_are_evicted(self):
         store = Store(self.root, max_count=5, max_detail_count=2)
         packets = [self.add(store, index) for index in range(5)]
         meta, body = store.get(packets[0][0], content=True)
@@ -53,7 +53,9 @@ class TieredRetentionTests(unittest.TestCase):
         self.assertTrue(meta["details_evicted"])
         self.assertNotIn("input_items", meta)
         self.assertNotIn("headers", meta)
-        self.assertNotIn("private-body-", json.dumps(meta))
+        original = packets[0][1]["body"]["input"][0]["content"]
+        self.assertEqual(meta["title"], original[:48] + "…")
+        self.assertNotIn(original[48:110], json.dumps(meta))
         for field in ("id", "created", "time", "thread_id", "parent_thread_id", "model", "method", "path",
                       "state", "status", "wire_bytes", "decoded_bytes", "outbound_wire_bytes", "top_fields",
                       "input_groups", "json_envelope_bytes", "pairing", "upstream_usage", "usage_override_applied",
@@ -140,6 +142,7 @@ class TieredRetentionTests(unittest.TestCase):
         meta, body = store.get(packet, content=True)
         self.assertIsNone(body)
         self.assertEqual(meta["upstream_usage"]["input_tokens"], 101)
+        self.assertTrue(meta["title"].startswith("private-body-1:"))
         self.assertIn("top_fields", meta)
         self.assertNotIn("input_items", meta)
         self.assertEqual(store.stats()["detail_count"], 0)

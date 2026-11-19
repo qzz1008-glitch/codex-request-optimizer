@@ -1367,6 +1367,7 @@ class Handler(BaseHTTPRequestHandler):
             elif action == "search":
                 self._json(200, search_body(content["body"], one("q")[:200]) if content else [])
             elif action == "export":
+                meta.pop("title", None)
                 exported = {"metadata": meta, "view": content,
                             "notice": "Sanitized viewing copy, not raw replay input. Exact sizes were measured before redaction."}
                 self._bytes(200, encode(exported), "application/json; charset=utf-8",
