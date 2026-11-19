@@ -996,7 +996,7 @@ const uiI18n = (() => {
     "大小构成":"Size",
     "请求正文":"Request body",
     "正文视图":"Request body view",
-    "对话":"Chat",
+    "消息":"Messages",
     "对话文本":"Conversation text",
     "没有可显示的对话文本。":"No conversation text to display.",
     "未记录消息时间":"Message time unavailable",
