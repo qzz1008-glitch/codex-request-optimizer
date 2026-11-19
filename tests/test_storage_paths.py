@@ -87,6 +87,37 @@ class StoragePathTests(unittest.TestCase):
         self.assertTrue(marker.is_file())
         self.assertFalse((self.data / "cache" / "packets.sqlite").exists())
 
+    def test_fresh_standby_upgrade_prepares_without_writing_settings(self):
+        config = self.root / "config.toml"
+        config.write_text('model="test-only"\n', encoding="utf8")
+        settings = self.data / "settings.json"
+        with InspectorServer(("127.0.0.1", 0), self.data, config, "http://127.0.0.1:1",
+                             worker_id="a" * 32) as server:
+            self.assertFalse(settings.exists())
+            server.worker_control({"action": "upgrade_prepare"})
+            self.assertEqual(server.worker_state, "standby")
+            self.assertTrue(server.configuration_prepared)
+            self.assertEqual(server.image_isolation.directory, self.data / "images")
+            self.assertFalse(settings.exists())
+        self.assertEqual(config.read_text(encoding="utf8"), 'model="test-only"\n')
+
+    def test_standby_upgrade_reads_latest_legacy_settings_without_writing_them(self):
+        config = self.root / "config.toml"
+        config.write_text('model="test-only"\n', encoding="utf8")
+        settings = self.data / "settings.json"
+        settings.write_text(json.dumps({"image_analysis_mode": "native"}), encoding="utf8")
+        with InspectorServer(("127.0.0.1", 0), self.data, config, "http://127.0.0.1:1",
+                             worker_id="a" * 32) as server:
+            updated = json.dumps({"image_analysis_mode": "disabled", "capacity_retry_enabled": True}).encode()
+            settings.write_bytes(updated)
+            server.worker_control({"action": "upgrade_prepare"})
+            self.assertEqual(server.settings["image_analysis_mode"], "disabled")
+            self.assertTrue(server.settings["capacity_retry_enabled"])
+            self.assertEqual(server.worker_state, "standby")
+            self.assertEqual(server.log_dir, self.data)
+            self.assertEqual(settings.read_bytes(), updated)
+        self.assertEqual(config.read_text(encoding="utf8"), 'model="test-only"\n')
+
 
 if __name__ == "__main__":
     unittest.main()
