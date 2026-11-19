@@ -545,7 +545,7 @@ button.other-session-group{background:#f5f2fc;border-color:#e7e0f5}
 #settings-dialog{
   --muted:#526174;
   --settings-label-width:172px;
-  --settings-inline-label-width:176px;
+  --settings-inline-label-width:80px;
   --settings-column-gap:12px;
   --settings-context-width:152px;
   --settings-path-width:320px;
@@ -594,7 +594,8 @@ button.other-session-group{background:#f5f2fc;border-color:#e7e0f5}
 #settings-dialog .settings-content>section>:is(h3,.context-heading){margin-inline-start:calc(-1 * var(--settings-section-indent))}
 #settings-dialog .settings-content>section:first-child{border-top:0}
 #settings-dialog .settings-content>section:last-child{padding-bottom:0}
-#settings-dialog label{margin:0;color:var(--ink);font-size:14px;line-height:22px;font-weight:400}
+#settings-dialog label,
+#settings-dialog #proxy-settings-label{margin:0;color:var(--ink);font-size:14px;line-height:22px;font-weight:400}
 #settings-dialog :is(button,input,select){font:inherit;font-size:14px}
 #settings-dialog button{min-height:var(--settings-control-height);padding:5px 10px;border-radius:var(--settings-control-radius);line-height:20px}
 #settings-dialog :is(input:not([type=checkbox],[type=radio]),select){block-size:var(--settings-field-height);margin:0;padding:5px 10px;border:1px solid var(--line);border-radius:var(--settings-control-radius);background:var(--panel);color:var(--ink);line-height:20px;text-align:right}
@@ -680,22 +681,24 @@ button.other-session-group{background:#f5f2fc;border-color:#e7e0f5}
 .zstd-level-option{display:flex;align-items:center;gap:6px;flex-wrap:wrap;min-height:24px;border:0;border-radius:4px;padding:0;background:transparent;color:inherit;font-size:13px}
 .zstd-level-option:hover{background:transparent}
 .zstd-level-check{display:inline-block;width:14px;flex:none;text-align:center}
-#settings-dialog .packet-size-controls{display:grid;grid-template-columns:var(--settings-label-width) minmax(0,1fr);align-items:center;gap:var(--settings-row-gap) var(--settings-column-gap);margin:0}
 #settings-dialog :is(.runtime-toggle,.overflow-toggle){display:flex;align-items:center;gap:8px;min-width:0;min-block-size:var(--settings-field-height);margin:0;color:var(--ink);font-size:14px;line-height:22px}
-#settings-dialog .packet-size-limit{display:grid;grid-template-columns:var(--settings-inline-label-width) max-content;align-items:center;justify-self:start;gap:8px;margin:0}
+#settings-dialog :is(.packet-size-limit,.capacity-retry-limit){
+  display:grid;grid-template-columns:var(--settings-inline-label-width) max-content;
+  align-items:center;justify-self:start;gap:8px;margin:0
+}
 #settings-dialog :is(.packet-size-value,.record-limit-value){display:inline-flex;align-items:center;gap:8px}
-#settings-dialog .packet-size-limit input{width:68px}
-#settings-dialog :is(.packet-size-unit,.record-limit-unit){color:var(--muted);font-size:13px;white-space:nowrap}
-#settings-dialog .runtime-setting-row{display:grid;grid-template-columns:var(--settings-label-width) minmax(0,1fr);align-items:center;gap:var(--settings-column-gap);margin:0}
+#settings-dialog :is(.packet-size-limit,.capacity-retry-limit) input{width:68px}
+#settings-dialog :is(.packet-size-unit,.record-limit-unit),
+#settings-dialog .capacity-retry-limit>span{color:var(--muted);font-size:13px;white-space:nowrap}
+#settings-dialog :is(.packet-size-controls,.runtime-setting-row){display:grid;grid-template-columns:var(--settings-label-width) minmax(0,1fr);align-items:center;gap:var(--settings-column-gap);margin:0}
 #settings-dialog .settings-language-row+.runtime-setting-row,
 #settings-dialog .runtime-setting-row+.runtime-setting-row,
 #settings-dialog #request-protection-settings .runtime-setting-row{margin-block-start:var(--settings-row-gap)}
 #settings-dialog .runtime-inline-hint{min-width:0;margin:0}
 #settings-dialog .proxy-inline-row{
-  display:grid;grid-template-columns:max-content max-content minmax(0,1fr) var(--settings-path-actions-width);
+  display:grid;grid-template-columns:var(--settings-label-width) max-content minmax(0,1fr) var(--settings-path-actions-width);
   align-items:center;gap:8px var(--settings-column-gap)
 }
-#settings-dialog #proxy-settings-label{font-weight:500}
 #settings-dialog .proxy-address-field{min-width:0}
 #settings-dialog .proxy-test-actions{display:flex;align-items:center;gap:8px}
 #settings-dialog #proxy-test{flex:none;width:72px;padding-inline:6px;white-space:nowrap}
@@ -707,12 +710,8 @@ button.other-session-group{background:#f5f2fc;border-color:#e7e0f5}
 #settings-dialog .proxy-test-result.success{color:var(--green)}
 #settings-dialog .proxy-test-result.error{color:var(--danger)}
 #settings-dialog #proxy-test-elapsed{color:var(--muted);font-size:12px;font-variant-numeric:tabular-nums}
-#settings-dialog .capacity-retry-limit{display:grid;grid-template-columns:var(--settings-inline-label-width) 68px minmax(0,1fr);align-items:center;gap:8px;min-width:0;color:var(--muted);font-size:13px;line-height:20px}
+#settings-dialog .capacity-retry-limit{grid-template-columns:var(--settings-inline-label-width) 68px max-content;min-width:0;line-height:20px}
 #settings-dialog .capacity-retry-options{display:flex;flex-wrap:wrap;gap:var(--settings-row-gap) 20px}
-#settings-dialog .capacity-retry-options .capacity-retry-limit{grid-template-columns:auto 68px auto}
-#settings-dialog .capacity-retry-limit label{white-space:nowrap}
-#settings-dialog .capacity-retry-limit input{width:68px}
-#settings-dialog .capacity-retry-limit>span{font-size:12px}
 #settings-dialog .image-directory-settings{display:grid;grid-template-columns:var(--settings-label-width) minmax(0,1fr);align-items:center;gap:8px var(--settings-column-gap)}
 #settings-dialog .image-directory-row{display:grid;grid-template-columns:minmax(0,var(--settings-path-width)) var(--settings-path-actions-width);justify-content:start;align-items:center;gap:8px;min-width:0}
 #settings-dialog :is(.image-directory-row,.proxy-address-field) input{width:100%;min-width:0;text-align:left}
@@ -774,27 +773,24 @@ button.other-session-group{background:#f5f2fc;border-color:#e7e0f5}
 #settings-dialog #settings-save[aria-busy=true]{cursor:wait;opacity:1}
 .settings-save-spinner{display:none;flex:none;width:12px;height:12px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;visibility:hidden}
 #settings-save[aria-busy=true] .settings-save-spinner{display:block;visibility:visible;animation:update-spin .8s linear infinite}
-@container settings-dialog (max-width:660px){
-  #settings-dialog .packet-size-controls{grid-template-columns:minmax(0,1fr)}
-  #settings-dialog .packet-size-limit{grid-template-columns:var(--settings-label-width) max-content;gap:var(--settings-column-gap)}
-}
 @container settings-dialog (max-width:620px){
   #settings-dialog>.dialog-heading,#settings-dialog>.settings-footer,#settings-dialog>.settings-content{--settings-padding:20px}
   #settings-dialog>.settings-content{--settings-label-width:160px}
-  #settings-dialog .runtime-setting-row{grid-template-columns:minmax(0,1fr);gap:8px}
-  #settings-dialog .capacity-retry-limit{grid-template-columns:var(--settings-label-width) 68px minmax(0,1fr);gap:var(--settings-column-gap)}
+  #settings-dialog :is(.packet-size-controls,.runtime-setting-row){grid-template-columns:minmax(0,1fr);gap:8px}
   #settings-dialog .runtime-inline-hint{padding-inline-start:22px}
   #settings-dialog .image-mode-row .runtime-inline-hint{padding-inline-start:0}
-  #settings-dialog .proxy-inline-row{--settings-path-actions-width:142px;column-gap:8px}
+  #settings-dialog .proxy-inline-row{--settings-path-actions-width:142px}
   #settings-dialog .proxy-test-actions{gap:6px}
+}
+@container settings-dialog (max-width:560px){
+  #settings-dialog .proxy-inline-row{grid-template-columns:max-content minmax(0,1fr) var(--settings-path-actions-width);column-gap:8px}
+  #settings-dialog #proxy-settings-label{grid-column:1/-1}
 }
 @container settings-dialog (max-width:500px){
   #settings-dialog>.settings-content{--settings-section-indent:12px}
-  #settings-dialog .proxy-inline-row{grid-template-columns:max-content minmax(0,1fr) var(--settings-path-actions-width)}
-  #settings-dialog #proxy-settings-label{grid-column:1/-1}
   #settings-dialog .image-directory-row{grid-template-columns:minmax(0,var(--settings-path-width)) auto}
   #settings-dialog .settings-language-row{grid-template-columns:minmax(0,1fr) auto}
-  #settings-dialog :is(.zstd-level-control,.packet-size-limit,.runtime-setting-row,.image-directory-settings){grid-template-columns:minmax(0,1fr);gap:8px}
+  #settings-dialog :is(.zstd-level-control,.image-directory-settings){grid-template-columns:minmax(0,1fr);gap:8px}
   #settings-dialog .record-limit-grid{--record-limit-columns:max-content minmax(0,1fr)}
   #settings-dialog .record-limit-row{row-gap:8px}
   #settings-dialog .record-limit-row>label{grid-column:1/-1}
@@ -802,8 +798,6 @@ button.other-session-group{background:#f5f2fc;border-color:#e7e0f5}
   #settings-dialog .entry-port-row>label{grid-column:1/-1}
   #settings-dialog .runtime-inline-hint{padding-inline-start:22px}
   #settings-dialog .image-directory-settings .help{grid-column:1}
-  #settings-dialog .capacity-retry-limit{grid-template-columns:68px minmax(0,1fr);gap:8px}
-  #settings-dialog .capacity-retry-limit label{grid-column:1/-1}
   #settings-dialog .context-control{grid-template-columns:var(--settings-context-width) minmax(0,1fr);gap:8px 12px}
   #settings-dialog .context-label{grid-column:1/-1}
   #settings-dialog .context-default{justify-self:end}

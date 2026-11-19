@@ -46,6 +46,18 @@ async function run(){
     });
     assert(layout.labelRight<=layout.optionsLeft,'the label and retry count must not overlap');
     assert(layout.optionsRight<=layout.rowRight+1,'the count fits the settings row');
+    assert.equal(await page.locator('#budget-label').textContent(),language==='zh'?'大小上限':'Size limit');
+    for(const width of [320,540,600,1120]){
+      await page.setViewportSize({width,height:900});
+      const columns=await page.evaluate(()=>[
+        ['#packet-size-protection','#budget-label','#budget','#budget-unit'],
+        ['#capacity-retry','label[for="capacity-retry-count"]','#capacity-retry-count','#capacity-retry-count+span'],
+        ['#bad-request-retry','label[for="bad-request-retry-count"]','#bad-request-retry-count','#bad-request-retry-count+span'],
+      ].map(selectors=>selectors.map(selector=>document.querySelector(selector).getBoundingClientRect().left)));
+      const [sizeLimit,...retryLimits]=columns;
+      for(const limit of retryLimits)assert.deepEqual(limit,sizeLimit,'The checkboxes, number labels, inputs and units share columns');
+      cases++;
+    }
     assert.equal(await enabled.getAttribute('data-settings-field'),null,'no native restart is needed');
     await enabled.uncheck();await count.evaluate(node=>{node.value='';});
     assert.equal(await count.isDisabled(),true);

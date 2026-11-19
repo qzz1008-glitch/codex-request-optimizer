@@ -189,7 +189,7 @@ let browser,cases=0;
         const r=node.getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height};
       }));
       assert(controls.slice(1).every(r=>r.width>=24&&r.height>=24),'Controls remain usable');
-      const inlineControls=width>=540?controls:controls.slice(width>=420?1:2);
+      const inlineControls=width>=600?controls:controls.slice(width>=420?1:2);
       const rowCenter=inlineControls[0].y+inlineControls[0].height/2;
       assert(inlineControls.every(r=>Math.abs(r.y+r.height/2-rowCenter)<1),'Expected proxy controls share one row and align vertically');
       for(let i=1;i<inlineControls.length;i++){
@@ -197,7 +197,15 @@ let browser,cases=0;
       }
       if(width>=600){
         const portLabel=await page.locator('label[for="entry-port"]').boundingBox();
+        const port=await page.locator('#entry-port').boundingBox();
+        const directory=await page.locator('#storage-dir').boundingBox();
         assert.equal(controls[0].x,portLabel.x,'The proxy label aligns with settings labels');
+        assert.equal(controls[1].x,port.x,'The proxy controls start in the same column as the port input');
+        assert.equal(controls[1].x,directory.x,'The proxy controls start in the same column as the directory input');
+      }
+      if(width>=1120){
+        const openDirectory=await page.locator('#storage-dir-open').boundingBox();
+        assert.equal(controls[3].x,openDirectory.x,'The test and open buttons start in the same column');
       }
       const rowBox=await proxyRow.boundingBox();
       const actionsBox=await proxyRow.locator('.proxy-test-actions').boundingBox();
