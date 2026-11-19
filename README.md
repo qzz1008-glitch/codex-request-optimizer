@@ -16,6 +16,7 @@ Codex 的本地请求分析与优化工具，运行于 Windows x64（64 位）�
 - **🔁 请求异常重试**：可选由中转拦截仅含 `Bad Request` 的通用 400，按设置额外重试 1～9 次；默认关闭，启用后默认 3 次，字段或参数错误保持原样。
 - **🔎 分析与趋势**：按会话查看请求大小、Token 用量、错误和脱敏 JSON，观察趋势、对比变化及保护触发情况。
 - **🤝 局域网共享**：额度与网络出口独立借入或借出，支持凭据管理、有效期、参考费用上限及每周刷新。
+- **🖥️ 设备接入**：管理本机（含 WSL）与已保存的 SSH 服务器；远端请求经 SSH 交由本机优化器处理，可分别管理各服务器的连接。
 
 容量重试针对报错：`Selected model is at capacity. Please try a different model.`
 
@@ -54,17 +55,11 @@ Codex 的本地请求分析与优化工具，运行于 Windows x64（64 位）�
 
 支持中英文切换、托盘驻留和登录后启动，升级保留已有记录与设置。已接入的配置会自动同步，需要重启或处理问题时明确提示。
 
-Windows 和 Linux 均可在设置的“出口代理”中选择自动检测或手动配置。自动模式显示检测到的地址，手动模式填写 HTTP 或 HTTPS 代理地址。保存后用于新请求，无需重启。“测试”可验证未保存的配置，不发送对话或 Codex 登录凭据。
-
-也可接入已有 WSL Codex 配置（验证功能）。共享、WSL 及其他详细操作见[使用指南](https://github.com/qzz1008-glitch/codex-request-optimizer/blob/main/docs/usage.md)。
+可在设置中自动检测或手动配置 HTTP/HTTPS 出口代理，并在保存前测试连接。本机、WSL、SSH 服务器和共享的详细操作见[使用指南](https://github.com/qzz1008-glitch/codex-request-optimizer/blob/main/docs/usage.md)。
 
 ## 🐧 Linux 服务器版（验证中）
 
-Linux 包在目标 Linux 环境中使用同一构建入口生成：`python -m scripts.build_inspector --release-only`。当前面向 EulerOS 3.0 x86_64 验证；构建来源记录包含架构和 glibc 版本，不能将 Windows EXE 用作 Linux 程序。
-
-解压 `CodexPacketInspector-linux-x86_64.tar.gz` 后运行 `./CodexPacketInspector --background --ui-forward-port 47848`，无需安装 Python。中转及管理界面默认只监听 `127.0.0.1:47844`；通过 SSH 隧道访问浏览器界面，例如 `ssh -N -L 47848:127.0.0.1:47844 user@server`，然后在本机打开 `http://127.0.0.1:47848/`，点击接入。隧道端口须与 `--ui-forward-port` 一致，该选项不改变 Codex 中转地址。接入会备份服务器上的 Codex 配置；已有 Codex 进程按提示重新加载或重启。
-
-Linux 版支持 HTTP 转发、zstd、包大小保护、请求记录及趋势，保留原生图片解析，也可禁用图片工具。Windows 托盘、桌面窗口、EXE 自动升级及 PowerShell 独立图片优化工具不在 Linux 包内启用。自动代理读取服务进程的环境变量，也可在设置中手动配置，不内置代理地址。可使用包内 systemd 用户服务示例；详细步骤见 [使用说明](https://github.com/qzz1008-glitch/codex-request-optimizer/blob/main/docs/usage.md#linux-服务器版)。
+Linux 服务器版正在 EulerOS 3.0 x86_64 上验证，支持中转、压缩、大小保护和请求分析，通过 SSH 隧道访问管理界面。本次公开下载仍提供 Windows EXE；Linux 包需在目标系统构建，详见[构建与使用说明](https://github.com/qzz1008-glitch/codex-request-optimizer/blob/main/docs/usage.md#linux-服务器版)。
 
 ## ⚙️ 实现概览
 
