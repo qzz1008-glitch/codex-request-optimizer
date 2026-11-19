@@ -2787,7 +2787,10 @@ function setRequestBodyTextMode(enabled) {
     if(!fragment.firstChild)fragment.append(el("p","muted",t("没有可显示的对话文本。")));
     root.replaceChildren(fragment);
   }
-  $("json-text-toggle").setAttribute("aria-pressed",String(showText));
+  const jsonMode=$("request-body-json-mode"),chatMode=$("request-body-chat-mode");
+  jsonMode.checked=!enabled;
+  chatMode.checked=enabled;
+  jsonMode.disabled=chatMode.disabled=!available;
   $("json-tree").hidden=showText;
   root.hidden=!showText;
   if(showText)scrollRequestTextOnFirstShow();
@@ -2918,9 +2921,10 @@ async function loadTree(path) {
   }
 }
 async function goPath(path) {setRequestBodyTextMode(false);showTab("tree");await loadTree(path);}
-async function toggleRequestBodyTextMode() {
+async function switchRequestBodyTextMode(enabled) {
+  if(enabled===requestBodyTextMode)return;
   clearTimeout(treeQueryTimer);requestBodySequence++;
-  setRequestBodyTextMode(!requestBodyTextMode);
+  setRequestBodyTextMode(enabled);
   const query=$("tree-query").value.trim();
   if(query&&!query.startsWith("/"))await searchBody(query);
   else $("body-results").hidden=true;
@@ -3385,7 +3389,9 @@ for(const select of document.querySelectorAll("[data-filter]")) select.addEventL
 $("tree-query").addEventListener("input",scheduleTreeQuery);
 $("tree-query").addEventListener("compositionend",scheduleTreeQuery);
 $("tree-query").addEventListener("keydown",e=>{if(e.key==="Enter" && !e.isComposing){e.preventDefault();Promise.resolve().then(submitTreeQuery).catch(fail);}});
-action("json-text-toggle",toggleRequestBodyTextMode);
+$("request-body-modes").addEventListener("change",event=>{
+  switchRequestBodyTextMode(event.target.value==="chat").catch(fail);
+});
 $("json-copy").addEventListener("click",copyRequestBody);
 function isTrendGeneration(packet) {
   const kinds=[purposeFromMetadata(packet),packet.request_purpose,packet.request_kind,packet.session_kind];
