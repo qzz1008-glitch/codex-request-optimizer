@@ -69,14 +69,22 @@
       <div id="requests-inline-feedback" class="inline-feedback requests-inline-feedback" data-feedback-inline role="status" aria-live="polite"></div>
       <p id="list-loading" data-feedback-source data-feedback-target="requests-inline-feedback" class="list-loading" role="status" hidden>正在加载更多记录…</p>
     </aside>
-    <section class="detail">
+    <section class="detail" aria-labelledby="request-info-title">
+      <header class="sidebar-title detail-title">
+        <h1 id="request-info-title">请求信息</h1>
+        <nav class="tabs" aria-label="请求详情">
+          <button type="button" class="active" data-tab="headers" aria-pressed="true">请求概况</button>
+          <button type="button" data-tab="overview" aria-pressed="false">大小构成</button>
+          <button type="button" data-tab="tree" aria-pressed="false">请求正文</button>
+          <button type="button" data-tab="diff" aria-pressed="false">变化明细</button>
+        </nav>
+      </header>
       <div id="empty-state" class="empty-state">
         <span class="empty-icon">{ }</span><h2>选择请求查看详情</h2>
         <p>在左侧选择会话，从中间选择请求。</p>
         <button id="empty-connect" class="primary">查看接入设置</button>
       </div>
       <div id="packet-detail" hidden>
-        <nav class="tabs" aria-label="请求详情"><button class="active" data-tab="headers">请求信息</button><button data-tab="overview">大小构成</button><button data-tab="tree">请求正文</button><button data-tab="diff">变化明细</button></nav>
         <div class="detail-content">
         <div id="tab-headers" class="tab-panel"><div id="headers-content"></div></div>
         <div id="tab-overview" class="tab-panel" hidden><div id="overview"></div></div>
