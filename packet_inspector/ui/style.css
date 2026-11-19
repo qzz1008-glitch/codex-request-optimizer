@@ -268,13 +268,13 @@ button.other-session-group{background:#f5f2fc;border-color:#e7e0f5}
 .detail-title h1{flex:none;white-space:nowrap}
 .detail-title>.tabs{
   --tab-gap:4px;
-  --tab-label-padding-end:4px;
+  --tab-label-padding-end:2px;
   /* Leave the last pixel for the selected tab to cover the frame border. */
   --tab-strip-height:calc(100% - 1px);
   position:relative;
   z-index:1;
   align-self:flex-end;
-  block-size:calc(var(--records-heading-height) - 4px);
+  block-size:calc(var(--records-heading-height) - 6px);
   min-width:0;
   gap:var(--tab-gap);
   margin:0;
