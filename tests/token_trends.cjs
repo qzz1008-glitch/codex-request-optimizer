@@ -305,12 +305,13 @@ function eventRows(){return [
  });
  await test('both charts use sidebar IDs, titles and associated request groups',()=>{
   context.sessionMetadataAt=1;
-  context.state={sessions:['parent','child','standalone','auto-title','']};
+  context.state={sessions:['parent','child','standalone','summary-only','auto-title','']};
   context.sessionSummaries=[{thread_id:'parent',title:'Parent task'},
    {thread_id:'child',session_kind:'subagent',parent_thread_id:'parent',origin:{kind:'remote',address:'192.0.2.8'}},
-   {thread_id:'standalone',title:'<b>First CLI input</b>',title_source:'input',codex_exec:true},
-   {thread_id:'auto-title',session_kind:'title_generation',title:'Title task',codex_exec:true}];
-  const rows=['parent','child','standalone','auto-title','','chart-only'].map((thread_id,i)=>packet(i+1,{
+   {thread_id:'standalone',title:'<b>First CLI input</b>',title_source:'input',has_conversation:true},
+   {thread_id:'summary-only',has_conversation:true},
+   {thread_id:'auto-title',session_kind:'title_generation',title:'Title task',has_conversation:true}];
+  const rows=['parent','child','standalone','summary-only','auto-title','','chart-only'].map((thread_id,i)=>packet(i+1,{
    thread_id,upstream_usage:{input_tokens:100},outbound_wire_bytes:1000
   }));
   const {result,ids}=rendered(rows,{sessions:context.sessionGroups});
@@ -319,8 +320,8 @@ function eventRows(){return [
   assert.deepEqual(curves(),sidebar());
   assert.ok(context.otherTaskSessions().some(row=>row.thread_id==='auto-title'));
   assert.deepEqual(Array.from(result.series.find(series=>series.id==='parent').points,point=>point.packet.thread_id),['child','parent']);
-  for(const chart of result.charts)assert.deepEqual(chartNodes(chart,'trend-series-line').map(node=>node.dataset.series).sort(),['parent','standalone']);
-  assert.deepEqual(coloredRows(ids).map(row=>row.dataset.session).sort(),['thread:parent','thread:standalone']);
+  for(const chart of result.charts)assert.deepEqual(chartNodes(chart,'trend-series-line').map(node=>node.dataset.series).sort(),['parent','standalone','summary-only']);
+  assert.deepEqual(coloredRows(ids).map(row=>row.dataset.session).sort(),['thread:parent','thread:standalone','thread:summary-only']);
   for(const query of ['child','192.0.2.8']) {
    result.query=query;
    assert.deepEqual(Array.from(result.model().matched,series=>series.id),['parent']);
@@ -334,7 +335,7 @@ function eventRows(){return [
   result.render();
   assert.deepEqual(curves(),sidebar());
   assert.equal(result.series.find(series=>series.id==='standalone').color,standaloneColor);
-  assert.deepEqual(coloredRows(ids).map(row=>row.dataset.session).sort(),['thread:parent','thread:standalone']);
+  assert.deepEqual(coloredRows(ids).map(row=>row.dataset.session).sort(),['thread:parent','thread:standalone','thread:summary-only']);
  });
  await test('full snapshot pages without duplicates, and deltas stop on overlap',async()=>{
   const rows=Array.from({length:303},(_,i)=>packet(i+1)),queries=[];let revision=1;

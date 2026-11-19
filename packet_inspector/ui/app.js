@@ -638,7 +638,8 @@ function sessionGroups() {
       const kind=auxiliarySessionKind(current);
       const named=knownSessionTitle(current);
       if(sessionIdentifier(current)&&((kind==="subagent"&&named)||
-        (!kind&&(named||current.codex_exec===true||imageParents.has(current.thread_id))))) {owner=current;break;}
+        (!kind&&(named||current.has_conversation===true||current.codex_exec===true||
+          imageParents.has(current.thread_id))))) {owner=current;break;}
       current=rows.get(current.parent_thread_id);
     }
     const id=owner?.thread_id||OTHER_SESSION_GROUP;
