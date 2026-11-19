@@ -587,6 +587,10 @@ const auxiliaryLabels={image_analysis:"图片解析",next_message_suggestion:"�
 const requestPurposeCache=new Map();
 function auxiliarySessionKind(row) {return Object.hasOwn(auxiliaryLabels,row?.session_kind)?row.session_kind:row?.title_source==="index_task"?"session_index":row?.title_source==="subagent"?"subagent":null;}
 function sessionTitle(row) {return typeof row?.title==="string"&&row.title.trim()?row.title:null;}
+function sessionIdentifier(row) {
+  const id=row?.thread_id;
+  return typeof id==="string"&&id.trim()&&id!==OTHER_SESSION_GROUP?id:null;
+}
 function preserveSessionTitles(rows) {
   // Capture records can load while native names are temporarily unreadable.
   // Retain known names only for the same explicit session ID.
@@ -604,27 +608,28 @@ function preserveSessionTitles(rows) {
 }
 function sessionGroups() {
   if(!sessionMetadataAt)return [];
+  const capturedIds=new Set(state.sessions);
   const rows=new Map(sessionSummaries.map(row=>[row.thread_id,row]));
-  for(const id of state.sessions)if(!rows.has(id))rows.set(id,{thread_id:id});
+  for(const id of capturedIds)if(!rows.has(id))rows.set(id,{thread_id:id});
   const imageParents=new Set([...rows.values()].filter(row=>auxiliarySessionKind(row)==="image_analysis"&&
     typeof row.parent_thread_id==="string"&&row.parent_thread_id&&row.parent_thread_id!==row.thread_id).map(row=>row.parent_thread_id));
   for(const id of imageParents)if(!rows.has(id))rows.set(id,{thread_id:id,packet_count:0});
   const groups=new Map();
   for(const member of rows.values()) {
-    if(member.packet_count===0&&!state.sessions.includes(member.thread_id))continue;
-    let current=member,owner=null;const visited=new Set();
+    if(member.packet_count===0&&!capturedIds.has(member.thread_id))continue;
+    const memberId=sessionIdentifier(member);
+    let current=memberId?member:null,owner=null;const visited=new Set();
     for(let depth=0;current&&depth<32;depth++) {
       if(visited.has(current.thread_id))break;
       visited.add(current.thread_id);
       const kind=auxiliarySessionKind(current);
-      const name=sessionTitle(current);
-      const imageParent=imageParents.has(current.thread_id)&&current.origin?.kind!=="remote";
-      if((kind==="subagent"&&name)||(!kind&&(name||imageParent))) {owner=current;break;}
+      if(sessionIdentifier(current)&&(!kind||(kind==="subagent"&&sessionTitle(current)))) {owner=current;break;}
       current=rows.get(current.parent_thread_id);
     }
+    if(!owner&&memberId)owner=member;
     const id=owner?.thread_id||OTHER_SESSION_GROUP;
     if(!groups.has(id)) {
-      const title=sessionTitle(owner)||t(owner?"会话":"其他");
+      const title=owner?sessionTitle(owner)||id:t("其他");
       groups.set(id,{...(owner||{}),thread_id:id,title,members:[],packet_count:0,updated_at:owner?.updated_at||0});
     }
     const group=groups.get(id);group.members.push(member);
@@ -1071,14 +1076,14 @@ function renderSessions() {
   for(const id of ids) {
     const otherGroup=id===OTHER_SESSION_GROUP;
     const value=otherGroup?OTHER_SESSION_GROUP:id?"thread:"+id:"unknown", data=summaries.get(id)||{};
-    const title=data.title;
+    const title=data.title,idOnly=!otherGroup&&title===id;
     const origin=data.origin?.address;
     if(query&&!sessionGroupMatchesQuery(data,query))continue;
-    const row=el("div","session-row");row.dataset.session=value;
+    const row=el("div",idOnly?"session-row session-row-id-only":"session-row");row.dataset.session=value;
     const item=el("button","session-item"+(otherGroup?" other-session-group":"")+(value===selected?" selected":""));
     item.type="button";item.dataset.session=value;
     const label=[title];
-    if(!otherGroup&&id)label.push(id);
+    if(!otherGroup&&id&&!idOnly)label.push(id);
     if(origin)label.push(origin);
     if(data.title_cached)label.push(t("会话名称暂不可用，显示上次加载的名称"));
     for(const link of connections) {
@@ -1087,8 +1092,10 @@ function renderSessions() {
     }
     item.setAttribute("aria-label",label.join("\n"));
     if(value===selected)item.setAttribute("aria-current","page");
-    const heading=el("div","session-heading");heading.append(el("span","session-title",title));
-    item.append(heading);
+    if(!idOnly) {
+      const heading=el("div","session-heading");heading.append(el("span","session-title",title));
+      item.append(heading);
+    }
     if(!otherGroup&&id)item.append(el("code","session-id",id));
     const updated=Number.isFinite(data.updated_at)?new Date(data.updated_at*1000):null;
     const meta=el("div","session-meta");
@@ -1106,7 +1113,7 @@ function renderSessions() {
     });
     row.append(item);
     if(!otherGroup) {
-      row.append(...sessionCopy("title",title,copyFeedback.get(value+" title")));
+      if(!idOnly)row.append(...sessionCopy("title",title,copyFeedback.get(value+" title")));
       if(id)row.append(...sessionCopy("id",id,copyFeedback.get(value+" id")));
     }
     fragment.append(row);
@@ -1136,6 +1143,7 @@ function renderSessions() {
   if(nextFocus&&nextFocus!==document.activeElement)nextFocus.focus({preventScroll:true});
   list.scrollTop=scrollTop;
   if(nextAnchor)list.scrollTop+=nextAnchor.getBoundingClientRect().top-list.getBoundingClientRect().top-anchorOffset;
+  tokenTrendView?.scheduleRender();
 }
 async function selectSession(value) {
   if(value===state.filters.thread)return;
@@ -3568,15 +3576,21 @@ class TokenTrendView {
     return this.hydration;
   }
   model() {
-    const names=new Map(this.services.sessions().map(row=>[row.thread_id,row.title||row.task_name||row.thread_id]));
+    const ownerByThread=new Map();
+    for(const session of this.services.sessions()) {
+      if(session.thread_id===OTHER_SESSION_GROUP)continue;
+      for(const member of session.members)ownerByThread.set(member.thread_id,session);
+    }
     const groups=new Map();let unknown=0;
     const view=this.viewport(),now=view.end,since=view.start;
     for(const packet of (this.previewPackets||this.packets).values()) {
       if(!Number.isFinite(packet.created)||(!packet.is_compaction&&!this.services.isGeneration(packet)))continue;
       const inView=packet.created>=since&&packet.created<=now;
-      if(typeof packet.thread_id!=="string"||!packet.thread_id){if(inView)unknown++;continue;}
-      if(!groups.has(packet.thread_id))groups.set(packet.thread_id,{id:packet.thread_id,title:names.get(packet.thread_id)||packet.thread_id,points:[],latest:0});
-      const group=groups.get(packet.thread_id);if(inView)group.latest=Math.max(group.latest,packet.created);
+      const session=ownerByThread.get(packet.thread_id);
+      if(!session){if(inView)unknown++;continue;}
+      const id=session.thread_id;
+      if(!groups.has(id))groups.set(id,{id,title:session.title,session,points:[],latest:0});
+      const group=groups.get(id);if(inView)group.latest=Math.max(group.latest,packet.created);
       group.points.push({packet,input:packet.is_compaction?null:this.input(packet),size:TokenTrendView.size(packet),events:TokenTrendView.events(packet)});
     }
     const series=[];
@@ -3587,7 +3601,7 @@ class TokenTrendView {
       if(group.points.length||group.lines.input.length||group.lines.size.length)series.push(group);
     }
     series.sort((a,b)=>b.latest-a.latest||a.id.localeCompare(b.id));
-    const matched=series.filter(group=>!this.query||(group.title+" "+group.id).toLowerCase().includes(this.query));
+    const matched=series.filter(group=>!this.query||sessionGroupMatchesQuery(group.session,this.query));
     return {series,matched,visible:matched,unknown,now,view};
   }
   assignSeriesColors(series) {
@@ -3627,7 +3641,7 @@ class TokenTrendView {
     for(const group of model.matched) {
       const item=el("div","trend-series-item"),swatch=el("span","trend-series-swatch"),label=el("span","",group.title);
       item.dataset.renderKey="trend-series:"+group.id;item.style.setProperty("--series-color",group.color);
-      item.setAttribute("role","listitem");item.title=group.title+"\n"+group.id;
+      item.setAttribute("role","listitem");item.title=group.title===group.id?group.id:group.title+"\n"+group.id;
       item.onpointerenter=()=>{this.emphasis=group.id;this.renderFocus();};item.onpointerleave=()=>{this.emphasis=null;this.renderFocus();};
       item.append(swatch,label);fragment.append(item);
     }
@@ -3817,7 +3831,7 @@ class TokenTrendView {
     }
   }
 }
-tokenTrendView=new TokenTrendView({api,status:()=>state.status,sessions:()=>sessionSummaries,peek:listTokens,read:readListTokens,isGeneration:isTrendGeneration});
+tokenTrendView=new TokenTrendView({api,status:()=>state.status,sessions:sessionGroups,peek:listTokens,read:readListTokens,isGeneration:isTrendGeneration});
 function setWorkspaceView(view) {
   workspaceView=["trends","sharing"].includes(view)?view:"records";
   $("records-view").hidden=workspaceView!=="records";$("token-trend-view").hidden=workspaceView!=="trends";

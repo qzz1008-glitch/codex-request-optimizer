@@ -2,7 +2,8 @@
 const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
 const source=fs.readFileSync('packet_inspector/ui/app.js','utf8');
 const classSource=source.slice(source.indexOf('function isTrendGeneration('),source.indexOf('tokenTrendView=new TokenTrendView('));
-const helpers=source.split(/\r?\n/).filter(line=>/^function (tokenVersion|compressedBytes|originalBytes|uploadBytes|compact)\(/.test(line)||/^const auxiliaryLabels=/.test(line)).join('\n');
+const helpers=source.split(/\r?\n/).filter(line=>/^function (tokenVersion|compressedBytes|originalBytes|uploadBytes|compact)\(/.test(line)||/^const (auxiliaryLabels|OTHER_SESSION_GROUP)=/.test(line)).join('\n');
+const sessionHelpers=source.slice(source.indexOf('function auxiliarySessionKind('),source.indexOf('function purposeFromMetadata('));
 const requestHelpers=source.slice(source.indexOf('function purposeFromMetadata('),source.indexOf('function cacheRequestPurpose('))+
   source.slice(source.indexOf('function hasModelTokenUsage('),source.indexOf('function requestKind('));
 const usageHelpers=source.slice(source.indexOf('function overflowApplied('),source.indexOf('function listTokens('))+
@@ -10,17 +11,21 @@ const usageHelpers=source.slice(source.indexOf('function overflowApplied('),sour
 // Keep samples and viewports on one clock, including on slower CI runners.
 const fixtureNow=Date.now();
 class FixtureDate extends Date{static now(){return fixtureNow;}}
-const context={Date:FixtureDate,Map,Set,AbortController,setTimeout,clearTimeout,URLSearchParams,document:{hidden:false},tokenVersion:null};
-vm.createContext(context);vm.runInContext(helpers+'\n'+requestHelpers+'\n'+usageHelpers+'\n'+classSource+'\nglobalThis.View=TokenTrendView;globalThis.isGeneration=isTrendGeneration;',context);
+const context={Date:FixtureDate,Map,Set,AbortController,setTimeout,clearTimeout,URLSearchParams,document:{hidden:false},tokenVersion:null,t:text=>text};
+vm.createContext(context);vm.runInContext(helpers+'\n'+sessionHelpers+'\n'+requestHelpers+'\n'+usageHelpers+'\n'+classSource+'\nglobalThis.View=TokenTrendView;globalThis.isGeneration=isTrendGeneration;',context);
 const View=context.View,now=fixtureNow/1000,id=n=>n.toString(16).padStart(32,'0');
 const packet=(n,extra={})=>({id:id(n),created:now-n,thread_id:'session-a',method:'POST',path:'/responses',state:'complete',status:200,...extra});
 const estimate=input_tokens=>({state:'available',source:'codex_estimate',estimated:true,input_tokens});
 let checks=0;
 function test(name,fn){return Promise.resolve().then(fn).then(()=>{checks++;}).catch(error=>{error.message=name+': '+error.message;throw error;});}
+function fixtureSessions(result) {
+ const ids=new Set(Array.from((result.previewPackets||result.packets).values(),row=>row.thread_id).filter(Boolean));
+ return Array.from(ids,id=>({thread_id:id,title:id,members:[{thread_id:id}]}));
+}
 function view(services={}) {
  const result=Object.create(View.prototype);
   Object.assign(result,{active:true,loading:false,hydrating:false,packets:new Map(),native:new Map(),hours:1,windowEnd:null,loadedBounds:{since:now-12*3600-1,before:null},requestBounds:null,windowTimer:null,oldestCreated:now-12*3600,boundsReady:true,revision:null,lastFull:0,query:'',error:false,limited:false,
-  services:{api:async()=>[],status:()=>({storage:{revision:1,oldest_created:now-12*3600},trend_packets_supported:true}),sessions:()=>[],peek:()=>null,isGeneration:context.isGeneration,...services},
+  services:{api:async()=>[],status:()=>({storage:{revision:1,oldest_created:now-12*3600},trend_packets_supported:true}),sessions:()=>fixtureSessions(result),peek:()=>null,isGeneration:context.isGeneration,...services},
   render(){},hydrate(){},scheduleRender(){}});
  return result;
 }
@@ -55,6 +60,7 @@ function rendered(rows,services={}){
  context.ResizeObserver=class{constructor(callback){this.callback=callback;this.observed=[];}observe(node){this.observed.push(node);}};
  context.requestAnimationFrame=callback=>{frames.push(callback);return frames.length;};
  const result=new View(view(services).services);result.active=true;result.loadedBounds={since:now-12*3600-1,before:null};result.packets=new Map(rows.map(row=>[row.id,row]));
+ if(!services.sessions)result.services.sessions=()=>fixtureSessions(result);
  result.render();return {result,ids,frames,events};
 }
 function chartNodes(chart,cls){return chart.svg.all(node=>(node.attrs.class||'').split(' ').includes(cls));}
@@ -275,13 +281,41 @@ function eventRows(){return [
   for(const [id,color] of refreshed)assert.equal(extended.get(id),color);
  });
  await test('model shares request times while preserving missing values and event-only compaction',()=>{
-  const result=view({sessions:()=>[{thread_id:'session-a',title:'A'}]});
+  const result=view({sessions:()=>[{thread_id:'session-a',title:'A',members:[{thread_id:'session-a'}]}]});
   result.packets=new Map([packet(3,{upstream_usage:{input_tokens:30}}),packet(2),packet(1,{is_compaction:true}),packet(4,{thread_id:null}),packet(5,{request_kind:'title_generation'})].map(p=>[p.id,p]));
   const model=result.model();assert.equal(model.series.length,1);assert.equal(model.unknown,1);
   assert.deepEqual(Array.from(model.visible[0].points,p=>p.input),[30,null,null]);
   assert.equal(model.visible[0].points[2].events[0],'compact');
   assert.equal(model.visible.length,model.matched.length);
   result.query='missing';assert.equal(result.model().matched.length,0);
+ });
+ await test('both charts use sidebar IDs, titles and associated request groups',()=>{
+  context.sessionMetadataAt=1;
+  context.state={sessions:['parent','child','standalone','']};
+  context.sessionSummaries=[{thread_id:'parent',title:'Parent task'},
+   {thread_id:'child',session_kind:'subagent',parent_thread_id:'parent',origin:{kind:'remote',address:'192.0.2.8'}}];
+  const rows=['parent','child','standalone','','chart-only'].map((thread_id,i)=>packet(i+1,{
+   thread_id,upstream_usage:{input_tokens:100},outbound_wire_bytes:1000
+  }));
+  const {result,ids}=rendered(rows,{sessions:context.sessionGroups});
+  const curves=()=>Array.from(result.series,series=>[series.id,series.title]).sort();
+  const sidebar=()=>Array.from(context.sessionGroups(),group=>[group.thread_id,group.title]).filter(([id])=>id!=='group:other').sort();
+  assert.deepEqual(curves(),sidebar());
+  assert.deepEqual(Array.from(result.series.find(series=>series.id==='parent').points,point=>point.packet.thread_id),['child','parent']);
+  for(const chart of result.charts)assert.deepEqual(chartNodes(chart,'trend-series-line').map(node=>node.dataset.series).sort(),['parent','standalone']);
+  const legend=ids.get('trend-series');
+  assert.deepEqual(legend.children.map(node=>node.children[1].textContent).sort(),['Parent task','standalone']);
+  for(const query of ['child','192.0.2.8']) {
+   result.query=query;
+   assert.deepEqual(Array.from(result.model().matched,series=>series.id),['parent']);
+  }
+  result.query='';
+  const standaloneColor=result.series.find(series=>series.id==='standalone').color;
+  context.sessionSummaries.push({thread_id:'standalone',title:'CLI session'});
+  result.render();
+  assert.deepEqual(curves(),sidebar());
+  assert.equal(result.series.find(series=>series.id==='standalone').color,standaloneColor);
+  assert.deepEqual(legend.children.map(node=>node.children[1].textContent).sort(),['CLI session','Parent task']);
  });
  await test('full snapshot pages without duplicates, and deltas stop on overlap',async()=>{
   const rows=Array.from({length:303},(_,i)=>packet(i+1)),queries=[];let revision=1;
