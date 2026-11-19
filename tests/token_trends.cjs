@@ -234,9 +234,45 @@ function eventRows(){return [
    assert.ok(result.charts.every(chart=>chart.points.length===0));
    assert.equal(ids.get('trend-series').children.filter(node=>node.dataset.renderKey).length,0);
   });
- await test('scale includes all values and identity colors stay stable',()=>{
+ await test('scale includes all values',()=>{
   for(const n of [0,1,999,500000,10000000]){const scale=View.scale(n);assert.ok(scale.max>=n&&scale.step>0&&Number.isFinite(scale.max));}
-  assert.equal(View.color('session-a'),View.color('session-a'));assert.notEqual(View.color('session-a'),View.color('session-b'));
+ });
+ await test('visible sessions use well separated colors that survive updates and search',()=>{
+  const sample=(n,thread_id)=>packet(n,{thread_id,outbound_wire_bytes:10000,upstream_usage:{input_tokens:10000}});
+  const rows=Array.from({length:7},(_,index)=>sample(100+index,'session-color-'+index));
+  const {result,ids}=rendered(rows),legend=ids.get('trend-series');
+  const colors=()=>new Map(result.series.map(group=>[group.id,group.color]));
+  const initial=colors(),labs=result.series.map(group=>View.seriesPalette[group.colorSlot].lab);
+  assert.equal(new Set(initial.values()).size,7);
+  for(const [index,[l,a,b]] of labs.entries())for(const [otherL,otherA,otherB] of labs.slice(0,index)) {
+   assert.ok(Math.hypot(l-otherL,a-otherA,b-otherB)>.13,'Oklab color separation');
+  }
+  for(const {color} of View.seriesPalette) {
+   const linear=[1,3,5].map(offset=>Number.parseInt(color.slice(offset,offset+2),16)/255).map(channel=>
+    channel<=.04045?channel/12.92:((channel+.055)/1.055)**2.4);
+   const luminance=linear[0]*.2126+linear[1]*.7152+linear[2]*.0722;
+   assert.ok(1.05/(luminance+.05)>=4.5,'white background contrast');
+  }
+  for(const row of [sample(50,rows[6].thread_id),sample(49,'new-session-color')])result.packets.set(row.id,row);
+  result.render();
+  const refreshed=colors();
+  assert.deepEqual(Array.from(result.series.slice(0,2),group=>group.id),['new-session-color',rows[6].thread_id]);
+  for(const [id,color] of initial)assert.equal(refreshed.get(id),color);
+  assert.equal(new Set(refreshed.values()).size,8);
+  result.query=rows[6].thread_id;result.render();
+  const color=initial.get(result.query);
+  assert.equal(legend.children.length,1);assert.equal(legend.children[0].style['--series-color'],color);
+  for(const chart of result.charts) {
+   const curves=chartNodes(chart,'trend-curve');assert.equal(curves.length,1);assert.equal(curves[0].attrs.stroke,color);
+  }
+  result.query='';
+  for(let index=0;index<12;index++) {
+   const row=sample(20+index,'additional-session-'+index);result.packets.set(row.id,row);
+  }
+  result.render();
+  const extended=colors();
+  assert.equal(new Set(extended.values()).size,20);
+  for(const [id,color] of refreshed)assert.equal(extended.get(id),color);
  });
  await test('model shares request times while preserving missing values and event-only compaction',()=>{
   const result=view({sessions:()=>[{thread_id:'session-a',title:'A'}]});
