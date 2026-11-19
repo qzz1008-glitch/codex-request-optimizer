@@ -3515,12 +3515,13 @@ class TokenTrendView {
     return ticks;
   }
   static compactTimeScale(start,end,activity,coverage={start,end}) {
+    const minimumGapSeconds=30*60;
     const intervals=activity.filter(([a,b])=>Number.isFinite(a)&&Number.isFinite(b)&&b>=a&&a-60<=coverage.end&&b+60>=coverage.start)
       .map(([a,b])=>[Math.max(coverage.start,a-60),Math.min(coverage.end,b+60)]).sort((a,b)=>a[0]-b[0]);
     // Keep one global time coordinate: each confirmed long idle interval retains one minute.
     const gaps=[],addGap=(a,b)=>{
       const from=Math.max(start,a),to=Math.min(end,b);
-      if(b-a>=600&&to>from)gaps.push({start:from,end:to,length:60*(to-from)/(b-a)});
+      if(b-a>=minimumGapSeconds&&to>from)gaps.push({start:from,end:to,length:60*(to-from)/(b-a)});
     };
     let cursor=coverage.start;
     for(const [a,b]of intervals){addGap(cursor,a);cursor=Math.max(cursor,b);}
