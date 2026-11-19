@@ -1220,7 +1220,7 @@ async function loadTokenWindow() {
   }
 }
 function panel(title,{showTitle=true}={}) {
-  const n=el("section","panel");
+  const n=el("section","detail-section");
   n.dataset.renderKey="panel:"+title;
   if(showTitle)n.append(el("h3","",title));
   else n.setAttribute("aria-label",title);
@@ -1239,13 +1239,13 @@ function showTab(tab) {
   const basic=!!state.detail?.details_evicted,search=isToolSearch(state.detail);
   if((basic&&tab==="tree")||(search&&tab==="diff"))tab="headers";
   state.tab=tab;
-  for(const b of document.querySelectorAll("[data-tab]")) {
-    b.hidden=(basic&&b.dataset.tab==="tree")||(search&&b.dataset.tab==="diff");
-    const active=b.dataset.tab===tab;
-    b.classList.toggle("active",active);
-    b.setAttribute("aria-pressed",String(active));
+  for(const button of $("request-info-tabs").querySelectorAll("[data-tab]")) {
+    const key=button.dataset.tab,active=key===tab;
+    button.hidden=(basic&&key==="tree")||(search&&key==="diff");
+    button.setAttribute("aria-selected",String(active));
+    button.tabIndex=active?0:-1;
+    $("tab-"+key).hidden=!active;
   }
-  for(const t of ["headers","overview","tree","diff"])$("tab-"+t).hidden=t!==tab;
 }
 function packetStatus(p) {
   if(p.state==="relay_error" || p.status>=400)return "failed";
@@ -2407,12 +2407,7 @@ function renderProtectionPanelState() {
   const panel=$("packet-protection-panel");if(!panel)return;
   const enabled={size:state.status?.packet_size_protection_enabled===true,retry:state.status?.capacity_retry_enabled===true||state.status?.bad_request_retry_enabled===true,
     optimization:state.status?.image_analysis_mode?state.status.image_analysis_mode==="optimized":state.status?.image_isolation_enabled===true};
-  const rows=[...panel.querySelectorAll("[data-protection]")];
-  const disabled=!rows.some(row=>enabled[row.dataset.protection]);
-  panel.classList.toggle("protection-disabled",disabled);
-  panel.setAttribute("aria-disabled",String(disabled));
-  panel.title=disabled?t("可在设置中开启请求保护"):"";
-  for(const row of rows) {
+  for(const row of panel.querySelectorAll("[data-protection]")) {
     const inactive=!enabled[row.dataset.protection];
     row.classList.toggle("protection-inactive",inactive);
     const hint={retry:"可在设置中开启自动重试",optimization:"可在设置中开启解图优化"};
@@ -2421,7 +2416,9 @@ function renderProtectionPanelState() {
 }
 function appendRequestProcessingFacts(facts,m) {
   const original=originalBytes(m), compressed=compressedBytes(m);
-  fact(facts,t("原始请求"),bytes(original)).title=t("原始请求大小（图片处理、传输压缩前）");
+  const originalRow=fact(facts,t("原始请求"),bytes(original));
+  originalRow.classList.add("request-transport-start");
+  originalRow.title=t("原始请求大小（图片处理、传输压缩前）");
   const imageSize=m.inline_image_bytes;
   if(Number.isSafeInteger(imageSize)&&imageSize>0) {
     fact(facts,t("图片大小"),bytes(imageSize));
@@ -2473,8 +2470,17 @@ function appendRequestProcessingFacts(facts,m) {
   }
 }
 function requestProtectionPanel(m) {
-  const steps=panel(t("请求保护"),{showTitle:false});steps.id="packet-protection-panel";steps.classList.add("packet-protection-panel");
   const flags=packetProtection(m);
+  const previous=$("packet-protection-panel");
+  const steps=el("details","detail-section packet-protection-panel");
+  steps.id="packet-protection-panel";steps.dataset.requestId=m.id||"";
+  steps.setAttribute("aria-label",t("请求保护"));
+  if(m.id&&previous?.dataset.requestId===m.id)steps.open=previous.open;
+  const summary=el("summary","protection-summary");
+  const triggered=Object.keys(protectionLabels).filter(key=>flags[key]).map(key=>t(protectionLabels[key]));
+  const status=el("span","protection-summary-status",triggered.join(" · ")||t("未触发"));
+  status.classList.toggle("triggered",triggered.length>0);
+  summary.append(el("span","",t("请求保护")),status);steps.append(summary);
   const item=(key,category)=>{
     const triggered=flags[key];
     const section=el("section","protection-item");section.dataset.renderKey="protection:"+key;
@@ -2809,8 +2815,8 @@ async function loadDiff() {
   const root=document.createDocumentFragment();
   if(!data){reconcileContent($("diff-content"),el("p","muted",t("没有可比较的上条请求。")));return;}
   const p=panel(t("相对上条请求"));fact(p,t("转发请求变化"),signed(delta));fact(p,t("原始请求变化"),signed(data.decoded_delta));root.append(p);
-  if(data.state==="summary_only")root.append(el("small","muted",t("输入条目详情已回收，以下显示统计变化。")));
-  const changes=panel(t("变化明细")),rows=packetDiffRows(data,state.detail);
+  const changes=panel(t("变化明细"),{showTitle:false}),rows=packetDiffRows(data,state.detail);
+  if(data.state==="summary_only")changes.append(el("small","muted detail-note",t("输入条目详情已回收，以下显示统计变化。")));
   const labels={added:t("新增"),removed:t("移除"),changed:t("内容改变")};
   if(rows.length) {
     const grid=table([t("字段与条目"),t("变化"),t("当前")],rows.map(r=>{
@@ -2954,10 +2960,12 @@ function renderHeaders(m) {
   const ended=m.response_summary?.status,code=Number.isInteger(m.status)&&m.status>=100&&m.status<=599?m.status:null;
   const relayFailed=["relay_error","client_disconnected","interrupted"].includes(m.state);
   const result=relayFailed?states[m.state]:code>=400?t("失败"):Object.hasOwn(endings,ended)?t(endings[ended]):m.state==="complete"?t("已结束"):states[m.state]||t("尚未收到");
-  fact(facts,t("结果"),result+(code!==null?" · HTTP "+code:""));
-  fact(facts,t("总耗时"),Number.isFinite(m.duration_ms)&&m.duration_ms>=0?nf.format(Math.round(m.duration_ms/100)/10)+" "+t("秒"):"—");
+  const resultRow=fact(facts,t("结果"),result+(code!==null?" · HTTP "+code:""));
+  if(relayFailed||code>=400||ended==="failed")resultRow.lastChild.classList.add("danger");
+  else if(ended==="completed"||!Object.hasOwn(endings,ended)&&m.state==="complete")resultRow.lastChild.classList.add("request-result-success");
   const errorReason=m.network_error?.message||m.relay_error;
-  if(typeof errorReason==="string"&&errorReason)fact(facts,t("错误原因"),t(errorReason));
+  if(typeof errorReason==="string"&&errorReason)fact(facts,t("错误原因"),t(errorReason)).classList.add("request-error-detail");
+  fact(facts,t("总耗时"),Number.isFinite(m.duration_ms)&&m.duration_ms>=0?nf.format(Math.round(m.duration_ms/100)/10)+" "+t("秒"):"—");
   if(m.details_evicted)fact(facts,t("请求详情"),t("已回收"));
   appendRequestProcessingFacts(facts,m);
   p.append(facts);root.append(p);
@@ -3138,7 +3146,14 @@ async function linkAction(which) {
 }
 $("session-search").addEventListener("input",renderSessions);
 $("packet-list").addEventListener("scroll",loadMorePackets,{passive:true});
-for(const b of document.querySelectorAll("[data-tab]")) b.addEventListener("click",()=>showTab(b.dataset.tab));
+const requestInfoTabs=$("request-info-tabs");
+for(const button of requestInfoTabs.querySelectorAll("[data-tab]"))button.addEventListener("click",()=>showTab(button.dataset.tab));
+requestInfoTabs.addEventListener("keydown",event=>{
+  const tabs=Array.from(requestInfoTabs.querySelectorAll("[data-tab]:not([hidden])")),index=tabs.indexOf(event.target);
+  const next={ArrowLeft:(index-1+tabs.length)%tabs.length,ArrowRight:(index+1)%tabs.length,Home:0,End:tabs.length-1}[event.key];
+  if(index<0||next===undefined)return;
+  event.preventDefault();showTab(tabs[next].dataset.tab);tabs[next].focus();
+});
 for(const b of document.querySelectorAll("[data-sort]")) b.addEventListener("click",()=>{
   const key=b.dataset.sort;
   state.direction=state.sort===key?(state.direction==="asc"?"desc":"asc"):"desc";

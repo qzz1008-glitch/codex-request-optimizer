@@ -91,7 +91,8 @@ for(const fields of [{image_isolation_applied:true},{image_paths:['C:\\image.png
   assert.notEqual(context.packetDetailVersion({...waitingPacket,...fields}),context.packetDetailVersion(waitingPacket),
     'Protection details must refresh even if request status has not changed');
 const labels=['大小预测','超限压缩','容量重试','解图优化'];
-function rows(){return rendered.children.at(-1).children.filter(child=>child.dataset.protection);}
+function protection(){return rendered.children.at(-1);}
+function rows(){return protection().children.filter(child=>child.dataset.protection);}
 function headings(){return rows().map(row=>{
   const heading=row.children[0],status=heading.lastChild;
   assert.equal(heading.lastChild.text,row.dataset.triggered==='true'?'✓':'—');
@@ -119,8 +120,20 @@ for(let mask=0;mask<16;mask++) {
     for(const marker of markers.children)assert.equal(marker.title,labels[mechanisms.indexOf(marker.dataset.mechanism)]+' · 已触发');
   }
   context.renderHeaders(meta);
+  const summary=protection().children[0];
+  assert.equal(protection().tag,'details');
+  assert.equal(summary.tag,'summary');
+  assert.equal(summary.lastChild.text,active.map(key=>labels[mechanisms.indexOf(key)]).join(' · ')||'未触发');
+  assert.equal(Boolean(protection().open),false);
   assert.deepEqual(Array.from(headings(),row=>row.value),mechanisms.map(key=>active.includes(key)?'✓':'—'));
 }
+context.renderHeaders({id:'request-a'});
+protection().open=true;
+context.renderHeaders({id:'request-a',usage_override_applied:true});
+assert.equal(protection().open,true,'Refreshing the same request must keep its disclosure open');
+assert.equal(protection().children[0].lastChild.text,'大小预测');
+context.renderHeaders({id:'request-b',usage_override_applied:true});
+assert.equal(Boolean(protection().open),false,'A different request starts with the compact summary');
 assert.equal(context.packetProtection({image_isolation_removed:1}).optimization,true);
 assert.equal(context.packetProtection({image_isolation_removed:'1'}).optimization,false);
 assert.equal(context.renderProtectionMarkers(context.packetProtection({image_upload_optimized:true})),null,
@@ -251,11 +264,11 @@ assert.equal(facts(0)['图片压缩'],undefined,'Unmodified images must not show
 // Image optimization has its own setting, independent of request-size protection.
 context.state.status.packet_size_protection_enabled=false;context.state.status.capacity_retry_enabled=false;
 context.renderHeaders({source:'live',image_isolation_applied:true,image_paths:[image]});
-assert.equal(rendered.children[1].attributes['aria-disabled'],'false');
 assert.equal(rows()[3].classList.contains('protection-inactive'),false);
 assert.equal(rows()[0].classList.contains('protection-inactive'),true);
 context.state.status.image_analysis_mode='native';context.renderProtectionPanelState();
-assert.equal(rendered.children[1].attributes['aria-disabled'],'true');
+assert.equal(protection().attributes['aria-disabled'],undefined,'Settings cannot disable the disclosure for an existing request');
+assert.equal(protection().children[0].lastChild.text,'解图优化');
 assert.equal(rows()[3].title,'可在设置中开启解图优化');
 assert.equal(descendants(details('optimization')).filter(child=>child.tag==='button').every(button=>!button.disabled),true,
   'Turning a feature off must not disable access to images saved in an earlier request');
