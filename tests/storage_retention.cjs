@@ -20,6 +20,7 @@ function fixture() {
     requestBodyView:{id:'basic',body:{input:'cached private body'}},
     requestBodyCache:{id:'basic',promise:Promise.resolve({input:'cached private body'})},
     requestBodyTextMode:false,requestBodyExportUrl:"",
+    URL:{createObjectURL:()=>'',revokeObjectURL(){}},Blob,
     requestBodySequence:0,treeQueryTimer:0,tokenWindow:{input_tokens:123},
     $:element,t:value=>value,clearTimeout(){},URLSearchParams,
     clearJsonFocus(){calls.push('focus-cleared');},clearCopyFeedback(){},
@@ -33,9 +34,9 @@ function fixture() {
     table(headers,rows){const result={...element(Symbol('table')),headers,rows};context.tables.push(result);return result;}
   };
   vm.createContext(context);
-  vm.runInContext(extract('function requestTextMessages(','function copyRequestJson('),context);
+  vm.runInContext(extract('function requestTextMessages(','function copyRequestBody('),context);
   vm.runInContext(extract('async function loadTree(path)','async function goPath(path)'),context);
-  vm.runInContext(extract('function retainedReasoningEncryptedBytes(','function focusJsonPath('),context);
+  vm.runInContext(extract('function retainedReasoningEncryptedBytes(','function focusRequestBodyLine('),context);
   vm.runInContext(source.split(/\r?\n/).filter(line=>/^function compressedBytes\(/.test(line)).join('\n'),context);
   vm.runInContext(extract('function packetDiffRows(','function requestImagePaths('),context);
   vm.runInContext(extract('function packetDetailVersion(','function renderProtectionPanelState('),context);
@@ -49,6 +50,9 @@ function fixture() {
     c.setRequestBodyTextMode(true);
     assert.equal(c.$('request-body-text').hidden,false);
     assert(c.$('request-body-text').firstChild);
+    assert.equal(c.requestBodyView.output.extension,'txt');
+    assert.equal(c.requestBodyView.output.text,'用户\ncached private body\n');
+    c.$('body-results').append('cached search preview');
     c.api=async()=>{throw Error('Removed body must not be fetched');};
     await c.loadTree('');
     assert.equal(c.requestBodyView,null);
@@ -58,6 +62,7 @@ function fixture() {
     assert.equal(c.$('json-tree').hidden,false);
     assert.equal(c.$('request-body-text').hidden,true);
     assert.equal(c.$('request-body-text').children.length,0);
+    assert.equal(c.$('body-results').children.length,0);
     assert.equal(c.$('json-actions').hidden,true);
     await assert.rejects(c.ensureJsonView('basic',c.requestBodySequence),/仅保留基本信息/);
     c.state.selected='full';c.state.detail={id:'full'};
