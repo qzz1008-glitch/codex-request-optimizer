@@ -91,10 +91,16 @@
           <div id="tab-tree" class="tab-panel" role="tabpanel" aria-labelledby="request-tab-tree" hidden>
             <div class="tree-tools">
               <input id="tree-query" type="search" placeholder="搜索关键词或输入路径，如 /input/0" aria-label="搜索内容或定位路径" title="输入后自动定位；支持关键词或 / 开头的路径；始终显示完整 JSON" autocomplete="off" spellcheck="false">
-              <a id="json-download" class="json-download" hidden download>下载 JSON</a>
             </div>
             <div id="body-results" class="search-results" hidden></div>
-            <div id="request-body-view" class="json-viewer"><div id="json-tree" class="json-content" role="region" aria-label="请求正文"></div></div>
+            <div id="request-body-view" class="json-viewer">
+              <a id="json-download" class="json-download" title="下载 JSON" aria-label="下载 JSON" hidden download>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+                  <path d="M12 3v12m-4-4 4 4 4-4M4 16v4h16v-4"/>
+                </svg>
+              </a>
+              <div id="json-tree" class="json-content" role="region" aria-label="请求正文"></div>
+            </div>
           </div>
           <div id="tab-diff" class="tab-panel" role="tabpanel" aria-labelledby="request-tab-diff" tabindex="0" hidden><div id="diff-content"></div></div>
         </div>
