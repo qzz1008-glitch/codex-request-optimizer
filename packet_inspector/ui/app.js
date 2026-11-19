@@ -628,6 +628,14 @@ function sessionGroups() {
   }
   return [...groups.values()];
 }
+function sessionGroupMatchesQuery(group,query) {
+  const memberSearch=group.members.map(member=>{
+    const kindLabel=auxiliaryLabels[auxiliarySessionKind(member)];
+    return [member.thread_id,member.title,kindLabel&&t(kindLabel),member.origin?.address].join(" ");
+  });
+  const id=group.thread_id===OTHER_SESSION_GROUP?"":group.thread_id;
+  return [group.title,id,group.origin?.address,...memberSearch].join("\n").toLowerCase().includes(query);
+}
 function otherTaskSessions() {return sessionGroups().find(group=>group.thread_id===OTHER_SESSION_GROUP)?.members||[];}
 function selectedSessionGroup(groups=sessionGroups()) {
   const value=state.filters.thread;
@@ -1050,13 +1058,7 @@ function renderSessions() {
     const value=otherGroup?OTHER_SESSION_GROUP:id?"thread:"+id:"unknown", data=summaries.get(id)||{};
     const title=data.title;
     const origin=data.origin?.address;
-    if(query) {
-      const memberSearch=data.members.map(member=>{
-        const kindLabel=auxiliaryLabels[auxiliarySessionKind(member)];
-        return [member.thread_id,member.title,kindLabel&&t(kindLabel)].join(" ");
-      });
-      if(![title,otherGroup?"":id,...memberSearch].join("\n").toLowerCase().includes(query))continue;
-    }
+    if(query&&!sessionGroupMatchesQuery(data,query))continue;
     const row=el("div","session-row");row.dataset.session=value;
     const item=el("button","session-item"+(otherGroup?" other-session-group":"")+(value===selected?" selected":""));
     item.type="button";item.dataset.session=value;

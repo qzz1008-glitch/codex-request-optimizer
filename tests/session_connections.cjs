@@ -77,17 +77,28 @@ test('a confirmed image parent remains a group before its name or native record 
   assert.equal(context.otherTaskSessions().length,0);
  }
 });
-test('a confirmed SSH session displays its own card once the native title is available',()=>{
+test('an SSH session can be found by IP before and after its native title arrives',()=>{
  const origin={kind:'remote',address:'192.0.2.25'};
  const pending=[session('remote',{origin}),session('helper',{origin,parent_thread_id:'remote',session_kind:'title_generation'}),
   session('unresolved')];
- assert.deepEqual(grouped(pending).map(group=>group.title),['其他']);
- const groups=grouped([{...pending[0],title:'Real SSH title'},...pending.slice(1)]);
+ const untitled=grouped(pending);
+ assert.deepEqual(untitled.map(group=>group.title),['其他']);
+ assert.equal(context.sessionGroupMatchesQuery(untitled[0],'192.0.2.25'),true);
+ const groups=grouped([{...pending[0],title:'Real SSH title'},...pending.slice(1),
+  session('remote-v6',{title:'IPv6 session',origin:{kind:'remote',address:'2001:DB8::25'}})]);
  const remote=groups.find(group=>group.thread_id==='remote');
  assert.equal(remote.title,'Real SSH title');
  assert.deepEqual(remote.origin,origin);
  assert.deepEqual(remote.members.map(row=>row.thread_id),['remote','helper']);
  assert.deepEqual(Array.from(context.otherTaskSessions(),row=>row.thread_id),['unresolved']);
+ const matches=query=>groups.filter(group=>context.sessionGroupMatchesQuery(group,query)).map(group=>group.thread_id);
+ assert.deepEqual(matches('192.0.2.25'),['remote']);
+ assert.deepEqual(matches('0.2.25'),['remote']);
+ assert.deepEqual(matches('2001:db8::25'),['remote-v6']);
+ assert.deepEqual(matches('db8::'),['remote-v6']);
+ assert.deepEqual(matches('real ssh title'),['remote']);
+ assert.deepEqual(matches('helper'),['remote']);
+ assert.deepEqual(matches('198.51.100'),[]);
 });
 test('image requests belong to their direct subtask or fork without merging unrelated parents',()=>{
  const rows=[session('main',{title:'Main'}),session('child',{parent_thread_id:'main',session_kind:'subagent',title:'Builder'}),
