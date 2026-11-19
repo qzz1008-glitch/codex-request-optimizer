@@ -2419,7 +2419,7 @@ function renderProtectionPanelState() {
   }
 }
 function originalRequestPanel(m) {
-  const section=panel(t("原始请求信息"),{headingTag:"h2"}),facts=el("dl","request-overview-facts");
+  const section=panel(t("原始请求"),{headingTag:"h2"}),facts=el("dl","request-overview-facts");
   if(m.source!=="live")fact(facts,t("数据来源"),t("历史重建（大小为估算）"));
   fact(facts,t("模型"),m.model||t("未标记"));
   fact(facts,t("原始请求"),bytes(originalBytes(m))).title=t("原始请求大小（图片处理、传输压缩前）");
@@ -2441,7 +2441,7 @@ function originalRequestPanel(m) {
   return section;
 }
 function forwardedRequestPanel(m) {
-  const section=panel(t("转发请求信息"),{headingTag:"h2"}),facts=el("dl","request-overview-facts");
+  const section=panel(t("转发请求"),{headingTag:"h2"}),facts=el("dl","request-overview-facts");
   const compressed=compressedBytes(m),summaryTriggered=overflowApplied(m);
   fact(facts,t("转发请求"),bytes(compressed)).title=t("转发请求大小（图片处理、传输压缩后，超限摘要处理前）");
   const hasTransport=typeof m.transport_content_encoding==="string";
@@ -2496,7 +2496,7 @@ function forwardedRequestPanel(m) {
 }
 function requestProtectionPanel(m) {
   const flags=packetProtection(m);
-  const title=t("请求保护信息"),steps=panel(title,{headingTag:"h2"});
+  const title=t("请求保护"),steps=panel(title,{headingTag:"h2"});
   steps.id="packet-protection-panel";
   steps.setAttribute("aria-label",title);
   const item=(key,category)=>{
@@ -2985,7 +2985,7 @@ function renderHeaders(m) {
   const auxiliary=auxiliarySessionKind(session),purpose=purposeFromMetadata(m);
   const specialKind=[purpose,m.request_kind,auxiliary].find(kind=>kind&&kind!=="subagent"&&Object.hasOwn(auxiliaryLabels,kind));
   if(specialKind) {
-    const context=panel(t("独立会话信息"),{headingTag:"h2"}),facts=el("dl","request-overview-facts");
+    const context=panel(t("独立会话"),{headingTag:"h2"}),facts=el("dl","request-overview-facts");
     context.id="request-session-info";
     fact(facts,t("任务类型"),t(auxiliaryLabels[specialKind]));
     const nativeTitle=session?.title_source==="index_task"||session?.title_source==="subagent"?null:session?.title;
