@@ -493,7 +493,7 @@ document.querySelector(".app-header").addEventListener("dblclick",async event=>{
 });
 initializeWindowControls();
 history.replaceState(null, "", "/");
-const state = { status: null, packets: [], sessions: [], selected: null, detail: null, tab: "headers", path: "", text: null, older: false, polling: false, detailVersion: "", detailRequest: 0, listVersion: "", sessionVersion: "", sort: "created", direction: "desc", filters: {kind:"",status:"",thread:""}, canLoadMore: false, listRequest: 0, listController: null, listRevision: null, filterRevision: null };
+const state = { status: null, packets: [], sessions: [], selected: null, detail: null, tab: "headers", diffAvailable: null, path: "", text: null, older: false, polling: false, detailVersion: "", detailRequest: 0, listVersion: "", sessionVersion: "", sort: "created", direction: "desc", filters: {kind:"",status:"",thread:""}, canLoadMore: false, listRequest: 0, listController: null, listRevision: null, filterRevision: null };
 const nf = new Intl.NumberFormat("zh-CN");
 let workspaceView="records",tokenTrendView=null;
 let requestBodyCache=null, requestBodyExportUrl="", requestBodySequence=0;
@@ -1143,7 +1143,7 @@ async function selectSession(value) {
   state.filters.thread=value;
   state.listController?.abort();state.listRequest++;
   state.detailRequest++;
-  state.selected=null;state.detail=null;state.detailVersion="";state.text=null;
+  state.selected=null;state.detail=null;state.detailVersion="";state.text=null;state.diffAvailable=null;
   requestBodyCache=null;requestBodyView=null;requestBodySequence++;clearJsonFocus();clearJsonActions();
   state.packets=[];state.older=false;state.canLoadMore=false;state.listRevision=null;
   $("packet-detail").hidden=true;$("empty-state").hidden=false;
@@ -1240,16 +1240,23 @@ function fact(n,label,value) {
   return row;
 }
 function showTab(tab) {
-  const basic=!!state.detail?.details_evicted,search=isToolSearch(state.detail);
-  if((basic&&tab==="tree")||(search&&tab==="diff"))tab="headers";
+  const basic=!!state.detail?.details_evicted, noDiff=isToolSearch(state.detail)||state.diffAvailable===false;
+  let refocus=false;
+  if((basic&&tab==="tree")||(noDiff&&tab==="diff")) {
+    const focused=document.activeElement;
+    refocus=$("request-tab-"+tab)===focused||$("tab-"+tab).contains(focused);
+    tab="headers";
+  }
   state.tab=tab;
   for(const button of $("request-info-tabs").querySelectorAll("[data-tab]")) {
     const key=button.dataset.tab,active=key===tab;
-    button.hidden=(basic&&key==="tree")||(search&&key==="diff");
+    // Keep an active comparison visible while the newly selected request is checked.
+    button.hidden=(basic&&key==="tree")||(key==="diff"&&(noDiff||state.diffAvailable===null&&!active));
     button.setAttribute("aria-selected",String(active));
     button.tabIndex=active?0:-1;
     $("tab-"+key).hidden=!active;
   }
+  if(refocus)$("request-tab-headers").focus();
 }
 function packetStatus(p) {
   if(p.state==="relay_error" || p.status>=400)return "failed";
@@ -2391,12 +2398,14 @@ async function selectPacket(id,refresh=false,expectedListRequest=null) {
     if(requestId!==state.detailRequest)return;
     if(error.status!==404||!refresh||state.selected!==id)throw error;
     cancelTokenRead();tokenWindow=null;
-    state.selected=null;state.detail=null;state.detailVersion="";state.text=null;
+    state.selected=null;state.detail=null;state.detailVersion="";state.text=null;state.diffAvailable=null;
     requestBodyCache=null;requestBodyView=null;requestBodySequence++;clearJsonFocus();clearJsonActions();
     $("packet-detail").hidden=true;$("empty-state").hidden=false;renderList();return;
   }
   if(requestId!==state.detailRequest || (refresh && state.selected!==id) || (expectedListRequest!==null && expectedListRequest!==state.listRequest)) return;
-  const changed=state.selected!==id, previousDetail=state.detail, detailsChanged=!!m.details_evicted!==!!previousDetail?.details_evicted; state.selected=id; state.detail=m; state.detailVersion=packetDetailVersion(m);
+  const changed=state.selected!==id, previousDetail=state.detail, detailsChanged=!!m.details_evicted!==!!previousDetail?.details_evicted;
+  state.selected=id;state.detail=m;state.detailVersion=packetDetailVersion(m);
+  if(changed)state.diffAvailable=null;
   showTab(state.tab);
   $("empty-state").hidden=true; $("packet-detail").hidden=false; renderList();
   if(changed || tokenVersion(m)!==tokenVersion(previousDetail||{})) {cancelTokenRead();tokenWindow=cachedTokenWindow(m);}
@@ -2404,8 +2413,10 @@ async function selectPacket(id,refresh=false,expectedListRequest=null) {
   loadTokenWindow();
   renderOverview(m); renderHeaders(m);
   if(changed)$("diff-content").replaceChildren(el("p","muted",t("加载中…")));
-  if(changed||detailsChanged) {state.path=""; state.text=null; $("body-results").hidden=true; await loadTree("");if(requestId===state.detailRequest)await loadDiff();}
-  else if(state.tab==="diff") await loadDiff();
+  if(changed||detailsChanged) {
+    state.path="";state.text=null;$("body-results").hidden=true;
+    await Promise.all([loadTree(""),loadDiff()]);
+  } else if(state.tab==="diff"||state.diffAvailable===null) await loadDiff();
 }
 function renderProtectionPanelState() {
   const panel=$("packet-protection-panel");if(!panel)return;
@@ -2835,12 +2846,17 @@ async function loadDiff() {
   const id=state.selected,current=state.detail,active=()=>state.selected===id&&state.detail===current;
   let data=await api("/api/packets/"+id+"/diff");if(!active())return;
   if(data?.state==="details_unavailable")data=await readSummaryPacketDiff(data,current,active);if(!active())return;
-  if(data?.state==="details_unavailable") {
+  const available=!!data;
+  if(state.diffAvailable!==available) {
+    state.diffAvailable=available;
+    showTab(state.tab);
+  }
+  if(!data){$("diff-content").replaceChildren();return;}
+  if(data.state==="details_unavailable") {
     reconcileContent($("diff-content"),el("p","muted",t("暂时无法取得可比较的统计信息。")));return;
   }
-  const delta=data?await compressedDelta(data,current):null;if(!active())return;
+  const delta=await compressedDelta(data,current);if(!active())return;
   const root=document.createDocumentFragment();
-  if(!data){reconcileContent($("diff-content"),el("p","muted",t("没有可比较的上条请求。")));return;}
   const p=panel(t("相对上条请求"));fact(p,t("转发请求变化"),signed(delta));fact(p,t("原始请求变化"),signed(data.decoded_delta));root.append(p);
   const changes=panel(t("变化明细"),{showTitle:false}),rows=packetDiffRows(data,state.detail);
   if(data.state==="summary_only")changes.append(el("small","muted detail-note",t("输入条目详情已回收，以下显示统计变化。")));

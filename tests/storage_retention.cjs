@@ -15,14 +15,14 @@ function fixture() {
   };
   const calls=[];
   const context={
-    state:{selected:'basic',detail:{id:'basic',details_evicted:true},detailRequest:0,listRequest:0},
+    state:{selected:'basic',detail:{id:'basic',details_evicted:true},tab:'headers',diffAvailable:null,detailRequest:0,listRequest:0},
     requestBodyView:{id:'basic',body:{input:'cached private body'}},
     requestBodyCache:{id:'basic',promise:Promise.resolve({input:'cached private body'})},
     requestBodySequence:0,treeQueryTimer:0,tokenWindow:{input_tokens:123},
     $:element,t:value=>value,clearTimeout(){},URLSearchParams,
     clearJsonFocus(){calls.push('focus-cleared');},clearJsonActions(){calls.push('actions-cleared');},
     fail(error){throw error;},
-    cancelTokenRead(){calls.push('token-cancelled');},renderList(){calls.push('list-rendered');},
+    cancelTokenRead(){calls.push('token-cancelled');},renderList(){calls.push('list-rendered');},showTab(){},
     el:(tag,cls,text)=>({...element(Symbol(tag)),tag,cls,text}),
     reconcileContent:(node,content)=>node.replaceChildren(content),
     document:{createDocumentFragment:()=>({...element(Symbol('fragment'))})},
@@ -63,6 +63,15 @@ function fixture() {
     c.compressedDelta=async()=>{throw Error('Missing details must not generate a diff');};
     await c.loadDiff();
     assert(c.$('diff-content').children[0].text.includes('无法取得可比较的统计信息'));
+    assert.equal(c.state.diffAvailable,true);
+    passed++;
+  }
+  {
+    const c=fixture();c.api=async()=>null;
+    c.compressedDelta=async()=>{throw Error('Missing previous request must not generate a diff');};
+    await c.loadDiff();
+    assert.equal(c.state.diffAvailable,false);
+    assert.equal(c.$('diff-content').children.length,0);
     passed++;
   }
   {
