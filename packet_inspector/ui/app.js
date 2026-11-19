@@ -498,7 +498,7 @@ const nf = new Intl.NumberFormat("zh-CN");
 let workspaceView="records",tokenTrendView=null;
 let requestBodyCache=null, requestBodyExportUrl="", requestBodySequence=0;
 let treeQueryTimer=null,requestBodyView=null,requestBodyHighlight=null;
-let requestBodyTextMode=false;
+let requestBodyTextMode=true;
 let contextSettings = null;
 const contextCustomValues = new Map();
 let settingsEditing = false, settingsSaving = false, settingsOpening = false, settingsRevision = 0;
