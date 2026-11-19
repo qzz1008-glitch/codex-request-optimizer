@@ -424,8 +424,10 @@ function eventRows(){return [
   for(const ticks of [narrow,distant]){assert.ok(ticks.length>=2&&ticks.length<=9);assert.ok(ticks.slice(1).every((stamp,index)=>stamp-ticks[index]>600));}
  });
  await test('one global time coordinate shortens long idle intervals to one minute',()=>{
-  const scale=View.compactTimeScale(0,7200,[[100,200],[3500,3600],[7000,7100]]);
+  const secondRequestStart=200+32*60;
+  const scale=View.compactTimeScale(0,7200,[[100,200],[secondRequestStart,secondRequestStart+100],[7000,7100]]);
   assert.equal(scale.gaps.length,2);
+  assert.equal(scale.gaps[0].end-scale.gaps[0].start,30*60);
   for(const gap of scale.gaps)assert.ok(Math.abs(scale.offset(gap.end)-scale.offset(gap.start)-60)<1e-6);
   let previous=-1;
   for(let stamp=0;stamp<=7200;stamp+=25){const offset=scale.offset(stamp);assert.ok(offset>previous);assert.ok(Math.abs(scale.at(offset)-stamp)<1e-6);previous=offset;}
@@ -435,6 +437,10 @@ function eventRows(){return [
   for(const activity of [[],[[100,200],[600,700],[1100,1800]],[[0,1800]]]){
    const scale=View.compactTimeScale(0,1800,activity);assert.equal(scale.gaps.length,0);
    assert.equal(scale.offset(900),900);assert.equal(scale.at(450),450);
+  }
+  for(const idle of [15*60,30*60,32*60-1]){
+   const scale=View.compactTimeScale(0,3600,[[100,200],[200+idle,3600]]);
+   assert.equal(scale.gaps.length,0);assert.equal(scale.offset(1200),1200);
   }
  });
  await test('overlapping request durations merge before detecting idle intervals',()=>{
