@@ -112,13 +112,14 @@ body{height:100dvh;min-width:0;display:flex;flex-direction:column;overflow-x:hid
 .session-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;min-width:0}
 /* Let selection start in the left inset of each text row. */
 .session-heading,.session-id,.session-meta{padding-left:12px}
-.session-row:has(.session-copy) :is(.session-heading,.session-id){padding-right:24px}
-.session-copy{position:absolute;top:7px;right:8px;display:grid;place-items:center;width:22px;height:18px;min-height:0;padding:0;border:0;border-radius:4px;background:transparent;color:var(--muted)}
+.session-row:has(.session-copy) .session-heading{padding-right:24px}
+.session-row:has(.session-copy) .session-id{padding-right:19px}
+.session-copy{position:absolute;top:7px;right:4px;display:grid;place-items:center;width:22px;height:18px;min-height:0;padding:0;border:0;border-radius:4px;background:transparent;color:var(--muted)}
 .session-copy[data-session-copy="id"]{top:26px}
 .session-copy svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linejoin:round;stroke-linecap:round}
 .session-copy:hover{background:var(--soft);color:var(--accent)}
 .session-copy:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
-.session-copy-feedback{position:absolute;top:6px;right:34px;pointer-events:none}
+.session-copy-feedback{position:absolute;top:6px;right:30px;pointer-events:none}
 .session-copy[data-session-copy="id"] + .session-copy-feedback{top:25px}
 .session-copy-feedback:not(:empty){padding:2px 6px;border-radius:4px;background:var(--panel);color:var(--muted);font-size:11px;line-height:16px;white-space:nowrap}
 @media (hover:hover){
@@ -216,9 +217,9 @@ body{height:100dvh;min-width:0;display:flex;flex-direction:column;overflow-x:hid
 @media(prefers-reduced-motion:reduce){.trend-series-line{transition:none}}
 .image-path-item{display:flex;align-items:flex-start;gap:8px;min-width:0;padding:8px 0;border-top:1px solid var(--line)}
 .image-path-name{flex:1;min-width:0;color:var(--ink);font:12px/1.6 Consolas,"Cascadia Mono",monospace;white-space:pre-wrap;overflow-wrap:anywhere;user-select:text}
-.session-title,.session-id,.session-meta>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.session-title,.session-meta>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .session-title{font-size:13px;font-weight:600;line-height:1.35}
-.session-id{font:11px/1.35 Consolas,"Cascadia Mono",monospace;color:var(--muted)}
+.session-id{min-width:0;overflow-wrap:anywhere;font:.6875rem/1.35 Consolas,"Cascadia Mono",monospace;color:var(--muted)}
 .session-meta{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));align-items:center;gap:4px;font-size:10px;line-height:1.35;color:var(--muted);font-variant-numeric:tabular-nums}
 .session-token{grid-column:1}
 .session-origin{grid-column:2;text-align:center}
