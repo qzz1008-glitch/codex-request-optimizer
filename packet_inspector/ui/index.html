@@ -42,7 +42,11 @@
   <div id="notice" data-feedback-source data-feedback-target="app-inline-feedback" class="notice" role="alert" hidden><span id="notice-text"></span><button id="notice-dismiss" data-notice-dismiss type="button" aria-label="关闭提示" title="关闭提示">×</button></div>
   <main id="records-view" class="workspace">
     <aside class="sessions-sidebar" aria-label="会话">
-      <div class="sidebar-title sessions-title"><h1>会话</h1><input id="session-search" class="session-search" type="search" placeholder="搜索会话" aria-label="搜索会话名称或 session_id" autocomplete="off" spellcheck="false"></div>
+      <search class="sidebar-title sessions-title">
+        <h1>会话</h1>
+        <label for="session-search" class="sr-only">搜索会话名称、ID 或 IP</label>
+        <input id="session-search" class="session-search" type="search" placeholder="搜索名称、ID 或 IP" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false">
+      </search>
       <nav id="session-list" class="session-list" aria-label="选择 session_id"></nav>
       <p id="session-metadata-note" class="session-metadata-note muted" hidden>会话信息暂时不可用，正在重试。</p>
     </aside>
