@@ -688,9 +688,12 @@ button.other-session-group{background:#f5f2fc;border-color:#e7e0f5}
 #settings-dialog #request-protection-settings .runtime-setting-row{margin-block-start:var(--settings-row-gap)}
 #settings-dialog .runtime-inline-hint{min-width:0;margin:0}
 #settings-dialog .proxy-address-field{min-width:0}
-#settings-dialog #proxy-test{justify-self:start;width:76px;padding-inline:6px;white-space:nowrap}
+#settings-dialog .proxy-test-actions{display:flex;align-items:center;gap:8px}
+#settings-dialog #proxy-test{flex:none;width:76px;padding-inline:6px;white-space:nowrap}
 #settings-dialog #proxy-settings>.help{margin:12px 0 0}
-#settings-dialog .proxy-test-result{display:block;margin-top:12px;font-size:13px;line-height:20px;white-space:pre-wrap;overflow-wrap:anywhere}
+#settings-dialog .proxy-test-result{color:var(--muted);font-size:13px;line-height:20px;white-space:nowrap}
+#settings-dialog .proxy-test-result.success{color:var(--green)}
+#settings-dialog .proxy-test-result.error{color:var(--danger)}
 #settings-dialog .capacity-retry-limit{display:grid;grid-template-columns:var(--settings-inline-label-width) 68px minmax(0,1fr);align-items:center;gap:8px;min-width:0;color:var(--muted);font-size:13px;line-height:20px}
 #settings-dialog .capacity-retry-options{display:flex;flex-wrap:wrap;gap:var(--settings-row-gap) 20px}
 #settings-dialog .capacity-retry-options .capacity-retry-limit{grid-template-columns:auto 68px auto}
@@ -774,7 +777,9 @@ button.other-session-group{background:#f5f2fc;border-color:#e7e0f5}
 @container settings-dialog (max-width:500px){
   #settings-dialog>.settings-content{--settings-section-indent:12px}
   #settings-dialog .proxy-inline-row{grid-template-columns:max-content minmax(0,1fr);column-gap:8px}
-  #settings-dialog :is(.image-directory-row,.proxy-controls){grid-template-columns:minmax(0,var(--settings-path-width)) auto}
+  #settings-dialog .image-directory-row{grid-template-columns:minmax(0,var(--settings-path-width)) auto}
+  #settings-dialog .proxy-controls{grid-template-columns:minmax(0,var(--settings-path-width)) 142px;column-gap:4px}
+  #settings-dialog .proxy-test-actions{gap:6px}
   #settings-dialog .settings-language-row{grid-template-columns:minmax(0,1fr) auto}
   #settings-dialog :is(.zstd-level-control,.packet-size-limit,.runtime-setting-row,.image-directory-settings){grid-template-columns:minmax(0,1fr);gap:8px}
   #settings-dialog .record-limit-grid{--record-limit-columns:max-content minmax(0,1fr)}
@@ -792,10 +797,8 @@ button.other-session-group{background:#f5f2fc;border-color:#e7e0f5}
   #settings-dialog .settings-feedback{grid-column:1/-1}
   #settings-dialog #settings-restore{grid-column:2}
 }
-@container settings-dialog (max-width:360px){
-  #settings-dialog .proxy-inline-row{grid-template-columns:minmax(0,1fr)}
-}
 @container settings-dialog (max-width:380px){
+  #settings-dialog .proxy-inline-row{grid-template-columns:minmax(0,1fr)}
   #settings-dialog .image-directory-row{grid-template-columns:minmax(0,1fr);max-width:var(--settings-path-width)}
   #settings-dialog .image-directory-row button{justify-self:start}
 }

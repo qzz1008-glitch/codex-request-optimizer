@@ -1807,24 +1807,32 @@ function fillProxySettings(force=false) {
   if(detected.unsupported_all_proxy)warnings.push(t("ALL_PROXY 未用于转发，请配置 HTTP/HTTPS 代理。"));
   $("proxy-detection-warning").textContent=warnings.join(" ");$("proxy-detection-warning").hidden=manual||!warnings.length;
 }
+function setProxyTestStatus(status="") {
+  const labels={ok:"已连通",rejected:"响应异常",failed:"连接失败",timeout:"测试超时",stale:"需重测",error:"测试失败"};
+  const output=$("proxy-test-result");
+  output.classList.toggle("success",status==="ok");
+  output.classList.toggle("error",Boolean(status)&&status!=="ok"&&status!=="stale");
+  uiI18n.text(output,status?labels[status]??labels.error:"");
+}
 async function testProxySettings() {
-  const button=$("proxy-test"),output=$("proxy-test-result");
+  const button=$("proxy-test");
   if(settingsSaving||button.getAttribute("aria-busy")==="true")return;
   if(!$("proxy-address").reportValidity())return;
   const draft=proxySettingsDraft();
-  button.setAttribute("aria-busy","true");fillProxySettings();output.hidden=true;
+  button.setAttribute("aria-busy","true");
+  setProxyTestStatus();
+  fillProxySettings();
+  let status;
   try {
     const result=await api("/api/proxy-test",JSON.parse(draft),AbortSignal.timeout(15000));
-    if(draft!==proxySettingsDraft()) {output.textContent=t("配置已更改，请重新测试。");output.className="proxy-test-result muted";return;}
-    const states={ok:"连接已建立",rejected:"收到拒绝或异常响应",failed:"连接失败",timeout:"测试超时"};
-    const summary=[t(states[result.state]??"连接失败")];
-    if(result.status)summary.push("HTTP "+result.status);
-    summary.push(t("耗时 {ms} ms").replace("{ms}",Number(result.elapsed_ms).toLocaleString()));
-    if(result.error)summary.push(result.error.replace(/\s+/g," ").trim());
-    const lines=[summary.join(" · "),t("测试目标：{url}").replace("{url}",result.target)];
-    output.textContent=lines.join("\n");output.className="proxy-test-result "+(result.state==="ok"?"muted":"error");
-  } catch(error) {output.textContent=t("代理测试失败：")+t(error.message);output.className="proxy-test-result error";}
-  finally {output.hidden=false;button.setAttribute("aria-busy","false");fillProxySettings();}
+    status=result.state??"error";
+  } catch(error) {
+    status=error?.name==="TimeoutError"?"timeout":"error";
+  } finally {
+    button.setAttribute("aria-busy","false");
+    fillProxySettings();
+  }
+  if($("settings-dialog").open)setProxyTestStatus(draft===proxySettingsDraft()?status:"stale");
 }
 function imageAnalysisMode(status=state.status) {
   return ["native","disabled","optimized"].includes(status?.image_analysis_mode)?status.image_analysis_mode:
@@ -3290,6 +3298,7 @@ function discardSettingsDraft() {
   settingsEditing=false;settingsBaseline=null;settingsLanguage=null;
   const restore=setInterfaceLanguage(language,{persist:false});
   resetSettingsSaveProgress();
+  setProxyTestStatus();
   if(state.status)fillSettings();if(contextSettings)fillContextSettings(contextSettings);renderUpdates();
   setSettingsMessage("");
   return restore.catch(fail);
@@ -3308,7 +3317,7 @@ function closeSettings() {
 action("settings-close",closeSettings);action("settings-restore",restoreSettings);
 action("proxy-test",testProxySettings);
 $("proxy-mode").addEventListener("change",()=>{fillProxySettings();updateSettingsSaveState();});
-$("proxy-settings").addEventListener("input",()=>{$("proxy-test-result").hidden=true;});
+$("proxy-settings").addEventListener("input",()=>setProxyTestStatus());
 action("storage-dir-open",()=>openSettingsDirectory("storage-dir"));
 action("storage-dir-reset",resetStorageDirectory);
 $("settings-dialog").addEventListener("cancel",event=>{event.preventDefault();closeSettings();});
