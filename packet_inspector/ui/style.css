@@ -264,7 +264,7 @@ button.other-session-group{background:#f5f2fc;border-color:#e7e0f5}
   position:relative;
   z-index:1;
   align-self:flex-end;
-  block-size:calc(var(--records-heading-height) + var(--records-heading-gap));
+  block-size:calc(var(--records-heading-height) + var(--records-heading-gap) - 6px);
   min-width:0;
   gap:1px;
   margin:0;
