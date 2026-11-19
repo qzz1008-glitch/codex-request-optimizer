@@ -396,8 +396,8 @@ class InspectorServer(ThreadingHTTPServer):
                 with self.guard:
                     if self.settings_path.exists():
                         saved = json.loads(self.settings_path.read_text(encoding="utf8"))
-                    if isinstance(saved.get("storage_dir"), str):
-                        saved.update(grouped_paths(self.data_dir, saved["storage_dir"]))
+                        if isinstance(saved.get("storage_dir"), str):
+                            saved.update(grouped_paths(self.data_dir, saved["storage_dir"]))
                         self.settings = {**self.settings, **protection_settings(saved)}
                         self.settings["image_analysis_mode"] = image_mode(saved)
                         self.settings["image_isolation_enabled"] = self.settings["image_analysis_mode"] == "optimized"
