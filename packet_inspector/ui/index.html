@@ -94,11 +94,20 @@
             </div>
             <div id="body-results" class="search-results" hidden></div>
             <div id="request-body-view" class="json-viewer">
-              <a id="json-download" class="json-download" title="下载 JSON" aria-label="下载 JSON" hidden download>
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
-                  <path d="M12 3v12m-4-4 4 4 4-4M4 16v4h16v-4"/>
-                </svg>
-              </a>
+              <div id="json-actions" class="json-actions" hidden>
+                <button id="json-copy" class="json-action" type="button" title="复制 JSON" aria-label="复制 JSON">
+                  <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                    <path d="M9 9h11v11H9zM15 6V4H4v11h2"/>
+                    <path class="json-copy-check" d="M5 12l4 4L19 6"/>
+                  </svg>
+                </button>
+                <span id="json-copy-feedback" class="json-copy-feedback" role="status"></span>
+                <a id="json-export" class="json-action" title="导出 JSON" aria-label="导出 JSON" download>
+                  <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                    <path d="M12 3v12m-4-4 4 4 4-4M4 16v4h16v-4"/>
+                  </svg>
+                </a>
+              </div>
               <div id="json-tree" class="json-content" role="region" aria-label="请求正文"></div>
             </div>
           </div>

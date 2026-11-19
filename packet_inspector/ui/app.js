@@ -496,7 +496,7 @@ history.replaceState(null, "", "/");
 const state = { status: null, packets: [], sessions: [], selected: null, detail: null, tab: "headers", path: "", text: null, older: false, polling: false, detailVersion: "", detailRequest: 0, listVersion: "", sessionVersion: "", sort: "created", direction: "desc", filters: {kind:"",status:"",thread:""}, canLoadMore: false, listRequest: 0, listController: null, listRevision: null, filterRevision: null };
 const nf = new Intl.NumberFormat("zh-CN");
 let workspaceView="records",tokenTrendView=null;
-let requestBodyCache=null, requestBodyDownloadUrl="", requestBodySequence=0;
+let requestBodyCache=null, requestBodyExportUrl="", requestBodySequence=0;
 let treeQueryTimer=null,requestBodyView=null,requestBodyHighlight=null;
 let contextSettings = null;
 const contextCustomValues = new Map();
@@ -1007,6 +1007,26 @@ function renderSessionConnections() {
   }
   items.append(svg);
 }
+function showCopyFeedback(status,result) {
+  status.dataset.copyFeedback=result;
+  status.textContent=t(result==="success"?"已复制":"复制失败");
+}
+function clearCopyFeedback(status) {
+  clearTimeout(status.copyFeedbackTimer);
+  delete status.dataset.copyFeedback;
+  status.textContent="";
+}
+async function copyWithFeedback(text,status) {
+  const request=Symbol();
+  status.copyRequest=request;
+  let result="success";
+  try {await navigator.clipboard.writeText(text);}
+  catch(_) {result="error";}
+  if(!status.isConnected||status.copyRequest!==request)return;
+  clearCopyFeedback(status);
+  showCopyFeedback(status,result);
+  status.copyFeedbackTimer=setTimeout(()=>clearCopyFeedback(status),result==="success"?900:1600);
+}
 function sessionCopy(field,text,previousFeedback) {
   const button=el("button","session-copy"),label=t(field==="id"?"复制会话 ID":"复制会话名称");
   button.type="button";button.setAttribute("aria-label",label);
@@ -1020,24 +1040,8 @@ function sessionCopy(field,text,previousFeedback) {
   icon.append(path,check);button.append(icon);
   const feedback=el("span","session-copy-feedback");
   feedback.setAttribute("role","status");
-  const showFeedback=(status,result)=>{
-    status.dataset.copyFeedback=result;
-    status.textContent=t(result==="success"?"已复制":"复制失败");
-  };
-  if(previousFeedback)showFeedback(feedback,previousFeedback);
-  button.onclick=async event=>{
-    const status=event.currentTarget.nextElementSibling;
-    let result="success";
-    try {await navigator.clipboard.writeText(text);}
-    catch(_) {result="error";}
-    if(!status.isConnected)return;
-    clearTimeout(status.copyFeedbackTimer);
-    showFeedback(status,result);
-    status.copyFeedbackTimer=setTimeout(()=>{
-      delete status.dataset.copyFeedback;
-      status.textContent="";
-    },result==="success"?900:1600);
-  };
+  if(previousFeedback)showCopyFeedback(feedback,previousFeedback);
+  button.onclick=event=>copyWithFeedback(text,event.currentTarget.nextElementSibling);
   return [button,feedback];
 }
 function renderSessions() {
@@ -1140,7 +1144,7 @@ async function selectSession(value) {
   state.listController?.abort();state.listRequest++;
   state.detailRequest++;
   state.selected=null;state.detail=null;state.detailVersion="";state.text=null;
-  requestBodyCache=null;requestBodyView=null;requestBodySequence++;clearJsonFocus();clearJsonDownload();
+  requestBodyCache=null;requestBodyView=null;requestBodySequence++;clearJsonFocus();clearJsonActions();
   state.packets=[];state.older=false;state.canLoadMore=false;state.listRevision=null;
   $("packet-detail").hidden=true;$("empty-state").hidden=false;
   $("packet-list").scrollTop=0;
@@ -2388,7 +2392,7 @@ async function selectPacket(id,refresh=false,expectedListRequest=null) {
     if(error.status!==404||!refresh||state.selected!==id)throw error;
     cancelTokenRead();tokenWindow=null;
     state.selected=null;state.detail=null;state.detailVersion="";state.text=null;
-    requestBodyCache=null;requestBodyView=null;requestBodySequence++;clearJsonFocus();clearJsonDownload();
+    requestBodyCache=null;requestBodyView=null;requestBodySequence++;clearJsonFocus();clearJsonActions();
     $("packet-detail").hidden=true;$("empty-state").hidden=false;renderList();return;
   }
   if(requestId!==state.detailRequest || (refresh && state.selected!==id) || (expectedListRequest!==null && expectedListRequest!==state.listRequest)) return;
@@ -2606,10 +2610,17 @@ function jsonValueNode(value,key=null,comma=false,root=false,path="",nodes=new M
   else node.addEventListener("toggle",expand);
   return node;
 }
-function clearJsonDownload() {
-  if(requestBodyDownloadUrl)URL.revokeObjectURL(requestBodyDownloadUrl);
-  requestBodyDownloadUrl="";
-  const download=$("json-download");download.hidden=true;download.removeAttribute("href");
+function clearJsonActions() {
+  if(requestBodyExportUrl)URL.revokeObjectURL(requestBodyExportUrl);
+  requestBodyExportUrl="";
+  $("json-actions").hidden=true;
+  $("json-export").removeAttribute("href");
+  const feedback=$("json-copy-feedback");delete feedback.copyRequest;clearCopyFeedback(feedback);
+}
+function copyRequestJson() {
+  const view=requestBodyView;
+  if(!view||view.id!==state.selected)return;
+  return copyWithFeedback(requestJsonText(view.body),$("json-copy-feedback"));
 }
 function clearJsonFocus() {
   requestBodyHighlight?.classList.remove("json-focused");requestBodyHighlight=null;
@@ -2629,10 +2640,11 @@ function retainedReasoningEncryptedBytes({body,source_sizes:sizes},reasoningByte
   }
   return total===reasoningBytes?encrypted:null;
 }
+function requestJsonText(body) {return JSON.stringify(body,null,2)+"\n";}
 async function ensureJsonView(id,sequence) {
   if(state.detail?.id===id&&state.detail.details_evicted)throw new Error("请求详情已回收，仅保留基本信息。");
   if(requestBodyView?.id===id&&requestBodyView.language===uiI18n.language)return requestBodyView;
-  const root=$("json-tree");root.textContent=t("加载中…");requestBodyView=null;clearJsonFocus();clearJsonDownload();
+  const root=$("json-tree");root.textContent=t("加载中…");requestBodyView=null;clearJsonFocus();clearJsonActions();
   if(requestBodyCache?.id!==id) {
     const pending={id,promise:null};
     pending.promise=api("/api/packets/"+id+"/export").then(data=>{
@@ -2653,9 +2665,9 @@ async function ensureJsonView(id,sequence) {
     if(reasoningEncryptedBytes!==null&&state.detail.reasoning_encrypted_bytes==null)renderOverview(state.detail);
     renderHeaders(state.detail);
   }
-  const text=JSON.stringify(body,null,2);
-  requestBodyDownloadUrl=URL.createObjectURL(new Blob([text+"\n"],{type:"application/json;charset=utf-8"}));
-  const download=$("json-download");download.href=requestBodyDownloadUrl;download.download="codex-request-"+id+".json";download.hidden=false;
+  requestBodyExportUrl=URL.createObjectURL(new Blob([requestJsonText(body)],{type:"application/json;charset=utf-8"}));
+  const exportLink=$("json-export");exportLink.href=requestBodyExportUrl;exportLink.download="codex-request-"+id+".json";
+  $("json-actions").hidden=false;
   return requestBodyView;
 }
 function focusJsonPath(view,path) {
@@ -2681,7 +2693,7 @@ async function loadTree(path) {
   $("request-body-view").hidden=false;clearJsonFocus();
   $("tree-query").disabled=!!state.detail?.details_evicted;
   if(state.detail?.details_evicted) {
-    requestBodyView=null;requestBodyCache=null;clearJsonDownload();
+    requestBodyView=null;requestBodyCache=null;clearJsonActions();
     $("json-tree").textContent=t("请求详情已回收，仅保留基本信息。");return;
   }
   try {
@@ -3164,6 +3176,7 @@ for(const select of document.querySelectorAll("[data-filter]")) select.addEventL
 $("tree-query").addEventListener("input",scheduleTreeQuery);
 $("tree-query").addEventListener("compositionend",scheduleTreeQuery);
 $("tree-query").addEventListener("keydown",e=>{if(e.key==="Enter" && !e.isComposing){e.preventDefault();Promise.resolve().then(submitTreeQuery).catch(fail);}});
+$("json-copy").addEventListener("click",copyRequestJson);
 function isTrendGeneration(packet) {
   const kinds=[purposeFromMetadata(packet),packet.request_purpose,packet.request_kind,packet.session_kind];
   return hasModelTokenUsage(packet)&&kinds.every(kind=>!kind||["turn","generation","subagent"].includes(kind));
