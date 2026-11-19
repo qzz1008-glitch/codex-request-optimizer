@@ -261,11 +261,13 @@ button.other-session-group{background:#f5f2fc;border-color:#e7e0f5}
 .detail-title h1{flex:none;white-space:nowrap}
 .detail-title>.tabs{
   --tab-gap:4px;
-  --tab-strip-height:calc(100% - 5px);
+  --tab-label-padding-end:4px;
+  /* Leave the last pixel for the selected tab to cover the frame border. */
+  --tab-strip-height:calc(100% - 1px);
   position:relative;
   z-index:1;
   align-self:flex-end;
-  block-size:var(--records-heading-height);
+  block-size:calc(var(--records-heading-height) - 4px);
   min-width:0;
   gap:var(--tab-gap);
   margin:0;
@@ -285,7 +287,8 @@ button.other-session-group{background:#f5f2fc;border-color:#e7e0f5}
   flex:none;
   align-items:center;
   height:100%;
-  padding:0 7px 6px;
+  padding-inline:7px;
+  padding-block:0 var(--tab-label-padding-end);
   border:0;
   border-radius:0;
   background:transparent;
@@ -298,9 +301,10 @@ button.other-session-group{background:#f5f2fc;border-color:#e7e0f5}
 .detail-title>.tabs button:has(~ button:not([hidden]))::after{
   content:"";
   position:absolute;
-  inset-block-start:6px;
+  inset-block:0 var(--tab-label-padding-end);
   inset-inline-end:calc((var(--tab-gap) + 1px) / -2);
   block-size:12px;
+  margin-block:auto;
   border-inline-end:1px solid #cbd6e4;
   pointer-events:none;
 }
