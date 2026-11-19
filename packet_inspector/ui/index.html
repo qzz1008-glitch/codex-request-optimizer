@@ -333,11 +333,13 @@
           <div id="proxy-manual" class="proxy-address-field" hidden>
             <label class="sr-only" for="proxy-address">代理地址</label><input id="proxy-address" name="proxy-address" type="text" inputmode="url" maxlength="2048" placeholder="http://proxy:8080" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" required disabled>
           </div>
-          <button id="proxy-test" type="button" title="测试当前配置，不保存；不发送对话或 Codex 登录凭据。">测试</button>
+          <div class="proxy-test-actions">
+            <button id="proxy-test" type="button" title="测试当前配置，不保存；不发送对话或 Codex 登录凭据。">测试</button>
+            <output id="proxy-test-result" class="proxy-test-result" role="status" aria-live="polite"></output>
+          </div>
         </div>
       </div>
       <p id="proxy-detection-warning" class="help" role="status" hidden></p>
-      <output id="proxy-test-result" class="proxy-test-result" role="status" aria-live="polite" hidden></output>
     </section>
     <section><h3>运行设置</h3>
       <div class="runtime-setting-row"><div class="runtime-toggle" data-settings-field="start_on_login"><input id="start-on-login" type="checkbox" aria-labelledby="start-on-login-label" aria-describedby="startup-hint"><span id="start-on-login-label">开机启动</span></div><p id="startup-hint" class="muted help runtime-inline-hint">登录 Windows 后自动启动。</p></div>

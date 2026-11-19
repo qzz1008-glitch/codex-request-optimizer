@@ -38,6 +38,7 @@ let browser,cases=0;
       requests.push({url,data});
       if(url==='/api/proxy-test'){
         if(holdTest)await new Promise(resolve=>{window.releaseTest=resolve;});
+        if(testState==='api-error')throw Error('Synthetic probe error');
         const status={ok:404,rejected:407}[testState];
         return {state:testState,status,elapsed_ms:32,target:'https://upstream.invalid/responses',
           proxy_used:true,proxy:data.address||'http://regional.invalid:8080',
@@ -65,6 +66,7 @@ let browser,cases=0;
     ['entry-port','sharing-port','exit-port']);cases++;
   const detectedAddress=page.locator('#proxy-detected-address');
   const manualAddress=page.locator('#proxy-address');
+  const testStatus=page.locator('#proxy-test-result');
   assert.equal(await detectedAddress.isDisabled(),true);
   assert.equal(await page.locator('#proxy-settings input[type=text]:visible').count(),1);
   assert.equal(await page.locator('#proxy-settings input[type=password]').count(),0);
@@ -123,11 +125,17 @@ let browser,cases=0;
   await page.waitForFunction(()=>typeof releaseTest==='function');
   assert.equal(await page.locator('#proxy-test').isDisabled(),true);
   assert.match(await page.locator('#proxy-test').textContent(),/测试中/);
+  assert.equal(await testStatus.textContent(),'');
   await page.evaluate(()=>{fillProxySettings();releaseTest();holdTest=false;});
   await page.waitForFunction(()=>$('proxy-test').getAttribute('aria-busy')==='false');
   assert.deepEqual(await page.evaluate(()=>requests.at(-1).data),{mode:'manual',address:'http://unsaved.invalid:8080'});
-  assert.equal(await page.locator('#proxy-test-result').textContent(),
-    '连接已建立 · HTTP 404 · 耗时 32 ms\n测试目标：https://upstream.invalid/responses');
+  assert.equal(await testStatus.textContent(),'已连通');
+  assert.equal(await testStatus.getAttribute('role'),'status');
+  assert.equal(await testStatus.getAttribute('aria-live'),'polite');
+  assert.equal(await testStatus.evaluate(node=>node.previousElementSibling?.id),'proxy-test');
+  await page.evaluate(()=>uiI18n.setLanguage('en',{persist:false}));
+  assert.equal(await testStatus.textContent(),'Reachable');
+  await page.evaluate(()=>uiI18n.setLanguage('zh',{persist:false}));
   assert.equal(await page.evaluate(()=>state.status.proxy_settings.mode),'auto');
   assert.equal(await page.evaluate(()=>requests.filter(r=>r.url==='/api/proxy-settings'&&r.data).length),savesBeforeTest);cases++;
 
@@ -137,20 +145,18 @@ let browser,cases=0;
   await page.locator('#proxy-address').fill('http://changed.invalid:8080');
   await page.evaluate(()=>{releaseTest();holdTest=false;});
   await page.waitForFunction(()=>$('proxy-test').getAttribute('aria-busy')==='false');
-  assert.match(await page.locator('#proxy-test-result').textContent(),/配置已更改/);
-  await page.evaluate(()=>{testState='rejected';});
-  await page.locator('#proxy-test').click();
-  await page.waitForFunction(()=>$('proxy-test').getAttribute('aria-busy')==='false');
-  assert.match(await page.locator('#proxy-test-result').textContent(),/HTTP 407/);
-  assert.equal(await page.locator('#proxy-test-result').evaluate(node=>node.classList.contains('error')),true);
-  await page.evaluate(()=>{testState='failed';});
-  await page.locator('#proxy-test').click();
-  await page.waitForFunction(()=>$('proxy-test').getAttribute('aria-busy')==='false');
-  assert.equal(await page.locator('#proxy-test-result').textContent(),
-    '连接失败 · 耗时 32 ms · Connection refused Try again\n测试目标：https://upstream.invalid/responses');
+  assert.equal(await testStatus.textContent(),'需重测');
+  for(const [state,label] of [['rejected','响应异常'],['failed','连接失败'],['timeout','测试超时'],['api-error','测试失败']]){
+    await page.evaluate(state=>{testState=state;},state);
+    await page.locator('#proxy-test').click();
+    await page.waitForFunction(()=>$('proxy-test').getAttribute('aria-busy')==='false');
+    assert.equal(await testStatus.textContent(),label);
+    assert.equal(await testStatus.evaluate(node=>node.classList.contains('error')),true);cases++;
+  }
   await page.locator('#proxy-address').fill('http://changed-again.invalid:8080');
-  assert.equal(await page.locator('#proxy-test-result').isVisible(),false);
-  await page.evaluate(()=>restoreSettings());cases++;
+  assert.equal(await testStatus.textContent(),'');
+  await page.evaluate(()=>{setProxyTestStatus('failed');restoreSettings();});
+  assert.equal(await testStatus.textContent(),'');cases++;
 
   for(const width of [320,420,600,1120,1440])for(const language of ['zh','en']){
     await page.setViewportSize({width,height:900});
@@ -188,9 +194,18 @@ let browser,cases=0;
       const beforeTest=await page.locator('#proxy-test').boundingBox();
       await page.evaluate(()=>{$('proxy-test').setAttribute('aria-busy','true');fillProxySettings();});
       assert.deepEqual(await page.locator('#proxy-test').boundingBox(),beforeTest,'Testing state does not shift the button');
-      await page.evaluate(()=>{$('proxy-test').setAttribute('aria-busy','false');fillProxySettings();});
+      await page.evaluate(()=>{
+        $('proxy-test').setAttribute('aria-busy','false');fillProxySettings();
+        setProxyTestStatus('timeout');
+      });
+      assert.equal(await testStatus.textContent(),language==='zh'?'测试超时':'Timed out');
+      assert.deepEqual(await page.locator('#proxy-test').boundingBox(),beforeTest,'The result does not shift the button');
+      const statusBox=await testStatus.boundingBox();
+      assert(statusBox.x>=beforeTest.x+beforeTest.width,'The result is after the button');
+      assert(Math.abs(statusBox.y+statusBox.height/2-(beforeTest.y+beforeTest.height/2))<1,'The result is centered beside the button');
       const overflow=await page.locator('#proxy-settings').evaluate(node=>node.scrollWidth>node.clientWidth+1);
       assert.equal(overflow,false,'Proxy settings fit the dialog');cases++;
+      await page.evaluate(()=>setProxyTestStatus());
     }
   }
   await page.evaluate(()=>{state.status.proxy_settings_supported=false;fillProxySettings();});
