@@ -1860,8 +1860,7 @@ function fillZstdLevel() {
   $("auto-zstd-level-hint").textContent=Number.isInteger(s.auto_image_zstd_level)?t("对话按大小选档，图片请求使用{level}级；开启后禁用手动选择。").replace("{level}",s.auto_image_zstd_level):t("根据请求大小自动选择合适的压缩等级，开启后禁用手动选择。");
   const selected=settingsEditing?Number(input.value):(s.zstd_level??3);
   const automatic=$("packet-size-protection").checked&&$("auto-zstd-level").checked;
-  $("compression-settings").classList.toggle("is-automatic",automatic);
-  $("compression-settings").setAttribute("aria-disabled",String(automatic));
+  $("manual-compression-levels").disabled=automatic;
   input.value=String(selected);
   input.disabled=settingsSaving||!supported||automatic;
   $("zstd-level-open").disabled=input.disabled;

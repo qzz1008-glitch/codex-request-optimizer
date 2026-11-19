@@ -53,9 +53,9 @@ context.resetStorageDirectory();
 assert.equal(context.changedSettings().length,0,'Grouped default reset does not dirty unchanged settings');
 
 const html=fs.readFileSync('packet_inspector/ui/index.html','utf8');
-const section=html.slice(html.indexOf('<section id="storage-location-settings"')).split('</section>')[0];
-assert.equal((section.match(/<input /g)||[]).length,1);
-for(const id of ['storage-dir','storage-dir-open','storage-dir-reset'])assert(section.includes(`id="${id}"`));
+const section=html.slice(html.indexOf('<section id="record-storage-settings"')).split('</section>')[0];
+assert.equal((section.match(/<input /g)||[]).length,3);
+for(const id of ['storage-dir','storage-dir-open','storage-dir-reset','packet-limit','storage-limit'])assert(section.includes(`id="${id}"`));
 for(const id of ['log-dir','cache-dir','image-save-dir'])assert(!html.includes(`id="${id}"`));
 
 (async()=>{
