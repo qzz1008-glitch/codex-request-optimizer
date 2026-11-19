@@ -1223,10 +1223,10 @@ async function loadTokenWindow() {
     }
   }
 }
-function panel(title,{showTitle=true}={}) {
+function panel(title,{showTitle=true,headingTag="h3"}={}) {
   const n=el("section","detail-section");
   n.dataset.renderKey="panel:"+title;
-  if(showTitle)n.append(el("h3","",title));
+  if(showTitle)n.append(el(headingTag,"",title));
   else n.setAttribute("aria-label",title);
   return n;
 }
@@ -2418,11 +2418,11 @@ function renderProtectionPanelState() {
     row.title=inactive?t(hint[row.dataset.protection]||"可在设置中开启请求大小保护"):"";
   }
 }
-function appendRequestProcessingFacts(facts,m) {
-  const original=originalBytes(m), compressed=compressedBytes(m);
-  const originalRow=fact(facts,t("原始请求"),bytes(original));
-  originalRow.classList.add("request-transport-start");
-  originalRow.title=t("原始请求大小（图片处理、传输压缩前）");
+function originalRequestPanel(m) {
+  const section=panel(t("原始请求信息"),{headingTag:"h2"}),facts=el("dl","request-overview-facts");
+  if(m.source!=="live")fact(facts,t("数据来源"),t("历史重建（大小为估算）"));
+  fact(facts,t("模型"),m.model||t("未标记"));
+  fact(facts,t("原始请求"),bytes(originalBytes(m))).title=t("原始请求大小（图片处理、传输压缩前）");
   const imageSize=m.inline_image_bytes;
   if(Number.isSafeInteger(imageSize)&&imageSize>0) {
     fact(facts,t("图片大小"),bytes(imageSize));
@@ -2432,8 +2432,18 @@ function appendRequestProcessingFacts(facts,m) {
     // Older records only have the net change from replacing images with paths.
     fact(facts,t("图片大小"),"≈ "+bytes(m.image_isolation_decoded_before-m.image_isolation_decoded_after));
   }
+  if(overflowApplied(m)) {
+    const estimate=requestTokenUsage(m);
+    fact(facts,t("输入 Token（估算）"),sortInputTokens(estimate)!==null?"≈ "+nf.format(estimate.input_tokens):"—").title=t("超限摘要前输入 Token（估算）");
+  }
+  if(m.details_evicted)fact(facts,t("请求详情"),t("已回收"));
+  section.append(facts);
+  return section;
+}
+function forwardedRequestPanel(m) {
+  const section=panel(t("转发请求信息"),{headingTag:"h2"}),facts=el("dl","request-overview-facts");
+  const compressed=compressedBytes(m),summaryTriggered=overflowApplied(m);
   fact(facts,t("转发请求"),bytes(compressed)).title=t("转发请求大小（图片处理、传输压缩后，超限摘要处理前）");
-  const summaryTriggered=m.overflow_compaction_calls>0||m.overflow_cache_hit===true;
   const hasTransport=typeof m.transport_content_encoding==="string";
   // Older summary records only retain the final body's encoding and grade.
   // Those values cannot describe the pre-summary packet shown beside them.
@@ -2448,7 +2458,7 @@ function appendRequestProcessingFacts(facts,m) {
   fact(facts,t("请求压缩"),compression);
   if(isCompressed) {
     // Older resized requests did not record the uncompressed body of the selected resize.
-    const legacyInput=m.image_upload_optimized?null:m.image_isolation_decoded_after??(m.image_isolation_applied?null:original);
+    const legacyInput=m.image_upload_optimized?null:m.image_isolation_decoded_after??(m.image_isolation_applied?null:originalBytes(m));
     const before=m.transport_input_bytes??legacyInput,after=m.transport_wire_bytes??compressed;
     if(Number.isSafeInteger(before)&&before>0&&Number.isSafeInteger(after)&&after>0) {
       fact(facts,t("压缩比例"),(100*after/before).toFixed(1)+"%");
@@ -2468,14 +2478,25 @@ function appendRequestProcessingFacts(facts,m) {
     }
   }
   if(summaryTriggered) {
-    const estimate=requestTokenUsage(m), actual=m.upstream_usage?.input_tokens;
-    fact(facts,t("输入 Token（估算）"),sortInputTokens(estimate)!==null?"≈ "+nf.format(estimate.input_tokens):"—").title=t("超限摘要前输入 Token（估算）");
+    const actual=m.upstream_usage?.input_tokens;
     fact(facts,t("上游实际输入 Token"),Number.isSafeInteger(actual)&&actual>=0?nf.format(actual):"—");
   }
+  const endings={completed:"完成",failed:"失败",incomplete:"未完成",cancelled:"已取消",interrupted:"已中断"};
+  const ended=m.response_summary?.status,code=Number.isInteger(m.status)&&m.status>=100&&m.status<=599?m.status:null;
+  const relayFailed=["relay_error","client_disconnected","interrupted"].includes(m.state);
+  const result=relayFailed?states[m.state]:code>=400?t("失败"):Object.hasOwn(endings,ended)?t(endings[ended]):m.state==="complete"?t("已结束"):states[m.state]||t("尚未收到");
+  const resultRow=fact(facts,t("结果"),result+(code!==null?" · HTTP "+code:""));
+  if(relayFailed||code>=400||ended==="failed")resultRow.lastChild.classList.add("danger");
+  else if(ended==="completed"||!Object.hasOwn(endings,ended)&&m.state==="complete")resultRow.lastChild.classList.add("request-result-success");
+  fact(facts,t("总耗时"),Number.isFinite(m.duration_ms)&&m.duration_ms>=0?nf.format(Math.round(m.duration_ms/100)/10)+" "+t("秒"):"—");
+  const errorReason=m.network_error?.message||m.relay_error;
+  if(typeof errorReason==="string"&&errorReason)fact(facts,t("错误原因"),t(errorReason)).classList.add("request-error-detail");
+  section.append(facts);
+  return section;
 }
 function requestProtectionPanel(m) {
   const flags=packetProtection(m);
-  const title=t("请求保护"),steps=panel(title);
+  const title=t("请求保护信息"),steps=panel(title,{headingTag:"h2"});
   steps.id="packet-protection-panel";
   steps.setAttribute("aria-label",title);
   const item=(key,category)=>{
@@ -2931,7 +2952,7 @@ function imagePathAction(kind,path) {
   return button;
 }
 function renderImageInfo(paths) {
-  const images=panel(t("图片信息"));images.id="request-image-info";
+  const images=el("div");images.id="request-image-info";
   if(!paths.length) {images.append(el("p","muted",t("未记录图片路径")));return images;}
   images.append(renderImagePaths(paths));return images;
 }
@@ -2958,37 +2979,24 @@ function renderImagePaths(paths,{showDirectoryRow=true}={}) {
   return images;
 }
 function renderHeaders(m) {
-  const root=document.createDocumentFragment(),p=panel(t("请求概况"),{showTitle:false});
-  const facts=el("dl","request-overview-facts");
-  if(m.source!=="live")fact(facts,t("数据来源"),t("历史重建（大小为估算）"));
-  fact(facts,t("模型"),m.model||t("未标记"));
-  const endings={completed:"完成",failed:"失败",incomplete:"未完成",cancelled:"已取消",interrupted:"已中断"};
-  const ended=m.response_summary?.status,code=Number.isInteger(m.status)&&m.status>=100&&m.status<=599?m.status:null;
-  const relayFailed=["relay_error","client_disconnected","interrupted"].includes(m.state);
-  const result=relayFailed?states[m.state]:code>=400?t("失败"):Object.hasOwn(endings,ended)?t(endings[ended]):m.state==="complete"?t("已结束"):states[m.state]||t("尚未收到");
-  const resultRow=fact(facts,t("结果"),result+(code!==null?" · HTTP "+code:""));
-  if(relayFailed||code>=400||ended==="failed")resultRow.lastChild.classList.add("danger");
-  else if(ended==="completed"||!Object.hasOwn(endings,ended)&&m.state==="complete")resultRow.lastChild.classList.add("request-result-success");
-  const errorReason=m.network_error?.message||m.relay_error;
-  if(typeof errorReason==="string"&&errorReason)fact(facts,t("错误原因"),t(errorReason)).classList.add("request-error-detail");
-  fact(facts,t("总耗时"),Number.isFinite(m.duration_ms)&&m.duration_ms>=0?nf.format(Math.round(m.duration_ms/100)/10)+" "+t("秒"):"—");
-  if(m.details_evicted)fact(facts,t("请求详情"),t("已回收"));
-  appendRequestProcessingFacts(facts,m);
-  p.append(facts);root.append(p);
+  const root=document.createDocumentFragment();
+  root.append(originalRequestPanel(m),forwardedRequestPanel(m));
   const session=sessionSummaries.find(row=>row.thread_id===m.thread_id);
   const auxiliary=auxiliarySessionKind(session),purpose=purposeFromMetadata(m);
   const specialKind=[purpose,m.request_kind,auxiliary].find(kind=>kind&&kind!=="subagent"&&Object.hasOwn(auxiliaryLabels,kind));
   if(specialKind) {
-    const context=panel(t("子会话信息"));context.id="request-session-info";
-    fact(context,"session_id",m.thread_id||"—").classList.add("request-context");
+    const context=panel(t("独立会话信息"),{headingTag:"h2"}),facts=el("dl","request-overview-facts");
+    context.id="request-session-info";
+    fact(facts,t("任务类型"),t(auxiliaryLabels[specialKind]));
     const nativeTitle=session?.title_source==="index_task"||session?.title_source==="subagent"?null:session?.title;
-    fact(context,t("会话名称"),nativeTitle||"—").classList.add("request-context");
-    fact(context,t("任务类型"),t(auxiliaryLabels[specialKind]));
+    fact(facts,t("会话名称"),nativeTitle||"—");
+    fact(facts,"session_id",m.thread_id||"—");
+    context.append(facts);
+    if(specialKind==="image_analysis") {
+      const body=requestBodyView&&requestBodyView.id===m.id?requestBodyView.body:null;
+      context.append(renderImageInfo(requestImagePaths(m,body)));
+    }
     root.append(context);
-  }
-  if(specialKind==="image_analysis") {
-    const body=requestBodyView&&requestBodyView.id===m.id?requestBodyView.body:null,paths=requestImagePaths(m,body);
-    root.append(renderImageInfo(paths));
   }
   root.append(requestProtectionPanel(m));
   reconcileContent($("headers-content"),root);renderProtectionPanelState();
