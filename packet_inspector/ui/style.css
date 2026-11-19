@@ -840,24 +840,6 @@ dialog{width:min(760px,calc(var(--desktop-width) - 80px));max-height:calc(var(--
 .diff-table .link-button{flex-shrink:0;white-space:nowrap;word-break:normal}
 .diff-item-entry .cell-note{display:inline;margin:0;max-width:none;white-space:nowrap;overflow-wrap:normal}
 
-.protection-summary{
-  display:grid;
-  grid-template-columns:max-content minmax(0,1fr) 9px;
-  align-items:center;
-  gap:8px;
-  padding-block:4px;
-  list-style:none;
-  cursor:pointer;
-  font-size:12px;
-  font-weight:600;
-}
-.protection-summary::-webkit-details-marker{display:none}
-.protection-summary::after{content:"";width:6px;height:6px;border-inline-end:1px solid currentColor;border-block-end:1px solid currentColor;transform:translateY(-1px) rotate(45deg)}
-.packet-protection-panel[open]>.protection-summary::after{transform:translateY(2px) rotate(225deg)}
-.protection-summary:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
-.protection-summary-status{min-width:0;color:var(--muted);text-align:end;font-weight:400;overflow-wrap:anywhere}
-.protection-summary-status.triggered{color:#274776;font-weight:600}
-.protection-summary+.protection-item{padding-block-start:5px}
 .protection-item+.protection-item{margin-block-start:3px}
 .protection-item.protection-inactive:not([data-triggered="true"]){--protection-color:var(--muted);cursor:help}
 .protection-item>.protection-heading>span:first-child{font-weight:500}
