@@ -344,26 +344,22 @@
     </section>
     <section>
       <h3>记录设置</h3>
-      <div class="settings-grid">
+      <div class="record-limit-grid">
         <div class="record-limit-row" data-settings-field="max_packets">
           <label for="packet-limit">记录上限</label>
-          <div class="record-limit-control">
-            <div class="record-limit-value">
-              <input id="packet-limit" type="number" min="10" max="100000" aria-describedby="packet-limit-unit packet-limit-usage" required>
-              <span id="packet-limit-unit" class="record-limit-unit">条</span>
-            </div>
-            <small id="packet-limit-usage" class="record-limit-usage">—</small>
+          <div class="record-limit-value">
+            <input id="packet-limit" type="number" min="10" max="100000" aria-describedby="packet-limit-unit packet-limit-usage" required>
+            <span id="packet-limit-unit" class="record-limit-unit">条</span>
           </div>
+          <small id="packet-limit-usage" class="record-limit-usage">—</small>
         </div>
         <div class="record-limit-row" data-settings-field="max_storage_mb">
           <label for="storage-limit">存储上限</label>
-          <div class="record-limit-control">
-            <div class="record-limit-value">
-              <input id="storage-limit" type="number" min="17" max="8590" step="1" inputmode="numeric" aria-describedby="storage-limit-unit storage-limit-usage" required>
-              <span id="storage-limit-unit" class="record-limit-unit">MB</span>
-            </div>
-            <small id="storage-limit-usage" class="record-limit-usage">—</small>
+          <div class="record-limit-value">
+            <input id="storage-limit" type="number" min="17" max="8590" step="1" inputmode="numeric" aria-describedby="storage-limit-unit storage-limit-usage" required>
+            <span id="storage-limit-unit" class="record-limit-unit">MB</span>
           </div>
+          <small id="storage-limit-usage" class="record-limit-usage">—</small>
         </div>
       </div>
     </section>
