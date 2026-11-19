@@ -86,8 +86,8 @@ body{height:100dvh;min-width:0;display:flex;flex-direction:column;overflow-x:hid
 .workspace{display:grid;flex:1;min-height:0;min-width:0;height:auto;grid-template-columns:300px minmax(0,1fr) clamp(480px,calc(100% - 300px - 420px),500px)}
 .sessions-sidebar{--session-edge-gap:7px;display:flex;flex-direction:column;min-width:0;min-height:0;gap:var(--records-heading-gap);padding:var(--view-inset);background:var(--panel);border-right:1px solid var(--line);overflow:hidden}
 /* Match the request pane's title center and content start, including the search field and tabs. */
-.sessions-sidebar .sidebar-title,.requests-sidebar .sidebar-title{flex:none;height:var(--records-heading-height);margin:0}
-.sessions-sidebar .sidebar-title h1,.requests-sidebar .sidebar-title h1{line-height:22px}
+.workspace .sidebar-title{flex:none;height:var(--records-heading-height);margin:0}
+.workspace .sidebar-title h1{line-height:22px}
 .sessions-sidebar .sessions-title{gap:12px;padding-left:3px;margin-right:calc(var(--session-edge-gap) - var(--view-inset) + 5px)}
 .sessions-title h1{flex-shrink:0}
 .session-search{flex:1;width:0;min-width:0;max-width:230px;height:30px;padding:5px 8px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:inherit;font-size:12px}
@@ -244,17 +244,21 @@ button.other-session-group{background:#f5f2fc;border-color:#e7e0f5}
 .packet-table{min-width:345px}
 .detail{display:flex;flex-direction:column;min-height:0;padding:var(--view-inset);background:#fafbfd;overflow:hidden}
 .sessions-sidebar,.requests-sidebar,.detail{padding-top:8px}
-.detail .tabs{margin-inline:0}
+.detail-title{gap:12px}
+.detail-title h1{flex:none;white-space:nowrap}
+.detail-title>.tabs{height:100%;min-width:0;gap:12px;margin:0;margin-inline-start:auto;border-bottom:0;box-shadow:inset 0 -1px var(--line);overflow-x:auto;scrollbar-width:thin}
+.detail:has(>#packet-detail[hidden]) .detail-title>.tabs{display:none}
+.detail-title>.tabs button{position:relative;display:flex;flex:none;align-items:center;height:100%;padding:0;border-bottom:0;font-size:12px;line-height:22px;white-space:nowrap}
+.detail-title>.tabs button:focus-visible{outline-offset:-2px}
+.detail-title>.tabs button[aria-pressed="true"]::after{content:"";position:absolute;inset:auto 0 0;border-bottom:2px solid currentColor}
 #packet-detail:not([hidden]){display:flex;flex:1;flex-direction:column;min-height:0;min-width:0}
-#packet-detail>.tabs{flex:none;height:var(--records-heading-height);margin-bottom:0;border-bottom:0;box-shadow:inset 0 -1px var(--line)}
-#packet-detail>.tabs button{display:flex;align-items:center;height:100%;padding:0;border-bottom:0;line-height:22px}
-#packet-detail>.tabs button.active{box-shadow:inset 0 -2px var(--accent)}
 .detail-content{flex:1;min-height:0;min-width:0;overflow-x:auto;overflow-y:scroll;scrollbar-gutter:stable;overscroll-behavior:contain;margin-top:var(--records-heading-gap)}
 .detail-content .panel{padding:14px 16px;margin-bottom:12px}
 .detail-content .panel>h3{margin-bottom:10px}
 .detail-content .panel>.fact-row{margin:8px 0}
 .request-overview-facts{margin:0}
 .request-overview-facts .fact-row{margin:8px 0}
+.request-overview-facts .fact-row:first-child{margin-top:0}
 .request-overview-facts .fact-row:last-child{margin-bottom:0}
 .request-overview-facts dt{color:var(--muted);flex:none;white-space:nowrap}
 .request-overview-facts dd{margin:0;min-width:0;overflow-wrap:anywhere}
@@ -716,7 +720,7 @@ dialog{width:min(760px,calc(var(--desktop-width) - 80px));max-height:calc(var(--
 .diff-item-entry .cell-note{display:inline;margin:0;max-width:none;white-space:nowrap;overflow-wrap:normal}
 
 .packet-protection-panel.protection-disabled{background:var(--bg);color:var(--muted);cursor:help}
-.packet-protection-panel.protection-disabled h3,.packet-protection-panel.protection-disabled .fact-row span{color:var(--muted)}
+.packet-protection-panel.protection-disabled .fact-row span{color:var(--muted)}
 .packet-protection-panel .protection-inactive{--protection-color:var(--muted);cursor:help}
 .packet-protection-panel .protection-inactive span{color:var(--muted)}
 .protection-item+.protection-item{border-top:1px solid var(--line);margin-top:9px;padding-top:9px}
