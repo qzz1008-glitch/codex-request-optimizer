@@ -82,8 +82,8 @@ body{height:100dvh;min-width:0;display:flex;flex-direction:column;overflow-x:hid
 .brand .brand-wordmark{display:inline-flex;align-items:baseline;gap:10px;font-size:18px;line-height:1.2;white-space:nowrap;font-synthesis:none;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
 .brand-wordmark .brand-latin{font-family:Bahnschrift,"Segoe UI",sans-serif;font-size:1.12em;font-weight:600;letter-spacing:-.45px}
 .brand-wordmark .brand-name{font-family:"Microsoft YaHei UI","Microsoft YaHei",sans-serif;font-weight:600;letter-spacing:.3px}
-/* At 1200px the panes are 300px, 480px and 420px. Details grow first up to 500px. */
-.workspace{--workspace-switch-time:280ms;--workspace-switch-easing:cubic-bezier(.22,.72,.26,1);display:grid;flex:1;min-height:0;min-width:0;height:auto;grid-template-columns:300px minmax(0,1fr) clamp(420px,calc(100% - 300px - 480px),500px);grid-template-rows:minmax(0,1fr);isolation:isolate;overflow:hidden}
+/* Only the details pane takes the remaining window width. */
+.workspace{--workspace-switch-time:280ms;--workspace-switch-easing:cubic-bezier(.22,.72,.26,1);display:grid;flex:1;min-height:0;min-width:0;height:auto;grid-template-columns:300px 480px minmax(0,1fr);grid-template-rows:minmax(0,1fr);isolation:isolate;overflow:hidden}
 .workspace>.sessions-sidebar{grid-area:1/1}
 .workspace>.requests-sidebar{grid-area:1/2}
 .workspace>.detail{grid-area:1/3}
