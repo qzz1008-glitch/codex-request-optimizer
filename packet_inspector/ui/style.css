@@ -398,10 +398,28 @@ button.other-session-group{background:#f5f2fc;border-color:#e7e0f5}
 #tab-tree>.search-results{max-height:min(260px,40%);padding:7px 0;border-radius:0}
 .json-viewer{position:relative;flex:1;min-width:0;min-height:0;overflow:hidden;margin-inline-start:calc(-1 * var(--detail-content-inset))}
 .json-content{height:100%;margin:0;padding:8px var(--detail-content-inset) 4px 0;overflow:auto;scrollbar-gutter:stable;overscroll-behavior:contain;white-space:pre;word-break:normal;overflow-wrap:normal;font-family:Consolas,"Cascadia Mono",monospace;font-size:12px;line-height:1.65;tab-size:2}
-.request-body-text{padding:10px var(--detail-content-inset) 14px;white-space:normal;font:inherit}
-.request-message+.request-message{margin-block-start:12px;padding-block-start:12px;border-block-start:1px solid var(--detail-divider)}
-.request-message-author{display:block;margin-block-end:6px;color:var(--muted);font-size:12px}
-.request-message-text{margin:0;white-space:pre-wrap;overflow-wrap:anywhere}
+.request-body-text{padding:10px var(--detail-content-inset) 14px;white-space:normal;font:inherit;font-size:.85rem;line-height:1.55}
+/* Keep the first bubble below the floating actions. */
+.request-body-text:has(>.request-message){padding-block-start:38px}
+.request-body-text>.request-message{
+  inline-size:fit-content;
+  max-inline-size:min(88%,64ch);
+  padding:6px 9px;
+  border:1px solid var(--line);
+  border-radius:10px;
+  border-start-start-radius:3px;
+  background:var(--bg);
+}
+.request-message+.request-message{margin-block-start:8px}
+.request-body-text>.request-message[data-role="user"]{
+  margin-inline-start:auto;
+  border-start-start-radius:10px;
+  border-start-end-radius:3px;
+  background:var(--soft);
+}
+.request-body-text>.request-message.json-focused{border-color:var(--accent);box-shadow:none}
+.request-message-author{display:block;margin-block-end:2px;font-size:.9em}
+.request-message-text{margin:0;line-height:inherit;white-space:pre-wrap;overflow-wrap:anywhere}
 .json-actions:not([hidden]){
   position:absolute;
   z-index:1;
