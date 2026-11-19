@@ -1236,6 +1236,8 @@ const uiI18n = (() => {
     "差值":"Change",
     "字节":"Bytes",
     "请求概况":"Overview",
+    "基本信息":"Basic information",
+    "转发处理":"Forwarding",
     "独立会话":"Independent session",
     "结果":"Result",
     "总耗时":"Total time",

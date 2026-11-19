@@ -108,7 +108,7 @@ function overviewTitles(){return rendered.children.map(section=>{
   assert.equal(section.children[0].tag,'h2');
   return section.children[0].text;
 });}
-function originalFacts(){return fields(rendered.children[0]);}
+function basicFacts(){return fields(rendered.children[0]);}
 function forwardedFacts(){return fields(rendered.children[1]);}
 function protectionFacts(){return Object.fromEntries(headings().map(row=>[row.label,row.value]));}
 const mechanisms=['predictive','overflow','retry','optimization'];
@@ -177,10 +177,10 @@ assert.equal(protectionFacts()['大小预测'],'—');
 context.renderHeaders({...interrupted,state:'complete',usage_override_applied:true,
   request_token_estimate:{source:'codex_estimate',estimated:true,state:'available',input_tokens:230000},
   upstream_usage:{input_tokens:19643},reported_usage:{input_tokens:500000},relay_wire_bytes:95000,outbound_wire_bytes:91000});
-assert.equal(originalFacts()['输入 Token（估算）'],'≈ 230,000');
-assert.equal(originalFacts()['上游实际输入 Token'],undefined);
-assert.equal(forwardedFacts()['上游实际输入 Token'],'19,643');
-assert.equal(forwardedFacts()['输入 Token（估算）'],undefined);
+assert.deepEqual(Object.entries(forwardedFacts()).slice(-2),[
+  ['输入 Token（估算）','≈ 230,000'],['上游实际输入 Token','19,643']]);
+assert.equal(basicFacts()['输入 Token（估算）'],undefined);
+assert.equal(basicFacts()['上游实际输入 Token'],undefined);
 assert.equal(protectionFacts()['大小预测'],'✓');
 assert.deepEqual(fields(details('predictive')),{'原始 Token':'19,643','改写 Token':'500,000'});
 assert.deepEqual(fields(details('overflow')),{'处理前大小':'1004951','处理后大小':'95000'});
@@ -207,19 +207,20 @@ const historicalImageRequest={source:'live',model:'example',state:'complete',sta
   image_isolation_decoded_before:2806092,image_isolation_decoded_after:1931967,
   transport_content_encoding:'zstd',transport_zstd_level:16,overflow_original_wire_bytes:954743};
 context.renderHeaders(historicalImageRequest);
-assert.deepEqual(originalFacts(),{'模型':'example','原始请求':'2806092','图片大小':'≈ 874125'});
-assert.deepEqual(forwardedFacts(),{'结果':'完成 · HTTP 200','总耗时':'1.3 秒',
-  '转发请求':'954743','请求压缩':'zstd · 16 级','压缩比例':'49.4%'});
-assert.deepEqual(overviewTitles(),['原始请求','转发请求','请求保护']);
+assert.deepEqual(basicFacts(),{'模型':'example','结果':'完成 · HTTP 200','总耗时':'1.3 秒'});
+assert.deepEqual(Object.entries(forwardedFacts()),[
+  ['原始请求','2806092'],['转发请求','954743'],['请求压缩','zstd · 16 级'],['压缩比例','49.4%'],['图片大小','≈ 874125']]);
+assert.deepEqual(overviewTitles(),['基本信息','转发处理','请求保护']);
 for(const section of rendered.children.slice(0,2)) {
   const list=section.children[1];
   assert.equal(list.tag,'dl');
   assert(list.children.every(row=>row.children[0].tag==='dt'&&row.children[1].tag==='dd'));
 }
 context.renderHeaders({source:'history',details_evicted:true,state:'relay_error',network_error:{message:'Test network failure'}});
-assert.equal(originalFacts()['数据来源'],'历史重建（大小为估算）');
-assert.equal(originalFacts()['请求详情'],'已回收');
-assert.equal(forwardedFacts()['错误原因'],'Test network failure');
+assert.equal(basicFacts()['数据来源'],'历史重建（大小为估算）');
+assert.equal(basicFacts()['请求详情'],'已回收');
+assert.equal(basicFacts()['错误原因'],'Test network failure');
+assert.equal(forwardedFacts()['错误原因'],undefined);
 context.renderHeaders({...historicalImageRequest,transport_content_encoding:'identity'});
 assert.equal(forwardedFacts()['请求压缩'],'-');
 assert.equal(forwardedFacts()['压缩比例'],undefined,'Image-to-path size changes alone do not qualify as compression');
@@ -227,7 +228,7 @@ const resizedAndCompacted={decoded_bytes:2000000,inline_image_bytes:800000,image
   transport_content_encoding:'zstd',transport_input_bytes:1200000,transport_wire_bytes:600000,
   outbound_wire_bytes:100000,overflow_original_wire_bytes:600000,overflow_cache_hit:true};
 context.renderHeaders(resizedAndCompacted);
-assert.equal(originalFacts()['图片大小'],'800000');
+assert.equal(forwardedFacts()['图片大小'],'800000');
 assert.equal(forwardedFacts()['压缩比例'],'50.0%','Use only the measured transport stage');
 context.renderHeaders({...resizedAndCompacted,transport_input_bytes:undefined});
 assert.equal(forwardedFacts()['压缩比例'],undefined,'A resize with no before-size cannot use the original request size');
@@ -250,7 +251,7 @@ assert.deepEqual(descendants(details('optimization')).filter(child=>child.tag===
   .map(button=>button.attributes['aria-label']),['查看图片','在文件夹中显示']);
 context.sessionSummaries=[{thread_id:'image-session',title:'示例会话',title_source:'native'}];
 context.renderHeaders({source:'live',request_kind:'image_analysis',thread_id:'image-session',image_paths:[image]});
-assert.deepEqual(overviewTitles(),['原始请求','转发请求','独立会话','请求保护']);
+assert.deepEqual(overviewTitles(),['基本信息','转发处理','独立会话','请求保护']);
 const sessionInfo=rendered.children.find(child=>child.id==='request-session-info');
 assert.deepEqual(fields(sessionInfo),{'任务类型':'图片解析','会话名称':'示例会话',session_id:'image-session'});
 const imageInfo=sessionInfo.children.find(child=>child.id==='request-image-info');
@@ -259,7 +260,7 @@ context.renderHeaders({source:'live',request_kind:'title_generation',thread_id:'
 assert.deepEqual(fields(rendered.children[2]),{'任务类型':'自动标题','会话名称':'—',session_id:'title-session'});
 assert.equal(descendants(rendered.children[2]).some(child=>child.id==='request-image-info'),false);
 context.renderHeaders({source:'live',image_paths:[image]});
-assert.deepEqual(overviewTitles(),['原始请求','转发请求','请求保护']);
+assert.deepEqual(overviewTitles(),['基本信息','转发处理','请求保护']);
 assert.equal(protectionFacts()['解图优化'],'—','A path in a request does not prove that this request optimized an image');
 assert.equal(details('optimization'),undefined);
 context.renderHeaders({source:'live',image_isolation_applied:true});
@@ -295,9 +296,9 @@ context.renderHeaders({source:'live',transport_content_encoding:'zstd',transport
   image_upload_images:[{original_width:2560,original_height:1440,width:1600,height:900}]});
 assert.equal(forwardedFacts()['Request compression'],'zstd · Level 1');
 assert.equal(forwardedFacts()['Image compression'],'2560 × 1440 → 1600 × 900');
-assert.deepEqual(overviewTitles(),['Original request','Forwarded request','Request protection']);
+assert.deepEqual(overviewTitles(),['Basic information','Forwarding','Request protection']);
 context.renderHeaders({source:'live',request_kind:'image_analysis',thread_id:'image-session',image_paths:[image]});
-assert.deepEqual(overviewTitles(),['Original request','Forwarded request','Independent session','Request protection']);
+assert.deepEqual(overviewTitles(),['Basic information','Forwarding','Independent session','Request protection']);
 context.renderHeaders({transport_content_encoding:'identity'});
 assert.equal(forwardedFacts()['Request compression'],'-');
 context.renderHeaders(interrupted);
