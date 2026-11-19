@@ -407,24 +407,36 @@ button.other-session-group{background:#f5f2fc;border-color:#e7e0f5}
 /* Keep the first bubble below the floating actions. */
 .request-body-text:has(>.request-message){padding-block-start:38px}
 .request-body-text>.request-message{
+  display:flex;
+  flex-direction:column;
+  align-items:flex-start;
   inline-size:fit-content;
   max-inline-size:min(88%,64ch);
+}
+.request-message+.request-message{margin-block-start:8px}
+.request-body-text>.request-message[data-role="user"]{margin-inline-start:auto;align-items:flex-end}
+.request-message-meta{display:flex;flex-wrap:wrap;align-items:baseline;column-gap:6px;margin-block-end:3px;font-size:.9em}
+.request-message[data-role="user"]>.request-message-meta{justify-content:flex-end}
+.request-message-time{opacity:.72;font-variant-numeric:tabular-nums}
+.request-message-text{
+  max-inline-size:100%;
+  margin:0;
   padding:6px 9px;
   border:1px solid var(--line);
   border-radius:10px;
   border-start-start-radius:3px;
   background:var(--bg);
+  line-height:inherit;
+  white-space:pre-wrap;
+  overflow-wrap:anywhere;
 }
-.request-message+.request-message{margin-block-start:8px}
-.request-body-text>.request-message[data-role="user"]{
-  margin-inline-start:auto;
+.request-message[data-role="user"]>.request-message-text{
   border-start-start-radius:10px;
   border-start-end-radius:3px;
   background:var(--soft);
 }
-.request-body-text>.request-message.json-focused{border-color:var(--accent);box-shadow:none}
-.request-message-author{display:block;margin-block-end:2px;font-size:.9em}
-.request-message-text{margin:0;line-height:inherit;white-space:pre-wrap;overflow-wrap:anywhere}
+.request-body-text>.request-message.json-focused{background:transparent;box-shadow:none}
+.request-message.json-focused>.request-message-text{border-color:var(--accent)}
 .json-actions:not([hidden]){
   position:absolute;
   z-index:1;
