@@ -270,8 +270,7 @@ button.other-session-group{background:#f5f2fc;border-color:#e7e0f5}
   margin:0;
   /* Bridge the shared heading gap and cover the detail frame's top border. */
   margin-block-end:calc(-1px - var(--records-heading-gap));
-  /* Align the last label with the text inside the scrollbar gutter. */
-  margin-inline:auto calc(var(--detail-scrollbar-size) + var(--detail-content-inset) - var(--detail-tab-inset));
+  margin-inline-start:auto;
   border:0;
   overflow-x:auto;
   scrollbar-width:thin;
@@ -314,6 +313,9 @@ button.other-session-group{background:#f5f2fc;border-color:#e7e0f5}
   border-radius:8px;
   background:var(--panel);
   overflow:hidden;
+}
+.detail:has(#request-info-tabs > [aria-selected="true"]:nth-last-child(1 of :not([hidden]))) > #packet-detail{
+  border-start-end-radius:0;
 }
 .detail-content{
   flex:1;
