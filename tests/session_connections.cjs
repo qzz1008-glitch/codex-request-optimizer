@@ -160,12 +160,12 @@ test('unnamed sessions use their IDs and requests without an ID use Other',()=>{
   [['main','main',['main','child']],['orphan','orphan',['orphan']],['group:other','其他',['']]]);
 });
 test('standalone CLI sessions keep captured counts and filter-only IDs have independent rows',()=>{
- grouped([session('cli-resumed',{packet_count:3})]);
+ grouped([session('cli-resumed',{packet_count:3,input_title:'Inspect the first request'})]);
  context.state.sessions.push('cli-filter-only');
  context.state.status={storage:{threads:[{thread:'cli-filter-only',count:2}]}};
  const groups=context.sessionGroups();
  assert.deepEqual(Array.from(groups,group=>[group.thread_id,group.title,group.packet_count]),
-  [['cli-resumed','cli-resumed',3],['cli-filter-only','cli-filter-only',2]]);
+  [['cli-resumed','Inspect the first request',3],['cli-filter-only','cli-filter-only',2]]);
  context.state.filters.thread='thread:cli-resumed';
  assert.equal(context.selectedSessionGroup(groups).thread_id,'cli-resumed');
 });
