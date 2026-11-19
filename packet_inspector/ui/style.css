@@ -75,15 +75,15 @@
 .sidebar>*:not(.packet-list){flex-shrink:0}
 
 /* Sessions, requests, and details scroll independently. */
-:root{--desktop-width:1280px;--desktop-height:760px;--desktop-min-width:1280px;--desktop-min-height:720px;--view-inset:12px;--records-heading-height:30px;--records-heading-gap:9px}
+:root{--desktop-width:1280px;--desktop-height:760px;--desktop-min-width:1200px;--desktop-min-height:720px;--view-inset:12px;--records-heading-height:30px;--records-heading-gap:9px}
 body{height:100dvh;min-width:0;display:flex;flex-direction:column;overflow-x:hidden;overflow-y:hidden}
 .app-window{display:flex;flex-direction:column;flex:1;min-height:0;min-width:0;width:100%;height:100dvh;background:var(--bg);overflow:hidden;container:inspector-window / size}
 .app-header{flex-shrink:0}
 .brand .brand-wordmark{display:inline-flex;align-items:baseline;gap:10px;font-size:18px;line-height:1.2;white-space:nowrap;font-synthesis:none;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
 .brand-wordmark .brand-latin{font-family:Bahnschrift,"Segoe UI",sans-serif;font-size:1.12em;font-weight:600;letter-spacing:-.45px}
 .brand-wordmark .brand-name{font-family:"Microsoft YaHei UI","Microsoft YaHei",sans-serif;font-weight:600;letter-spacing:.3px}
-/* Give details up to 500px after reserving 300px for sessions and 420px for requests. */
-.workspace{display:grid;flex:1;min-height:0;min-width:0;height:auto;grid-template-columns:300px minmax(0,1fr) clamp(480px,calc(100% - 300px - 420px),500px)}
+/* At 1200px the panes are 300px, 480px and 420px. Details grow first up to 500px. */
+.workspace{display:grid;flex:1;min-height:0;min-width:0;height:auto;grid-template-columns:300px minmax(0,1fr) clamp(420px,calc(100% - 300px - 480px),500px)}
 .sessions-sidebar{--session-edge-gap:7px;display:flex;flex-direction:column;min-width:0;min-height:0;gap:var(--records-heading-gap);padding:var(--view-inset);background:var(--panel);border-right:1px solid var(--line);overflow:hidden}
 /* Match the request pane's title center and content start, including the search field and tabs. */
 .workspace .sidebar-title{flex:none;height:var(--records-heading-height);margin:0}

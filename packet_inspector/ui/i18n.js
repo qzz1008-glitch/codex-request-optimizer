@@ -1003,7 +1003,7 @@ const uiI18n = (() => {
     "请求详情已回收，仅保留基本信息。":"Request details were removed; basic information is retained.",
     "已回收":"Removed",
     "JSON 路径不存在。":"JSON path not found.",
-    "请求信息":"Request information",
+    "请求信息":"Request info",
     "搜索关键词或输入路径，如 /input/0":"Search or enter a path, e.g. /input/0",
     "搜索内容或定位路径":"Search content or go to a path",
     "输入后自动搜索；以 / 开头的路径直接定位；清空后恢复完整内容":"Search automatically as you type; enter a path starting with / to navigate; clear to restore the full content",
