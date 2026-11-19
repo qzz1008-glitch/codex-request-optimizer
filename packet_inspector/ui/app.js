@@ -2471,16 +2471,9 @@ function appendRequestProcessingFacts(facts,m) {
 }
 function requestProtectionPanel(m) {
   const flags=packetProtection(m);
-  const previous=$("packet-protection-panel");
-  const steps=el("details","detail-section packet-protection-panel");
-  steps.id="packet-protection-panel";steps.dataset.requestId=m.id||"";
-  steps.setAttribute("aria-label",t("请求保护"));
-  if(m.id&&previous?.dataset.requestId===m.id)steps.open=previous.open;
-  const summary=el("summary","protection-summary");
-  const triggered=Object.keys(protectionLabels).filter(key=>flags[key]).map(key=>t(protectionLabels[key]));
-  const status=el("span","protection-summary-status",triggered.join(" · ")||t("未触发"));
-  status.classList.toggle("triggered",triggered.length>0);
-  summary.append(el("span","",t("请求保护")),status);steps.append(summary);
+  const title=t("请求保护"),steps=panel(title);
+  steps.id="packet-protection-panel";
+  steps.setAttribute("aria-label",title);
   const item=(key,category)=>{
     const triggered=flags[key];
     const section=el("section","protection-item");section.dataset.renderKey="protection:"+key;
