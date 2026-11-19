@@ -222,6 +222,16 @@ body{height:100dvh;min-width:0;display:flex;flex-direction:column;overflow-x:hid
 .session-meta{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));align-items:center;gap:4px;font-size:10px;line-height:1.35;color:var(--muted);font-variant-numeric:tabular-nums}
 .session-token{grid-column:1}
 .session-origin{grid-column:2;text-align:center}
+.session-origin[title]{
+  --session-origin-bg:#e1ebfa;
+  justify-self:center;
+  max-width:100%;
+  border-radius:3px;
+  background-color:var(--session-origin-bg);
+  box-shadow:0 0 0 2px var(--session-origin-bg);
+  color:#2d507c;
+  font-weight:600;
+}
 .session-updated{grid-column:3;text-align:right}
 .session-metadata-note{flex-shrink:0;font-size:11px;line-height:1.5;margin:0 5px 4px}
 .requests-sidebar{position:relative;height:auto;max-height:none;min-height:0;border-bottom:0;gap:var(--records-heading-gap);padding:var(--view-inset)}
