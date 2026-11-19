@@ -303,7 +303,8 @@ class InspectorServer(ThreadingHTTPServer):
         ssh_labels = (SshSessionLabels(self.remote_relays, self.connections.codex_home, self.connections.ssh_config,
                                        updates=self.session_label_updates)
                       if self.remote_relays is not None else None)
-        self.session_summaries = SessionSummaries(self.token_windows, wsl_labels=self.wsl.labels, ssh_labels=ssh_labels)
+        self.session_summaries = SessionSummaries(self.token_windows, wsl_labels=self.wsl.labels, ssh_labels=ssh_labels,
+                                                  ssh_origins=ssh_labels.route_origins if ssh_labels else None)
         self.analysis_thread = threading.Thread(target=self._classify_pending, daemon=True)
         self.analysis_thread.start()
 

@@ -16,6 +16,25 @@ class SshSessionLabels(BackgroundSessionLabels):
     def __call__(self, origins):
         return {} if self.relays.closed else super().__call__(origins)
 
+    def route_origins(self, keys):
+        """Resolve previously captured route keys using local SSH settings."""
+        try:
+            hosts = saved_hosts(self.codex_home, self.ssh_config)
+        except (OSError, ValueError, RuntimeError):
+            return {}
+        by_host = {}
+        for host in hosts:
+            address = host.destination.rsplit("@", 1)[-1].removeprefix("[").removesuffix("]")
+            if address:
+                by_host[self.relays.key(host)] = (host.id, {"kind": "remote", "address": address})
+        origins = {}
+        for key in keys:
+            # Older routes used the host key alone. Newer routes append an account hash.
+            origin = by_host.get(key.partition("-")[0])
+            if origin:
+                origins[key] = origin
+        return origins
+
     def _find_labels(self, requests):
         matches = defaultdict(list)
         routes = defaultdict(dict)

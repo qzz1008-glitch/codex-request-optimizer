@@ -162,9 +162,10 @@ def _previous_token_window(db, latest, last_native):
 
 
 class SessionSummaries:
-    def __init__(self, token_windows, *, wsl_labels=None, ssh_labels=None):
+    def __init__(self, token_windows, *, wsl_labels=None, ssh_labels=None, ssh_origins=None):
         self.tokens = token_windows
         self.connection_labels = {kind: reader for kind, reader in (("wsl", wsl_labels), ("ssh", ssh_labels)) if reader}
+        self.ssh_origins = ssh_origins
         self._cursor = 0
         self._token_states = {}
         self._last_native_tokens = {}
@@ -460,9 +461,17 @@ class SessionSummaries:
                         previous = _previous_token_window(db, model_packets[thread], self._last_native_tokens.get(thread))
                         if previous is not None:
                             record["token_window"] = previous
+        ssh_keys = {key for kind, key in captured_origins.values() if kind == "ssh"}
+        ssh_origins = self.ssh_origins(ssh_keys) if ssh_keys and self.ssh_origins else {}
         for record in records:
-            if record["thread_id"] in native_origins:
-                record["origin"] = native_origins[record["thread_id"]][1]
+            thread = record["thread_id"]
+            kind, key = captured_origins.get(thread, (None, None))
+            host_id, origin = native_origins.get(thread, (None, record["origin"]))
+            if kind == "ssh" and key in ssh_origins:
+                route_host_id, route_origin = ssh_origins[key]
+                if host_id != route_host_id or not origin:
+                    origin = route_origin
+            record["origin"] = origin
         records.sort(key=lambda r: (-r["updated_at"], r["thread_id"]))
         return {"state": "available", "sessions": records}
 
