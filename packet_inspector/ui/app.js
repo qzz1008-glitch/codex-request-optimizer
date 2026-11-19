@@ -3247,7 +3247,35 @@ class TokenTrendView {
     const step=[1,2,2.5,5,10].map(value=>value*power).find(value=>value>=rough)||power*10;
     return {step,max:Math.max(step,Math.ceil(maximum/step)*step)};
   }
-  static color(id) {let hash=2166136261;for(const char of id)hash=Math.imul(hash^char.charCodeAt(0),16777619);return "hsl("+((hash>>>0)%360)+" 62% 42%)";}
+  static toOklab(color) {
+    const [red,green,blue]=[1,3,5].map(offset=>{
+      const channel=Number.parseInt(color.slice(offset,offset+2),16)/255;
+      return channel<=.04045?channel/12.92:((channel+.055)/1.055)**2.4;
+    });
+    // Linear sRGB to Oklab matrices from https://bottosson.github.io/posts/oklab/
+    const l=Math.cbrt(.4122214708*red+.5363325363*green+.0514459929*blue);
+    const m=Math.cbrt(.2119034982*red+.6806995451*green+.1073969566*blue);
+    const s=Math.cbrt(.0883024619*red+.2817188376*green+.6299787005*blue);
+    return [
+      .2104542553*l+.7936177850*m-.0040720468*s,
+      1.9779984951*l-2.4285922050*m+.4505937099*s,
+      .0259040371*l+.7827717662*m-.8086757660*s
+    ];
+  }
+  static seriesPalette=[
+    "#245fcb","#b34a09","#087752","#b23873","#7046ac","#006e83","#b52e36","#816204",
+    "#566479","#4d6f18","#2f3991","#864330","#13729e","#44255d","#8b2149","#04503f"
+  ].map(color=>({color,lab:TokenTrendView.toOklab(color)}));
+  static farthestSwatch(available,usedLabs) {
+    let bestSlot,bestDistance=-1;
+    for(const slot of available) {
+      const [lightness,a,b]=TokenTrendView.seriesPalette[slot].lab;
+      const distance=Math.min(...usedLabs.map(([otherLightness,otherA,otherB])=>
+        (lightness-otherLightness)**2+(a-otherA)**2+(b-otherB)**2));
+      if(distance>bestDistance){bestSlot=slot;bestDistance=distance;}
+    }
+    return bestSlot;
+  }
   static timeTicks(start,end,width) {
     const target=(end-start)/Math.max(2,Math.min(8,Math.floor(width/100)));
     const step=[1,2,5,10,15,30,60,120,300,600,1200,1800,3600,7200,10800,21600,43200].find(value=>value>=target)||43200;
@@ -3510,7 +3538,7 @@ class TokenTrendView {
       if(!Number.isFinite(packet.created)||(!packet.is_compaction&&!this.services.isGeneration(packet)))continue;
       const inView=packet.created>=since&&packet.created<=now;
       if(typeof packet.thread_id!=="string"||!packet.thread_id){if(inView)unknown++;continue;}
-      if(!groups.has(packet.thread_id))groups.set(packet.thread_id,{id:packet.thread_id,title:names.get(packet.thread_id)||packet.thread_id,color:TokenTrendView.color(packet.thread_id),points:[],latest:0});
+      if(!groups.has(packet.thread_id))groups.set(packet.thread_id,{id:packet.thread_id,title:names.get(packet.thread_id)||packet.thread_id,points:[],latest:0});
       const group=groups.get(packet.thread_id);if(inView)group.latest=Math.max(group.latest,packet.created);
       group.points.push({packet,input:packet.is_compaction?null:this.input(packet),size:TokenTrendView.size(packet),events:TokenTrendView.events(packet)});
     }
@@ -3525,13 +3553,38 @@ class TokenTrendView {
     const matched=series.filter(group=>!this.query||(group.title+" "+group.id).toLowerCase().includes(this.query));
     return {series,matched,visible:matched,unknown,now,view};
   }
+  assignSeriesColors(series) {
+    const previous=new Map(this.series.map(group=>[group.id,group.colorSlot]));
+    // Reserve retained colors before assigning any new session, even when it sorts first.
+    const occupied=new Set(series.map(group=>previous.get(group.id)).filter(slot=>slot!==undefined));
+    const palette=TokenTrendView.seriesPalette,available=new Set(),usedLabs=[];
+    for(const [slot,swatch] of palette.entries()) {
+      if(occupied.has(slot))usedLabs.push(swatch.lab);
+      else available.add(slot);
+    }
+    let fallback=palette.length;
+    for(const group of series) {
+      let slot=previous.get(group.id);
+      if(slot===undefined) {
+        if(available.size) {
+          slot=TokenTrendView.farthestSwatch(available,usedLabs);
+          available.delete(slot);usedLabs.push(palette[slot].lab);
+        } else {
+          while(occupied.has(fallback))fallback++;
+          slot=fallback++;
+        }
+      }
+      group.colorSlot=slot;
+      group.color=palette[slot]?.color??`hsl(${((slot-palette.length)*137.508)%360} 68% 28%)`;
+    }
+  }
   svgNode(tag,attrs={},text) {const node=document.createElementNS("http://www.w3.org/2000/svg",tag);for(const [name,value]of Object.entries(attrs))node.setAttribute(name,String(value));if(text!==undefined)node.textContent=text;return node;}
   time(value,withSeconds=false) {
     const date=new Date(value*1000),locale=uiI18n.language==="en"?"en-GB":"zh-CN";
     return date.toLocaleString(locale,{month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit",...(withSeconds?{second:"2-digit"}:{})});
   }
   renderLegend(model) {
-    const signature=JSON.stringify([uiI18n.language,this.query,model.matched.map(group=>[group.id,group.title])]);
+    const signature=JSON.stringify([uiI18n.language,this.query,model.matched.map(group=>[group.id,group.title,group.color])]);
     if(signature===this.legendVersion)return;this.legendVersion=signature;
     const fragment=document.createDocumentFragment();
     for(const group of model.matched) {
@@ -3556,7 +3609,7 @@ class TokenTrendView {
   }
   render() {
     if(!this.active)return;
-    this.updateRange();const model=this.model();this.series=model.series;this.renderLegend(model);
+    this.updateRange();const model=this.model();this.assignSeriesColors(model.series);this.series=model.series;this.renderLegend(model);
     if(!model.visible.some(group=>group.id===this.hoverSeries&&(group.lines.input.length||group.lines.size.length)))this.hoverSeries=null;
     const emphasis=this.eventKey()?null:this.emphasis||this.hoverSeries||(this.hover?model.visible.find(group=>group.points.some(point=>point.packet.id===this.hover&&(point.input!==null||point.size!==null)))?.id:null);
     const {start,end}=model.view;
