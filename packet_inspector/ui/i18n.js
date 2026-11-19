@@ -977,7 +977,7 @@ const uiI18n = (() => {
     "会话信息暂时不可用，正在重试。":"Session information is unavailable. Retrying.",
     "{count} 个会话":"{count} sessions",
     "已记录 {count} 条":"{count} requests recorded",
-    "已用 {size}":"{size} used",
+    "已使用 {size}":"{size} used",
     "请求记录":"Requests",
     "时间":"Time",
     "类型":"Type",
