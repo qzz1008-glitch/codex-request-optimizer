@@ -773,7 +773,8 @@ class WindowsRemoteRelayTests(unittest.TestCase):
         provider = next(iter(record["routes"]))
         self.assertEqual(self.relays.route(record["token"], provider), (record["routes"][provider], personal))
 
-        thread, legacy, other_account, parent = (f"00000000-0000-7000-8000-{n:012d}" for n in range(1, 5))
+        thread, legacy, other_account, parent, local_thread, unknown = (
+            f"00000000-0000-7000-8000-{n:012d}" for n in range(1, 7))
         database = self.remote_home / "state_12.sqlite"
         with closing(sqlite3.connect(database)) as db, db:
             db.execute("CREATE TABLE threads(id TEXT,name TEXT,source TEXT,updated_at_ms INTEGER)")
@@ -786,33 +787,41 @@ class WindowsRemoteRelayTests(unittest.TestCase):
 
         capture = self.root / "capture"
         store = Store(capture)
-        for session, owner in ((thread, personal), (legacy, None), (other_account, root_key)):
-            store.add({"method": "POST", "path": "/responses", "thread_id": session,
+        for session, owner in ((thread, personal), (legacy, None), (other_account, root_key),
+                               (local_thread, None), (unknown, "f" * 64)):
+            store.add({"method": "POST", "path": "/responses", "thread_id": session, "source": "live",
                        **({"ssh_connection_key": owner} if owner else {})})
         local = self.root / "local"
         local.mkdir()
         (local / ".codex-global-state.json").write_text(json.dumps({
-            "thread-project-membership-host-ids": {legacy: self.host.id},
-            "codex-managed-remote-connections": [{"hostId": self.host.id, "hostname": self.host.destination}],
+            "thread-project-membership-host-ids": {legacy: self.host.id, other_account: "local", local_thread: "local"},
+            "codex-managed-remote-connections": [{"hostId": self.host.id, "hostname": "198.51.100.176"}],
         }), encoding="utf8")
         labels = SshSessionLabels(self.relays, local, self.root / "ssh-config")
-        sidebar = SessionSummaries(TokenWindows(local), ssh_labels=labels)
+        sidebar = SessionSummaries(TokenWindows(local), ssh_labels=labels, ssh_origins=labels.route_origins)
         with patch("packet_inspector.ssh_session_labels.saved_hosts", return_value=[self.host]):
             def rows():
                 return {row["thread_id"]: row for row in sidebar.read(capture)["sessions"]}
 
             revision = labels.updates.revision()
-            self.assertIsNone(rows()[thread]["title"])
+            first = rows()
+            origin = {"kind": "remote", "address": self.host.destination}
+            self.assertIsNone(first[thread]["title"])
+            self.assertEqual(first[thread]["origin"], origin)
+            self.assertEqual(first[other_account]["origin"], origin)
+            self.assertEqual(first[local_thread]["origin"], {"kind": "local"})
+            self.assertIsNone(first[unknown]["origin"])
             self.assertTrue(labels.updates.wait(revision, timeout=2)["changed"])
             parent_revision = labels.updates.revision()
             rows()  # The first lookup exposes the child-to-parent relationship.
             self.assertTrue(labels.updates.wait(parent_revision, timeout=2)["changed"])
             sessions = rows()
             self.assertEqual(sessions[legacy]["title"], "Saved remote chat")
-            self.assertEqual(sessions[legacy]["origin"], {"kind": "remote", "address": self.host.destination})
+            self.assertEqual(sessions[legacy]["origin"], {"kind": "remote", "address": "198.51.100.176"})
             self.assertEqual(sessions[thread]["title"], "Remote child")
             self.assertEqual(sessions[thread]["parent_thread_id"], parent)
             self.assertEqual(sessions[parent]["title"], "Remote parent")
+            self.assertEqual(sessions[parent]["origin"], origin)
             self.assertIsNone(sessions[other_account]["title"])
         self.assertEqual({path: path.read_bytes() for path in before}, before)
 
