@@ -3899,7 +3899,7 @@ class TokenTrendView {
         const a=x(Math.max(start,gap.start)),b=x(Math.min(end,gap.end)),center=(a+b)/2,span=Math.max(12,b-a);
         const from=Math.max(left,center-span/2),to=Math.min(width-right,center+span/2);
         const band=this.svgNode("g",{class:"trend-time-fold","data-start":gap.start,"data-end":gap.end});
-        band.append(this.svgNode("title",{},t("已跳过无请求时段：{start} – {end}").replace("{start}",this.time(gap.start,true)).replace("{end}",this.time(gap.end,true))),
+        band.append(this.svgNode("title",{},t("无请求时间段：{start} – {end}").replace("{start}",this.time(gap.start,true)).replace("{end}",this.time(gap.end,true))),
           this.svgNode("rect",{x:from,y:top,width:to-from,height:plotHeight,class:"trend-fold-shade"}),
           this.svgNode("rect",{x:from,y:top,width:to-from,height:plotHeight,fill:`url(#${id})`}),
           this.svgNode("path",{d:`M${from},${top}V${height-bottom}M${to},${top}V${height-bottom}`,class:"trend-fold-edge"}));root.append(band);
@@ -3948,7 +3948,7 @@ class TokenTrendView {
       for(const gap of axis.gaps) {
         const a=x(Math.max(bounds.start,gap.start)),b=x(Math.min(bounds.end,gap.end)),center=(a+b)/2,offset=3;
         const mark=this.svgNode("g",{class:"trend-time-break","data-start":gap.start,"data-end":gap.end});
-        mark.append(this.svgNode("title",{},t("已跳过无请求时段：{start} – {end}").replace("{start}",this.time(gap.start,true)).replace("{end}",this.time(gap.end,true))),
+        mark.append(this.svgNode("title",{},t("无请求时间段：{start} – {end}").replace("{start}",this.time(gap.start,true)).replace("{end}",this.time(gap.end,true))),
           this.svgNode("rect",{x:center-11,y:0,width:22,height:13,rx:3}),this.svgNode("path",{d:`M${center-offset+1},2l-2,7M${center+offset+1},2l-2,7`}));root.append(mark);
       }
     }
