@@ -2418,31 +2418,28 @@ function renderProtectionPanelState() {
     row.title=inactive?t(hint[row.dataset.protection]||"可在设置中开启请求大小保护"):"";
   }
 }
-function originalRequestPanel(m) {
-  const section=panel(t("原始请求"),{headingTag:"h2"}),facts=el("dl","request-overview-facts");
-  if(m.source!=="live")fact(facts,t("数据来源"),t("历史重建（大小为估算）"));
+function requestBasicsPanel(m) {
+  const section=panel(t("基本信息"),{headingTag:"h2"}),facts=el("dl","request-overview-facts");
   fact(facts,t("模型"),m.model||t("未标记"));
-  fact(facts,t("原始请求"),bytes(originalBytes(m))).title=t("原始请求大小（图片处理、传输压缩前）");
-  const imageSize=m.inline_image_bytes;
-  if(Number.isSafeInteger(imageSize)&&imageSize>0) {
-    fact(facts,t("图片大小"),bytes(imageSize));
-  } else if(imageSize==null&&m.image_isolation_removed>0&&Number.isSafeInteger(m.image_isolation_decoded_before)&&
-      Number.isSafeInteger(m.image_isolation_decoded_after)&&m.image_isolation_decoded_after>=0&&
-      m.image_isolation_decoded_before>m.image_isolation_decoded_after) {
-    // Older records only have the net change from replacing images with paths.
-    fact(facts,t("图片大小"),"≈ "+bytes(m.image_isolation_decoded_before-m.image_isolation_decoded_after));
-  }
-  if(overflowApplied(m)) {
-    const estimate=requestTokenUsage(m);
-    fact(facts,t("输入 Token（估算）"),sortInputTokens(estimate)!==null?"≈ "+nf.format(estimate.input_tokens):"—").title=t("超限摘要前输入 Token（估算）");
-  }
+  const endings={completed:"完成",failed:"失败",incomplete:"未完成",cancelled:"已取消",interrupted:"已中断"};
+  const ended=m.response_summary?.status,code=Number.isInteger(m.status)&&m.status>=100&&m.status<=599?m.status:null;
+  const relayFailed=["relay_error","client_disconnected","interrupted"].includes(m.state);
+  const result=relayFailed?states[m.state]:code>=400?t("失败"):Object.hasOwn(endings,ended)?t(endings[ended]):m.state==="complete"?t("已结束"):states[m.state]||t("尚未收到");
+  const resultRow=fact(facts,t("结果"),result+(code!==null?" · HTTP "+code:""));
+  if(relayFailed||code>=400||ended==="failed")resultRow.lastChild.classList.add("danger");
+  else if(ended==="completed"||!Object.hasOwn(endings,ended)&&m.state==="complete")resultRow.lastChild.classList.add("request-result-success");
+  fact(facts,t("总耗时"),Number.isFinite(m.duration_ms)&&m.duration_ms>=0?nf.format(Math.round(m.duration_ms/100)/10)+" "+t("秒"):"—");
+  const errorReason=m.network_error?.message||m.relay_error;
+  if(typeof errorReason==="string"&&errorReason)fact(facts,t("错误原因"),t(errorReason)).classList.add("request-error-detail");
+  if(m.source!=="live")fact(facts,t("数据来源"),t("历史重建（大小为估算）"));
   if(m.details_evicted)fact(facts,t("请求详情"),t("已回收"));
   section.append(facts);
   return section;
 }
-function forwardedRequestPanel(m) {
-  const section=panel(t("转发请求"),{headingTag:"h2"}),facts=el("dl","request-overview-facts");
+function requestForwardingPanel(m) {
+  const section=panel(t("转发处理"),{headingTag:"h2"}),facts=el("dl","request-overview-facts");
   const compressed=compressedBytes(m),summaryTriggered=overflowApplied(m);
+  fact(facts,t("原始请求"),bytes(originalBytes(m))).title=t("原始请求大小（图片处理、传输压缩前）");
   fact(facts,t("转发请求"),bytes(compressed)).title=t("转发请求大小（图片处理、传输压缩后，超限摘要处理前）");
   const hasTransport=typeof m.transport_content_encoding==="string";
   // Older summary records only retain the final body's encoding and grade.
@@ -2464,6 +2461,15 @@ function forwardedRequestPanel(m) {
       fact(facts,t("压缩比例"),(100*after/before).toFixed(1)+"%");
     }
   }
+  const imageSize=m.inline_image_bytes;
+  if(Number.isSafeInteger(imageSize)&&imageSize>0) {
+    fact(facts,t("图片大小"),bytes(imageSize));
+  } else if(imageSize==null&&m.image_isolation_removed>0&&Number.isSafeInteger(m.image_isolation_decoded_before)&&
+      Number.isSafeInteger(m.image_isolation_decoded_after)&&m.image_isolation_decoded_after>=0&&
+      m.image_isolation_decoded_before>m.image_isolation_decoded_after) {
+    // Older records only have the net change from replacing images with paths.
+    fact(facts,t("图片大小"),"≈ "+bytes(m.image_isolation_decoded_before-m.image_isolation_decoded_after));
+  }
   if(m.image_upload_optimized===true) {
     const images=Array.isArray(m.image_upload_images)?m.image_upload_images.filter(image=>image&&typeof image==="object"&&!Array.isArray(image)):[];
     const changes=[];
@@ -2478,19 +2484,11 @@ function forwardedRequestPanel(m) {
     }
   }
   if(summaryTriggered) {
+    const estimate=requestTokenUsage(m);
     const actual=m.upstream_usage?.input_tokens;
+    fact(facts,t("输入 Token（估算）"),sortInputTokens(estimate)!==null?"≈ "+nf.format(estimate.input_tokens):"—").title=t("超限摘要前输入 Token（估算）");
     fact(facts,t("上游实际输入 Token"),Number.isSafeInteger(actual)&&actual>=0?nf.format(actual):"—");
   }
-  const endings={completed:"完成",failed:"失败",incomplete:"未完成",cancelled:"已取消",interrupted:"已中断"};
-  const ended=m.response_summary?.status,code=Number.isInteger(m.status)&&m.status>=100&&m.status<=599?m.status:null;
-  const relayFailed=["relay_error","client_disconnected","interrupted"].includes(m.state);
-  const result=relayFailed?states[m.state]:code>=400?t("失败"):Object.hasOwn(endings,ended)?t(endings[ended]):m.state==="complete"?t("已结束"):states[m.state]||t("尚未收到");
-  const resultRow=fact(facts,t("结果"),result+(code!==null?" · HTTP "+code:""));
-  if(relayFailed||code>=400||ended==="failed")resultRow.lastChild.classList.add("danger");
-  else if(ended==="completed"||!Object.hasOwn(endings,ended)&&m.state==="complete")resultRow.lastChild.classList.add("request-result-success");
-  fact(facts,t("总耗时"),Number.isFinite(m.duration_ms)&&m.duration_ms>=0?nf.format(Math.round(m.duration_ms/100)/10)+" "+t("秒"):"—");
-  const errorReason=m.network_error?.message||m.relay_error;
-  if(typeof errorReason==="string"&&errorReason)fact(facts,t("错误原因"),t(errorReason)).classList.add("request-error-detail");
   section.append(facts);
   return section;
 }
@@ -2980,7 +2978,7 @@ function renderImagePaths(paths,{showDirectoryRow=true}={}) {
 }
 function renderHeaders(m) {
   const root=document.createDocumentFragment();
-  root.append(originalRequestPanel(m),forwardedRequestPanel(m));
+  root.append(requestBasicsPanel(m),requestForwardingPanel(m));
   const session=sessionSummaries.find(row=>row.thread_id===m.thread_id);
   const auxiliary=auxiliarySessionKind(session),purpose=purposeFromMetadata(m);
   const specialKind=[purpose,m.request_kind,auxiliary].find(kind=>kind&&kind!=="subagent"&&Object.hasOwn(auxiliaryLabels,kind));
