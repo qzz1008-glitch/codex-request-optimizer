@@ -633,10 +633,15 @@ dialog{width:min(760px,calc(var(--desktop-width) - 80px));max-height:calc(var(--
   border-radius: 999px;
   background: var(--panel);
   color: var(--ink);
-  font-size: 11px;
-  font-weight: 600;
-  line-height: 16px;
-  white-space: nowrap;
+}
+.connection-device-reconnect svg {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 .connection-device-reconnect:hover{border-color:var(--reconnect-rim);background:var(--soft);color:var(--accent)}
 .connection-device-reconnect.needs-reconnect {

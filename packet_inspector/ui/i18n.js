@@ -8,7 +8,7 @@ const uiI18n = (() => {
     "将接入本机的 Codex，包括检测到的 WSL 配置。":"Connect Codex on this computer, including detected WSL configurations.",
     "本机接入状态暂不可用。":"Local connection status is unavailable.",
     "配置待生效，请重启 ChatGPT App。":"Configuration is pending. Restart the ChatGPT App to apply it.",
-    "配置待生效，请点击“重连”重新加载此服务器的 Codex。":"Configuration is pending. Click Reconnect to reload Codex on this server.",
+    "配置待生效，请点击重连图标重新加载此服务器的 Codex。":"Configuration is pending. Click the reconnect icon to reload Codex on this server.",
     "重连结果未确认":"Reconnection unconfirmed",
     "重新连接 Codex":"Reconnect Codex",
     "现在重新连接 Codex？":"Reconnect Codex now?",
