@@ -390,7 +390,7 @@ button.other-session-group{background:#f5f2fc;border-color:#e7e0f5}
 #tab-tree>.tree-tools{flex-wrap:nowrap;align-items:center;padding-block-end:8px}
 #tab-tree>.tree-tools input{flex:1;min-width:0;padding:6px 9px}
 #tab-tree>.search-results{max-height:min(260px,40%);padding:7px 0;border-radius:0}
-.json-viewer{flex:1;min-width:0;min-height:0;overflow:hidden}
+.json-viewer{flex:1;min-width:0;min-height:0;overflow:hidden;margin-inline-start:calc(-1 * var(--detail-content-inset))}
 .json-content{height:100%;margin:0;padding:8px var(--detail-content-inset) 4px 0;overflow:auto;scrollbar-gutter:stable;overscroll-behavior:contain;white-space:pre;word-break:normal;overflow-wrap:normal;font-family:Consolas,"Cascadia Mono",monospace;font-size:12px;line-height:1.65;tab-size:2}
 .json-download{flex:none;padding-block:4px;color:var(--accent);font-size:12px;white-space:nowrap;text-decoration:none}
 .json-download:hover{text-decoration:underline}
