@@ -97,7 +97,8 @@ body{height:100dvh;min-width:0;display:flex;flex-direction:column;overflow-x:hid
 .session-search:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 2px #1d4ed81a}
 .session-empty{margin:0;padding:18px 8px;color:var(--muted);font-size:12px;line-height:1.6}
 .session-list{--session-connection-gutter:9px;display:flex;flex-direction:column;gap:3px;flex:1;min-height:0;overflow-x:hidden;overflow-y:scroll;margin-right:calc(var(--session-edge-gap) - var(--view-inset));padding:2px 2px 8px var(--session-connection-gutter);scrollbar-gutter:stable;overflow-anchor:none}
-.session-items{position:relative;display:flex;flex-direction:column;gap:6px;flex:none;min-width:0}
+.session-items{position:relative;display:flex;flex-direction:column;gap:6px;flex:none;min-width:0;transition:row-gap var(--workspace-switch-time) var(--workspace-switch-easing)}
+.workspace[data-view="trends"] .session-items{row-gap:4px}
 .session-items.session-loading{flex:1;align-items:center;justify-content:center;min-height:0}
 .session-spinner{flex:none;width:24px;height:24px;border:2px solid var(--line);border-top-color:var(--accent);border-radius:50%;animation:update-spin .8s linear infinite}
 .session-connections{position:absolute;top:0;left:calc(-1 * var(--session-connection-gutter));z-index:1;overflow:visible;pointer-events:none}
@@ -227,7 +228,7 @@ button.other-session-group{background:#f5f2fc;border-color:#e7e0f5}
 .session-id{min-width:0;overflow-wrap:anywhere;font:calc(11rem / 14)/1.35 Consolas,"Cascadia Mono",monospace;color:var(--muted)}
 .session-meta{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));align-items:center;gap:4px;font-size:10px;line-height:1.35;color:var(--muted);font-variant-numeric:tabular-nums;block-size:1.35em;margin-block-start:2px;overflow:hidden;transition:block-size var(--workspace-switch-time) var(--workspace-switch-easing),margin-block-start var(--workspace-switch-time) var(--workspace-switch-easing),opacity .16s,visibility 0s}
 .workspace[data-view="trends"] .session-meta{block-size:0;margin-block-start:0;opacity:0;visibility:hidden;transition-delay:0s,0s,0s,var(--workspace-switch-time)}
-@media(prefers-reduced-motion:reduce){.trend-main,.trend-series-line,.trend-curve,button.session-item,.session-item::before,.session-meta{transition:none}}
+@media(prefers-reduced-motion:reduce){.trend-main,.trend-series-line,.trend-curve,.session-items,button.session-item,.session-item::before,.session-meta{transition:none}}
 .session-token{grid-column:1}
 .session-origin{grid-column:2;text-align:center}
 .session-origin.has-address{
