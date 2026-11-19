@@ -2699,10 +2699,11 @@ function setRequestBodyTextMode(enabled) {
   const view=requestBodyView,root=$("request-body-text"),available=view?.id===state.selected;
   const showText=enabled&&available;
   if(showText&&!view.messages) {
-    view.messages=requestTextMessages(view.body).map(({role,text})=>({author:t(role==="user"?"用户":"模型"),text}));
+    view.messages=requestTextMessages(view.body).map(({role,text})=>({role,author:t(role==="user"?"用户":"模型"),text}));
     const fragment=document.createDocumentFragment();
-    for(const {author,text} of view.messages) {
+    for(const {role,author,text} of view.messages) {
       const message=el("div","request-message");
+      message.setAttribute("data-role",role);
       message.append(el("strong","request-message-author",author),el("p","request-message-text",text));
       fragment.append(message);
     }
