@@ -595,7 +595,7 @@ button.other-session-group{background:#f5f2fc;border-color:#e7e0f5}
 #settings-dialog .settings-content>section:first-child{border-top:0}
 #settings-dialog .settings-content>section:last-child{padding-bottom:0}
 #settings-dialog label,
-#settings-dialog #proxy-settings-label{margin:0;color:var(--ink);font-size:14px;line-height:22px;font-weight:400}
+#settings-dialog :is(#proxy-settings-label,#image-analysis-mode-label){margin:0;color:var(--ink);font-size:14px;line-height:22px;font-weight:400}
 #settings-dialog :is(button,input,select){font:inherit;font-size:14px}
 #settings-dialog button{min-height:var(--settings-control-height);padding:5px 10px;border-radius:var(--settings-control-radius);line-height:20px}
 #settings-dialog :is(input:not([type=checkbox],[type=radio]),select){block-size:var(--settings-field-height);margin:0;padding:5px 10px;border:1px solid var(--line);border-radius:var(--settings-control-radius);background:var(--panel);color:var(--ink);line-height:20px;text-align:right}
@@ -695,6 +695,8 @@ button.other-session-group{background:#f5f2fc;border-color:#e7e0f5}
 #settings-dialog .runtime-setting-row+.runtime-setting-row,
 #settings-dialog #request-protection-settings .runtime-setting-row{margin-block-start:var(--settings-row-gap)}
 #settings-dialog .runtime-inline-hint{min-width:0;margin:0}
+#settings-dialog .image-mode-controls{display:flex;flex-wrap:wrap;align-items:center;gap:8px var(--settings-column-gap)}
+#settings-dialog .image-mode-controls>.runtime-inline-hint{flex:1 1 12em}
 #settings-dialog .proxy-inline-row{
   display:grid;grid-template-columns:var(--settings-label-width) max-content minmax(0,1fr) var(--settings-path-actions-width);
   align-items:center;gap:8px var(--settings-column-gap)

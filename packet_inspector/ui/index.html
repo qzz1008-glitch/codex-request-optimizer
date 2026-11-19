@@ -262,6 +262,18 @@
       <div class="runtime-setting-row runtime-retry-row"><div class="runtime-toggle" data-settings-field="capacity_retry_enabled"><input id="capacity-retry" type="checkbox" aria-labelledby="capacity-retry-label"><span id="capacity-retry-label" title="模型容量不足时自动重试">容量不足重试</span></div><div class="capacity-retry-options"><div class="capacity-retry-limit" data-settings-field="capacity_retry_max_retries"><label for="capacity-retry-count">重试次数</label><input id="capacity-retry-count" type="number" min="1" max="99" step="1" value="15" inputmode="numeric" required><span>次</span></div><div class="capacity-retry-limit" data-settings-field="capacity_retry_delay_seconds"><label for="capacity-retry-delay">等待时间</label><input id="capacity-retry-delay" type="number" min="1" max="99" step="1" value="30" inputmode="numeric" required><span>秒</span></div></div></div>
       <div class="runtime-setting-row runtime-retry-row"><div class="runtime-toggle"><input id="bad-request-retry" type="checkbox" aria-labelledby="bad-request-retry-label"><span id="bad-request-retry-label" title="仅重试通用 Bad Request；字段或参数错误保持原样。">请求异常重试</span></div><div class="capacity-retry-options"><div class="capacity-retry-limit"><label for="bad-request-retry-count">重试次数</label><input id="bad-request-retry-count" type="number" min="1" max="9" step="1" value="3" inputmode="numeric" required><span>次</span></div></div></div>
       <p id="runtime-settings-message" data-feedback-source data-feedback-target="settings-inline-feedback" class="help" role="status" hidden></p>
+      <div class="runtime-setting-row image-mode-row">
+        <span id="image-analysis-mode-label">解图优化</span>
+        <div class="image-mode-controls">
+          <fieldset id="image-analysis-mode" class="image-mode-pills" data-settings-field="image_analysis_mode" aria-labelledby="image-analysis-mode-label" aria-describedby="image-isolation-hint">
+            <label><input type="radio" name="image-analysis-mode" value="native" checked><span>原生</span></label>
+            <label><input type="radio" name="image-analysis-mode" value="disabled"><span>禁用</span></label>
+            <label><input type="radio" name="image-analysis-mode" value="optimized"><span>优化</span></label>
+          </fieldset>
+          <p id="image-isolation-hint" class="muted help runtime-inline-hint" aria-live="polite">卸载优化工具，恢复原生图片解析</p>
+        </div>
+      </div>
+      <p id="image-isolation-message" data-feedback-source data-feedback-target="settings-inline-feedback" class="help" role="status" hidden></p>
     </section>
     <section id="compression-settings" aria-labelledby="compression-settings-title">
       <h3 id="compression-settings-title">传输压缩</h3>
@@ -283,17 +295,6 @@
           <button id="image-zstd-level-open" class="zstd-level-trigger" type="button" aria-haspopup="dialog" aria-controls="zstd-level-dialog" aria-describedby="auto-zstd-level-hint" aria-expanded="false" disabled><span id="image-zstd-level-value">6级</span><svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
         </div>
       </fieldset>
-    </section>
-    <section id="image-settings" aria-labelledby="image-settings-title"><h3 id="image-settings-title">图片解析</h3>
-      <div class="runtime-setting-row image-mode-row">
-        <fieldset id="image-analysis-mode" class="image-mode-pills" data-settings-field="image_analysis_mode" aria-label="图片解析" aria-describedby="image-isolation-hint">
-          <label><input type="radio" name="image-analysis-mode" value="native" checked><span>原生</span></label>
-          <label><input type="radio" name="image-analysis-mode" value="disabled"><span>禁用</span></label>
-          <label><input type="radio" name="image-analysis-mode" value="optimized"><span>优化</span></label>
-        </fieldset>
-        <p id="image-isolation-hint" class="muted help runtime-inline-hint" aria-live="polite">卸载优化工具，恢复原生图片解析</p>
-      </div>
-      <p id="image-isolation-message" data-feedback-source data-feedback-target="settings-inline-feedback" class="help" role="status" hidden></p>
     </section>
     <section id="record-storage-settings" aria-labelledby="record-storage-title">
       <h3 id="record-storage-title">记录与存储</h3>
