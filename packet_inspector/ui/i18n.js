@@ -998,6 +998,7 @@ const uiI18n = (() => {
     "文本视图":"Text view",
     "对话文本":"Conversation text",
     "没有可显示的对话文本。":"No conversation text to display.",
+    "未记录消息时间":"Message time unavailable",
     "用户":"User",
     "复制 JSON":"Copy JSON",
     "导出 JSON":"Export JSON",

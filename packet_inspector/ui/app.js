@@ -2691,7 +2691,10 @@ function requestTextMessages(body) {
       const trimmed=part.trim();
       return trimmed!==""&&(role!=="user"||!nativeUserContext.test(trimmed));
     }).join("\n");
-    if(text)messages.push({role,text});
+    if(text) {
+      const created=item.internal_chat_message_metadata_passthrough?.create_time;
+      messages.push({role,text,created:Number.isFinite(created)&&created>0?created:null});
+    }
   }
   return messages;
 }
@@ -2700,12 +2703,20 @@ function setRequestBodyTextMode(enabled) {
   const view=requestBodyView,root=$("request-body-text"),available=view?.id===state.selected;
   const showText=enabled&&available;
   if(showText&&!view.messages) {
-    view.messages=requestTextMessages(view.body).map(({role,text})=>({role,author:t(role==="user"?"用户":"模型"),text}));
+    view.messages=requestTextMessages(view.body).map(message=>({...message,author:t(message.role==="user"?"用户":"模型")}));
     const fragment=document.createDocumentFragment();
-    for(const {role,author,text} of view.messages) {
+    for(const {role,author,text,created} of view.messages) {
       const message=el("div","request-message");
       message.setAttribute("data-role",role);
-      message.append(el("strong","request-message-author",author),el("p","request-message-text",text));
+      const meta=el("div","request-message-meta");
+      const date=created===null?null:new Date(created*1000),hasTime=date&&Number.isFinite(date.getTime());
+      const time=hasTime
+        ?el("time","request-message-time",dateFormat.format(date)+" "+clockFormat.format(date))
+        :el("span","request-message-time","—");
+      if(hasTime)time.setAttribute("datetime",date.toISOString());
+      time.title=hasTime?timestampFormat.format(date):t("未记录消息时间");
+      meta.append(el("strong","request-message-author",author),time);
+      message.append(meta,el("p","request-message-text",text));
       fragment.append(message);
     }
     if(!fragment.firstChild)fragment.append(el("p","muted",t("没有可显示的对话文本。")));
