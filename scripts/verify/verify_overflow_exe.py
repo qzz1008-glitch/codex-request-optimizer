@@ -121,7 +121,8 @@ def main():
         assert all(compact for _, compact, _ in upstream.requests[marker:])
         assert api("/api/status")["maintenance_errors"] == 0
         assert config.read_bytes() == original_config
-        assert b"fake-do-not-cache" not in (folder / "overflow-context.sqlite").read_bytes()
+        cache_dir = Path(api("/api/status")["active_cache_dir"])
+        assert b"fake-do-not-cache" not in (cache_dir / "overflow-context.sqlite").read_bytes()
         print(json.dumps({"packaged_overflow": "ok", "version": initial["version"],
                           "budget_bytes": 1_000_000, "compaction_calls": first_compactions,
                           "cache_reused": True, "cache_reset": True,
