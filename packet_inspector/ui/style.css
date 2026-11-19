@@ -248,27 +248,28 @@ button.other-session-group{background:#f5f2fc;border-color:#e7e0f5}
   --detail-divider:#e6ebf2;
   --detail-content-inset:14px;
   --detail-scrollbar-size:10px;
-  --detail-tab-inset:4px;
+  --detail-tab-inset:3px;
   display:flex;
   flex-direction:column;
+  row-gap:var(--records-heading-gap);
   min-height:0;
   padding:var(--view-inset);
   background:#fafbfd;
   overflow:hidden;
 }
 .sessions-sidebar,.requests-sidebar,.detail{padding-top:8px}
-.detail-title{gap:12px}
+.detail-title{gap:6px}
 .detail-title h1{flex:none;white-space:nowrap}
 .detail-title>.tabs{
   position:relative;
   z-index:1;
   align-self:flex-end;
-  height:var(--records-heading-height);
+  block-size:calc(var(--records-heading-height) + var(--records-heading-gap));
   min-width:0;
   gap:1px;
   margin:0;
-  /* Let the active tab cover the panel's top border. */
-  margin-block-end:-1px;
+  /* Bridge the shared heading gap and cover the detail frame's top border. */
+  margin-block-end:calc(-1px - var(--records-heading-gap));
   /* Align the last label with the text inside the scrollbar gutter. */
   margin-inline:auto calc(var(--detail-scrollbar-size) + var(--detail-content-inset) - var(--detail-tab-inset));
   border:0;
@@ -282,7 +283,7 @@ button.other-session-group{background:#f5f2fc;border-color:#e7e0f5}
   flex:none;
   align-items:center;
   height:100%;
-  padding:0 var(--detail-tab-inset);
+  padding:0 var(--detail-tab-inset) var(--records-heading-gap);
   border:1px solid transparent;
   border-radius:8px 8px 0 0;
   background:transparent;
