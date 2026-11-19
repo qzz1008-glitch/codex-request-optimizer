@@ -401,7 +401,29 @@ button.other-session-group{background:#f5f2fc;border-color:#e7e0f5}
   border-block-end:1px solid var(--detail-divider);
 }
 #tab-tree>.tree-tools{flex-wrap:nowrap;align-items:center;padding-block-end:8px}
-#tab-tree>.tree-tools input{flex:1;min-width:0;padding:6px 9px}
+#tab-tree>.tree-tools>input{flex:1;min-width:0;padding:6px 9px}
+#tab-tree>.tree-tools>.request-body-modes{position:relative;flex:none;padding:2px}
+.request-body-modes>input{padding:0;border:0;clip-path:inset(50%)}
+.request-body-modes>label{
+  min-inline-size:44px;
+  padding:1px 8px;
+  border:1px solid transparent;
+  border-radius:999px;
+  font-size:12px;
+  font-weight:600;
+  line-height:20px;
+  text-align:center;
+  white-space:nowrap;
+  cursor:pointer;
+  user-select:none;
+}
+.request-body-modes>input:enabled:not(:checked)+label:hover{background:var(--panel)}
+.request-body-modes>input:checked+label{background:var(--soft);border-color:var(--line);color:var(--accent)}
+.request-body-modes>input:focus-visible+label{outline:2px solid var(--accent);outline-offset:1px}
+.request-body-modes>input:disabled+label{opacity:.55;cursor:default}
+@media (forced-colors:active){
+  .request-body-modes>input:checked+label{border-color:Highlight}
+}
 #tab-tree>.search-results{max-height:min(260px,40%);padding:7px 0;border-radius:0}
 .json-viewer{position:relative;flex:1;min-width:0;min-height:0;overflow:hidden;margin-inline-start:calc(-1 * var(--detail-content-inset))}
 .json-content{height:100%;margin:0;padding:8px var(--detail-content-inset) 4px 0;overflow:auto;scrollbar-gutter:stable;overscroll-behavior:contain;white-space:pre;word-break:normal;overflow-wrap:normal;font-family:Consolas,"Cascadia Mono",monospace;font-size:12px;line-height:1.65;tab-size:2}
@@ -460,8 +482,6 @@ button.other-session-group{background:#f5f2fc;border-color:#e7e0f5}
 .json-action:hover{background:var(--soft)}
 .json-action[aria-disabled="true"]{opacity:.5;cursor:default}
 .json-action:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
-#json-text-toggle{font-weight:600}
-#json-text-toggle[aria-pressed="true"]{background:var(--soft);border-color:var(--accent)}
 #json-copy:has(+ [data-copy-feedback="success"]){color:var(--green)}
 .json-copy-check,#json-copy:has(+ [data-copy-feedback="success"]) path:first-child{display:none}
 #json-copy:has(+ [data-copy-feedback="success"]) .json-copy-check{display:inline}
