@@ -2503,7 +2503,7 @@ function requestProtectionPanel(m) {
   const optimization=item("optimization","optimization");
   if(optimization) {
     const body=requestBodyView&&requestBodyView.id===m.id?requestBodyView.body:null,paths=requestImagePaths(m,body);
-    if(paths.length)optimization.append(renderImagePaths(paths));
+    if(paths.length)optimization.append(renderImagePaths(paths,{showDirectoryRow:false}));
     else fact(optimization,t("图片路径"),"—");
   }
   return steps;
@@ -2909,12 +2909,17 @@ function renderImageInfo(paths) {
   if(!paths.length) {images.append(el("p","muted",t("未记录图片路径")));return images;}
   images.append(renderImagePaths(paths));return images;
 }
-function renderImagePaths(paths) {
+function renderImagePaths(paths,{showDirectoryRow=true}={}) {
   const images=el("div","image-paths");
   for(const group of imagePathGroups(paths)) {
-    const section=el("section","image-path-group");section.dataset.renderKey="image-folder:"+group.directory;section.setAttribute("aria-label",t("图片目录")+"："+group.directory);
-    const directory=el("code","image-path-directory",group.directory);directory.title=group.directory;
-    const heading=el("div","image-path-directory-row");heading.append(directory,imagePathAction("directory",group.directory));
+    const section=el("section","image-path-group");section.dataset.renderKey="image-folder:"+group.directory;
+    if(showDirectoryRow) {
+      section.setAttribute("aria-label",t("图片目录")+"："+group.directory);
+      const directory=el("code","image-path-directory",group.directory);directory.title=group.directory;
+      const heading=el("div","image-path-directory-row");
+      heading.append(directory,imagePathAction("directory",group.directory));
+      section.append(heading);
+    }
     const list=el("ul","image-path-list");
     for(const {name,path} of group.files) {
       const item=el("li","image-path-item"),filename=el("code","image-path-name",name);
@@ -2922,7 +2927,7 @@ function renderImagePaths(paths) {
       filename.title=path;
       item.append(filename,imagePathAction("image",path),imagePathAction("reveal",path));list.append(item);
     }
-    section.append(heading,list);images.append(section);
+    section.append(list);images.append(section);
   }
   return images;
 }
