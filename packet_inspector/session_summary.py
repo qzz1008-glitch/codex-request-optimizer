@@ -140,6 +140,8 @@ def connection_scope(metadata):
         key = metadata.get(kind + "_connection_key")
         if isinstance(key, str) and key:
             return kind, key
+    if metadata.get("local_connection") is True:
+        return "local", None
     return None
 
 
@@ -238,8 +240,8 @@ class SessionSummaries:
             return {}
         captured_origins = captured_origins or {}
         native_origins = native_origins or {}
-        local_ids = [thread for thread in ids if thread not in captured_origins
-                     and native_origins.get(thread, (None, None))[0] != WSL_HOST_ID]
+        local_ids = [thread for thread in ids if captured_origins.get(thread) == ("local", None)
+                     or (thread not in captured_origins and native_origins.get(thread, (None, None))[0] != WSL_HOST_ID)]
         found, resolved, parent_candidates = {}, set(), {}
         for database in state_databases(self.tokens.home):
             remaining = [thread for thread in local_ids if thread not in resolved]
@@ -265,7 +267,6 @@ class SessionSummaries:
                         edges = []
                 # Codex App stores its display name separately from the initial-message title.
                 labels = {r[0]: {"title": r[3] if isinstance(r[3], str) and r[3].strip() else r[1], "updated_at": r[2],
-                                "origin": {"kind": "local"},
                                 "fallback_title": subagent_title(r[5], r[3], r[4]),
                                 **({"session_kind": "subagent"} if subagent_source(r[5]) else {})} for r in rows}
                 parents = {}
@@ -360,15 +361,14 @@ class SessionSummaries:
         except OSError:
             return {}
 
-    def _prepare_records(self, database, records, labels, captured_origins, native_origins):
+    def _prepare_records(self, database, records, labels, label_scopes, native_origins):
         unread = 0
         for record in records:
             label = labels.get(record["thread_id"], {})
             scope = connection_scope(label)
             if scope:
-                captured_origins[record["thread_id"]] = scope
+                label_scopes.setdefault(record["thread_id"], scope)
             record["title"] = label.get("title")
-            record["origin"] = label.get("origin")
             if not record["title"] and label.get("fallback_title"):
                 record.update(title=label["fallback_title"], title_source="subagent")
             if label.get("session_kind"):
@@ -400,19 +400,19 @@ class SessionSummaries:
             parent_origins = {}
             for record in records:
                 parent = record.get("parent_thread_id")
-                origin = captured_origins.get(record["thread_id"])
+                origin = label_scopes.get(record["thread_id"])
                 if parent in unseen_parents and origin:
                     parent_origins.setdefault(parent, set()).add(origin)
-            captured_origins.update((parent, next(iter(origins))) for parent, origins in parent_origins.items() if len(origins) == 1)
-            parent_labels = self._labels(parents, captured_origins, native_origins)
+            label_scopes.update((parent, next(iter(origins))) for parent, origins in parent_origins.items() if len(origins) == 1)
+            parent_labels = self._labels(parents, label_scopes, native_origins)
             for thread in parents:
                 label = parent_labels.get(thread, {})
                 scope = connection_scope(label)
                 if scope:
-                    captured_origins[thread] = scope
+                    label_scopes.setdefault(thread, scope)
                 title = label.get("title") or label.get("fallback_title")
                 parent = {"thread_id": thread, "packet_count": 0, "updated_at": label["updated_at"] if number(label.get("updated_at")) else 0,
-                          "title": title, "latest_packet": None, "origin": label.get("origin")}
+                          "title": title, "latest_packet": None}
                 if label.get("session_kind"):
                     parent["session_kind"] = label["session_kind"]
                 if label.get("parent_thread_id"):
@@ -477,7 +477,7 @@ class SessionSummaries:
         native_origins = thread_origins(self.tokens.home)
         labels = self._labels([r["thread_id"] for r in records if r["thread_id"]], captured_origins, native_origins)
         with self._lock:
-            self._prepare_records(path, records, labels, captured_origins, native_origins)
+            self._prepare_records(path, records, labels, dict(captured_origins), native_origins)
             fallback = []
             for record in records:
                 thread = record["thread_id"]
@@ -518,16 +518,16 @@ class SessionSummaries:
                             record["token_window"] = previous
         # Older sessions are still in the sidebar even when recent metadata is capped.
         known = {record["thread_id"] for record in records}
-        older = [{"thread_id": thread, "packet_count": count, "updated_at": created, "title": None, "origin": None}
+        older = [{"thread_id": thread, "packet_count": count, "updated_at": created, "title": None}
                  for thread, count, created in groups[MAX_SESSIONS:] if thread and thread not in known]
         _add_input_titles(path, records + older)
         older = [record for record in older if record.get("input_title")]
-        if older and self.ssh_origins:
+        if older:
             with read_state(path) as db:
                 for record in older:
                     thread = record["thread_id"]
                     scope = _captured_connection_scope(_latest_session_packet(db, thread))
-                    if scope and scope[0] == "ssh":
+                    if scope:
                         captured_origins[thread] = scope
         records.extend(older)
         ssh_keys = {key for kind, key in captured_origins.values() if kind == "ssh"}
@@ -535,12 +535,12 @@ class SessionSummaries:
         for record in records:
             thread = record["thread_id"]
             kind, key = captured_origins.get(thread, (None, None))
-            host_id, origin = native_origins.get(thread, (None, record["origin"]))
-            if kind == "ssh" and key in ssh_origins:
-                route_host_id, route_origin = ssh_origins[key]
-                if host_id != route_host_id or not origin:
-                    origin = route_origin
-            record["origin"] = origin
+            if kind == "ssh":
+                record["origin"] = ssh_origins.get(key)
+            elif kind in {"local", "wsl"}:
+                record["origin"] = {"kind": kind}
+            else:
+                record["origin"] = None
         records.sort(key=lambda r: (-r["updated_at"], r["thread_id"]))
         return {"state": "available", "sessions": records}
 

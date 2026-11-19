@@ -1,7 +1,7 @@
 """Discover and control Codex's saved SSH hosts off the UI request threads."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import glob
 import hashlib
 import json
@@ -15,7 +15,7 @@ import threading
 import time
 from urllib.parse import quote
 
-from .native_state import WSL_HOST_ID, managed_remote_connections, read_global_state
+from .native_state import WSL_HOST_ID, managed_remote_connections, read_global_state, remote_address
 from .network_diagnostics import safe_text
 from .remote_control import SCRIPT, RESULT_PREFIX
 
@@ -30,6 +30,7 @@ class Host:
     destination: str
     port: int | None = None
     identity: str | None = None
+    address: str | None = field(default=None, compare=False)
 
 
 def _destination(value):
@@ -102,7 +103,8 @@ def saved_hosts(codex_home, ssh_config, *, config_hash=None):
         if identity in {host.id for host in hosts} or key in destinations:
             continue
         name = str(row.get("displayName") or destination)[:160]
-        hosts.append(Host(identity, name, destination, port, keyfile))
+        address = remote_address(row.get("hostname"), destination)
+        hosts.append(Host(identity, name, destination, port, keyfile, address=address))
         destinations.add(key)
         if len(hosts) >= MAX_TARGETS:
             break

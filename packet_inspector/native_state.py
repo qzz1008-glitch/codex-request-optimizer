@@ -29,6 +29,15 @@ def managed_remote_connections(state):
     return rows if isinstance(rows, list) else ()
 
 
+def remote_address(*values):
+    for value in values:
+        if isinstance(value, str):
+            address = value.strip().rsplit("@", 1)[-1].removeprefix("[").removesuffix("]")
+            if re.fullmatch(r"[\w.:%-]{1,255}", address):
+                return address
+    return None
+
+
 def thread_origins(home):
     """Return the native host ID and display metadata keyed by session ID."""
     try:
@@ -44,12 +53,9 @@ def thread_origins(home):
     for row in managed_remote_connections(state):
         if not isinstance(row, dict) or not isinstance(row.get("hostId"), str):
             continue
-        for value in (row.get("hostname"), row.get("alias")):
-            if isinstance(value, str):
-                address = value.strip().rsplit("@", 1)[-1].removeprefix("[").removesuffix("]")
-                if re.fullmatch(r"[\w.:%-]{1,255}", address):
-                    hosts.setdefault(row["hostId"], {"kind": "remote", "address": address})
-                    break
+        address = remote_address(row.get("hostname"), row.get("alias"))
+        if address:
+            hosts.setdefault(row["hostId"], {"kind": "remote", "address": address})
 
     origins = {}
     for thread in memberships.keys() | assignments.keys():
