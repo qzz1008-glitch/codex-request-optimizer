@@ -362,12 +362,19 @@ class SessionSummaryTests(unittest.TestCase):
         capture = self.root / "older-input-title-capture"
         store = Store(capture)
         body = json.dumps({"input": [{"role": "user", "content": "First request"}]}).encode()
+        route = "a" * 64
+        origin = {"kind": "remote", "address": "198.51.100.176"}
         for at, thread in enumerate((older, THREAD), start=100):
             meta, content = inspect_request(body, {"x-codex-thread-id": thread}, "/responses")
+            if thread == older:
+                meta.update(source="live", ssh_connection_key=route)
             with patch("packet_inspector.storage.time.time", return_value=at):
                 store.add({**meta, "method": "POST", "path": "/responses"}, content)
-        with patch("packet_inspector.session_summary.MAX_SESSIONS", 1):
+        with patch("packet_inspector.session_summary.MAX_SESSIONS", 1), \
+             patch.object(self.reader, "ssh_origins", return_value={route: ("remote-ssh-fixture", origin)}) as resolve:
             sessions = self.reader.read(capture)["sessions"]
+        resolve.assert_called_once_with({route})
+        self.assertEqual(sessions[1]["origin"], origin)
         self.assertEqual([(row["thread_id"], row.get("input_title")) for row in sessions],
                          [(THREAD, None), (older, "First request")])
         store.configure_limits(1_000_000, 10, 0)

@@ -154,6 +154,20 @@ def _packet_summary(thread, row):
     return packet
 
 
+def _latest_session_packet(db, thread):
+    # Keep known IDs searchable by the existing thread/time index. Older stores
+    # may use either NULL or an empty string for an unknown ID.
+    condition = "thread=?" if thread else "coalesce(thread,'')=?"
+    row = db.execute("SELECT id,created,method,meta FROM packet_summaries "
+                     "WHERE " + condition + " AND method!='GET' "
+                     "ORDER BY created DESC,id DESC LIMIT 1", (thread,)).fetchone()
+    return _packet_summary(thread, row) if row else None
+
+
+def _captured_connection_scope(packet):
+    return connection_scope(packet) if packet and packet.get("source") == "live" else None
+
+
 def _earlier_model_packets(db, latest):
     thread = latest["thread_id"]
     if thread:
@@ -209,9 +223,10 @@ def _previous_token_window(db, latest, last_native):
 
 
 class SessionSummaries:
-    def __init__(self, token_windows, *, wsl_labels=None, ssh_labels=None):
+    def __init__(self, token_windows, *, wsl_labels=None, ssh_labels=None, ssh_origins=None):
         self.tokens = token_windows
         self.connection_labels = {kind: reader for kind, reader in (("wsl", wsl_labels), ("ssh", ssh_labels)) if reader}
+        self.ssh_origins = ssh_origins
         self._cursor = 0
         self._token_states = {}
         self._last_native_tokens = {}
@@ -443,22 +458,16 @@ class SessionSummaries:
                                 "WHERE method!='GET' GROUP BY coalesce(thread,'') "
                                 "ORDER BY max(created) DESC,coalesce(thread,'')").fetchall()
             for thread, count, created in groups[:MAX_SESSIONS]:
-                # Keep known IDs searchable by the existing thread/time index.
-                # Older stores may use either NULL or '' for an unknown ID.
-                condition = "thread=?" if thread else "coalesce(thread,'')=?"
-                row = db.execute("SELECT id,created,method,meta FROM packet_summaries "
-                                 "WHERE " + condition + " AND method!='GET' "
-                                 "ORDER BY created DESC,id DESC LIMIT 1", (thread,)).fetchone()
-                if not row:
+                meta = _latest_session_packet(db, thread)
+                if meta is None:
                     continue
-                meta = _packet_summary(thread, row)
                 size = meta.get("outbound_wire_bytes")
-                scope = connection_scope(meta)
-                if thread and meta.get("source") == "live" and scope:
+                scope = _captured_connection_scope(meta)
+                if thread and scope:
                     captured_origins[thread] = scope
                 model_packets[thread] = _latest_model_packet(db, meta)
                 records.append({"thread_id": thread, "packet_count": count, "updated_at": created,
-                                "title": None, "latest_packet": {"id": row[0], "created": row[1],
+                                "title": None, "latest_packet": {"id": meta["id"], "created": meta["created"],
                                 "wire_bytes": size if number(size) and size >= 0 else None},
                                 **({"parent_thread_id": session_id(meta.get("parent_thread_id"))}
                                    if session_id(meta.get("parent_thread_id")) else {}),
@@ -509,13 +518,29 @@ class SessionSummaries:
                             record["token_window"] = previous
         # Older sessions are still in the sidebar even when recent metadata is capped.
         known = {record["thread_id"] for record in records}
-        older = [{"thread_id": thread, "packet_count": count, "updated_at": created, "title": None}
+        older = [{"thread_id": thread, "packet_count": count, "updated_at": created, "title": None, "origin": None}
                  for thread, count, created in groups[MAX_SESSIONS:] if thread and thread not in known]
         _add_input_titles(path, records + older)
-        records.extend(record for record in older if record.get("input_title"))
+        older = [record for record in older if record.get("input_title")]
+        if older and self.ssh_origins:
+            with read_state(path) as db:
+                for record in older:
+                    thread = record["thread_id"]
+                    scope = _captured_connection_scope(_latest_session_packet(db, thread))
+                    if scope and scope[0] == "ssh":
+                        captured_origins[thread] = scope
+        records.extend(older)
+        ssh_keys = {key for kind, key in captured_origins.values() if kind == "ssh"}
+        ssh_origins = self.ssh_origins(ssh_keys) if ssh_keys and self.ssh_origins else {}
         for record in records:
-            if record["thread_id"] in native_origins:
-                record["origin"] = native_origins[record["thread_id"]][1]
+            thread = record["thread_id"]
+            kind, key = captured_origins.get(thread, (None, None))
+            host_id, origin = native_origins.get(thread, (None, record["origin"]))
+            if kind == "ssh" and key in ssh_origins:
+                route_host_id, route_origin = ssh_origins[key]
+                if host_id != route_host_id or not origin:
+                    origin = route_origin
+            record["origin"] = origin
         records.sort(key=lambda r: (-r["updated_at"], r["thread_id"]))
         return {"state": "available", "sessions": records}
 
