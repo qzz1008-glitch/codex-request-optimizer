@@ -66,6 +66,7 @@ let browser,cases=0;
     ['entry-port','sharing-port','exit-port']);cases++;
   const detectedAddress=page.locator('#proxy-detected-address');
   const manualAddress=page.locator('#proxy-address');
+  const proxyRow=page.locator('#proxy-settings .proxy-inline-row');
   const testStatus=page.locator('#proxy-test-result');
   const testStateText=testStatus.locator('#proxy-test-state');
   const testElapsed=testStatus.locator('#proxy-test-elapsed');
@@ -168,7 +169,7 @@ let browser,cases=0;
   assert.equal(await testStateText.textContent(),'');
   assert.equal(await testElapsed.isVisible(),false);cases++;
 
-  for(const width of [320,420,600,1120,1440])for(const language of ['zh','en']){
+  for(const width of [320,420,540,600,1120,1440])for(const language of ['zh','en']){
     await page.setViewportSize({width,height:900});
     await page.evaluate(language=>{
       uiI18n.setLanguage(language,{persist:false});
@@ -176,31 +177,31 @@ let browser,cases=0;
         https:null,bypass:'localhost,127.0.0.1,::1,*.example.internal',pac_url:'https://proxy.invalid/proxy.pac',unsupported_all_proxy:true};
       fillProxySettings();
     },language);
+    assert.equal(await page.getByRole('group',{name:language==='zh'?'出口代理':'Outbound proxy',exact:true}).getAttribute('id'),'proxy-settings');
+    assert.deepEqual(await proxyRow.locator('#proxy-mode label span').allTextContents(),language==='zh'?['自动','手动']:['Auto','Manual']);
     assert.match(await detectedAddress.inputValue(),/long-regional-proxy.invalid:8080/);
     for(const mode of ['auto','manual']){
       await page.locator('#proxy-mode input[value="'+mode+'"]').check();
       assert.equal(await page.locator('#proxy-detection-warning').isVisible(),mode==='auto');
       await page.locator('#proxy-test').scrollIntoViewIfNeeded();
       const address=mode==='auto'?'#proxy-detected-address':'#proxy-address';
-      const controls=await page.locator('#proxy-mode,'+address+',#proxy-test').evaluateAll(nodes=>nodes.map(node=>{
+      const controls=await proxyRow.locator('#proxy-settings-label,#proxy-mode,'+address+',#proxy-test').evaluateAll(nodes=>nodes.map(node=>{
         const r=node.getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height};
       }));
-      assert(controls.every(r=>r.width>=24&&r.height>=24),'Controls remain usable');
-      if(width>=420){
-        const rowCenter=controls[0].y+controls[0].height/2;
-        assert(controls.every(r=>Math.abs(r.y+r.height/2-rowCenter)<1),'Proxy controls share one row and align vertically');
-        for(let i=1;i<controls.length;i++)assert(controls[i].x>=controls[i-1].x+controls[i-1].width,'Controls do not overlap');
+      assert(controls.slice(1).every(r=>r.width>=24&&r.height>=24),'Controls remain usable');
+      const inlineControls=width>=540?controls:controls.slice(width>=420?1:2);
+      const rowCenter=inlineControls[0].y+inlineControls[0].height/2;
+      assert(inlineControls.every(r=>Math.abs(r.y+r.height/2-rowCenter)<1),'Expected proxy controls share one row and align vertically');
+      for(let i=1;i<inlineControls.length;i++){
+        assert(inlineControls[i].x>=inlineControls[i-1].x+inlineControls[i-1].width,'Controls do not overlap');
       }
       if(width>=600){
-        const port=await page.locator('#entry-port').boundingBox();
-        const directory=await page.locator('#storage-dir').boundingBox();
         const portLabel=await page.locator('label[for="entry-port"]').boundingBox();
-        const open=await page.locator('#storage-dir-open').boundingBox();
-        assert.equal(controls[0].x,portLabel.x,'Proxy mode aligns with settings labels');
-        assert.equal(controls[1].x,port.x,'Proxy address aligns with the port input');
-        assert.equal(controls[1].x,directory.x,'Proxy address aligns with the directory input');
-        assert.equal(controls[2].x,open.x,'The test and open buttons start in the same column');
+        assert.equal(controls[0].x,portLabel.x,'The proxy label aligns with settings labels');
       }
+      const rowBox=await proxyRow.boundingBox();
+      const actionsBox=await proxyRow.locator('.proxy-test-actions').boundingBox();
+      assert(Math.abs(actionsBox.x+actionsBox.width-rowBox.x-rowBox.width)<1,'Test actions sit at the right edge of the row');
       const beforeTest=await page.locator('#proxy-test').boundingBox();
       await page.evaluate(()=>{$('proxy-test').setAttribute('aria-busy','true');fillProxySettings();});
       assert.deepEqual(await page.locator('#proxy-test').boundingBox(),beforeTest,'Testing state does not shift the button');
@@ -217,7 +218,7 @@ let browser,cases=0;
       const stateBox=await testStateText.boundingBox();
       const elapsedBox=await testElapsed.boundingBox();
       assert(elapsedBox,'The duration is visible');
-      if(width>=600)assert(elapsedBox.x>=stateBox.x+stateBox.width,'The duration fits beside the label');
+      if(width>=1120)assert(elapsedBox.x>=stateBox.x+stateBox.width,'The duration fits beside the status label');
       const overflow=await page.locator('#proxy-settings').evaluate(node=>node.scrollWidth>node.clientWidth+1);
       assert.equal(overflow,false,'Proxy settings fit the dialog');cases++;
       await page.evaluate(()=>setProxyTestStatus());
