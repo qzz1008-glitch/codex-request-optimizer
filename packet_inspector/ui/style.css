@@ -343,7 +343,7 @@ button.other-session-group{background:#f5f2fc;border-color:#e7e0f5}
 .detail-note{display:block;margin-block-end:6px}
 .detail-content>.tab-panel:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
 .size-breakdown{
-  --breakdown-columns:minmax(0,1fr) max-content minmax(0,1fr);
+  --breakdown-columns:minmax(0,1fr) max-content minmax(0,1fr) max-content;
   display:grid;
   grid-template-columns:var(--breakdown-columns);
   column-gap:10px;

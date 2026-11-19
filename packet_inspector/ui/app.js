@@ -2522,12 +2522,13 @@ function bars(title, rows, total, bodyAvailable) {
     const label=bodyAvailable?link(r.name,()=>goPath(r.path)):el("span","",r.name);
     label.classList.add("bar-label");
     label.title=r.name;
+    const size=el("span","bar-value",bytes(r.bytes));
     const progress=el("progress");
     progress.max=max;
     progress.value=r.bytes;
     progress.setAttribute("aria-hidden","true");
-    const value=el("span","bar-value",bytes(r.bytes)+" · "+(r.bytes/max*100).toFixed(1)+"%");
-    row.append(label,value,progress);
+    const percentage=el("span","bar-value",(r.bytes/max*100).toFixed(1)+"%");
+    row.append(label,size,progress,percentage);
     p.append(row);
   }
   return p;
