@@ -9,9 +9,9 @@ import sqlite3
 import threading
 import zlib
 
-from .request_context import (AUTOMATED_REQUEST_KINDS, CODEX_EXEC_ORIGINATOR, INDEX_TASK_PREFIX, codex_exec_generation,
-                              input_title_from_labels, last_user_text, request_session_context, session_id,
-                              temporary_kind_from_metadata, temporary_request_kind)
+from .request_context import (AUTOMATED_REQUEST_KINDS, INDEX_TASK_PREFIX, input_title_from_labels,
+                              is_conversation_generation, last_user_text, request_session_context,
+                              session_id, temporary_kind_from_metadata, temporary_request_kind)
 from .response_usage import packet_usage
 from .native_state import WSL_HOST_ID, read_state, state_databases, thread_origins
 from .token_estimate import estimate_usage, overflow_applied
@@ -21,16 +21,13 @@ from .usage_trigger import REPORTED_INPUT_TOKENS
 MAX_SESSIONS = 300
 
 
-def _has_exec_generation(db, thread):
-    candidates = db.execute("""SELECT CASE WHEN json_extract(s.meta,'$.codex_exec')=1 THEN s.meta ELSE p.meta END
+def _has_conversation(db, thread):
+    candidates = db.execute("""SELECT CASE WHEN json_extract(s.meta,'$.details_evicted')=1
+                                           THEN s.meta ELSE coalesce(p.meta,s.meta) END
         FROM packet_summaries s LEFT JOIN packets p ON p.id=s.id
         WHERE s.thread=? AND s.method='POST'
-          AND (json_extract(s.meta,'$.codex_exec')=1 OR
-               (coalesce(json_extract(s.meta,'$.details_evicted'),0)=0 AND EXISTS (
-                    SELECT 1 FROM json_each(p.meta,'$.headers') header
-                    WHERE lower(header.key)='originator' AND header.value=?)))
-        ORDER BY s.created DESC,s.id DESC""", (thread, CODEX_EXEC_ORIGINATOR))
-    return any(codex_exec_generation(json.loads(raw)) for (raw,) in candidates)
+        ORDER BY s.created DESC,s.id DESC""", (thread,))
+    return any(is_conversation_generation(json.loads(raw)) for (raw,) in candidates)
 
 
 def _add_capture_labels(database, records):
@@ -45,8 +42,8 @@ def _add_capture_labels(database, records):
         with closing(sqlite3.connect(database.as_uri() + "?mode=ro", uri=True, timeout=.2)) as db:
             for record in pending:
                 thread = record["thread_id"]
-                if not record.get("session_kind") and _has_exec_generation(db, thread):
-                    record["codex_exec"] = True
+                if not record.get("session_kind") and _has_conversation(db, thread):
+                    record["has_conversation"] = True
                 candidates = db.execute(f"""SELECT json_extract(s.meta,'$.title'),json_extract(s.meta,'$.title_source'),
                     CASE WHEN json_extract(s.meta,'$.title') IS NULL AND json_type(p.meta,'$.input_items')='array'
                          THEN json_extract(p.meta,'$.input_items') END
@@ -520,7 +517,7 @@ class SessionSummaries:
         older = [{"thread_id": thread, "packet_count": count, "updated_at": created, "title": None}
                  for thread, count, created in groups[MAX_SESSIONS:] if thread and thread not in known]
         _add_capture_labels(path, records + older)
-        older = [record for record in older if record.get("title") or record.get("codex_exec")]
+        older = [record for record in older if record.get("title") or record.get("has_conversation")]
         if older:
             with read_state(path) as db:
                 for record in older:

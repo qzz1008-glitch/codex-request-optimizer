@@ -29,7 +29,6 @@ INPUT_CONTEXT_WRAPPERS = (
 AUTOMATED_REQUEST_KINDS = {"image_analysis", "next_message_suggestion", "title_generation",
                            "session_index", "ambient_suggestions"}
 AUXILIARY_KINDS = AUTOMATED_REQUEST_KINDS | {"subagent"}
-CODEX_EXEC_ORIGINATOR = "codex_exec"
 SESSION_ID = re.compile(r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}")
 DELEGATION_NOTICE = re.compile(
     r"<codex_delegation>\s*<source_thread_id>" + SESSION_ID.pattern +
@@ -164,13 +163,10 @@ def packet_metadata(meta):
     return {**meta, "request_purpose": kind} if kind else meta
 
 
-def codex_exec_generation(meta):
-    headers = meta.get("headers")
-    from_exec = meta.get("codex_exec") is True or (
-        isinstance(headers, dict) and any(key.lower() == "originator" and value == CODEX_EXEC_ORIGINATOR
-                                         for key, value in headers.items()))
-    return (from_exec and bool(meta.get("path")) and is_token_request(meta)
-            and meta.get("request_kind") in (None, "", "turn", "generation")
+def is_conversation_generation(meta):
+    kind = meta.get("request_kind")
+    return (is_token_request(meta) and (bool(meta.get("path")) or kind in ("turn", "generation"))
+            and kind in (None, "", "turn", "generation")
             and temporary_kind_from_metadata(meta) is None)
 
 

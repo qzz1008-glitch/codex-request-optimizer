@@ -87,7 +87,7 @@ test('a confirmed image parent remains a group before its name or native record 
 });
 test('an SSH session can be found by IP before and after its native title arrives',()=>{
  const origin={kind:'remote',address:'192.0.2.25'};
- const pending=[session('remote',{origin,codex_exec:true}),session('helper',{origin,parent_thread_id:'remote',session_kind:'title_generation'}),
+ const pending=[session('remote',{origin,has_conversation:true}),session('helper',{origin,parent_thread_id:'remote',session_kind:'title_generation'}),
   session('unresolved'),session('')];
  const untitled=grouped(pending);
  assert.deepEqual(untitled.map(group=>group.title),['remote','其他']);
@@ -125,10 +125,10 @@ test('missing or cyclic image parent metadata never assigns a request to an arbi
   [['group:other','orphan','self','a','b']]);
 });
 
-test('unparented automated tasks stay in Other even when they have a title or exec origin',()=>{
+test('unparented automated tasks stay in Other even when they have a title or a conversation flag',()=>{
   for(const kind of ['ambient_suggestions','title_generation','session_index','next_message_suggestion','image_analysis']){
     const groups=grouped([session('main',{title:'Main'}),
-      session('temporary',{session_kind:kind,title:'Temporary task',codex_exec:true})]);
+      session('temporary',{session_kind:kind,title:'Temporary task',has_conversation:true})]);
     assert.deepEqual(groups.map(group=>group.thread_id),['main','group:other']);
     assert.deepEqual(groups[1].members.map(row=>row.thread_id),['temporary']);
     assert.deepEqual(groups.find(group=>group.thread_id==='main').members.map(row=>row.thread_id),['main']);
@@ -158,16 +158,16 @@ test('unresolved sessions and requests without an ID stay in Other',()=>{
  assert.deepEqual(groups.map(group=>[group.thread_id,group.title,group.members.map(row=>row.thread_id)]),
   [['group:other','其他',['main','child','orphan','']]]);
 });
-test('verified exec sessions have their own rows while filter-only IDs stay in Other',()=>{
- grouped([session('cli-resumed',{packet_count:3,title:'Inspect the first request',title_source:'input',codex_exec:true}),
-          session('cli-unnamed',{codex_exec:true}),session('manual',{title:'SSH session at 14:28',title_source:'manual'})]);
+test('unnamed conversations have their own rows while filter-only IDs stay in Other',()=>{
+ grouped([session('resumed',{packet_count:3,title:'Inspect the first request',title_source:'input',has_conversation:true}),
+          session('summary-only',{has_conversation:true}),session('manual',{title:'SSH session at 14:28',title_source:'manual'})]);
  context.state.sessions.push('filter-only');
  context.state.status={storage:{threads:[{thread:'filter-only',count:2}]}};
  const groups=context.sessionGroups();
  assert.deepEqual(Array.from(groups,group=>[group.thread_id,group.title,group.packet_count]),
-  [['cli-resumed','Inspect the first request',3],['cli-unnamed','cli-unnamed',1],['manual','SSH session at 14:28',1],['group:other','其他',2]]);
- context.state.filters.thread='thread:cli-resumed';
- assert.equal(context.selectedSessionGroup(groups).thread_id,'cli-resumed');
+  [['resumed','Inspect the first request',3],['summary-only','summary-only',1],['manual','SSH session at 14:28',1],['group:other','其他',2]]);
+ context.state.filters.thread='thread:resumed';
+ assert.equal(context.selectedSessionGroup(groups).thread_id,'resumed');
 });
 test('temporarily missing native names retain the last loaded title without retaining old request metrics',()=>{
  context.sessionSummaries=[session('main',{title:'Frontend',updated_at:100,latest_packet:{id:'old',created:100}})];

@@ -390,14 +390,16 @@ class SessionSummaryTests(unittest.TestCase):
         saved = next(row for row in self.reader.read(capture)["sessions"] if row["thread_id"] == older)
         self.assertEqual(saved["title"], "First request")
 
-    def test_exec_sessions_require_a_generation_and_keep_their_identity_after_compaction(self):
-        capture = self.root / "exec-capture"
+    def test_conversations_keep_their_identity_without_originator_or_details(self):
+        capture = self.root / "conversation-capture"
         store = Store(capture)
-        standalone, legacy, title, compact, prewarm, terminal = [
-            f"00000000-0000-0000-0000-{number:012d}" for number in range(1, 7)]
+        standalone, legacy, title, compact, prewarm, terminal, summary_only = [
+            f"00000000-0000-0000-0000-{number:012d}" for number in range(1, 8)]
 
         def add(thread, *, origin="codex_exec", path="/responses", context=None):
-            headers = {"Originator": origin, "x-codex-thread-id": thread}
+            headers = {"x-codex-thread-id": thread}
+            if origin:
+                headers["Originator"] = origin
             if context:
                 headers["x-codex-turn-metadata"] = json.dumps(context)
             raw = b'{"input":[{"role":"user","content":"First request"}]}'
@@ -411,10 +413,16 @@ class SessionSummaryTests(unittest.TestCase):
         add(compact, path="/responses/compact")
         add(prewarm, context={"request_kind": "prewarm"})
         add(terminal, origin="codex_cli_rs")
+        pruned = add(summary_only, origin=None, context={"request_kind": "turn"})
         with store.connect() as db:
-            db.execute("UPDATE packets SET meta=json_remove(meta,'$.codex_exec','$.title') WHERE id=?", (previous,))
+            db.execute("UPDATE packets SET meta=json_remove(meta,'$.title','$.headers') WHERE id=?", (previous,))
+            db.execute("""UPDATE packets SET content=NULL,
+                meta=json_set(json_remove(meta,'$.title','$.headers','$.input_items'),'$.details_evicted',1)
+                WHERE id=?""", (pruned,))
+        conversations = {standalone, legacy, terminal, summary_only}
         sessions = {row["thread_id"]: row for row in self.reader.read(capture)["sessions"]}
-        self.assertEqual({thread for thread, row in sessions.items() if row.get("codex_exec")}, {standalone, legacy})
+        self.assertEqual({thread for thread, row in sessions.items() if row.get("has_conversation")}, conversations)
+        self.assertIsNone(sessions[summary_only]["title"])
         self.assertEqual(sessions[title]["session_kind"], "title_generation")
         store.configure_limits(1_000_000, 25, 0)
         saved, body = store.get(first, content=True)
@@ -423,10 +431,9 @@ class SessionSummaryTests(unittest.TestCase):
         saved, body = store.get(previous, content=True)
         self.assertIsNone(body)
         self.assertNotIn("headers", saved)
-        self.assertTrue(saved["codex_exec"])
         self.assertEqual(saved["title"], "First request")
         sessions = {row["thread_id"]: row for row in self.reader.read(capture)["sessions"]}
-        self.assertEqual({thread for thread, row in sessions.items() if row.get("codex_exec")}, {standalone, legacy})
+        self.assertEqual({thread for thread, row in sessions.items() if row.get("has_conversation")}, conversations)
         self.assertEqual(sessions[standalone]["title"], "First request")
 
     def test_sidebar_origin_uses_only_the_recorded_entry(self):
