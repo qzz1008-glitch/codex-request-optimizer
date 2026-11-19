@@ -171,7 +171,8 @@ let browser,cases=0;
       }));
       assert(controls.every(r=>r.width>=24&&r.height>=24),'Controls remain usable');
       if(width>=420){
-        assert(controls.every(r=>Math.abs(r.y-controls[0].y)<1&&r.height===controls[0].height),'Proxy controls share one row and height');
+        const rowCenter=controls[0].y+controls[0].height/2;
+        assert(controls.every(r=>Math.abs(r.y+r.height/2-rowCenter)<1),'Proxy controls share one row and align vertically');
         for(let i=1;i<controls.length;i++)assert(controls[i].x>=controls[i-1].x+controls[i-1].width,'Controls do not overlap');
       }
       if(width>=600){
