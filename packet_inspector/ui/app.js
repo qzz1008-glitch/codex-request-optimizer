@@ -2696,12 +2696,14 @@ function requestTextMessages(body) {
 }
 function setRequestBodyTextMode(enabled) {
   requestBodyTextMode=enabled;
-  const view=requestBodyView,root=$("request-body-text"),showText=enabled&&view?.id===state.selected;
-  if(showText&&!root.firstChild) {
+  const view=requestBodyView,root=$("request-body-text"),available=view?.id===state.selected;
+  const showText=enabled&&available;
+  if(showText&&!view.messages) {
+    view.messages=requestTextMessages(view.body).map(({role,text})=>({author:t(role==="user"?"用户":"模型"),text}));
     const fragment=document.createDocumentFragment();
-    for(const {role,text} of requestTextMessages(view.body)) {
+    for(const {author,text} of view.messages) {
       const message=el("div","request-message");
-      message.append(el("strong","request-message-author",t(role==="user"?"用户":"模型")),el("p","request-message-text",text));
+      message.append(el("strong","request-message-author",author),el("p","request-message-text",text));
       fragment.append(message);
     }
     if(!fragment.firstChild)fragment.append(el("p","muted",t("没有可显示的对话文本。")));
@@ -2710,20 +2712,43 @@ function setRequestBodyTextMode(enabled) {
   $("json-text-toggle").setAttribute("aria-pressed",String(showText));
   $("json-tree").hidden=showText;
   root.hidden=!showText;
+  if(available)setRequestBodyActions(view,showText);
 }
-function clearJsonActions() {
+function clearRequestBodyExport() {
   if(requestBodyExportUrl)URL.revokeObjectURL(requestBodyExportUrl);
   requestBodyExportUrl="";
-  $("json-actions").hidden=true;
   $("json-export").removeAttribute("href");
   const feedback=$("json-copy-feedback");delete feedback.copyRequest;clearCopyFeedback(feedback);
+}
+function setRequestBodyActions(view,showText) {
+  const extension=showText?"txt":"json";
+  if(view.output?.extension===extension)return;
+  const text=showText
+    ?view.messages.map(({author,text})=>author+"\n"+text+"\n").join("\n")
+    :requestJsonText(view.body);
+  view.output={extension,text};
+  clearRequestBodyExport();
+  const copy=$("json-copy"),exportLink=$("json-export");
+  const copyLabel=t(showText?"复制文本":"复制 JSON"),exportLabel=t(showText?"导出文本":"导出 JSON");
+  copy.title=copyLabel;copy.setAttribute("aria-label",copyLabel);copy.disabled=!text;
+  exportLink.title=exportLabel;exportLink.setAttribute("aria-label",exportLabel);
+  exportLink.setAttribute("aria-disabled",String(!text));
+  if(!text)return;
+  const type=showText?"text/plain;charset=utf-8":"application/json;charset=utf-8";
+  requestBodyExportUrl=URL.createObjectURL(new Blob([text],{type}));
+  exportLink.href=requestBodyExportUrl;exportLink.download="codex-request-"+view.id+"."+extension;
+}
+function clearJsonActions() {
+  clearRequestBodyExport();
+  $("json-actions").hidden=true;
   $("request-body-text").replaceChildren();
+  const results=$("body-results");results.hidden=true;results.replaceChildren();
   setRequestBodyTextMode(requestBodyTextMode);
 }
-function copyRequestJson() {
+function copyRequestBody() {
   const view=requestBodyView;
-  if(!view||view.id!==state.selected)return;
-  return copyWithFeedback(requestJsonText(view.body),$("json-copy-feedback"));
+  if(view?.id!==state.selected||!view?.output?.text)return;
+  return copyWithFeedback(view.output.text,$("json-copy-feedback"));
 }
 function clearJsonFocus() {
   requestBodyHighlight?.classList.remove("json-focused");requestBodyHighlight=null;
@@ -2768,11 +2793,14 @@ async function ensureJsonView(id,sequence) {
     if(reasoningEncryptedBytes!==null&&state.detail.reasoning_encrypted_bytes==null)renderOverview(state.detail);
     renderHeaders(state.detail);
   }
-  requestBodyExportUrl=URL.createObjectURL(new Blob([requestJsonText(body)],{type:"application/json;charset=utf-8"}));
-  const exportLink=$("json-export");exportLink.href=requestBodyExportUrl;exportLink.download="codex-request-"+id+".json";
-  $("json-actions").hidden=false;
   setRequestBodyTextMode(requestBodyTextMode);
+  $("json-actions").hidden=false;
   return requestBodyView;
+}
+function focusRequestBodyLine(container,line) {
+  clearJsonFocus();requestBodyHighlight=line;line.classList.add("json-focused");
+  const offset=line.getBoundingClientRect().top-container.getBoundingClientRect().top;
+  container.scrollTop=Math.max(0,container.scrollTop+offset-container.clientHeight*.35);container.scrollLeft=0;
 }
 function focusJsonPath(view,path) {
   if(path&&(!path.startsWith("/")||/~(?![01])/.test(path)))throw new Error("JSON 路径不存在。");
@@ -2784,10 +2812,8 @@ function focusJsonPath(view,path) {
   }
   let node=view.root;
   for(const segment of segments)node=node.jsonReveal(segment);
-  node.jsonExpand?.();clearJsonFocus();
-  const line=node.jsonLine||node;requestBodyHighlight=line;line.classList.add("json-focused");
-  const container=$("json-tree"),offset=line.getBoundingClientRect().top-container.getBoundingClientRect().top;
-  container.scrollTop=Math.max(0,container.scrollTop+offset-container.clientHeight*.35);container.scrollLeft=0;
+  node.jsonExpand?.();
+  focusRequestBodyLine($("json-tree"),node.jsonLine||node);
 }
 async function loadTree(path) {
   clearTimeout(treeQueryTimer);
@@ -2813,6 +2839,13 @@ async function loadTree(path) {
   }
 }
 async function goPath(path) {setRequestBodyTextMode(false);showTab("tree");await loadTree(path);}
+async function toggleRequestBodyTextMode() {
+  clearTimeout(treeQueryTimer);requestBodySequence++;
+  setRequestBodyTextMode(!requestBodyTextMode);
+  const query=$("tree-query").value.trim();
+  if(query&&!query.startsWith("/"))await searchBody(query);
+  else $("body-results").hidden=true;
+}
 function scheduleTreeQuery(event) {
   clearTimeout(treeQueryTimer);requestBodySequence++;
   $("body-results").hidden=true;clearJsonFocus();
@@ -2824,24 +2857,43 @@ async function submitTreeQuery() {
   clearTimeout(treeQueryTimer);
   if(!state.selected)return;
   const query=$("tree-query").value.trim();
-  if(!query || query.startsWith("/")) {
-    $("body-results").hidden=true;
-    await loadTree(query);
+  if(query.startsWith("/")) {
+    await goPath(query);
+  } else if(!query) {
+    $("body-results").hidden=true;clearJsonFocus();
+    if(!requestBodyTextMode)await loadTree("");
   } else await searchBody(query);
 }
+function requestTextSearchHits(messages,query) {
+  const needle=query.toLowerCase(),hits=[];
+  for(const [index,{author,text}] of messages.entries()) {
+    const offset=text.toLowerCase().indexOf(needle);
+    if(offset<0)continue;
+    hits.push({index,label:author+" · "+(index+1),preview:text.slice(Math.max(0,offset-45),offset+150)});
+    if(hits.length===60)break;
+  }
+  return hits;
+}
 async function searchBody(query) {
-  const id=state.selected,sequence=++requestBodySequence,root=$("body-results");
+  const id=state.selected,sequence=++requestBodySequence,root=$("body-results"),textMode=requestBodyTextMode;
   $("request-body-view").hidden=false;clearJsonFocus();
-  root.hidden=false;root.replaceChildren(el("small","muted",t("加载中…")));
   try {
-    const [view,results]=await Promise.all([ensureJsonView(id,sequence),api("/api/packets/"+id+"/search?q="+encodeURIComponent(query))]);
+    const pending=ensureJsonView(id,sequence);
+    root.hidden=false;root.replaceChildren(el("small","muted",t("加载中…")));
+    const [view,jsonHits]=await Promise.all([pending,textMode?null:api("/api/packets/"+id+"/search?q="+encodeURIComponent(query))]);
     if(!view||state.selected!==id||sequence!==requestBodySequence||$("tree-query").value.trim()!==query)return;
+    const results=textMode?requestTextSearchHits(view.messages,query):jsonHits;
+    const textRoot=$("request-body-text");
+    const jump=hit=>textMode?focusRequestBodyLine(textRoot,textRoot.children[hit.index]):loadTree(hit.path);
     root.replaceChildren(el("small","muted",t("找到 ")+results.length+t(" 项（最多 60 项）")));
     for(const hit of results) {
       const n=el("div","search-hit");
-      n.append(link(hit.path||t("根节点"),()=>loadTree(hit.path)),el("p","",hit.preview));root.append(n);
+      n.append(link(hit.label||hit.path||t("根节点"),()=>jump(hit)),el("p","",hit.preview));root.append(n);
     }
-    if(results.length) {state.path=results[0].path||"";focusJsonPath(view,state.path);}
+    if(results.length) {
+      if(textMode)jump(results[0]);
+      else {state.path=results[0].path||"";focusJsonPath(view,state.path);}
+    }
   } catch(error) {
     if(state.selected===id&&sequence===requestBodySequence) {
       root.hidden=true;fail(error);
@@ -3254,8 +3306,8 @@ for(const select of document.querySelectorAll("[data-filter]")) select.addEventL
 $("tree-query").addEventListener("input",scheduleTreeQuery);
 $("tree-query").addEventListener("compositionend",scheduleTreeQuery);
 $("tree-query").addEventListener("keydown",e=>{if(e.key==="Enter" && !e.isComposing){e.preventDefault();Promise.resolve().then(submitTreeQuery).catch(fail);}});
-$("json-text-toggle").addEventListener("click",()=>setRequestBodyTextMode(!requestBodyTextMode));
-$("json-copy").addEventListener("click",copyRequestJson);
+action("json-text-toggle",toggleRequestBodyTextMode);
+$("json-copy").addEventListener("click",copyRequestBody);
 function isTrendGeneration(packet) {
   const kinds=[purposeFromMetadata(packet),packet.request_purpose,packet.request_kind,packet.session_kind];
   return hasModelTokenUsage(packet)&&kinds.every(kind=>!kind||["turn","generation","subagent"].includes(kind));
