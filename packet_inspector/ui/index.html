@@ -92,10 +92,10 @@
             <div class="tree-tools">
               <input id="tree-query" type="search" placeholder="搜索关键词或路径" aria-label="搜索内容或定位路径" title="输入后自动定位；支持关键词或 / 开头的 JSON 路径" autocomplete="off" spellcheck="false">
               <div id="request-body-modes" class="language-toggle request-body-modes" role="radiogroup" aria-label="正文视图">
-                <input id="request-body-json-mode" class="sr-only" type="radio" name="request-body-mode" value="json" aria-controls="json-tree" checked disabled>
-                <label for="request-body-json-mode">JSON</label>
-                <input id="request-body-chat-mode" class="sr-only" type="radio" name="request-body-mode" value="chat" aria-controls="request-body-text" disabled>
+                <input id="request-body-chat-mode" class="sr-only" type="radio" name="request-body-mode" value="chat" aria-controls="request-body-text" checked disabled>
                 <label for="request-body-chat-mode">对话</label>
+                <input id="request-body-json-mode" class="sr-only" type="radio" name="request-body-mode" value="json" aria-controls="json-tree" disabled>
+                <label for="request-body-json-mode">JSON</label>
               </div>
             </div>
             <div id="body-results" class="search-results" hidden></div>
