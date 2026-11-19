@@ -746,7 +746,6 @@ const uiI18n = (() => {
     "请求大小上限":"Request size limit",
     "记录设置":"Record settings",
     "保存记录设置":"Save record settings",
-    "没有可比较的上条请求。":"No previous request available for comparison.",
     "字段构成":"Field breakdown",
     "input 构成":"input breakdown",
     " 条":" requests",
