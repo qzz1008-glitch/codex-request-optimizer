@@ -790,18 +790,15 @@ input[type=checkbox][switch]:focus-visible{outline:2px solid var(--accent);outli
 #settings-dialog .record-limit-edit:not(:focus-within) .record-limit-formatted{visibility:visible}
 #settings-dialog .record-limit-edit:not(:focus-within):has(.record-limit-formatted:not(:empty)) input{opacity:0}
 #settings-dialog .record-limit-edit:has(input:disabled) .record-limit-formatted{opacity:.55}
-#settings-dialog .repository-link{display:inline-flex;align-items:center;justify-content:center;flex:none;width:24px;height:24px;border-radius:6px;color:var(--muted)}
+#settings-dialog .repository-link{display:inline-flex;align-items:center;justify-content:center;flex:none;width:24px;height:24px;margin-inline-start:auto;margin-inline-end:8px;border-radius:6px;color:var(--muted)}
 #settings-dialog .repository-link:hover{color:var(--ink);background:var(--bg)}
 #settings-dialog .repository-link:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
-#settings-dialog #updates-versions{display:flex;align-items:center;flex:none;min-width:0;min-height:var(--settings-control-height);margin:0;white-space:nowrap}
-#settings-dialog .updates-actions{flex-wrap:nowrap;overflow-x:auto;overflow-y:hidden;overscroll-behavior-x:contain;scrollbar-width:thin}
-#settings-dialog .updates-buttons{display:flex;flex:none;gap:8px}
-#settings-dialog .updates-actions button{flex:none;inline-size:72px;gap:4px;padding-inline:6px}
-#settings-dialog .updates-actions button:focus-visible{outline-offset:-3px}
-#settings-dialog .updates-actions .update-spinner{position:static;display:none;flex:none;width:12px;height:12px}
-#settings-dialog .updates-actions button[aria-busy=true] .update-spinner{display:block}
-#settings-dialog .updates-details{display:flex;align-items:center;flex:0 1 12em;min-inline-size:9em}
-#settings-dialog .updates-status{flex:1 1 auto;min-width:0;margin:0;overflow:hidden;text-align:left;text-overflow:ellipsis;white-space:nowrap}
+#settings-dialog .updates-actions{flex-wrap:nowrap;column-gap:8px;overflow-x:auto;overflow-y:hidden;overscroll-behavior-x:contain;scrollbar-width:thin}
+#settings-dialog .updates-details{display:flex;align-items:center;justify-content:flex-end;flex:0 1 13em;gap:8px;min-inline-size:11.5em}
+#settings-dialog #updates-versions{flex:none;max-inline-size:100%}
+#settings-dialog :is(#updates-versions,.updates-status){min-inline-size:0;margin:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#settings-dialog #updates-action{display:inline-flex;align-items:center;justify-content:center;flex:none;inline-size:72px;gap:4px;padding-inline:6px}
+#settings-dialog #updates-action:focus-visible{outline-offset:-3px}
 #settings-dialog>.settings-footer{
   flex:none;display:grid;grid-template-columns:minmax(0,1fr) auto auto;align-items:center;gap:12px;
   padding-block:12px;
@@ -820,9 +817,9 @@ input[type=checkbox][switch]:focus-visible{outline:2px solid var(--accent);outli
 #settings-dialog .settings-save-log li[data-state=done] .settings-step-icon{color:var(--green)}
 #settings-dialog .settings-save-log li[data-state=error]{color:var(--danger)}
 #settings-dialog #settings-save{display:inline-flex;align-items:center;justify-content:center;gap:4px;min-width:84px}
-#settings-dialog #settings-save[aria-busy=true]{cursor:wait;opacity:1}
-.settings-save-spinner{display:none;flex:none;width:12px;height:12px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;visibility:hidden}
-#settings-save[aria-busy=true] .settings-save-spinner{display:block;visibility:visible;animation:update-spin .8s linear infinite}
+#settings-dialog :is(#settings-save,#updates-action)[aria-busy=true]{cursor:wait;opacity:1}
+.settings-save-spinner,.update-spinner{display:none;flex:none;width:12px;height:12px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%}
+#settings-save[aria-busy=true] .settings-save-spinner,#updates-action[aria-busy=true] .update-spinner{display:block;animation:update-spin .8s linear infinite}
 @container settings-dialog (max-width:620px){
   #settings-dialog>.dialog-heading,#settings-dialog>.settings-footer,#settings-dialog>.settings-content{--settings-padding:20px}
   #settings-dialog>.settings-content{--settings-path-actions-width:142px}
@@ -844,8 +841,7 @@ input[type=checkbox][switch]:focus-visible{outline:2px solid var(--accent);outli
 @container settings-dialog (max-width:380px){
   #settings-dialog .proxy-controls{grid-template-columns:minmax(0,1fr)}
   #settings-dialog #proxy-test-state{white-space:normal;overflow-wrap:anywhere}
-  #settings-dialog .updates-buttons{gap:4px}
-  #settings-dialog .updates-actions button{inline-size:70px;padding-inline:4px}
+  #settings-dialog .updates-details{justify-content:flex-start}
   #settings-dialog .record-limit-prefix{flex-basis:7.5ch;gap:2px}
   #settings-dialog .record-limit-field{gap:4px;padding-inline-start:6px}
   #settings-dialog :is(.record-limit-prefix,.record-limit-edit input,.record-limit-edit .record-limit-formatted){font-size:12px}
@@ -1012,12 +1008,8 @@ dialog{width:min(760px,calc(var(--desktop-width) - 80px));max-height:calc(var(--
 #compression-confirm-dialog{width:min(440px,calc(100vw - 48px))}#compression-confirm-dialog h2{font-size:20px}#compression-confirm-dialog .button-row{justify-content:flex-end}#compression-confirm-message{color:var(--danger)}
 #exit-confirm-dialog{width:min(540px,calc(100vw - 48px))}#exit-confirm-dialog h2{font-size:20px}#exit-confirm-dialog .button-row{justify-content:flex-end;flex-wrap:wrap}#exit-confirm-message{color:var(--danger)}
 #connect-confirm-dialog{width:min(460px,calc(100vw - 48px))}#connect-confirm-dialog h2{font-size:20px}#connect-confirm-dialog .button-row{justify-content:flex-end}#connect-confirm-message{color:var(--danger)}
-.updates-actions button{position:relative;display:inline-flex;align-items:center;justify-content:center;min-width:0;text-align:center}
-.update-spinner{position:absolute;inset-inline-start:10px;top:calc(50% - 7px);width:14px;height:14px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;visibility:hidden}
-.updates-actions button[aria-busy=true]{opacity:1;padding-inline:30px}
-.updates-actions button[aria-busy=true] .update-spinner{visibility:visible;animation:update-spin .8s linear infinite}
 @keyframes update-spin{to{transform:rotate(360deg)}}
-@media(prefers-reduced-motion:reduce){.session-spinner,.updates-actions button[aria-busy=true] .update-spinner,#settings-save[aria-busy=true] .settings-save-spinner{animation:none}}
+@media(prefers-reduced-motion:reduce){.session-spinner,#updates-action[aria-busy=true] .update-spinner,#settings-save[aria-busy=true] .settings-save-spinner{animation:none}}
 
 .diff-table .diff-field-row>td{background:var(--soft);font-weight:600;border-bottom-color:#d4def1}
 .diff-table th:first-child{padding-inline-start:16px}

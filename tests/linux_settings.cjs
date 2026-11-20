@@ -49,17 +49,15 @@ let browser,cases=0;
     assert.equal(await toggle.isChecked(),false);
     assert.equal(await toggle.isDisabled(),true);
     assert.equal(await hint.textContent(),lang==='zh'?'当前中转仅支持原生图片解析。':'This relay supports native image analysis only.');
-    assert.equal(await page.locator('#updates-check').isDisabled(),true);
-    assert.equal(await page.locator('#updates-install').isDisabled(),true);
+    assert.equal(await page.locator('#updates-action').isDisabled(),true);
     assert.match(await page.locator('#updates-message').textContent(),/Linux/);cases++;
   }
   await page.evaluate(()=>{delete state.status.image_analysis_modes;delete state.status.updates_supported;state.status.image_analysis_mode='optimized';updateStatus={state:'available'};fillImageAnalysisMode();renderUpdates();});
   assert.equal(await toggle.isDisabled(),false);
   assert.equal(await toggle.isChecked(),true);
   assert.equal(await hint.textContent(),'Keep only image paths in the main request.');
-  assert.equal(await page.locator('#updates-check').isDisabled(),false);
-  assert.equal(await page.locator('#updates-install').isDisabled(),false);
-  assert.equal(await page.locator('#updates-install').textContent(),'Update');cases++;
+  assert.equal(await page.locator('#updates-action').isDisabled(),false);
+  assert.equal(await page.locator('#updates-action').textContent(),'Update');cases++;
   const save=page.locator('#settings-save');
   for(const [status,before,after,values] of [
     [{image_analysis_mode:'optimized'},'optimized','native',{image_analysis_mode:'native'}],
