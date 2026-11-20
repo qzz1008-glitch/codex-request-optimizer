@@ -236,7 +236,7 @@
     <section id="general-settings" aria-labelledby="general-settings-title">
       <h3 id="general-settings-title">通用设置</h3>
       <div class="settings-row" data-settings-field="language">
-        <span id="settings-language-label" class="settings-key">语言</span>
+        <span id="settings-language-label" class="settings-key">界面语言</span>
         <div class="settings-controls">
           <div id="language-toggle" class="language-toggle" role="group" aria-labelledby="settings-language-label">
             <button id="language-zh" type="button" data-language="zh" aria-pressed="true" lang="zh-CN">中文</button>
@@ -255,14 +255,14 @@
     <section id="context-settings"><h3>上下文设置</h3>
       <div class="context-grid">
         <div class="settings-row" role="group" aria-labelledby="context-label" data-settings-field="context_tokens">
-          <span id="context-label" class="settings-key">有效上下文</span>
+          <span id="context-label" class="settings-key">窗口上限</span>
           <div class="settings-controls">
             <div class="context-value"><input id="context-tokens" type="number" min="4" max="10000" step="0.001" required aria-labelledby="context-label" aria-describedby="context-unit"><span id="context-unit" class="context-unit">k tokens</span></div>
             <div class="context-default"><input id="context-default" type="checkbox" aria-labelledby="context-label context-default-label"><span id="context-default-label">默认</span></div>
           </div>
         </div>
         <div class="settings-row" role="group" aria-labelledby="compact-label" data-settings-field="compact_tokens">
-          <span id="compact-label" class="settings-key">自动压缩阈值</span>
+          <span id="compact-label" class="settings-key">压缩阈值</span>
           <div class="settings-controls">
             <div class="context-value"><input id="compact-tokens" type="number" min="1" max="10000" step="0.001" required aria-labelledby="compact-label" aria-describedby="compact-unit"><span id="compact-unit" class="context-unit">k tokens</span></div>
             <div class="context-default"><input id="compact-default" type="checkbox" aria-labelledby="compact-label compact-default-label"><span id="compact-default-label">默认</span></div>
@@ -273,7 +273,7 @@
     </section>
     <section id="request-protection-settings"><h3>请求保护</h3>
       <div class="settings-row">
-        <span id="packet-size-protection-label" class="settings-key">请求大小保护</span>
+        <span id="packet-size-protection-label" class="settings-key">大小保护</span>
         <div class="settings-controls settings-compound-controls">
           <div class="settings-checkbox" data-settings-field="packet_size_protection_enabled"><input id="packet-size-protection" type="checkbox" aria-labelledby="packet-size-protection-label"></div>
           <div class="settings-inline-fields">
@@ -286,7 +286,7 @@
       </div>
       <p id="packet-size-message" data-feedback-source data-feedback-target="settings-inline-feedback" class="help" role="status" hidden></p>
       <div class="settings-row">
-        <span id="capacity-retry-label" class="settings-key">容量不足重试</span>
+        <span id="capacity-retry-label" class="settings-key">容量重试</span>
         <div class="settings-controls settings-compound-controls">
           <div class="settings-checkbox" data-settings-field="capacity_retry_enabled" title="模型容量不足时自动重试"><input id="capacity-retry" type="checkbox" aria-labelledby="capacity-retry-label"></div>
           <div class="settings-inline-fields">
@@ -302,7 +302,7 @@
         </div>
       </div>
       <div class="settings-row">
-        <span id="bad-request-retry-label" class="settings-key">请求异常重试</span>
+        <span id="bad-request-retry-label" class="settings-key">异常重试</span>
         <div class="settings-controls settings-compound-controls">
           <div class="settings-checkbox" title="仅重试通用 Bad Request；字段或参数错误保持原样。"><input id="bad-request-retry" type="checkbox" aria-labelledby="bad-request-retry-label"></div>
           <div class="settings-inline-fields">
@@ -330,7 +330,7 @@
     <section id="compression-settings" aria-labelledby="compression-settings-title">
       <h3 id="compression-settings-title">传输压缩</h3>
       <div class="settings-row auto-zstd-row" data-settings-field="auto_zstd_level_enabled">
-        <span id="auto-zstd-level-label" class="settings-key">自动压缩等级</span>
+        <span id="auto-zstd-level-label" class="settings-key">自动压缩</span>
         <div class="settings-controls">
           <div class="settings-checkbox"><input id="auto-zstd-level" type="checkbox" aria-labelledby="auto-zstd-level-label" aria-describedby="auto-zstd-level-hint" disabled></div>
           <p id="auto-zstd-level-hint" class="help muted runtime-inline-hint">根据请求大小自动选择合适的压缩等级，开启后禁用手动选择。</p>
@@ -339,7 +339,7 @@
       <fieldset id="manual-compression-levels">
         <legend class="sr-only">手动压缩等级</legend>
         <div class="settings-row zstd-level-control" data-settings-field="zstd_level">
-          <span id="zstd-level-label" class="settings-key">对话压缩等级</span>
+          <span id="zstd-level-label" class="settings-key">对话压缩</span>
           <div class="settings-controls">
             <input id="zstd-level" type="hidden" value="3" disabled>
             <button id="zstd-level-open" class="zstd-level-trigger" type="button" aria-labelledby="zstd-level-label zstd-level-value" aria-haspopup="dialog" aria-controls="zstd-level-dialog" aria-describedby="auto-zstd-level-hint" aria-expanded="false" disabled><span id="zstd-level-value">3级</span><svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
@@ -347,7 +347,7 @@
         </div>
         <p id="zstd-level-message" data-feedback-inline class="help" role="status" hidden></p>
         <div class="settings-row zstd-level-control" data-settings-field="image_zstd_level">
-          <span id="image-zstd-level-label" class="settings-key">图片压缩等级</span>
+          <span id="image-zstd-level-label" class="settings-key">图片压缩</span>
           <div class="settings-controls">
             <input id="image-zstd-level" type="hidden" value="6" disabled>
             <button id="image-zstd-level-open" class="zstd-level-trigger" type="button" aria-labelledby="image-zstd-level-label image-zstd-level-value" aria-haspopup="dialog" aria-controls="zstd-level-dialog" aria-describedby="auto-zstd-level-hint" aria-expanded="false" disabled><span id="image-zstd-level-value">6级</span><svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
