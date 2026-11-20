@@ -268,31 +268,6 @@
         </div>
       </div>
     </section>
-    <section id="context-settings"><h3>上下文设置</h3>
-      <div class="context-grid">
-        <div class="settings-row" role="group" aria-labelledby="context-label" data-settings-field="context_tokens">
-          <span id="context-label" class="settings-key">窗口上限</span>
-          <div class="settings-controls">
-            <input id="context-custom" type="checkbox" switch role="switch" aria-labelledby="context-label" aria-controls="context-tokens" disabled>
-            <label class="context-value settings-value-unit">
-              <input id="context-tokens" type="number" min="4" max="10000" step="0.001" placeholder="默认" required aria-labelledby="context-label" aria-describedby="context-unit" disabled>
-              <span id="context-unit">k</span>
-            </label>
-          </div>
-        </div>
-        <div class="settings-row" role="group" aria-labelledby="compact-label" data-settings-field="compact_tokens">
-          <span id="compact-label" class="settings-key">压缩阈值</span>
-          <div class="settings-controls">
-            <input id="compact-custom" type="checkbox" switch role="switch" aria-labelledby="compact-label" aria-controls="compact-tokens" disabled>
-            <label class="context-value settings-value-unit">
-              <input id="compact-tokens" type="number" min="1" max="10000" step="0.001" placeholder="默认" required aria-labelledby="compact-label" aria-describedby="compact-unit" disabled>
-              <span id="compact-unit">k</span>
-            </label>
-          </div>
-        </div>
-      </div>
-      <p id="context-message" data-feedback-source data-feedback-target="settings-inline-feedback" class="help" role="status" hidden></p>
-    </section>
     <section id="request-protection-settings"><h3>请求保护</h3>
       <div class="settings-row">
         <span id="packet-size-protection-label" class="settings-key">大小保护</span>
@@ -388,6 +363,31 @@
           </div>
         </div>
       </fieldset>
+    </section>
+    <section id="context-settings"><h3>上下文设置</h3>
+      <div class="context-grid">
+        <div class="settings-row" role="group" aria-labelledby="context-label" data-settings-field="context_tokens">
+          <span id="context-label" class="settings-key">窗口上限</span>
+          <div class="settings-controls">
+            <input id="context-custom" type="checkbox" switch role="switch" aria-labelledby="context-label" aria-controls="context-tokens" disabled>
+            <label class="context-value settings-value-unit">
+              <input id="context-tokens" type="number" min="4" max="10000" step="0.001" placeholder="默认" required aria-labelledby="context-label" aria-describedby="context-unit" disabled>
+              <span id="context-unit">k</span>
+            </label>
+          </div>
+        </div>
+        <div class="settings-row" role="group" aria-labelledby="compact-label" data-settings-field="compact_tokens">
+          <span id="compact-label" class="settings-key">压缩阈值</span>
+          <div class="settings-controls">
+            <input id="compact-custom" type="checkbox" switch role="switch" aria-labelledby="compact-label" aria-controls="compact-tokens" disabled>
+            <label class="context-value settings-value-unit">
+              <input id="compact-tokens" type="number" min="1" max="10000" step="0.001" placeholder="默认" required aria-labelledby="compact-label" aria-describedby="compact-unit" disabled>
+              <span id="compact-unit">k</span>
+            </label>
+          </div>
+        </div>
+      </div>
+      <p id="context-message" data-feedback-source data-feedback-target="settings-inline-feedback" class="help" role="status" hidden></p>
     </section>
     <section id="record-storage-settings" aria-labelledby="record-storage-title">
       <h3 id="record-storage-title">记录与存储</h3>
