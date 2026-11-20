@@ -52,6 +52,12 @@ async function run(){
   assert.deepEqual(await page.evaluate(()=>settingInteractions),[],'Clicking a key never activates or focuses a setting');cases++;
   for(const language of ['zh','en']){
     await page.evaluate(language=>{uiI18n.setLanguage(language,{persist:false});settingsLanguage=language;settingsBaseline=readSettingsDraft();},language);
+    const names=await settings.locator('.settings-key').allTextContents();
+    if(language==='zh'){
+      assert.deepEqual(names.filter(name=>!/^\p{Script=Han}{4}$/u.test(name)),[],'Every Chinese setting name has four characters');
+    }else{
+      assert.deepEqual(names.filter(name=>/\p{Script=Han}/u.test(name)),[],'Setting names are translated');
+    }
     await enabled.check();assert.equal(await count.isDisabled(),false);
     await count.fill('4');
     const value=await page.evaluate(()=>({draft:readSettingsDraft(),changed:changedSettings()}));
@@ -60,7 +66,7 @@ async function run(){
     assert.deepEqual(value.changed.sort(),['bad_request_retry_enabled','bad_request_retry_max_retries']);
     await count.fill('10');assert.equal(await count.evaluate(node=>node.checkValidity()),false);
     await count.fill('9');assert.equal(await count.evaluate(node=>node.checkValidity()),true);
-    assert.equal(await page.getByRole('checkbox',{name:language==='zh'?'请求异常重试':'Retry request errors',exact:true}).getAttribute('id'),'bad-request-retry');
+    assert.equal(await page.getByRole('checkbox',{name:language==='zh'?'异常重试':'Retry request errors',exact:true}).getAttribute('id'),'bad-request-retry');
     assert.equal(await page.getByRole('spinbutton',{name:language==='zh'?'中转入口':'Relay entry',exact:true}).getAttribute('id'),'entry-port');
     assert.equal(await page.locator('#budget-label').textContent(),language==='zh'?'大小上限':'Size limit');
     for(const width of [320,540,600,1120]){

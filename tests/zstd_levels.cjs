@@ -153,8 +153,12 @@ assert(html.includes('data-settings-field="image_zstd_level"'));
 assert(!html.includes('image-upload-optimization'));
 const translations=fs.readFileSync('packet_inspector/ui/i18n.js','utf8');
 const dictionary=vm.runInNewContext(translations.slice(translations.indexOf('const english = {'),translations.indexOf('\n  };')+5)+'\nenglish;');
-for(const label of ['原始请求＜1.5 MB','原始请求≥1.5 MB','手动压缩等级','对话压缩等级','图片压缩等级','压缩耗时']) {
+for(const label of ['原始请求＜1.5 MB','原始请求≥1.5 MB','手动压缩等级','压缩耗时']) {
   assert(html.includes(label));
+  assert(dictionary[label]);
+}
+for(const label of ['自动压缩','对话压缩','图片压缩']) {
+  assert(html.includes(`class="settings-key">${label}</span>`));
   assert(dictionary[label]);
 }
 console.log('Both compression pickers: levels 1–22, separate size/time profiles, keyboard, settings and smart-mode checks passed');
