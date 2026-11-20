@@ -58,6 +58,7 @@ async function run(){
  for(const language of ['zh','en']){
   await page.evaluate(language=>{uiI18n.setLanguage(language,{persist:false});updateStatus={state:'idle',current_version:'1.0.0'};renderUpdates();},language);
   assert.equal(await updates.locator('.settings-key').textContent(),language==='zh'?'软件版本':'Software version');
+  assert.equal(await updates.locator('#updates-versions').textContent(),'1.0.0');
   const before=await geometry(page,updateLayout);
   const [current,check,install,repository]=before;
   assert(current[0]+current[2]<=check[0],'The current version sits before the buttons');
@@ -88,7 +89,13 @@ async function run(){
    await noPopup(page);assert(await page.locator('#updates-message').isVisible());
    assert.equal(await page.locator('#updates-message').getAttribute('title'),await page.locator('#updates-message').textContent());
    const [version,result]=await geometry(page,['updates-versions','updates-message']);
-   assert(result[0]>=repository[0]+repository[2]&&Math.abs(result[1]+result[3]/2-version[1]-version[3]/2)<=1);
+   assert(result[0]>=version[0]+version[2]&&result[0]+result[2]<=check[0],'Update feedback goes between the version and buttons');
+   assert(Math.abs(result[1]+result[3]/2-version[1]-version[3]/2)<=1);
+   if(status==='current'){
+    assert.equal(await page.locator('#updates-message').textContent(),language==='zh'?'已是最新版本。':'You are up to date.');
+    const {scrollWidth,clientWidth}=await page.locator('#updates-message').evaluate(node=>({scrollWidth:node.scrollWidth,clientWidth:node.clientWidth}));
+    assert.equal(scrollWidth,clientWidth,`The ${language} up-to-date message fits at ${width}px`);
+   }
    assert.deepEqual(await geometry(page,updateLayout),before);
   }cases++;
  }}

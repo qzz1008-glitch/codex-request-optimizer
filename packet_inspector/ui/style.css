@@ -796,7 +796,7 @@ input[type=checkbox][switch]:focus-visible{outline:2px solid var(--accent);outli
 #settings-dialog .updates-actions button:focus-visible{outline-offset:-3px}
 #settings-dialog .updates-actions .update-spinner{position:static;display:none;flex:none;width:12px;height:12px}
 #settings-dialog .updates-actions button[aria-busy=true] .update-spinner{display:block}
-#settings-dialog .updates-details{display:flex;align-items:center;flex:1;min-inline-size:96px;padding-inline-end:12px}
+#settings-dialog .updates-details{display:flex;align-items:center;flex:0 1 12em;min-inline-size:9em}
 #settings-dialog .updates-status{flex:1 1 auto;min-width:0;margin:0;overflow:hidden;text-align:left;text-overflow:ellipsis;white-space:nowrap}
 #settings-dialog>.settings-footer{
   flex:none;display:grid;grid-template-columns:minmax(0,1fr) auto auto;align-items:center;gap:12px;
