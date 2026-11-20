@@ -326,12 +326,10 @@
       <div class="settings-row">
         <span id="image-analysis-mode-label" class="settings-key">解图优化</span>
         <div class="settings-controls">
-          <fieldset id="image-analysis-mode" class="image-mode-pills" data-settings-field="image_analysis_mode" aria-labelledby="image-analysis-mode-label" aria-describedby="image-isolation-hint">
-            <label><input type="radio" name="image-analysis-mode" value="native" checked><span>原生</span></label>
-            <label><input type="radio" name="image-analysis-mode" value="disabled"><span>禁用</span></label>
-            <label><input type="radio" name="image-analysis-mode" value="optimized"><span>优化</span></label>
-          </fieldset>
-          <p id="image-isolation-hint" class="muted help runtime-inline-hint" aria-live="polite">卸载优化工具，恢复原生图片解析</p>
+          <div class="settings-switch" data-settings-field="image_analysis_mode">
+            <input id="image-analysis-mode" type="checkbox" switch role="switch" aria-labelledby="image-analysis-mode-label" aria-describedby="image-isolation-hint">
+          </div>
+          <p id="image-isolation-hint" class="muted help runtime-inline-hint" aria-live="polite">使用原生图片解析</p>
         </div>
       </div>
       <p id="image-isolation-message" data-feedback-source data-feedback-target="settings-inline-feedback" class="help" role="status" hidden></p>

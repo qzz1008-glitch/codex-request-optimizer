@@ -16,41 +16,80 @@ let browser,cases=0;
   await page.evaluate(()=>{
     window.$=id=>document.getElementById(id);window.settingsSaving=false;window.settingsEditing=false;
     window.state={status:{image_analysis_mode:'native',image_isolation_supported:true,image_analysis_modes:['native','disabled']}};
+    Object.assign(window,{linkSaving:false,settingsLanguage:null,settingsBaseline:null,settingsRevision:0,contextSettings:null,
+      settingsSaveProgress:{total:0,steps:[]},imageSaves:[],imageRestarts:[]});
+    window.storageLimitSettings=()=>({toBackend:value=>Number(value)*1000000});
+    window.renderEntryPortStatus=()=>{};
+    window.renderStatus=()=>{};
+    window.fillSettings=()=>fillImageAnalysisMode();
+    window.el=(tag,cls,text)=>Object.assign(document.createElement(tag),{className:cls,textContent:text});
+    window.restartNotices={ingest(){},change(...args){imageRestarts.push(args);}};
+    window.api=async(path,values)=>{imageSaves.push({path,values});return values;};
     window.updateStatus={supported:false,current_version:'0.8.7',state:'idle'};
     window.updateBusy=false;window.updateAction='';window.updateFeedbackVisible=false;
     window.fetch=()=>{throw new Error('Capability changes must not send requests');};
+    $('storage-limit').value=500;$('packet-limit').value=10000;
     $('settings-dialog').showModal();
   });
   await page.addScriptTag({content:source.slice(source.indexOf('function imageAnalysisMode('),source.indexOf('function fillZstdLevel('))+
-    '\n'+source.slice(source.indexOf('function renderUpdates('),source.indexOf('async function loadUpdates('))});
-  const modes=page.locator('#request-protection-settings #image-analysis-mode');
+    '\n'+source.slice(source.indexOf('function readSettingsDraft('),source.indexOf('async function loadUpdates('))});
+  await page.evaluate(()=>{
+    $('image-analysis-mode').addEventListener('change',()=>{fillImageAnalysisMode();updateSettingsSaveState();});
+  });
+  const toggle=page.locator('#request-protection-settings #image-analysis-mode');
   const hint=page.locator('#image-isolation-hint');
   for(const lang of ['zh','en']){
     await page.evaluate(lang=>{uiI18n.setLanguage(lang);fillImageAnalysisMode();renderUpdates();},lang);
-    const groupName=lang==='zh'?'解图优化':'Image analysis optimization';
-    assert.equal(await modes.getAttribute('aria-labelledby'),'image-analysis-mode-label');
-    assert.equal(await page.getByRole('group',{name:groupName,exact:true}).getAttribute('id'),'image-analysis-mode');
-    const modeBox=await modes.boundingBox();
+    const name=lang==='zh'?'解图优化':'Image analysis optimization';
+    assert.equal(await page.getByRole('switch',{name,exact:true}).getAttribute('id'),'image-analysis-mode');
+    const modeBox=await toggle.boundingBox();
     const protectionBox=await page.locator('#packet-size-protection').boundingBox();
-    assert.equal(modeBox.x,protectionBox.x,'Image modes start in the request protection controls column');
-    assert((await hint.boundingBox()).x>=modeBox.x+modeBox.width,'The mode hint sits beside the controls');
-    assert.equal(await modes.locator('input[value="optimized"]').isDisabled(),true);
-    assert.equal(await modes.locator('input[value="native"]').isDisabled(),false);
-    assert.equal(await modes.locator('input[value="disabled"]').isDisabled(),false);
+    assert.equal(modeBox.x,protectionBox.x,'The image switch aligns with the other protection switches');
+    assert((await hint.boundingBox()).x>=modeBox.x+modeBox.width,'The mode hint sits beside the switch');
+    assert.equal(await toggle.isChecked(),false);
+    assert.equal(await toggle.isDisabled(),true);
+    assert.equal(await hint.textContent(),lang==='zh'?'当前中转仅支持原生图片解析。':'This relay supports native image analysis only.');
     assert.equal(await page.locator('#updates-check').isDisabled(),true);
     assert.equal(await page.locator('#updates-install').isDisabled(),true);
     assert.match(await page.locator('#updates-message').textContent(),/Linux/);cases++;
   }
   await page.evaluate(()=>{delete state.status.image_analysis_modes;delete state.status.updates_supported;state.status.image_analysis_mode='optimized';updateStatus={state:'available'};fillImageAnalysisMode();renderUpdates();});
-  assert.equal(await modes.locator('input[value="optimized"]').isDisabled(),false);
-  assert.equal(await modes.locator('input[value="optimized"]').isChecked(),true);
+  assert.equal(await toggle.isDisabled(),false);
+  assert.equal(await toggle.isChecked(),true);
   assert.equal(await hint.textContent(),'Keep only image paths in the main request.');
   assert.equal(await page.locator('#updates-check').isDisabled(),false);
   assert.equal(await page.locator('#updates-install').isDisabled(),false);
   assert.equal(await page.locator('#updates-install').textContent(),'Update');cases++;
+  const save=page.locator('#settings-save');
+  for(const [status,before,after,values] of [
+    [{image_analysis_mode:'optimized'},'optimized','native',{image_analysis_mode:'native'}],
+    [{image_analysis_mode:'disabled',image_analysis_modes:['native','disabled']},'disabled','native',{image_analysis_mode:'native'}],
+    [{image_isolation_supported:true,image_isolation_enabled:false},'native','optimized',{image_isolation_enabled:true}],
+  ]){
+    await page.evaluate(status=>{
+      state.status=status;settingsEditing=false;settingsBaseline=null;fillImageAnalysisMode();
+      settingsBaseline=readSettingsDraft();settingsEditing=true;updateSettingsSaveState();
+    },status);
+    assert.equal(await toggle.isChecked(),before==='optimized');
+    if(before==='disabled'){
+      assert.equal(await hint.textContent(),'Save to restore native image analysis.');
+      assert.equal(await page.locator('#settings-restore').isDisabled(),true);
+    }else{
+      assert.equal(await save.isDisabled(),true);
+      await toggle.press('Space');
+    }
+    assert.equal(await toggle.isChecked(),after==='optimized');
+    assert.deepEqual(await page.evaluate(()=>imageSaves),[],'Choosing a mode does not save it');
+    assert.equal(await save.isDisabled(),false);
+    await page.evaluate(()=>saveSettings());
+    assert.deepEqual(await page.evaluate(()=>imageSaves.splice(0)),[{path:'/api/settings',values}]);
+    assert.deepEqual(await page.evaluate(()=>imageRestarts.splice(0)),[['image_analysis_mode',before,after]]);
+    assert.equal(await page.evaluate(()=>imageAnalysisMode()),after);
+    assert.equal(await save.isDisabled(),true);cases++;
+  }
   await page.setViewportSize({width:320,height:900});
-  assert.equal(await modes.evaluate(node=>node.parentElement.scrollWidth<=node.parentElement.clientWidth+1),true);
+  assert.equal(await toggle.evaluate(node=>node.closest('.settings-controls').scrollWidth<=node.closest('.settings-controls').clientWidth+1),true);
   await page.evaluate(()=>{settingsSaving=true;fillImageAnalysisMode();renderUpdates();});
-  assert.equal(await modes.locator('input[value="native"]').isDisabled(),true);cases++;
+  assert.equal(await toggle.isDisabled(),true);cases++;
   console.log(JSON.stringify({linux_settings:'passed',browser_cases:cases}));
 })().catch(error=>{console.error(error.stack);process.exitCode=1;}).finally(async()=>{if(browser)await browser.close();});
