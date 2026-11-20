@@ -60,7 +60,7 @@ let browser,cases=0;
   ].join('\n')});
   await page.evaluate(()=>{fillProxySettings();settingsBaseline=readSettingsDraft();settingsEditing=true;$('settings-dialog').showModal();});
   const sections=await page.locator('.settings-content>section').evaluateAll(nodes=>nodes.map(node=>node.id));
-  assert.deepEqual(sections.slice(-3),['record-storage-settings','connection-settings','updates-settings']);
+  assert.deepEqual(sections.slice(-2),['record-storage-settings','connection-settings']);
   assert.equal(await page.locator('#connection-settings > fieldset#proxy-settings').count(),1);
   assert.deepEqual(await page.locator('#connection-settings .entry-port-row input').evaluateAll(nodes=>nodes.map(node=>node.id)),
     ['entry-port','sharing-port','exit-port']);cases++;
