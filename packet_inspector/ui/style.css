@@ -794,7 +794,7 @@ input[type=checkbox][switch]:focus-visible{outline:2px solid var(--accent);outli
 #settings-dialog .repository-link:hover{color:var(--ink);background:var(--bg)}
 #settings-dialog .repository-link:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 #settings-dialog .updates-actions{flex-wrap:nowrap;column-gap:8px;overflow-x:auto;overflow-y:hidden;overscroll-behavior-x:contain;scrollbar-width:thin}
-#settings-dialog .updates-details{display:flex;align-items:center;justify-content:flex-end;flex:0 1 13em;gap:8px;min-inline-size:11.5em}
+#settings-dialog .updates-details{display:flex;align-items:center;justify-content:flex-start;flex:0 1 13em;gap:8px;min-inline-size:11.5em;text-align:start}
 #settings-dialog #updates-versions{flex:none;max-inline-size:100%}
 #settings-dialog :is(#updates-versions,.updates-status){min-inline-size:0;margin:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #settings-dialog #updates-action{display:inline-flex;align-items:center;justify-content:center;flex:none;inline-size:72px;gap:4px;padding-inline:6px}
@@ -841,7 +841,6 @@ input[type=checkbox][switch]:focus-visible{outline:2px solid var(--accent);outli
 @container settings-dialog (max-width:380px){
   #settings-dialog .proxy-controls{grid-template-columns:minmax(0,1fr)}
   #settings-dialog #proxy-test-state{white-space:normal;overflow-wrap:anywhere}
-  #settings-dialog .updates-details{justify-content:flex-start}
   #settings-dialog .record-limit-prefix{flex-basis:7.5ch;gap:2px}
   #settings-dialog .record-limit-field{gap:4px;padding-inline-start:6px}
   #settings-dialog :is(.record-limit-prefix,.record-limit-edit input,.record-limit-edit .record-limit-formatted){font-size:12px}

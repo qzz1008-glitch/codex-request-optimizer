@@ -68,8 +68,11 @@ async function run(){
   const before=await geometry(page,updateLayout);
   const [button,repository]=before;
   const [current]=await geometry(page,['updates-versions']);
-  const versionGap=button[0]-(current[0]+current[2]);
-  assert(versionGap>=0&&button[0]+button[2]<=repository[0],'The update button sits between the version and repository link');
+  const [languageToggle]=await geometry(page,['language-toggle']);
+  const label=await updates.locator('.settings-key').boundingBox();
+  assert.equal(current[0],languageToggle[0],'The version starts at the shared controls column');
+  assert(Math.abs(current[1]-label.y)<=1,'The version lines up with the first line of its label');
+  assert(current[0]+current[2]<=button[0]&&button[0]+button[2]<=repository[0],'The update button sits between the version and repository link');
   const controls=updates.locator('.updates-actions');
   assert(await controls.evaluate(node=>{
    const {left,right}=node.getBoundingClientRect();
@@ -80,7 +83,6 @@ async function run(){
    node.scrollLeft=originalScroll;
    return bounds.left>=left-1&&bounds.right<=right+1;
   }),'The update button is accessible on a narrow row');
-  if(width>320)assert(versionGap<=10,'The update button stays close to the version before checking');
   if(width>=1120){
    assert(await controls.evaluate(node=>node.scrollWidth===node.clientWidth),'The desktop update row fits without scrolling');
    const rightInset=await controls.evaluate(node=>node.getBoundingClientRect().right-node.querySelector('#updates-repository svg').getBoundingClientRect().right);
@@ -98,9 +100,10 @@ async function run(){
    await noPopup(page);assert(await page.locator('#updates-message').isVisible());
    assert.equal(await page.locator('#updates-message').getAttribute('title'),await page.locator('#updates-message').textContent());
    const [version,result]=await geometry(page,['updates-versions','updates-message']);
-   const feedbackGap=button[0]-(result[0]+result[2]);
-   assert(result[0]>=version[0]+version[2]&&feedbackGap>=0,'Update feedback goes between the version and action');
-   if(width>320)assert(feedbackGap<=10,'The update button stays close to the feedback');
+   assert.deepEqual(version,current,'The version stays left-aligned when feedback appears');
+   const textGap=result[0]-(version[0]+version[2]);
+   assert(Math.abs(textGap-8)<=1,'Update feedback follows the version directly');
+   assert(result[0]+result[2]<=button[0],'Update feedback stays to the left of the action');
    assert(Math.abs(result[1]+result[3]/2-version[1]-version[3]/2)<=1);
    if(status==='current'){
     assert.equal(await page.locator('#updates-message').textContent(),language==='zh'?'已是最新版本。':'You are up to date.');
