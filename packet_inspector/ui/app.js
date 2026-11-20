@@ -4141,7 +4141,6 @@ class TokenTrendView {
       const point=chart.points.find(value=>value.packet.id===this.hover);
       if(point?.node){chart.hoverNode=point.node;point.node.classList.toggle("trend-hover-node",true);}
       else if(point)chart.focusLayer.append(this.svgNode("circle",{cx:point.x,cy:point.y,r:3.6,fill:point.series.color,class:"trend-sample trend-hover-node"}));
-      if(point)chart.focusLayer.append(this.svgNode("circle",{cx:point.x,cy:point.y,r:7,stroke:point.series.color,class:"trend-focus-ring"}));
       chart.tooltip.hidden=false;
       const estimated=chart.key!=="size"&&requestTokenUsage(anchor.packet,this.tokenData(anchor.packet))?.estimated===true;
       chart.tooltip.replaceChildren(el("span","",t(chart.key==="size"?"转发请求":estimated?"输入 Token（估算）":"输入 Token")),el("strong","",point?(chart.key==="size"?TokenTrendView.sizeLabel(point.value):(estimated?"≈ ":"")+nf.format(point.value)):"—"));

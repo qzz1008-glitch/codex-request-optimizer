@@ -557,7 +557,7 @@ function eventRows(){return [
   for(const chart of result.charts){
    assert.equal(chartNodes(chart,'trend-focus-line').length,0);const nodes=chartNodes(chart,'trend-hover-node');assert.equal(nodes.length,1);
    const point=chart.points.find(point=>point.packet.id===id(101));assert.equal(nodes[0],point.node);assert.equal(nodes[0].tag,'circle');assert.equal(nodes[0].attrs.fill,point.series.color);
-   assert.equal(chartNodes(chart,'trend-focus-ring')[0].attrs.stroke,point.series.color);
+   assert.equal(chart.focusLayer.children.length,0);
   }
   for(const chart of result.charts){chart.plot.clientWidth=900;chart.svg.clientWidth=900;chart.plot.clientHeight=300;chart.svg.clientHeight=300;}
   ids.get('trend-chart').top=300;ids.get('trend-time-axis').top=600;result.guide.clientWidth=900;result.guide.clientHeight=632;
@@ -583,7 +583,7 @@ function eventRows(){return [
   assert.equal(token.tooltip.children.length,2);assert.match(nodeText(token.tooltip),/输入 Token（估算）\s*≈\s*300/);
   assert.equal(result.timeTooltip.textContent,result.time(next.packet.created,true));assert.ok(nodeText(size.tooltip).includes('400 KB'));
   assert.equal(chartNodes(size,'trend-hover-node').length,1);
-  for(const chart of result.charts){const node=chartNodes(chart,'trend-hover-node')[0];assert.equal(node.dataset.packet,id(103));assert.equal(node.children[0].tag,'path');assert.equal(chartNodes(chart,'trend-focus-ring').length,1);}
+  for(const chart of result.charts){const node=chartNodes(chart,'trend-hover-node')[0];assert.equal(node.dataset.packet,id(103));assert.equal(node.children[0].tag,'path');assert.equal(chart.focusLayer.children.length,0);}
   token.svg.onpointerleave();assert.equal(result.hover,null);assert.equal(result.hoverChart,null);
   for(const chart of result.charts){assert.equal(chart.tooltip.hidden,true);assert.equal(chartNodes(chart,'trend-focus-line').length,0);assert.equal(chartNodes(chart,'trend-hover-node').length,0);}
   assert.equal(focusLines(result).length,0);
@@ -621,7 +621,7 @@ function eventRows(){return [
   const selected=()=>highlightedRows(ids);
   const [size,token]=result.charts,first=size.points.find(point=>point.series.id==='session-a'),next=token.points.find(point=>point.series.id==='session-b');
   size.svg.onpointermove({clientX:first.x,clientY:first.y});assert.deepEqual(selected(),[a]);
-  assert.equal(chartNodes(size,'trend-focus-ring')[0].attrs.stroke,a.style['--trend-series-color']);
+  assert.equal(chartNodes(size,'trend-hover-node')[0].attrs.fill,a.style['--trend-series-color']);
   token.svg.onpointermove({clientX:next.x,clientY:next.y});assert.deepEqual(selected(),[b]);
   token.svg.onpointerleave();assert.deepEqual(selected(),[]);
   list.events.get('pointerover').callback({target:a});
@@ -650,7 +650,9 @@ function eventRows(){return [
      assert.equal(chartNodes({svg:node},'trend-event')[0].attrs.stroke,color);
      for(const counter of chartNodes({svg:node},'trend-event-count'))assert.equal(counter.attrs.fill,color);
     assert.equal(chartNodes({svg:node},'trend-event').length,1);assert.equal(node.attrs.class,'trend-event-node');
-     result.hover=point.packet.id;result.renderFocus();assert.equal(chartNodes({svg:node},'trend-event')[0].attrs.stroke,color);
+     result.hover=point.packet.id;result.renderFocus();
+     assert.deepEqual(chartNodes(chart,'trend-hover-node'),[node]);assert.equal(chart.focusLayer.children.length,0);
+     assert.equal(chartNodes({svg:node},'trend-event')[0].attrs.stroke,color);
      result.hover=null;result.renderFocus();
    }
    const overlap=chart.eventNodes.find(node=>node.dataset.packet===id(702));
@@ -934,6 +936,13 @@ function eventRows(){return [
   const rows=Array.from({length:12000},(_,i)=>packet(i+1,{created:now-i/4,upstream_usage:{input_tokens:1000+i},outbound_wire_bytes:200000+i,...(i%1000===0?{usage_override_applied:true}: {})}));
   const {result}=rendered(rows);
   for(const chart of result.charts){assert.equal(chart.points.length,12000);assert.equal(chartNodes(chart,'trend-event-predictive').length,12);assert.ok(chart.svg.all(n=>n.tag==='circle').length<500);assert.equal(chartNodes(chart,'trend-curve').length,1);}
+  for(const chart of result.charts){
+   const point=chart.points.find(point=>!point.node);assert.ok(point);
+   result.hover=point.packet.id;result.renderFocus();
+   assert.equal(chart.focusLayer.children.length,1);
+   const [node]=chart.focusLayer.children;assert.equal(node.tag,'circle');assert.equal(node.attrs.fill,point.series.color);
+   assert.deepEqual(chartNodes(chart,'trend-hover-node'),[node]);
+  }
  });
  await test('status metadata fixes the range before history arrives and a short page cannot shrink it',async()=>{
   let release,entered,reads=0;const started=new Promise(resolve=>entered=resolve),oldest=now-5.6*3600;
