@@ -921,7 +921,7 @@ const uiI18n = (() => {
     "本机请求观察器":"Local request inspector",
     "连接中":"Connecting",
     "接入与设置":"Settings",
-    "软件更新":"Software update",
+    "软件版本":"Software version",
     "GitHub 仓库":"GitHub repository",
     "检查更新":"Check",
     "立即升级":"Update",
