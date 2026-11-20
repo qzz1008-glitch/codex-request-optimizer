@@ -387,50 +387,6 @@
       </div>
       <p id="context-message" data-feedback-source data-feedback-target="settings-inline-feedback" class="help" role="status" hidden></p>
     </section>
-    <section id="record-storage-settings" aria-labelledby="record-storage-title">
-      <h3 id="record-storage-title">记录与存储</h3>
-      <div class="settings-row" data-settings-field="storage_dir">
-        <span id="storage-dir-label" class="settings-key">数据目录</span>
-        <div class="settings-controls image-directory-row">
-          <input id="storage-dir" type="text" spellcheck="false" autocomplete="off" aria-labelledby="storage-dir-label">
-          <button id="storage-dir-open" type="button" aria-label="打开数据目录" disabled>打开</button>
-          <p id="storage-dir-message" data-feedback-source data-feedback-target="settings-inline-feedback" class="help" role="status" hidden></p>
-          <p id="storage-paths-hint" class="help muted" hidden></p>
-        </div>
-      </div>
-      <div class="record-limit-grid">
-        <div class="settings-row" data-settings-field="max_packets">
-          <span id="packet-limit-label" class="settings-key">记录条数</span>
-          <div class="settings-controls">
-            <div class="record-limit-value">
-              <span class="record-limit-prefix"><span id="packet-limit-usage">—</span><span aria-hidden="true">/</span></span>
-              <label class="settings-value-unit record-limit-field">
-                <span class="record-limit-edit">
-                  <input id="packet-limit" type="number" min="10" max="100000" inputmode="numeric" aria-labelledby="packet-limit-label" aria-describedby="packet-limit-usage packet-limit-unit" required>
-                  <span class="record-limit-formatted" aria-hidden="true"></span>
-                </span>
-                <span id="packet-limit-unit" data-i18n="settings.unit.requests">条</span>
-              </label>
-            </div>
-          </div>
-        </div>
-        <div class="settings-row" data-settings-field="max_storage_mb">
-          <span id="storage-limit-label" class="settings-key">存储容量</span>
-          <div class="settings-controls">
-            <div class="record-limit-value">
-              <span class="record-limit-prefix"><span id="storage-limit-usage">—</span><span aria-hidden="true">/</span></span>
-              <label class="settings-value-unit record-limit-field">
-                <span class="record-limit-edit">
-                  <input id="storage-limit" type="number" min="17" max="8590" step="1" inputmode="numeric" aria-labelledby="storage-limit-label" aria-describedby="storage-limit-usage storage-limit-unit" required>
-                  <span class="record-limit-formatted" aria-hidden="true"></span>
-                </span>
-                <span id="storage-limit-unit">MB</span>
-              </label>
-            </div>
-          </div>
-        </div>
-      </div>
-    </section>
     <section id="connection-settings" aria-labelledby="connection-settings-title">
       <h3><span id="connection-settings-title">网络连接</span> <span id="connection-pending-label" class="connection-pending-label" hidden>ChatGPT 待重启</span></h3>
       <div class="settings-row entry-port-row" data-settings-field="entry_port">
@@ -486,6 +442,50 @@
           </div>
         </div>
       </fieldset>
+    </section>
+    <section id="record-storage-settings" aria-labelledby="record-storage-title">
+      <h3 id="record-storage-title">记录与存储</h3>
+      <div class="settings-row" data-settings-field="storage_dir">
+        <span id="storage-dir-label" class="settings-key">数据目录</span>
+        <div class="settings-controls image-directory-row">
+          <input id="storage-dir" type="text" spellcheck="false" autocomplete="off" aria-labelledby="storage-dir-label">
+          <button id="storage-dir-open" type="button" aria-label="打开数据目录" disabled>打开</button>
+          <p id="storage-dir-message" data-feedback-source data-feedback-target="settings-inline-feedback" class="help" role="status" hidden></p>
+          <p id="storage-paths-hint" class="help muted" hidden></p>
+        </div>
+      </div>
+      <div class="record-limit-grid">
+        <div class="settings-row" data-settings-field="max_packets">
+          <span id="packet-limit-label" class="settings-key">记录条数</span>
+          <div class="settings-controls">
+            <div class="record-limit-value">
+              <span class="record-limit-prefix"><span id="packet-limit-usage">—</span><span aria-hidden="true">/</span></span>
+              <label class="settings-value-unit record-limit-field">
+                <span class="record-limit-edit">
+                  <input id="packet-limit" type="number" min="10" max="100000" inputmode="numeric" aria-labelledby="packet-limit-label" aria-describedby="packet-limit-usage packet-limit-unit" required>
+                  <span class="record-limit-formatted" aria-hidden="true"></span>
+                </span>
+                <span id="packet-limit-unit" data-i18n="settings.unit.requests">条</span>
+              </label>
+            </div>
+          </div>
+        </div>
+        <div class="settings-row" data-settings-field="max_storage_mb">
+          <span id="storage-limit-label" class="settings-key">存储容量</span>
+          <div class="settings-controls">
+            <div class="record-limit-value">
+              <span class="record-limit-prefix"><span id="storage-limit-usage">—</span><span aria-hidden="true">/</span></span>
+              <label class="settings-value-unit record-limit-field">
+                <span class="record-limit-edit">
+                  <input id="storage-limit" type="number" min="17" max="8590" step="1" inputmode="numeric" aria-labelledby="storage-limit-label" aria-describedby="storage-limit-usage storage-limit-unit" required>
+                  <span class="record-limit-formatted" aria-hidden="true"></span>
+                </span>
+                <span id="storage-limit-unit">MB</span>
+              </label>
+            </div>
+          </div>
+        </div>
+      </div>
     </section>
     </div>
     <div class="settings-footer">
