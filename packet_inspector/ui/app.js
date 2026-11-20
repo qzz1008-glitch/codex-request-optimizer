@@ -4,6 +4,7 @@ globalThis.InspectorConnections = {
   create({request}) {
     const get=id=>document.getElementById(id), tr=value=>uiI18n.t(value);
     const panel=get("connection-panel"), controls=get("connection-controls");
+    const headerActions=controls.parentElement;
     const headerToggle=get("request-compression");
     const localLabel=controls.querySelector(".connection-local-label");
     const restartBadge=get("restart-notice-open");
@@ -160,9 +161,11 @@ globalThis.InspectorConnections = {
       panel.style.left = `${panelLeft}px`;
       controls.style.setProperty("--connection-frame-left", `${panelLeft - trigger.left}px`);
       controls.style.setProperty("--connection-frame-width", `${width}px`);
+      const revealWidth = Math.min(width, panelLeft + width - localToggle.left + 4);
+      headerActions.style.setProperty("--connection-reveal-width", `${revealWidth}px`);
       localLabel.style.translate = `${panelLeft + addressInset - trigger.left - localLabel.offsetLeft}px`;
       if (badgeVisible) {
-        const gap = parseFloat(getComputedStyle(controls.parentElement).columnGap) || 0;
+        const gap = parseFloat(getComputedStyle(headerActions).columnGap) || 0;
         const badgeRight = trigger.left - gap;
         restartBadge.style.setProperty("--connection-badge-offset", `${localToggle.left - 8 - badgeRight}px`);
       }
@@ -174,6 +177,7 @@ globalThis.InspectorConnections = {
       controls.removeAttribute("data-server-panel-open");
     }
     function focusFirstAction() {
+      controls.dataset.serverPanelOpen="";
       panel.querySelector("button:not(:disabled):not([hidden])")?.focus();
     }
     function show(focus=false) {
@@ -192,7 +196,7 @@ globalThis.InspectorConnections = {
       openRequested=false;focusOnOpen=false;
       if(!shouldOpen||disposed||document.querySelector("dialog[open]"))return;
       if(nativePopover)panel.showPopover({source:controls});else{panel.hidden=false;}
-      controls.setAttribute("data-server-panel-open","");
+      controls.dataset.serverPanelOpen=hover&&!focus?"hover":"";
       place();
       if(focus)focusFirstAction();
     }
@@ -294,7 +298,10 @@ globalThis.InspectorConnections = {
     for(const node of [controls,panel]) {
       node.addEventListener("pointerenter",event=>{if(event.pointerType==="touch")return;hover=true;show();});
       node.addEventListener("pointerleave",leave);
-      node.addEventListener("focusin",()=>show());
+      node.addEventListener("focusin",()=>{
+        if(node===panel&&isOpen())controls.dataset.serverPanelOpen="";
+        show();
+      });
       node.addEventListener("focusout",leave);
     }
     restartBadge.addEventListener("pointerenter",event=>{
