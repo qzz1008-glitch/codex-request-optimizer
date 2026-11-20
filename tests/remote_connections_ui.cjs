@@ -34,12 +34,14 @@ const localControls=[
       const html=fs.readFileSync('packet_inspector/ui/index.html','utf8').replace(/<script[^>]*>[\s\S]*?<\/script>/g,'').replace(/<link[^>]*>/g,'');
       assert(!fs.readFileSync('packet_inspector/ui/index.html','utf8').includes('/connections.js'),'No new asset route is required for live reload');
       await page.setContent(html);
-      await page.addStyleTag({path:'packet_inspector/ui/style.css'});
+      const style=fs.readFileSync('packet_inspector/ui/style.css','utf8');
+      await page.addStyleTag({content:fallback?style.replace('@supports (top: anchor(bottom))','@supports (top: unsupported-anchor)'):style});
       await page.addScriptTag({path:'packet_inspector/ui/i18n.js'});
       if(fallback)await page.evaluate(()=>{delete HTMLElement.prototype.popover;});
       await page.addScriptTag({content:connections});
       await page.addScriptTag({content:localControls});
       await page.evaluate(address=>{
+        document.documentElement.classList.add('desktop-titlebar');
         document.getElementById('window-controls').hidden=false;
         window.fixture={rows:[{id:'local',name:'本机',kind:'local',state:'disconnected'},
           {id:'remote-a',name:address,kind:'ssh',state:'disconnected',codex_restart:{supported:true}}],
@@ -116,6 +118,18 @@ const localControls=[
         assert(Math.abs(local.centerY-localButton.centerY)<1&&Math.abs(remote.centerY-remoteButton.centerY)<1,'Each device label is vertically centered with its controls');
         assert.equal(await serverAddress.evaluate(node=>node.scrollWidth<=node.clientWidth),true,'A full IPv4 address fits');
       };
+      const assertDropdownFrame=async()=>{
+        const frame=await controls.evaluate(node=>{
+          const trigger=node.getBoundingClientRect(),surface=getComputedStyle(node,'::before');
+          return {left:trigger.left+parseFloat(surface.left),width:parseFloat(surface.width),bottom:trigger.bottom-parseFloat(surface.bottom)};
+        });
+        const dropdown=await panel.boundingBox();
+        assert(Math.abs(frame.left-dropdown.x)<1&&Math.abs(frame.width-dropdown.width)<1,'Both parts use the same left and right edges');
+        assert(Math.abs(frame.bottom-dropdown.y)<1,'The dropdown starts flush with the local row');
+        const [localActions,remoteActions]=await Promise.all([localToggle.boundingBox(),actions.first().boundingBox()]);
+        const rightPadding=dropdown.x+dropdown.width-Math.max(localActions.x+localActions.width,remoteActions.x+remoteActions.width);
+        assert(rightPadding>=2&&rightPadding<=12,`The right edge sits just past the action buttons (${rightPadding}px)`);
+      };
       const waitForReconnectPrompt=async()=>{
         await page.getByRole('dialog',{name:'现在重新连接 Codex？'}).waitFor({state:'visible'});
         assert.equal(await page.locator('#devices-confirm-apply').textContent(),'立即重连');
@@ -137,8 +151,13 @@ const localControls=[
       const labelBox=await localLabel.boundingBox(),localPillBox=await localToggle.boundingBox();
       assert(labelBox.x+labelBox.width<localPillBox.x,'The local label sits to the left of the local controls');
       await assertAlignment();
+      await assertDropdownFrame();
+      assert.equal(await controls.evaluate(node=>{
+        const {right,bottom}=node.getBoundingClientRect();
+        return node.contains(document.elementFromPoint(right-8,bottom+2));
+      }),true,'The joined edge keeps the hovering pointer inside the dropdown');
       const actionsBox=await actions.boundingBox(),reconnectBox=await reconnect.boundingBox();
-      assert(actionsBox.x+actionsBox.width<reconnectBox.x,'Reconnect sits to the right of the server connection controls');
+      assert(reconnectBox.x+reconnectBox.width<actionsBox.x,'Reconnect sits before the server connection controls');
       assert.equal(await actions.locator('[aria-pressed="true"]').evaluate(button=>getComputedStyle(button).opacity),'1');
       const bounds=await panel.boundingBox();assert(bounds.x>=0&&bounds.x+bounds.width<=1201&&bounds.y>=0&&bounds.y+bounds.height<=801);
       assert(bounds.width<332,'The address and actions determine the compact panel width');
@@ -210,7 +229,7 @@ const localControls=[
       await page.locator('#devices-confirm-cancel').click();
       await page.setViewportSize({width:700,height:700});
       await controls.focus();await page.keyboard.press('ArrowDown');await panel.waitFor({state:'visible'});
-      assert.equal(await actions.locator('button:enabled').evaluate(button=>button===document.activeElement),true,'ArrowDown focuses the first available server action');
+      assert.equal(await reconnect.evaluate(button=>button===document.activeElement),true,'ArrowDown focuses the first available server action');
       const narrow=await panel.boundingBox();assert(narrow.x>=0&&narrow.x+narrow.width<=701&&narrow.y>=0&&narrow.y+narrow.height<=701);
       await page.keyboard.press('Escape');await panel.waitFor({state:'hidden'});
       await page.evaluate(()=>fixture.unavailable=true);
@@ -321,8 +340,8 @@ const localControls=[
       assert.equal(await panel.getAttribute('aria-label'),'Server connections');
       assert.equal(await localLabel.textContent(),'Local');
       await assertAlignment();
+      await assertDropdownFrame();
       await page.evaluate(()=>{
-        document.documentElement.classList.add('desktop-titlebar');
         fixture.rows.push({id:'remote-b',name:'10.0.0.1',kind:'ssh',state:'connected'});
       });
       await reopenPanel();
@@ -334,8 +353,16 @@ const localControls=[
       }
       const restart=await page.locator('#restart-notice-open').boundingBox();
       const viewSwitch=await page.locator('#view-toggle').boundingBox();
+      const dropdown=await panel.boundingBox();
+      const labelWithBadge=await localLabel.boundingBox();
       assert(viewSwitch.x+viewSwitch.width<=restart.x,'The restart badge clears the view switch');
-      assert((await localLabel.boundingBox()).x>=restart.x+restart.width,'The label clears the visible restart badge');
+      assert(labelWithBadge.x+labelWithBadge.width<=restart.x,'The label clears the restart badge inside the local row');
+      assert(restart.x+restart.width<=(await localToggle.boundingBox()).x,'The restart badge clears the local buttons');
+      assert(viewSwitch.x+viewSwitch.width<=dropdown.x+1,'The joined frame leaves the view switch uncovered');
+      await assertDropdownFrame();
+      await page.locator('#restart-notice-open').evaluate(node=>node.addEventListener('click',()=>fixture.badgeClicked=true,{once:true}));
+      await page.locator('#restart-notice-open').click();
+      assert.equal(await page.evaluate(()=>fixture.badgeClicked),true,'The restart notice stays clickable inside the open dropdown');
       await page.mouse.move(0,page.viewportSize().height-1);
       await page.keyboard.press('Escape');await panel.waitFor({state:'hidden'});
       await page.evaluate(()=>fixture.rows.splice(1));
