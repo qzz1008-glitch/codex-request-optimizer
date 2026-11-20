@@ -547,7 +547,6 @@ button.other-session-group{background:#f5f2fc;border-color:#e7e0f5}
   --settings-label-width:172px;
   --settings-inline-label-width:80px;
   --settings-column-gap:12px;
-  --settings-context-width:152px;
   --settings-path-actions-width:190px;
   --settings-padding:28px;
   --settings-section-indent:16px;
@@ -724,7 +723,6 @@ button.other-session-group{background:#f5f2fc;border-color:#e7e0f5}
 #settings-dialog :is(.image-directory-row,.proxy-address-field) input{width:100%;min-width:0;text-align:left}
 #settings-dialog .image-directory-actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
 #settings-dialog .image-directory-row>.help{grid-column:1/-1;margin:0}
-#settings-dialog .context-value{inline-size:var(--settings-context-width)}
 #settings-dialog .context-value input::placeholder{font-size:13px;font-weight:400}
 #settings-dialog .context-default{display:flex;align-items:center;gap:8px;justify-self:start;min-width:0;min-block-size:var(--settings-field-height);margin:0;color:var(--muted);font-size:13px;line-height:20px}
 #settings-dialog .context-default input{display:block;width:14px;height:14px;margin:0}
