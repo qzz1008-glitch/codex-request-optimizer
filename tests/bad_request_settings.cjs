@@ -85,7 +85,7 @@ async function run(){
   }
   await page.evaluate(()=>{settingsEditing=false;fillPacketProtection();fillCapacityRetry();settingsEditing=true;});
   const settings=page.locator('#settings-dialog .settings-content');
-  assert.equal(await settings.getByRole('switch').count(),7);
+  assert.equal(await settings.getByRole('switch').count(),8);
   assert.equal(await settings.getByRole('checkbox').count(),0);
   const interactive='input:not([type=hidden]),select,button,a[href],[tabindex]';
   assert.deepEqual(await settings.locator(interactive).evaluateAll(nodes=>

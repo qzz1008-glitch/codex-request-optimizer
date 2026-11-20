@@ -11,7 +11,7 @@ A local request analysis and optimization tool for Codex on Windows x64 (64-bit)
 - **🗜️ Lossless compression**: reduce upload sizes for conversations, image generation, and image editing while retaining their content. Choose automatic compression or a manual level.
 - **🛡️ Size protection**: control request size with a configurable limit. Predictive protection triggers context compaction early; overflow protection condenses history before forwarding.
 - **🧠 Context settings**: adjust the context window and automatic compaction threshold, or restore model defaults.
-- **🖼️ Image optimization**: choose Native, Disable, or Optimize mode. Optimization uses a separate analysis session to reduce image content in the main context. Size protection can also downscale oversized image requests, which may lose detail.
+- **🖼️ Image optimization**: turn on image analysis optimization to use a separate analysis session and reduce image content in the main context. Turn it off to use native image analysis. Size protection can also downscale oversized image requests, which may lose detail.
 - **🔁 Capacity retries**: let Codex wait and retry automatically when a model is at capacity. Set the retry count and delay.
 - **🔁 Request error retries**: optionally intercept a generic 400 containing only `Bad Request` and make 1–9 additional attempts in the relay. Disabled by default, with three retries when enabled; field and parameter errors pass through unchanged.
 - **🔎 Analysis and trends**: inspect request sizes, token usage, errors, and redacted JSON by session. View trends, request changes, and protection events.

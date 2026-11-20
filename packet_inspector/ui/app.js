@@ -1859,21 +1859,25 @@ function imageAnalysisMode(status=state.status) {
     status?.image_isolation_enabled?"optimized":"native";
 }
 function selectedImageAnalysisMode() {
-  return $("image-analysis-mode").querySelector("input:checked")?.value??imageAnalysisMode();
+  return $("image-analysis-mode").checked?"optimized":"native";
+}
+function imageAnalysisModeSupported(mode,status=state.status) {
+  const supported=status?.image_analysis_modes;
+  return Array.isArray(supported)?supported.includes(mode):
+    !!status?.image_isolation_supported||["native","disabled","optimized"].includes(status?.image_analysis_mode);
+}
+function legacyImageAnalysisPending() {
+  return state.status?.image_analysis_mode==="disabled"&&imageAnalysisModeSupported("native");
 }
 function fillImageAnalysisMode() {
-  const s=state.status,hasModes=["native","disabled","optimized"].includes(s.image_analysis_mode);
-  const supportedModes=Array.isArray(s.image_analysis_modes)?s.image_analysis_modes:null;
-  for(const input of $("image-analysis-mode").querySelectorAll("input")) {
-    if(!settingsEditing)input.checked=input.value===imageAnalysisMode(s);
-    const unavailable=supportedModes?!supportedModes.includes(input.value):input.value==="disabled"&&!hasModes;
-    input.disabled=settingsSaving||!(s.image_isolation_supported||hasModes)||unavailable;
-    input.closest("label").title=unavailable?t(supportedModes?"当前中转暂不支持此功能。":"当前后台暂不支持禁用模式，升级后可用。"):"";
-  }
-  const descriptions={native:"卸载优化工具，恢复原生图片解析",disabled:"关闭原生与优化图片工具",
-    optimized:"主请求仅保留图片路径"};
-  $("image-isolation-hint").textContent=t(s.image_isolation_supported||hasModes?
-    descriptions[selectedImageAnalysisMode()]:"当前中转暂不支持此功能。");
+  const input=$("image-analysis-mode"),nativeSupported=imageAnalysisModeSupported("native");
+  const canSwitch=nativeSupported&&imageAnalysisModeSupported("optimized");
+  if(!settingsEditing)input.checked=imageAnalysisMode()==="optimized";
+  input.disabled=settingsSaving||!canSwitch;
+  let hint=input.checked?"主请求仅保留图片路径":"使用原生图片解析";
+  if(!input.checked&&legacyImageAnalysisPending())hint="保存后恢复原生图片解析。";
+  else if(!canSwitch)hint=nativeSupported?"当前中转仅支持原生图片解析。":"当前中转暂不支持此功能。";
+  uiI18n.text($("image-isolation-hint"),hint);
 }
 function fillZstdLevel() {
   const s=state.status,input=$("zstd-level"),supported=Number.isInteger(s.zstd_level);
@@ -2358,7 +2362,8 @@ function updateSettingsSaveState(clearMessage=true) {
   const changed=new Set(settingsEditing?changedSettings():[]),dirty=changed.size>0;
   for(const node of $("settings-dialog").querySelectorAll("[data-settings-field]"))
     node.classList.toggle("settings-dirty",changed.has(node.dataset.settingsField));
-  $("settings-save").disabled=settingsSaving||!!linkSaving||!dirty;
+  const canSave=dirty||(settingsEditing&&legacyImageAnalysisPending());
+  $("settings-save").disabled=settingsSaving||!!linkSaving||!canSave;
   $("settings-restore").disabled=settingsSaving||!dirty;$("settings-close").disabled=settingsSaving;
   if(clearMessage&&settingsEditing&&!settingsSaving)setSettingsMessage(dirty?"有未保存的修改":"");
   if(state.status)renderEntryPortStatus();
@@ -2374,6 +2379,7 @@ function finishSettingsSave() {
 async function saveSettings() {
   if(!settingsEditing||settingsSaving||linkSaving||!settingsBaseline)return;
   const draft=readSettingsDraft(),changed=new Set(changedSettings(draft)),s=state.status;
+  if(legacyImageAnalysisPending())changed.add("image_analysis_mode");
   if(!changed.size)return;
   for(const input of $("settings-dialog").querySelectorAll(".settings-content input:not(:disabled)")) {
     if(!input.reportValidity())return;
@@ -2395,7 +2401,7 @@ async function saveSettings() {
     ["bad_request_retry_max_retries","bad_request_retry_max_retries",Number(draft.bad_request_retry_max_retries),s.bad_request_retry_supported],
     ["image_analysis_mode","image_analysis_mode" in s?"image_analysis_mode":"image_isolation_enabled",
       "image_analysis_mode" in s?draft.image_analysis_mode:draft.image_analysis_mode==="optimized",
-      s.image_isolation_supported||["native","disabled","optimized"].includes(s.image_analysis_mode)],
+      imageAnalysisModeSupported(draft.image_analysis_mode,s)],
     ["storage_dir","storage_dir",draft.storage_dir===s.data_dir?"":draft.storage_dir,s.storage_dir_supported],
     ["max_storage_mb","max_storage_bytes",storage.toBackend(draft.max_storage_mb),true],
     ["max_packets","max_packets",Number(draft.max_packets),true]
@@ -2471,7 +2477,7 @@ async function saveSettings() {
         saved++;
       });
     }
-    if(changedSettings().length)throw Error("有未保存的修改");
+    if(changedSettings().length||legacyImageAnalysisPending())throw Error("有未保存的修改");
   } catch(failure) {error=failure;}
   finally {
     settingsSaving=false;settingsRevision++;
