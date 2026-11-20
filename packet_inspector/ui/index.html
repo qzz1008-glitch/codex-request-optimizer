@@ -40,7 +40,8 @@
     </div>
   </header>
   <div id="notice" data-feedback-source data-feedback-target="app-inline-feedback" class="notice" role="alert" hidden><span id="notice-text"></span><button id="notice-dismiss" data-notice-dismiss type="button" aria-label="关闭提示" title="关闭提示">×</button></div>
-  <main id="records-view" class="workspace" data-view="records">
+  <main class="workspace-stage">
+  <div id="records-view" class="workspace" data-view="records">
     <aside class="sessions-sidebar" aria-label="会话">
       <search class="sidebar-title sessions-title">
         <h1>会话</h1>
@@ -137,8 +138,8 @@
         <div id="trend-tooltip" class="trend-tooltip" role="tooltip" hidden></div>
       </div>
     </section>
-  </main>
-  <main id="sharing-view" data-validation-feedback="sharing-message" class="sharing-workspace" hidden>
+  </div>
+  <div id="sharing-view" data-validation-feedback="sharing-message" class="sharing-workspace" inert>
     <p id="sharing-message" data-feedback-source data-feedback-target="quota-inline-feedback" class="sharing-message" role="status" hidden></p>
     <div id="sharing-cards" class="sharing-layout">
       <section class="sharing-section" aria-labelledby="quota-section-title">
@@ -169,6 +170,7 @@
       <p id="sharing-inline-message" data-feedback-inline class="sharing-edit-message" role="alert" hidden></p>
       <div class="sharing-inline-footer"><div class="sharing-inline-actions"><button id="sharing-inline-cancel" type="button">取消</button><button id="sharing-inline-save" class="primary" type="submit">保存</button></div></div>
     </form>
+  </div>
   </main>
   <footer class="app-footer">
     <div id="app-inline-feedback" class="inline-feedback app-inline-feedback" data-feedback-inline role="status" aria-live="polite"></div>

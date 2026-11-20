@@ -4107,20 +4107,25 @@ class TokenTrendView {
 tokenTrendView=new TokenTrendView({api,status:()=>state.status,sessions:sessionGroups,peek:listTokens,read:readListTokens,isGeneration:isTrendGeneration});
 function setWorkspaceView(view) {
   hideSessionTitleTooltip();
+  const wasSharing=workspaceView==="sharing";
   workspaceView=["trends","sharing"].includes(view)?view:"records";
-  const workspace=$("records-view"),trends=workspaceView==="trends";
-  workspace.hidden=workspaceView==="sharing";
-  workspace.dataset.view=workspaceView;
+  const workspace=$("records-view"),sharing=workspaceView==="sharing",trends=workspaceView==="trends";
+  workspace.inert=sharing;
+  if(!sharing){
+    // Settle the next view behind the sharing panel before it slides out.
+    workspace.classList.toggle("skip-view-slide",wasSharing);
+    workspace.dataset.view=workspaceView;
+  }
   if(workspaceView==="records"&&state.tab==="tree")scrollRequestTextOnFirstShow();
   $("token-trend-view").inert=!trends;
   for(const pane of workspace.querySelectorAll(":scope > .requests-sidebar, :scope > .detail"))pane.inert=trends;
-  if($("sharing-view"))$("sharing-view").hidden=workspaceView!=="sharing";
+  if($("sharing-view"))$("sharing-view").inert=!sharing;
   $("view-records").setAttribute("aria-pressed",String(workspaceView==="records"));$("view-trends").setAttribute("aria-pressed",String(workspaceView==="trends"));
-  $("view-sharing")?.setAttribute("aria-pressed",String(workspaceView==="sharing"));
+  $("view-sharing")?.setAttribute("aria-pressed",String(sharing));
   try {localStorage.setItem("packet-inspector-view",workspaceView);} catch(_) {}
   tokenTrendView.setActive(trends);
-  globalThis.InspectorSharing?.setActive(workspaceView==="sharing");
-  if(workspaceView==="sharing"&&!globalThis.InspectorSharing&&$("sharing-message")) {
+  globalThis.InspectorSharing?.setActive(sharing);
+  if(sharing&&!globalThis.InspectorSharing&&$("sharing-message")) {
     $("sharing-message").textContent=t("当前后台不支持共享，请更新软件后使用。");$("sharing-message").hidden=false;
     if($("sharing-cards"))$("sharing-cards").hidden=true;
   }

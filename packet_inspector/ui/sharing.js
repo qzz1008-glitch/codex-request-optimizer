@@ -432,6 +432,10 @@ globalThis.InspectorSharing=(()=>{
   document.addEventListener("pointerdown",event=>{if(calendar&&!busy&&!get(calendar.id+"-calendar").contains(event.target)&&!get(calendar.id+"-date").contains(event.target))closeCalendar(false);if(editing&&!busy&&!get("sharing-inline-editor").contains(event.target)&&!event.target.closest("[data-action=field]"))closeInline(false);});
   document.addEventListener("keydown",event=>{if(!busy&&event.key==="Escape"){if(calendar){event.preventDefault();closeCalendar();}else if(editing){event.preventDefault();closeInline();}}});
   const positionEditors=()=>{positionInline();positionCalendar();};
+  const sharingView=get("sharing-view");
+  sharingView?.addEventListener("transitionend",event=>{
+    if(event.target===sharingView&&event.propertyName==="transform")positionEditors();
+  });
   globalThis.addEventListener("resize",()=>{positionEditors();alignNetworkColumns();});
   document.addEventListener("scroll",positionEditors,true);
   function openDelete(row){
