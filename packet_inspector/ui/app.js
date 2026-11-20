@@ -6,6 +6,7 @@ globalThis.InspectorConnections = {
     const panel=get("connection-panel"), controls=get("connection-controls");
     const headerToggle=get("request-compression");
     const localLabel=controls.querySelector(".connection-local-label");
+    const restartBadge=get("restart-notice-open");
     const dialog=get("devices-confirm-dialog"), list=get("connection-devices-list");
     const applyButton=get("devices-confirm-apply"), cancelButton=get("devices-confirm-cancel");
     const nativePopover="popover" in HTMLElement.prototype;
@@ -130,16 +131,24 @@ globalThis.InspectorConnections = {
       const trigger = controls.getBoundingClientRect();
       const deviceToggle = list.querySelector(".connection-device-actions");
       const headerDivider = toggleDivider(headerToggle);
+      const labelLeft = trigger.left + localLabel.offsetLeft;
       if (deviceToggle) {
         const deviceInset = toggleDivider(deviceToggle) - deviceToggle.getBoundingClientRect().left;
-        const gap = headerDivider - localLabel.getBoundingClientRect().right - deviceInset;
+        const labelRight = labelLeft + localLabel.getBoundingClientRect().width;
+        const gap = headerDivider - labelRight - deviceInset;
         panel.style.setProperty("--connection-device-gap", `${Math.max(8, gap)}px`);
       }
       const bounds = panel.getBoundingClientRect();
+      const address = list.querySelector(".connection-device-info strong");
+      const addressInset = address ? address.getBoundingClientRect().left - bounds.left : 0;
       const left = deviceToggle
         ? bounds.left + headerDivider - toggleDivider(deviceToggle)
         : trigger.right - bounds.width;
-      panel.style.left = `${Math.max(12, Math.min(left, innerWidth - bounds.width - 12))}px`;
+      // When the restart badge is visible, keep the local tag clear of it.
+      const minLeft = address && restartBadge.dataset.visible === "true" ? labelLeft - addressInset : 12;
+      const panelLeft = Math.max(12, Math.min(Math.max(minLeft, left), innerWidth - bounds.width - 12));
+      panel.style.left = `${panelLeft}px`;
+      localLabel.style.translate = address ? `${panelLeft + addressInset - labelLeft}px` : "";
       if (!anchorPositioning) {
         const top = Math.max(12, Math.min(trigger.bottom + 6, innerHeight - bounds.height - 12));
         panel.style.top = `${top}px`;
@@ -281,13 +290,15 @@ globalThis.InspectorConnections = {
     document.addEventListener("pointerdown",event=>{if(!controls.contains(event.target)&&!panel.contains(event.target))hide();});
     document.addEventListener("keydown",event=>{if(event.key==="Escape"&&(isOpen()||openRequested)){hide();event.stopPropagation();}});
     globalThis.addEventListener("resize",place);
+    const restartBadgeObserver=new MutationObserver(place);
+    restartBadgeObserver.observe(restartBadge,{attributeFilter:["data-visible"]});
     applyButton.addEventListener("click",apply);
     cancelButton.addEventListener("click",()=>dialog.close());
     document.addEventListener("close",event=>{
       if(event.target instanceof HTMLDialogElement)offerReconnect();
       if(event.target===dialog)schedule();
     },true);
-    globalThis.addEventListener("pagehide",()=>{disposed=true;clearTimeout(timer);clearTimeout(closeTimer);});
+    globalThis.addEventListener("pagehide",()=>{disposed=true;restartBadgeObserver.disconnect();clearTimeout(timer);clearTimeout(closeTimer);});
     render();poll();
     return {render,hide};
   }

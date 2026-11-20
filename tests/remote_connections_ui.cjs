@@ -94,21 +94,25 @@ const localControls=[
         await page.keyboard.press('Escape');await panel.waitFor({state:'hidden'});
         await page.locator('#compression-connect').hover();await panel.waitFor({state:'visible'});
       };
+      const textLeft=locator=>locator.evaluate(node=>{
+        const text=document.createRange();
+        text.selectNodeContents(node);
+        return text.getBoundingClientRect().left;
+      });
       const assertAlignment=async()=>{
-        const rightEdge=locator=>locator.evaluate(node=>node.getBoundingClientRect().right);
         const divider=toggle=>toggle.evaluate(node=>{
           const [disconnect,connect]=node.children;
           return (disconnect.getBoundingClientRect().right+connect.getBoundingClientRect().left)/2;
         });
-        assert(Math.abs(await rightEdge(localLabel)-await rightEdge(serverAddress))<1,'The local label and server address share a right edge');
+        assert(Math.abs(await textLeft(localLabel)-await textLeft(serverAddress))<1,'The local label starts at the same position as the server address');
         assert(Math.abs(await divider(localToggle)-await divider(actions))<1,'The local and remote toggle dividers align');
         const metrics=locator=>locator.evaluate(node=>{
           const {top,height}=node.getBoundingClientRect();
           return {size:parseFloat(getComputedStyle(node).fontSize),centerY:top+height/2};
         });
         const [local,remote,localButton,remoteButton]=await Promise.all([localLabel,serverAddress,localConnect,actions.locator('button').first()].map(metrics));
-        assert.equal(local.size,remote.size,'The local label and server address use the same font size');
-        assert(local.size>localButton.size&&remote.size>remoteButton.size,'Device labels are larger than the action text');
+        assert(local.size<remote.size,'The local tag uses a compact font size');
+        assert(remote.size>remoteButton.size,'The server address is larger than the action text');
         assert(Math.abs(local.centerY-localButton.centerY)<1&&Math.abs(remote.centerY-remoteButton.centerY)<1,'Each device label is vertically centered with its controls');
         assert.equal(await serverAddress.evaluate(node=>node.scrollWidth<=node.clientWidth),true,'A full IPv4 address fits');
       };
@@ -317,9 +321,24 @@ const localControls=[
       assert.equal(await panel.getAttribute('aria-label'),'Server connections');
       assert.equal(await localLabel.textContent(),'Local');
       await assertAlignment();
+      await page.evaluate(()=>{
+        document.documentElement.classList.add('desktop-titlebar');
+        fixture.rows.push({id:'remote-b',name:'10.0.0.1',kind:'ssh',state:'connected'});
+      });
+      await reopenPanel();
+      await page.waitForFunction(()=>document.querySelectorAll('.connection-device').length===2);
+      await page.locator('#restart-notice-open').evaluate(node=>{node.dataset.visible='true';});
+      const localStart=await textLeft(localLabel);
+      for(const server of await serverAddress.all()){
+        assert(Math.abs(localStart-await textLeft(server))<1,'Addresses of different lengths align with the local label');
+      }
+      const restart=await page.locator('#restart-notice-open').boundingBox();
+      const viewSwitch=await page.locator('#view-toggle').boundingBox();
+      assert(viewSwitch.x+viewSwitch.width<=restart.x,'The restart badge clears the view switch');
+      assert((await localLabel.boundingBox()).x>=restart.x+restart.width,'The label clears the visible restart badge');
       await page.mouse.move(0,page.viewportSize().height-1);
       await page.keyboard.press('Escape');await panel.waitFor({state:'hidden'});
-      await page.evaluate(()=>fixture.rows.pop());
+      await page.evaluate(()=>fixture.rows.splice(1));
       const buttonColors=button=>{const style=getComputedStyle(button);return [style.color,style.backgroundColor];};
       const normalColors=await localConnect.evaluate(buttonColors);
       await localConnect.hover();
