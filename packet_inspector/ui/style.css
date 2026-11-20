@@ -545,7 +545,7 @@ button.other-session-group{background:#f5f2fc;border-color:#e7e0f5}
 #settings-dialog{
   --muted:#526174;
   --settings-label-width:172px;
-  --settings-inline-label-width:80px;
+  --settings-inline-label-width:76px;
   --settings-column-gap:12px;
   --settings-path-actions-width:190px;
   --settings-padding:28px;
@@ -566,7 +566,7 @@ button.other-session-group{background:#f5f2fc;border-color:#e7e0f5}
   line-height:1.5;
   background:var(--panel);
 }
-#settings-dialog:lang(zh){--settings-label-width:88px}
+#settings-dialog:lang(zh){--settings-label-width:88px;--settings-inline-label-width:64px}
 #settings-dialog[open]{display:flex;flex-direction:column}
 #settings-dialog>.dialog-heading{
   flex:none;
@@ -692,14 +692,13 @@ button.other-session-group{background:#f5f2fc;border-color:#e7e0f5}
 #settings-dialog .settings-inline-fields{display:flex;flex-wrap:wrap;gap:var(--settings-row-gap) 20px;min-inline-size:0}
 #settings-dialog .settings-inline-field{
   display:grid;grid-template-columns:var(--settings-inline-label-width) max-content;
-  align-items:center;column-gap:8px;max-inline-size:100%
+  align-items:center;column-gap:6px;max-inline-size:100%
 }
 #settings-dialog .settings-value-unit{
   display:flex;align-items:center;gap:8px;inline-size:96px;min-inline-size:0;max-inline-size:100%;
   block-size:var(--settings-field-height);padding:5px 10px;border:1px solid var(--line);
   border-radius:var(--settings-control-radius);background:var(--panel)
 }
-#settings-dialog .settings-value-unit:has(#budget){inline-size:120px}
 #settings-dialog .settings-value-unit:focus-within{outline:2px solid var(--accent);outline-offset:2px}
 #settings-dialog .settings-value-unit:has(input:disabled){background:var(--bg)}
 #settings-dialog .settings-value-unit input{flex:1;min-inline-size:0;block-size:20px;padding:0;border:0;border-radius:0;background:transparent;outline:0;box-shadow:none}
