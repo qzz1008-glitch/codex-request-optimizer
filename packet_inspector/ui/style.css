@@ -638,12 +638,12 @@ button.other-session-group{background:#f5f2fc;border-color:#e7e0f5}
 #settings-dialog .entry-port-status[data-state=error]{color:var(--danger)}
 #settings-dialog :is(#manual-compression-levels,#proxy-settings){min-inline-size:0;margin:0;padding:0;border:0}
 #settings-dialog #manual-compression-levels:disabled{--ink:var(--muted);position:relative;isolation:isolate;color:var(--muted)}
-#settings-dialog #manual-compression-levels:disabled::before{content:"";position:absolute;inset:-4px -8px;border:1px solid #d8dee7;border-radius:10px;background:#eef0f3;pointer-events:none;z-index:-1}
+#settings-dialog #manual-compression-levels:disabled::before{content:"";position:absolute;inset-block:-4px;inset-inline:-8px 0;border:1px solid #d8dee7;border-radius:10px;background:#eef0f3;pointer-events:none;z-index:-1}
 #settings-dialog #manual-compression-levels:disabled .zstd-level-control{opacity:.65}
 #settings-dialog #manual-compression-levels:disabled .zstd-level-trigger{background:#e3e7ed;border-color:#cbd2dc;opacity:1}
 #settings-dialog .auto-zstd-row{margin-inline-start:-8px;padding-inline-start:8px}
 #settings-dialog .auto-zstd-row:is(:hover,:focus-within),
-#settings-dialog #compression-settings:has(#manual-compression-levels:disabled:hover) .auto-zstd-row{border-radius:8px;background:var(--soft);box-shadow:0 0 0 1px #b9c9ed}
+#settings-dialog #compression-settings:has(#manual-compression-levels:disabled:hover) .auto-zstd-row{border-radius:8px;background:var(--soft);box-shadow:inset 0 0 0 1px #b9c9ed}
 #settings-dialog .zstd-level-trigger{inline-size:96px;max-inline-size:100%;justify-self:start;font-variant-numeric:tabular-nums;display:flex;align-items:center;justify-content:flex-end;gap:8px;padding-inline:10px;text-align:right}
 #zstd-level-dialog{width:min(640px,calc(100vw - 32px));max-height:min(640px,calc(100vh - 40px));padding:20px;overflow:hidden}
 #zstd-level-dialog[open]{display:flex;flex-direction:column}
