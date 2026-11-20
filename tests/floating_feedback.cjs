@@ -59,6 +59,12 @@ async function run(){
   await page.evaluate(language=>{uiI18n.setLanguage(language,{persist:false});updateStatus={state:'idle',current_version:'1.0.0'};renderUpdates();},language);
   assert.equal(await updates.locator('.settings-key').textContent(),language==='zh'?'软件版本':'Software version');
   assert.equal(await updates.locator('#updates-versions').textContent(),'1.0.0');
+  const [budgetFont,versionFont,statusFont]=await page.evaluate(()=>['budget-label','updates-versions','updates-message'].map(id=>{
+   const {fontFamily,fontSize,fontWeight,lineHeight}=getComputedStyle(document.getElementById(id));
+   return {fontFamily,fontSize,fontWeight,lineHeight};
+  }));
+  assert.deepEqual(versionFont,budgetFont,'The version uses the size limit label typography');
+  assert.deepEqual(statusFont,budgetFont,'The update status uses the size limit label typography');
   const before=await geometry(page,updateLayout);
   const [current,check,install,repository]=before;
   assert(current[0]+current[2]<=check[0],'The current version sits before the buttons');
