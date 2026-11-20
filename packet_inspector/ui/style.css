@@ -572,7 +572,8 @@ button.other-session-group{background:#f5f2fc;border-color:#e7e0f5}
 #settings-dialog>.dialog-heading{
   flex:none;
   align-items:center;
-  padding:20px var(--settings-padding);
+  padding-block:12px;
+  padding-inline:var(--settings-padding);
   border-bottom:1px solid var(--line);
   background:var(--panel);
 }
@@ -741,7 +742,13 @@ button.other-session-group{background:#f5f2fc;border-color:#e7e0f5}
 #settings-dialog .updates-actions button[aria-busy=true] .update-spinner{display:block}
 #settings-dialog .updates-details{display:flex;align-items:center;flex:1 1 auto;gap:12px;min-width:240px}
 #settings-dialog .updates-status{flex:1 1 auto;min-width:0;margin:0;overflow:hidden;text-align:left;text-overflow:ellipsis;white-space:nowrap}
-#settings-dialog>.settings-footer{flex:none;display:grid;grid-template-columns:minmax(0,1fr) auto auto;align-items:center;gap:12px;padding:16px var(--settings-padding);border-top:1px solid var(--line);background:var(--panel)}
+#settings-dialog>.settings-footer{
+  flex:none;display:grid;grid-template-columns:minmax(0,1fr) auto auto;align-items:center;gap:12px;
+  padding-block:12px;
+  padding-inline:var(--settings-padding);
+  border-top:1px solid var(--line);
+  background:var(--panel)
+}
 #settings-dialog .settings-footer .help{min-width:0;margin:0}
 #settings-dialog .settings-footer button{white-space:nowrap}
 #settings-dialog .settings-feedback{min-width:0}
