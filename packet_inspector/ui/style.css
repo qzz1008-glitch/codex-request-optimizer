@@ -634,7 +634,9 @@ input[type=checkbox][switch]:focus-visible{outline:2px solid var(--accent);outli
 #settings-dialog :is(button,input,select):focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 #settings-dialog .help{margin:10px 0 0;color:var(--muted);font-size:13px;line-height:20px;overflow-wrap:anywhere}
 #settings-dialog .help.error{color:var(--danger)}
-#settings-dialog :is(.runtime-inline-hint,.entry-port-hint,#storage-paths-hint,#proxy-detection-warning){text-align:end}
+#settings-dialog :is(.runtime-inline-hint,.entry-port-hint,#storage-paths-hint,#proxy-detection-warning){
+  padding-inline-end:12px;color:#606e81;text-align:end
+}
 #settings-dialog .settings-dirty{border-radius:8px;outline:2px solid var(--accent);outline-offset:3px;background-color:var(--soft)}
 #settings-dialog .settings-row{
   display:grid;grid-template-columns:min(var(--settings-label-width),34%) minmax(0,1fr);
