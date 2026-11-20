@@ -121,41 +121,41 @@ const localControls=[
       const assertDropdownFrame=async()=>{
         const frame=await controls.evaluate(node=>{
           const trigger=node.getBoundingClientRect(),surface=getComputedStyle(node,'::before');
-          return {left:trigger.left+parseFloat(surface.left),width:parseFloat(surface.width),bottom:trigger.bottom-parseFloat(surface.bottom),topBorder:surface.borderTopWidth};
+          return {left:trigger.left+parseFloat(surface.left),width:parseFloat(surface.width),
+            bottom:trigger.bottom-parseFloat(surface.bottom),topBorder:surface.borderTopWidth,
+            topRadii:[surface.borderTopLeftRadius,surface.borderTopRightRadius]};
         });
         const dropdown=await panel.boundingBox();
         assert.equal(frame.topBorder,'0px','The local row has no top border');
+        assert.deepEqual(frame.topRadii,['0px','0px'],'Both upper corners are square');
+        assert(await panel.evaluate(node=>Array.from(node.querySelectorAll('#connection-devices-list, .connection-device'))
+          .every(row=>getComputedStyle(row).borderTopWidth==='0px')),'Spacing separates the rows');
         assert(Math.abs(frame.left-dropdown.x)<1&&Math.abs(frame.width-dropdown.width)<1,'Both parts use the same left and right edges');
         assert(Math.abs(frame.bottom-dropdown.y)<1,'The dropdown starts flush with the local row');
         const [localActions,remoteActions]=await Promise.all([localToggle.boundingBox(),actions.first().boundingBox()]);
         const rightPadding=dropdown.x+dropdown.width-Math.max(localActions.x+localActions.width,remoteActions.x+remoteActions.width);
         assert(rightPadding>=2&&rightPadding<=12,`The right edge sits just past the action buttons (${rightPadding}px)`);
       };
-      const paused=await page.addStyleTag({content:'.header-compression::before, .connection-panel {animation-play-state: paused}'});
+      const paused=await page.addStyleTag({content:'.connection-panel {animation-play-state: paused}'});
       await reopenPanel();
       const [start,middle]=await panel.evaluate(menu=>{
-        const controls=document.getElementById('connection-controls');
-        const unfold=animation=>animation.animationName==='connection-expand';
-        const frameMotion=controls.getAnimations({subtree:true}).find(unfold);
-        const menuMotion=menu.getAnimations().find(unfold);
+        const menuMotion=menu.getAnimations().find(animation=>animation.animationName==='connection-drop');
         const {duration}=menuMotion.effect.getTiming();
         const maskParts=style=>style.maskSize.match(/calc\([^)]*\)|\S+/g);
         const box=menu.getBoundingClientRect();
         return [0,duration/2].map(time=>{
-          frameMotion.currentTime=menuMotion.currentTime=time;
+          menuMotion.currentTime=time;
           const style=getComputedStyle(menu);
           const [width,height]=maskParts(style);
-          const [frameWidth]=maskParts(getComputedStyle(controls,'::before'));
           const keepsHover=menu.contains(document.elementFromPoint(box.left+30,box.top+30));
-          return {width,height,frameWidth,keepsHover,position:style.maskPosition};
+          return {width,height,keepsHover,position:style.maskPosition};
         });
       });
       assert.equal(start.height,'0%','The remote rows start collapsed');
-      assert.notEqual(start.width,middle.width,'The dropdown grows to the left');
+      assert.equal(start.width,middle.width,'The dropdown keeps its full width throughout the reveal');
       assert.notEqual(start.height,middle.height,'The dropdown grows downward');
       for(const state of [start,middle]){
-        assert.equal(state.width,state.frameWidth,'Both rows extend left in sync');
-        assert.match(state.position,/^calc\(100%[^)]*\) 0%$/,'The reveal is anchored at the top right');
+        assert.equal(state.position,'50% 0%','The reveal is anchored at the top edge');
         assert(state.keepsHover,'The dropdown can receive the pointer during the reveal');
       }
       await paused.evaluate(node=>node.remove());

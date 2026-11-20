@@ -862,7 +862,6 @@ dialog{width:min(760px,calc(var(--desktop-width) - 80px));max-height:calc(var(--
   width: var(--connection-frame-width);
   box-sizing: border-box;
   border-inline: 1px solid var(--line);
-  border-radius: 10px 10px 0 0;
   background: var(--panel);
   z-index: -1;
 }
@@ -912,43 +911,27 @@ dialog{width:min(760px,calc(var(--desktop-width) - 80px));max-height:calc(var(--
   --connection-panel-width-cap: 416px;
 }
 @media (prefers-reduced-motion: no-preference) {
-  .header-compression[data-server-panel-open="hover"]::before,
   .header-compression[data-server-panel-open="hover"] + .connection-panel {
-    animation: connection-expand 200ms ease-out;
-  }
-  .header-compression[data-server-panel-open="hover"]::before {
-    --connection-reveal-height: 100%;
-  }
-  .header-compression[data-server-panel-open="hover"] .connection-local-label {
-    animation: connection-label-enter 200ms ease-out;
+    animation: connection-drop 200ms ease-out;
   }
 }
-/* Keep the pointer area stable as the frame expands. The mask extends past the shadow at the end. */
-@keyframes connection-expand {
+/* Keep the pointer area stable as the panel opens. Reveal the bottom shadow after the rows. */
+@keyframes connection-drop {
   from, to {
-    mask: linear-gradient(#000 0 0) right -16px top no-repeat border-box no-clip;
+    mask: linear-gradient(#000 0 0) center top no-repeat border-box no-clip;
   }
-  from {
-    mask-size: calc(var(--connection-reveal-width, 100%) + 16px) var(--connection-reveal-height, 0%);
-  }
-  85% {
-    mask-size: calc(100% + 16px) 100%;
-  }
+  from { mask-size: calc(100% + 32px) 0%; }
+  85% { mask-size: calc(100% + 32px) 100%; }
   to { mask-size: calc(100% + 32px) calc(100% + 26px); }
 }
-@keyframes connection-label-enter {
-  0%, 52% { opacity: 0; }
-  100% { opacity: 1; }
-}
-#connection-devices-list{border-top:1px solid var(--line);padding-top:6px}
+#connection-devices-list{padding-top:7px}
 .connection-device {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 7px 0;
-  border-top: 1px solid var(--line);
+  padding-block: 8px 7px;
 }
-.connection-device:first-child{border-top:0;padding-top:0}
+.connection-device:first-child{padding-top:0}
 .connection-device-info{display:flex;flex:1;align-items:center;gap:4px;min-width:0}
 .connection-device-info strong {
   min-width: 0;
