@@ -751,8 +751,19 @@ input[type=checkbox][switch]:focus-visible{outline:2px solid var(--accent);outli
 #settings-dialog .context-value:has(input:disabled){background:#eef0f3}
 #settings-dialog .context-value input:disabled{background:transparent;color:var(--muted);opacity:1}
 #settings-dialog .context-value input::placeholder{color:var(--muted);font-size:13px}
-#settings-dialog .record-limit-controls{display:grid;grid-template-columns:136px minmax(0,1fr)}
-#settings-dialog .record-limit-usage{text-align:start;color:var(--muted);font-size:13px;line-height:20px;font-variant-numeric:tabular-nums}
+#settings-dialog .record-limit-value{inline-size:160px;gap:3px}
+#settings-dialog .record-limit-value>.record-limit-prefix{
+  display:flex;flex:0 0 8.5ch;justify-content:flex-end;gap:3px;min-inline-size:max-content;
+  font-size:14px;font-variant-numeric:tabular-nums
+}
+#settings-dialog .record-limit-edit{display:grid;grid-template-columns:minmax(0,1fr);flex:1;min-inline-size:0;font-variant-numeric:tabular-nums}
+#settings-dialog .record-limit-edit:has(#storage-limit){flex:0 1 5ch}
+#settings-dialog .record-limit-edit :is(input,.record-limit-formatted){grid-area:1/1;align-self:center}
+#settings-dialog .record-limit-edit input{inline-size:100%;text-align:start}
+#settings-dialog .record-limit-formatted{visibility:hidden;pointer-events:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#settings-dialog .record-limit-edit:not(:focus-within) .record-limit-formatted{visibility:visible}
+#settings-dialog .record-limit-edit:not(:focus-within):has(.record-limit-formatted:not(:empty)) input{opacity:0}
+#settings-dialog .record-limit-edit:has(input:disabled) .record-limit-formatted{opacity:.55}
 #settings-dialog .repository-link{position:relative;inset-inline-end:8px;display:inline-flex;align-items:center;justify-content:center;flex:none;width:24px;height:24px;border-radius:6px;color:var(--muted)}
 #settings-dialog .repository-link:hover{color:var(--ink);background:var(--bg)}
 #settings-dialog .repository-link:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
@@ -798,7 +809,7 @@ input[type=checkbox][switch]:focus-visible{outline:2px solid var(--accent);outli
 }
 @container settings-dialog (max-width:500px){
   #settings-dialog>.settings-content{--settings-section-indent:12px}
-  #settings-dialog :is(.image-directory-row,.record-limit-controls,.settings-compound-controls){grid-template-columns:minmax(0,1fr)}
+  #settings-dialog :is(.image-directory-row,.settings-compound-controls){grid-template-columns:minmax(0,1fr)}
   #settings-dialog .settings-compound-controls{row-gap:0}
   #settings-dialog .settings-inline-field{inline-size:min(180px,100%);grid-template-columns:min(var(--settings-inline-label-width),40%) minmax(0,1fr)}
   #settings-dialog .settings-feedback{grid-column:1/-1}
