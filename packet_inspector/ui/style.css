@@ -636,7 +636,7 @@ input[type=checkbox][switch]:focus-visible{outline:2px solid var(--accent);outli
 #settings-dialog .settings-content>section:first-child{border-top:0}
 #settings-dialog .settings-content>section:last-child{padding-bottom:0}
 #settings-dialog label,
-#settings-dialog .settings-key{margin:0;color:var(--ink);font-size:14px;line-height:22px;font-weight:400}
+#settings-dialog .settings-key{margin:0;color:var(--ink)}
 #settings-dialog .settings-key{min-inline-size:0;margin-block-start:calc((var(--settings-control-height) - 22px) / 2);overflow-wrap:anywhere}
 #settings-dialog .settings-key:lang(zh){font-weight:500}
 #settings-dialog .settings-key:not(fieldset:disabled *){color:#486085}
@@ -650,6 +650,10 @@ input[type=checkbox][switch]:focus-visible{outline:2px solid var(--accent);outli
 #settings-dialog :is(button,input,select):focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 #settings-dialog .help{margin:10px 0 0;color:var(--muted);font-size:13px;line-height:20px;overflow-wrap:anywhere}
 #settings-dialog .help.error{color:var(--danger)}
+#settings-dialog label,
+#settings-dialog .settings-key,
+#settings-dialog #updates-versions,
+#settings-dialog .updates-status{font-size:1rem;line-height:calc(22 / 14);font-weight:400}
 #settings-dialog :is(.runtime-inline-hint,.entry-port-hint,#storage-paths-hint,#proxy-detection-warning){
   padding-inline-end:12px;color:#606e81;text-align:end
 }
