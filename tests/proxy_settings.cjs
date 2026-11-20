@@ -206,8 +206,9 @@ let browser,cases=0;
         assert.equal(controls[1].x,port.x,'The proxy controls start in the same column as the port input');
         assert.equal(controls[1].x,directory.x,'The proxy controls start in the same column as the directory input');
       }
+      const openDirectory=await page.locator('#storage-dir-open').boundingBox();
+      assert.equal(controls[3].width,openDirectory.width,'The test and open buttons share a width');
       if(width>=1120){
-        const openDirectory=await page.locator('#storage-dir-open').boundingBox();
         assert.equal(controls[3].x,openDirectory.x,'The test and open buttons start in the same column');
       }
       const rowBox=await proxyRow.boundingBox();

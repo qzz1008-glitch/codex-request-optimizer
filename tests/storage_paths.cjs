@@ -10,7 +10,7 @@ const elements=new Map(),requests=[],messages=[];
 const context={
   state:{status:{data_dir:'C:\\Inspector',storage_dir_supported:true,storage_layout:'grouped',open_directory_supported:true}},
   settingsEditing:false,settingsSaving:false,settingsBaseline:null,settingsLanguage:null,uiI18n:{language:'zh-CN'},
-  directoryOpening:new Set(),updateSettingsSaveState:()=>{},
+  directoryOpening:new Set(),
   api:async(path,data)=>{requests.push({path,data});return {opened:true};},
   setSettingsMessage:(text,error=false)=>messages.push({text,error}),
   selectedImageAnalysisMode:()=>'native',t:value=>value,
@@ -41,21 +41,14 @@ context.settingsEditing=false;context.fillStorageDirectories();
 assert.equal(context.$('storage-dir').value,'C:\\OldData');
 context.settingsSaving=true;context.fillStorageDirectories();
 assert.equal(context.$('storage-dir').disabled,true);
-assert.equal(context.$('storage-dir-reset').disabled,true);
-
-context.settingsSaving=false;context.state.status.storage_dir='C:\\Inspector';
-context.state.status.storage_layout='legacy';context.fillStorageDirectories();
-context.settingsBaseline=context.readSettingsDraft();
-context.resetStorageDirectory();
-assert.equal(context.changedSettings().length,0,'Same-path reset does not relocate legacy records');
-context.state.status.storage_layout='grouped';
-context.resetStorageDirectory();
-assert.equal(context.changedSettings().length,0,'Grouped default reset does not dirty unchanged settings');
+assert.equal(context.$('storage-dir-open').disabled,true);
+context.settingsSaving=false;
 
 const html=fs.readFileSync('packet_inspector/ui/index.html','utf8');
 const section=html.slice(html.indexOf('<section id="record-storage-settings"')).split('</section>')[0];
 assert.equal((section.match(/<input /g)||[]).length,3);
-for(const id of ['storage-dir','storage-dir-open','storage-dir-reset','packet-limit','storage-limit'])assert(section.includes(`id="${id}"`));
+assert.equal((section.match(/<button /g)||[]).length,1);
+for(const id of ['storage-dir','storage-dir-open','packet-limit','storage-limit'])assert(section.includes(`id="${id}"`));
 for(const id of ['log-dir','cache-dir','image-save-dir'])assert(!html.includes(`id="${id}"`));
 
 (async()=>{
@@ -90,5 +83,5 @@ for(const id of ['log-dir','cache-dir','image-save-dir'])assert(!html.includes(`
   assert.equal(context.$('storage-dir-open').disabled,false);
   context.state.status.storage_dir_supported=false;context.fillStorageDirectories();
   assert.equal(context.$('storage-dir').disabled,true);
-  console.log('Unified storage: edits, legacy preservation, directory actions and error recovery passed.');
+  console.log('Unified storage: edits, directory actions and error recovery passed.');
 })().catch(error=>{console.error(error);process.exitCode=1;});

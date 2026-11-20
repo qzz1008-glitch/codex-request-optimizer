@@ -2166,15 +2166,10 @@ function fillStorageDirectories() {
   const s=state.status,supported=!!s.storage_dir_supported,input=$("storage-dir");
   if(!settingsEditing)input.value=s.storage_dir||s.data_dir||"";
   input.placeholder=s.data_dir||"";
-  input.disabled=settingsSaving||!supported;$("storage-dir-reset").disabled=settingsSaving||!supported;
+  input.disabled=settingsSaving||!supported;
   $("storage-paths-hint").hidden=!s.storage_paths_pending;
   $("storage-paths-hint").textContent=s.storage_paths_pending?t("目录已保存，重启本软件后生效，原目录数据保留。"):"";
   fillDirectoryOpenButtons();
-}
-function resetStorageDirectory() {
-  if(settingsSaving||!state.status.storage_dir_supported)return;
-  $("storage-dir").value=state.status.data_dir||"";
-  updateSettingsSaveState();
 }
 function fillDirectoryOpenButtons() {
   $("storage-dir-open").disabled=settingsSaving||!state.status.open_directory_supported||directoryOpening.has("storage-dir");
@@ -3327,7 +3322,6 @@ action("proxy-test",testProxySettings);
 $("proxy-mode").addEventListener("change",()=>{fillProxySettings();updateSettingsSaveState();});
 $("proxy-settings").addEventListener("input",()=>setProxyTestStatus());
 action("storage-dir-open",()=>openSettingsDirectory("storage-dir"));
-action("storage-dir-reset",resetStorageDirectory);
 $("settings-dialog").addEventListener("cancel",event=>{event.preventDefault();closeSettings();});
 $("settings-dialog").addEventListener("close",()=>{
   if(!$("settings-dialog").open){closeZstdLevelPicker(false);discardSettingsDraft();}
