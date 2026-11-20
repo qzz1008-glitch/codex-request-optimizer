@@ -8,8 +8,8 @@ if(!fs.existsSync(executablePath)){console.log(JSON.stringify({skipped:'No brows
 const root=path.join(__dirname,'../packet_inspector/ui'),read=name=>fs.readFileSync(path.join(root,name),'utf8'),app=read('app.js');
 const extract=(start,end)=>app.slice(app.indexOf(start),app.indexOf(end,app.indexOf(start)));
 const updateLabels={
- zh:{check:'检查更新',available:'立即升级',checking:'检查中',downloading:'升级中',upgrading:'升级中'},
- en:{check:'Check',available:'Update',checking:'Wait',downloading:'Wait',upgrading:'Wait'},
+ zh:{check:'检查更新',install:'立即升级',checking:'检查中',installing:'升级中'},
+ en:{check:'Check',install:'Update',checking:'Wait',installing:'Wait'},
 };
 let browser,cases=0;
 async function load(tray=false){
@@ -41,7 +41,7 @@ async function run(){
   "function el(tag,cls,value){const node=document.createElement(tag);node.className=cls;node.textContent=value;return node;}",
   extract('function renderUpdates()','async function selectPacket('),
   app.match(/^function action\(.*$/m)[0],
-  app.match(/^action\("updates-action",.*$/m)[0],
+  app.match(/^action\("updates-(?:check|install)",.*$/gm).join('\n'),
   extract('globalThis.InspectorRestartNotice = {','\nconst $ ='),
   "window.restartNotices=InspectorRestartNotice.create({status:()=>state.status,request:async()=>{},openSettings:async()=>{}});",
   extract('function setSettingsMessage(','async function runSettingsSaveStep('),
@@ -51,21 +51,29 @@ async function run(){
  ].join('\n')});
  await page.evaluate(()=>document.getElementById('settings-dialog').showModal());
  const updates=page.locator('#general-settings > #updates-settings');
- const updateButton=updates.locator('#updates-action');
- const updateLayout=['updates-settings','updates-action','updates-versions','settings-dialog','settings-save','settings-restore'];
- assert.equal(await updates.locator('button').count(),1);
- for(const width of [1120,1600]){await page.setViewportSize({width,height:900});
+ const checkButton=updates.locator('#updates-check'),installButton=updates.locator('#updates-install');
+ const updateLayout=['updates-settings','updates-check','updates-install','updates-versions','settings-dialog','settings-save','settings-restore'];
+ assert.equal(await updates.locator('button').count(),2);
+ for(const width of [320,1120,1600]){await page.setViewportSize({width,height:900});
  for(const language of ['zh','en']){
   await page.evaluate(language=>{uiI18n.setLanguage(language,{persist:false});updateStatus={state:'idle',current_version:'1.0.0'};renderUpdates();},language);
   assert.equal(await updates.locator('.settings-key').textContent(),language==='zh'?'软件更新':'Software update');
   const before=await geometry(page,updateLayout);
+  const [row,check,install,current]=before;
+  assert.equal(check[1],install[1],'The two update buttons share a row');
+  assert(check[0]+check[2]<=install[0]&&install[0]+install[2]<=current[0],'Both buttons sit before the version');
+  assert(install[0]+install[2]<=row[0]+row[2]+1,'Both buttons fit inside the visible update row');
   for(const status of ['checking','current','available','downloading','upgrading','complete','error']){
    await page.evaluate(status=>{updateStatus={state:status,current_version:'1.0.0',latest_version:'1.1.0',error:'Synthetic update error '.repeat(30)};renderUpdates();},status);
-   const busy=['checking','downloading','upgrading'].includes(status);
-   assert.equal(await updateButton.textContent(),updateLabels[language][status]??updateLabels[language].check);
-   assert.equal(await updateButton.getAttribute('aria-busy'),String(busy));
-   assert.equal(await updateButton.isDisabled(),busy);
-   assert.equal(await updateButton.locator('.update-spinner').isVisible(),busy);
+   const checking=status==='checking',installing=['downloading','upgrading'].includes(status);
+   assert.equal(await checkButton.textContent(),updateLabels[language][checking?'checking':'check']);
+   assert.equal(await installButton.textContent(),updateLabels[language][installing?'installing':'install']);
+   assert.equal(await checkButton.getAttribute('aria-busy'),String(checking));
+   assert.equal(await installButton.getAttribute('aria-busy'),String(installing));
+   assert.equal(await checkButton.isDisabled(),checking||installing);
+   assert.equal(await installButton.isDisabled(),status!=='available');
+   assert.equal(await checkButton.locator('.update-spinner').isVisible(),checking);
+   assert.equal(await installButton.locator('.update-spinner').isVisible(),installing);
    await noPopup(page);assert(await page.locator('#updates-message').isVisible());
    assert.equal(await page.locator('#updates-message').getAttribute('title'),await page.locator('#updates-message').textContent());
    const [version,result]=await geometry(page,['updates-versions','updates-message']);
@@ -87,35 +95,42 @@ async function run(){
    await openSettings();
   },language);
   assert.equal(await page.locator('#updates-message').isVisible(),false,'unchecked settings show only the current version');
-  assert.equal(await updateButton.textContent(),updateLabels[language].check);
-  await updateButton.click();
+  assert.equal(await checkButton.textContent(),updateLabels[language].check);
+  assert.equal(await installButton.isDisabled(),true);
+  await page.evaluate(()=>performUpdate('install'));
+  assert.deepEqual(await page.evaluate(()=>updateRequests.filter(action=>action!=='status')),[]);
+  await checkButton.click();
   await page.waitForFunction(()=>updateStatus?.state==='available'&&!updateBusy);
-  assert.equal(await updateButton.textContent(),updateLabels[language].available);
+  assert.equal(await installButton.isDisabled(),false);
   assert.deepEqual(await page.evaluate(()=>updateRequests.filter(action=>action!=='status')),['check']);cases++;
   for(let reopen=0;reopen<2;reopen++){
    await page.evaluate(async()=>{closeSettings();await openSettings();});
    assert(await page.locator('#updates-message').isVisible(),'an available update remains visible after reopening settings');
    assert((await page.locator('#updates-message').textContent()).includes('1.1.0'));
-   assert.equal(await updateButton.isDisabled(),false);
-   assert.equal(await updateButton.textContent(),updateLabels[language].available);
+   assert.equal(await checkButton.isDisabled(),false);
+   assert.equal(await installButton.isDisabled(),false);
    assert.equal(await page.evaluate(()=>updateRequests.filter(action=>action==='check').length),1,'reopening reads cached status without another release check');cases++;
   }
   await page.evaluate(async()=>{closeSettings();updateStatus=null;updateFeedbackVisible=false;await openSettings();});
   assert(await page.locator('#updates-message').isVisible(),'available status loaded from the backend is also shown');
   assert((await page.locator('#updates-message').textContent()).includes('1.1.0'));
-  assert.equal(await updateButton.textContent(),updateLabels[language].available);cases++;
-  await updateButton.click();
+  assert.equal(await installButton.isDisabled(),false);cases++;
+  await checkButton.click();
+  await page.waitForFunction(()=>updateStatus?.state==='available'&&!updateBusy&&updateRequests.filter(action=>action==='check').length===2);
+  assert.deepEqual(await page.evaluate(()=>updateRequests.filter(action=>action!=='status')),['check','check'],'Checking again keeps the check action');
+  await installButton.click();
   await page.waitForFunction(()=>updateStatus?.state==='downloading'&&!updateBusy);
-  assert.deepEqual(await page.evaluate(()=>updateRequests.filter(action=>action!=='status')),['check','install']);
-  assert.equal(await updateButton.textContent(),updateLabels[language].downloading);
-  assert.equal(await updateButton.isDisabled(),true);
+  assert.deepEqual(await page.evaluate(()=>updateRequests.filter(action=>action!=='status')),['check','check','install']);
+  assert.equal(await installButton.textContent(),updateLabels[language].installing);
+  assert.equal(await checkButton.isDisabled(),true);
+  assert.equal(await installButton.isDisabled(),true);
   await page.evaluate(async()=>{cachedUpdate={state:'complete',current_version:'1.1.0'};await loadUpdates();});
-  assert.equal(await updateButton.textContent(),updateLabels[language].check);
-  assert.equal(await updateButton.isDisabled(),false);cases++;
+  assert.equal(await checkButton.isDisabled(),false);
+  assert.equal(await installButton.isDisabled(),true);cases++;
   await page.evaluate(async()=>{closeSettings();cachedUpdate={state:'current',current_version:'1.1.0',latest_version:'1.1.0'};updateStatus=null;updateFeedbackVisible=false;await openSettings();});
   assert.equal(await page.locator('#updates-message').isVisible(),false,'a current cached version keeps the default display');
-  assert.equal(await updateButton.textContent(),updateLabels[language].check);
-  assert.equal(await updateButton.isDisabled(),false);cases++;
+  assert.equal(await checkButton.isDisabled(),false);
+  assert.equal(await installButton.isDisabled(),true);cases++;
   await page.evaluate(()=>closeSettings());
  }
  await page.evaluate(()=>document.getElementById('settings-dialog').showModal());

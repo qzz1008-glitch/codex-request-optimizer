@@ -254,7 +254,10 @@
       <div id="updates-settings" class="settings-row">
         <span class="settings-key">软件更新</span>
         <div class="settings-controls updates-actions">
-          <button id="updates-action" type="button" aria-busy="false"><span class="update-spinner" aria-hidden="true"></span><span id="updates-action-label">检查更新</span></button>
+          <div class="updates-buttons">
+            <button id="updates-check" type="button" aria-busy="false"><span class="update-spinner" aria-hidden="true"></span><span id="updates-check-label">检查更新</span></button>
+            <button id="updates-install" class="primary" type="button" aria-busy="false" disabled><span class="update-spinner" aria-hidden="true"></span><span id="updates-install-label">立即升级</span></button>
+          </div>
           <div class="updates-details">
             <p id="updates-versions" class="muted help"></p>
             <span id="updates-message" data-feedback-inline class="help updates-status" role="status" aria-atomic="true" hidden></span>
