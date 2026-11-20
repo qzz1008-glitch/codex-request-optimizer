@@ -243,8 +243,9 @@ async function run(){
  await recovery.evaluate(async()=>{replies.push({});await callApi('/api/status');});await noPopup(recovery);
  assert.equal(await recovery.locator('#settings-inline-feedback').textContent(),'');cases++;
  const sharing=await load();
+ await sharing.emulateMedia({reducedMotion:'reduce'});
  await sharing.evaluate(()=>{
-  document.getElementById('records-view').hidden=true;document.getElementById('sharing-view').hidden=false;
+  document.getElementById('records-view').inert=true;document.getElementById('sharing-view').inert=false;
   const credentials=['quota','exit'].map(kind=>({id:kind+'1',kind,direction:'out',label:kind,enabled:true,expires_at:null,weekly_reset:false,budget_nanos:10e9,totals:{},daily:{}}));
   const state={supported:true,protocol:4,credentials_supported:true,weekly_reset_days_supported:true,used_quota_edit_supported:true,host:{active:true,running:true},client:{active:false},egress:{supported:true,host:{active:false},selection:{mode:'local'}},credentials};
   window.fetch=async(_,options)=>{
