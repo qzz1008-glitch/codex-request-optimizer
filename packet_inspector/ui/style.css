@@ -638,6 +638,8 @@ input[type=checkbox][switch]:focus-visible{outline:2px solid var(--accent);outli
 #settings-dialog label,
 #settings-dialog .settings-key{margin:0;color:var(--ink);font-size:14px;line-height:22px;font-weight:400}
 #settings-dialog .settings-key{min-inline-size:0;margin-block-start:calc((var(--settings-control-height) - 22px) / 2);overflow-wrap:anywhere}
+#settings-dialog .settings-key:lang(zh){font-weight:500}
+#settings-dialog .settings-key:not(fieldset:disabled *){color:#486085}
 #settings-dialog :is(button,input,select){font:inherit;font-size:14px}
 #settings-dialog button{min-height:var(--settings-control-height);padding:5px 10px;border-radius:var(--settings-control-radius);line-height:20px}
 #settings-dialog :is(input:not([type=checkbox],[type=radio]),select){block-size:var(--settings-field-height);margin:0;padding:5px 10px;border:1px solid var(--line);border-radius:var(--settings-control-radius);background:var(--panel);color:var(--ink);line-height:20px;text-align:right}
