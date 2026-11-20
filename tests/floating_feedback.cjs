@@ -52,22 +52,28 @@ async function run(){
  await page.evaluate(()=>document.getElementById('settings-dialog').showModal());
  const updates=page.locator('#general-settings > #updates-settings');
  const checkButton=updates.locator('#updates-check'),installButton=updates.locator('#updates-install');
- const updateLayout=['updates-settings','updates-check','updates-install','updates-versions','settings-dialog','settings-save','settings-restore'];
+ const updateLayout=['updates-versions','updates-check','updates-install','updates-repository','updates-settings','settings-dialog','settings-save','settings-restore'];
  assert.equal(await updates.locator('button').count(),2);
  for(const width of [320,1120,1600]){await page.setViewportSize({width,height:900});
  for(const language of ['zh','en']){
   await page.evaluate(language=>{uiI18n.setLanguage(language,{persist:false});updateStatus={state:'idle',current_version:'1.0.0'};renderUpdates();},language);
-  assert.equal(await updates.locator('.settings-key').textContent(),language==='zh'?'软件更新':'Software update');
+  assert.equal(await updates.locator('.settings-key').textContent(),language==='zh'?'软件版本':'Software version');
   const before=await geometry(page,updateLayout);
-  const [row,check,install,current]=before;
-  const [repository,hint]=await geometry(page,['updates-repository','startup-hint']);
+  const [current,check,install,repository]=before;
+  assert(current[0]+current[2]<=check[0],'The current version sits before the buttons');
   assert.equal(check[1],install[1],'The two update buttons share a row');
-  assert(check[0]+check[2]<=install[0]&&install[0]+install[2]<=repository[0]&&repository[0]+repository[2]<=current[0],'Update controls sit before the version');
-  assert(install[0]+install[2]<=row[0]+row[2]+1,'Both buttons fit inside the visible update row');
-  if(width>320){
-   const hintInset=await page.locator('#startup-hint').evaluate(node=>parseFloat(getComputedStyle(node).paddingInlineEnd));
-   assert(Math.abs(current[0]+current[2]-(hint[0]+hint[2]-hintInset))<=1,'The current version aligns with the right-aligned settings hints');
-  }
+  assert(check[0]+check[2]<=install[0]&&install[0]+install[2]<=repository[0],'Update controls follow the version in order');
+  const controls=updates.locator('.updates-actions');
+  assert(await controls.evaluate(node=>{
+   const {left,right}=node.getBoundingClientRect();
+   const buttons=node.querySelector('.updates-buttons');
+   const originalScroll=node.scrollLeft;
+   node.scrollLeft+=buttons.getBoundingClientRect().left-left;
+   const bounds=buttons.getBoundingClientRect();
+   node.scrollLeft=originalScroll;
+   return bounds.left>=left-1&&bounds.right<=right+1;
+  }),'Both buttons can be viewed together');
+  if(width>320)assert(await controls.evaluate(node=>node.scrollWidth===node.clientWidth),'The desktop update row fits without scrolling');
   for(const status of ['checking','current','available','downloading','upgrading','complete','error']){
    await page.evaluate(status=>{updateStatus={state:status,current_version:'1.0.0',latest_version:'1.1.0',error:'Synthetic update error '.repeat(30)};renderUpdates();},status);
    const checking=status==='checking',installing=['downloading','upgrading'].includes(status);
@@ -82,7 +88,7 @@ async function run(){
    await noPopup(page);assert(await page.locator('#updates-message').isVisible());
    assert.equal(await page.locator('#updates-message').getAttribute('title'),await page.locator('#updates-message').textContent());
    const [version,result]=await geometry(page,['updates-versions','updates-message']);
-   assert(result[0]+result[2]<=version[0]&&Math.abs(result[1]+result[3]/2-version[1]-version[3]/2)<=1);
+   assert(result[0]>=repository[0]+repository[2]&&Math.abs(result[1]+result[3]/2-version[1]-version[3]/2)<=1);
    assert.deepEqual(await geometry(page,updateLayout),before);
   }cases++;
  }}
