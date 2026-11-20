@@ -4,7 +4,6 @@ globalThis.InspectorConnections = {
   create({request}) {
     const get=id=>document.getElementById(id), tr=value=>uiI18n.t(value);
     const panel=get("connection-panel"), controls=get("connection-controls");
-    const headerActions=controls.parentElement;
     const headerToggle=get("request-compression");
     const localLabel=controls.querySelector(".connection-local-label");
     const restartBadge=get("restart-notice-open");
@@ -161,11 +160,9 @@ globalThis.InspectorConnections = {
       panel.style.left = `${panelLeft}px`;
       controls.style.setProperty("--connection-frame-left", `${panelLeft - trigger.left}px`);
       controls.style.setProperty("--connection-frame-width", `${width}px`);
-      const revealWidth = Math.min(width, panelLeft + width - localToggle.left + 4);
-      headerActions.style.setProperty("--connection-reveal-width", `${revealWidth}px`);
       localLabel.style.translate = `${panelLeft + addressInset - trigger.left - localLabel.offsetLeft}px`;
       if (badgeVisible) {
-        const gap = parseFloat(getComputedStyle(headerActions).columnGap) || 0;
+        const gap = parseFloat(getComputedStyle(controls.parentElement).columnGap) || 0;
         const badgeRight = trigger.left - gap;
         restartBadge.style.setProperty("--connection-badge-offset", `${localToggle.left - 8 - badgeRight}px`);
       }
