@@ -8,6 +8,7 @@ globalThis.InspectorConnections = {
     const localLabel=controls.querySelector(".connection-local-label");
     const restartBadge=get("restart-notice-open");
     const viewToggle=get("view-toggle");
+    const settingsButton=get("settings-open");
     const dialog=get("devices-confirm-dialog"), list=get("connection-devices-list");
     const applyButton=get("devices-confirm-apply"), cancelButton=get("devices-confirm-cancel");
     const nativePopover="popover" in HTMLElement.prototype;
@@ -133,25 +134,25 @@ globalThis.InspectorConnections = {
       if (!isOpen()) return;
       const trigger = controls.getBoundingClientRect();
       const localToggle = headerToggle.getBoundingClientRect();
+      const settingsLeft = settingsButton.getBoundingClientRect().left;
+      const panelRight = Math.min(innerWidth - 12, (localToggle.right + settingsLeft) / 2);
+      const frameEndPadding = Math.max(0, panelRight - localToggle.right);
       const label = localLabel.getBoundingClientRect();
       const deviceToggle = list.querySelector(".connection-device-actions");
       const address = list.querySelector(".connection-device-info strong");
       const badgeVisible = restartBadge.dataset.visible === "true";
       panel.style.setProperty("--connection-panel-top", `${trigger.bottom + 4}px`);
       panel.style.paddingInlineEnd = "";
-      let frameEndPadding = 6;
       if (deviceToggle) {
         const localEnd = localToggle.right - toggleDivider(headerToggle);
         const remoteEnd = deviceToggle.getBoundingClientRect().right - toggleDivider(deviceToggle);
         // Align both dividers while allowing for the scrollbar and the two different button widths.
         const edgeInset = panel.offsetWidth - panel.clientWidth - 1;
-        frameEndPadding = Math.max(frameEndPadding, edgeInset + remoteEnd - localEnd);
-        panel.style.paddingInlineEnd = `${frameEndPadding + localEnd - remoteEnd - edgeInset}px`;
+        panel.style.paddingInlineEnd = `${Math.max(0, frameEndPadding + localEnd - remoteEnd - edgeInset)}px`;
       }
       const addressInset = address ? address.getBoundingClientRect().left - panel.getBoundingClientRect().left : 7;
       const badgeSpace = badgeVisible ? restartBadge.offsetWidth + 16 : 8;
       const minWidth = addressInset + label.width + badgeSpace + localToggle.width + frameEndPadding;
-      const panelRight = Math.min(innerWidth - 12, trigger.right + frameEndPadding);
       const availableWidth = panelRight - viewToggle.getBoundingClientRect().right - 4;
       panel.style.setProperty("--connection-panel-min-width", `${minWidth}px`);
       panel.style.setProperty("--connection-panel-available-width", `${Math.max(minWidth, availableWidth)}px`);

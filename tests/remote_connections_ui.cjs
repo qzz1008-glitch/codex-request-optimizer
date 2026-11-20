@@ -132,9 +132,9 @@ const localControls=[
           .every(row=>getComputedStyle(row).borderTopWidth==='0px')),'Spacing separates the rows');
         assert(Math.abs(frame.left-dropdown.x)<1&&Math.abs(frame.width-dropdown.width)<1,'Both parts use the same left and right edges');
         assert(Math.abs(frame.bottom-dropdown.y)<1,'The dropdown starts flush with the local row');
-        const [localActions,remoteActions]=await Promise.all([localToggle.boundingBox(),actions.first().boundingBox()]);
-        const rightPadding=dropdown.x+dropdown.width-Math.max(localActions.x+localActions.width,remoteActions.x+remoteActions.width);
-        assert(rightPadding>=2&&rightPadding<=12,`The right edge sits just past the action buttons (${rightPadding}px)`);
+        const [localActions,settings]=await Promise.all([localToggle.boundingBox(),page.locator('#settings-open').boundingBox()]);
+        const midpoint=(localActions.x+localActions.width+settings.x)/2;
+        assert(Math.abs(dropdown.x+dropdown.width-midpoint)<1,'The right edge bisects the gap before Settings');
       };
       const paused=await page.addStyleTag({content:'.connection-panel {animation-play-state: paused}'});
       await reopenPanel();
@@ -397,6 +397,12 @@ const localControls=[
       await page.locator('#restart-notice-open').evaluate(node=>node.addEventListener('click',()=>fixture.badgeClicked=true,{once:true}));
       await page.locator('#restart-notice-open').click();
       assert.equal(await page.evaluate(()=>fixture.badgeClicked),true,'The restart notice stays clickable inside the open dropdown');
+      await page.evaluate(()=>{
+        for(let index=1;index<=20;index++)fixture.rows.push({id:`scroll-${index}`,name:`10.0.1.${index}`,kind:'ssh',state:'connected'});
+      });
+      await reopenPanel();
+      assert(await panel.evaluate(node=>{node.scrollTop=60;return node.scrollTop>0;}),'A long server list still scrolls');
+      await assertDropdownFrame();
       await page.mouse.move(0,page.viewportSize().height-1);
       await page.keyboard.press('Escape');await panel.waitFor({state:'hidden'});
       await page.evaluate(()=>fixture.rows.splice(1));

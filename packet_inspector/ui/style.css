@@ -904,7 +904,6 @@ dialog{width:min(760px,calc(var(--desktop-width) - 80px));max-height:calc(var(--
   max-height: calc(100dvh - var(--connection-panel-top, 50px) - 12px);
   overflow: auto;
   scrollbar-width: thin;
-  scrollbar-gutter: stable;
   margin: 0;
   padding-block: 0 6px;
   padding-inline: 6px 5px;
