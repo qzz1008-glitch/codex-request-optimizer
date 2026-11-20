@@ -1076,6 +1076,7 @@ const uiI18n = (() => {
     "上传预算（字节）":"Upload budget (bytes)",
     "存储上限":"Storage limit",
     "记录上限":"Request limit",
+    "settings.unit.requests":"req.",
     "详情上限不能大于记录上限":"The detail limit cannot exceed the request limit",
     "超出预算时标记超额，记录满后自动清理旧记录。":"Flag uploads over budget and remove older records when storage is full.",
     "保存观察设置":"Save capture settings",
@@ -1294,7 +1295,7 @@ const uiI18n = (() => {
     const node=walker.currentNode;
     if(!node.parentElement?.closest("script,style") && /[\u4e00-\u9fff]/.test(node.nodeValue)) {
       const original=node.nodeValue, content=original.trim(), key=node.parentElement?.dataset.i18n||content;
-      textNodes.push({node,key,before:original.slice(0,original.indexOf(content)),after:original.slice(original.indexOf(content)+content.length)});
+      textNodes.push({node,key,original,before:original.slice(0,original.indexOf(content)),after:original.slice(original.indexOf(content)+content.length)});
     }
   }
   for(const node of document.querySelectorAll("[title],[placeholder],[aria-label]")) {
@@ -1317,7 +1318,10 @@ const uiI18n = (() => {
   }
   function apply() {
     document.documentElement.lang=language==="en"?"en":"zh-CN";
-    for(const {node,key,before,after} of textNodes)if(node.isConnected)node.nodeValue=before+t(key)+after;
+    for(const {node,key,original,before,after} of textNodes)if(node.isConnected){
+      const translated=t(key);
+      node.nodeValue=translated===key?original:before+translated+after;
+    }
     for(const {node,name,value} of attributes)if(node.isConnected)node.setAttribute(name,t(value));
     for(const [node,render] of boundText) {
       if(node.isConnected)node.textContent=render();else boundText.delete(node);
