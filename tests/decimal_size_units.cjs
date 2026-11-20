@@ -40,7 +40,7 @@ const html=fs.readFileSync('packet_inspector/ui/index.html','utf8'),i18n=fs.read
 assert.match(html,/id="budget-unit"[^>]*>KB<\/span>/);
 assert.match(html,/<span id="packet-limit-label" class="settings-key">记录条数<\/span>/);
 assert.match(html,/<span id="storage-limit-label" class="settings-key">存储容量<\/span>/);
-assert.match(html,/<span id="packet-limit-unit" class="sr-only"[^>]*>条<\/span>/);
+assert.match(html,/<span id="packet-limit-unit" data-i18n="settings.unit.requests">条<\/span>/);
 assert.match(html,/<input id="storage-limit" type="number" min="17" max="8590" step="1"/);
 assert.match(html,/<span id="storage-limit-unit">MB<\/span>/);
 assert(!/\b(?:KiB|MiB|GiB|kB)\b/.test(html+i18n));
