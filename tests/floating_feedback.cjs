@@ -50,12 +50,14 @@ async function run(){
   extract('function message(','function fail(')
  ].join('\n')});
  await page.evaluate(()=>document.getElementById('settings-dialog').showModal());
- const updateButton=page.locator('#updates-action');
+ const updates=page.locator('#general-settings > #updates-settings');
+ const updateButton=updates.locator('#updates-action');
  const updateLayout=['updates-settings','updates-action','updates-versions','settings-dialog','settings-save','settings-restore'];
- assert.equal(await page.locator('#updates-settings button').count(),1);
+ assert.equal(await updates.locator('button').count(),1);
  for(const width of [1120,1600]){await page.setViewportSize({width,height:900});
  for(const language of ['zh','en']){
   await page.evaluate(language=>{uiI18n.setLanguage(language,{persist:false});updateStatus={state:'idle',current_version:'1.0.0'};renderUpdates();},language);
+  assert.equal(await updates.locator('.settings-key').textContent(),language==='zh'?'软件更新':'Software update');
   const before=await geometry(page,updateLayout);
   for(const status of ['checking','current','available','downloading','upgrading','complete','error']){
    await page.evaluate(status=>{updateStatus={state:status,current_version:'1.0.0',latest_version:'1.1.0',error:'Synthetic update error '.repeat(30)};renderUpdates();},status);
