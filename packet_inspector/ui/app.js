@@ -2457,22 +2457,24 @@ async function saveSettings() {
   }
 }
 function renderUpdates() {
-  const u=updateStatus, busy=settingsSaving||updateBusy||["checking","downloading","upgrading"].includes(u?.state);
+  const u=updateStatus;
   const supported=u?.supported!==false&&state.status?.updates_supported!==false;
   const currentVersion=u?.current_version||state.status?.version;
   $("updates-versions").textContent=currentVersion?t("当前版本：{version}").replace("{version}",currentVersion):"";
-  $("updates-check").disabled=busy||!supported;$("updates-install").disabled=busy||!supported||u?.state!=="available";
-  const labels={idle:"可检查 GitHub 上的最新版本。",checking:"正在检查更新…",current:"已是最新版本。",available:"发现新版本，可以升级。",downloading:"正在下载并校验升级包…",upgrading:"正在升级，旧请求继续完成…",complete:"升级已完成。"};
   const displayedState=updateBusy?(updateAction==="check"?"checking":"downloading"):u?.state;
   const checking=displayedState==="checking",installing=["downloading","upgrading"].includes(displayedState);
-  if(checking||installing||displayedState==="available")updateFeedbackVisible=true;
-  $("updates-check").setAttribute("aria-busy",String(checking));
-  $("updates-install").setAttribute("aria-busy",String(installing));
-  $("updates-check-label").textContent=t(checking?"检查中":"检查更新");
-  $("updates-install-label").textContent=t(installing?"升级中":"立即升级");
+  const busy=checking||installing,available=displayedState==="available";
+  if(busy||available)updateFeedbackVisible=true;
+  const button=$("updates-action");
+  const buttonLabels={checking:"检查中",available:"立即升级",downloading:"升级中",upgrading:"升级中"};
+  button.disabled=settingsSaving||busy||!supported;
+  button.classList.toggle("primary",supported&&(available||installing));
+  button.setAttribute("aria-busy",String(supported&&busy));
+  $("updates-action-label").textContent=t((supported&&buttonLabels[displayedState])||"检查更新");
+  const labels={idle:"可检查 GitHub 上的最新版本。",checking:"正在检查更新…",current:"已是最新版本。",available:"发现新版本，可以升级。",downloading:"正在下载并校验升级包…",upgrading:"正在升级，旧请求继续完成…",complete:"升级已完成。"};
   const message=$("updates-message");
   message.hidden=!updateFeedbackVisible&&supported;
-  message.textContent=!supported?t("Linux 版请通过替换安装包更新。"):displayedState==="error"?t(u.error):displayedState==="available"&&u.latest_version?t("最新版本：{version}").replace("{version}",u.latest_version):t(labels[displayedState]||labels.idle);
+  message.textContent=!supported?t("Linux 版请通过替换安装包更新。"):displayedState==="error"?t(u.error):available&&u.latest_version?t("最新版本：{version}").replace("{version}",u.latest_version):t(labels[displayedState]||labels.idle);
   message.title=message.textContent;
   message.classList.toggle("error",supported&&displayedState==="error");
 }
@@ -2483,9 +2485,10 @@ async function loadUpdates() {
   catch(error){if(revision===updateRevision&&!updateBusy)updateStatus={...updateStatus,state:"error",error:error.message};}
   finally {updateStatusLoading=false;renderUpdates();}
 }
-async function performUpdate(which) {
+async function performUpdate() {
   if(updateStatus?.supported===false||state.status?.updates_supported===false)return;
   if(settingsSaving||updateBusy||["checking","downloading","upgrading"].includes(updateStatus?.state))return;
+  const which=updateStatus?.state==="available"?"install":"check";
   updateRevision++;updateBusy=true;updateAction=which;updateFeedbackVisible=true;renderUpdates();
   try {
     updateStatus=await api("/api/updates",{action:which});
@@ -3349,7 +3352,7 @@ $("zstd-level-dialog").addEventListener("click",event=>{
 $("image-analysis-mode").addEventListener("change",()=>{fillImageAnalysisMode();});
 action("settings-save",saveSettings);
 action("ui-refresh",()=>{if(state.status?.ui_live_reload)location.reload();});
-action("updates-check",()=>performUpdate("check"));action("updates-install",()=>performUpdate("install"));
+action("updates-action",performUpdate);
 setInterval(()=>{if($("settings-dialog").open&&!settingsSaving&&!updateBusy&&["checking","downloading","upgrading"].includes(updateStatus?.state))loadUpdates();},2000);
 action("compression-connect",()=>requestCompressionChange("connected"));
 action("compression-disconnect",()=>requestCompressionChange("disconnected"));
