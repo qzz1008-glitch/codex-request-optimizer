@@ -24,10 +24,32 @@ async function run(){
     window.settingsBaseline=null;
   });
   await page.addScriptTag({content:controls+'\n'+draft});
-  await page.evaluate(()=>{fillBadRequestRetry();settingsEditing=true;settingsBaseline=readSettingsDraft();document.getElementById('settings-dialog').showModal();});
+  await page.evaluate(()=>{
+    fillBadRequestRetry();settingsEditing=true;settingsBaseline=readSettingsDraft();
+    $('sharing-settings').hidden=false;$('proxy-settings').hidden=false;
+    $('settings-dialog').showModal();
+  });
   const enabled=page.locator('#bad-request-retry'),count=page.locator('#bad-request-retry-count');
   assert.equal(await enabled.isChecked(),false);assert.equal(await enabled.isDisabled(),false);
   assert.equal(await count.inputValue(),'3');assert.equal(await count.isDisabled(),true);cases++;
+  const settings=page.locator('#settings-dialog .settings-content');
+  const interactive='input:not([type=hidden]),select,button,a[href],[tabindex]';
+  assert.deepEqual(await settings.locator(interactive).evaluateAll(nodes=>
+    nodes.filter(node=>!node.closest('.settings-controls')).map(node=>node.id)),[]);
+  await settings.evaluate((section,selector)=>{
+    window.settingInteractions=[];
+    for(const event of ['click','focusin','change']){
+      section.addEventListener(event,({target})=>{
+        if(target.closest(selector))settingInteractions.push([event,target.id]);
+      });
+    }
+    for(const id of ['auto-zstd-level','zstd-level-open','image-zstd-level-open'])$(id).disabled=false;
+  },interactive);
+  for(const key of await settings.locator('.settings-key').all()){
+    assert.equal(await key.evaluate(node=>node.tagName),'SPAN');
+    await key.click();
+  }
+  assert.deepEqual(await page.evaluate(()=>settingInteractions),[],'Clicking a key never activates or focuses a setting');cases++;
   for(const language of ['zh','en']){
     await page.evaluate(language=>{uiI18n.setLanguage(language,{persist:false});settingsLanguage=language;settingsBaseline=readSettingsDraft();},language);
     await enabled.check();assert.equal(await count.isDisabled(),false);
@@ -38,17 +60,22 @@ async function run(){
     assert.deepEqual(value.changed.sort(),['bad_request_retry_enabled','bad_request_retry_max_retries']);
     await count.fill('10');assert.equal(await count.evaluate(node=>node.checkValidity()),false);
     await count.fill('9');assert.equal(await count.evaluate(node=>node.checkValidity()),true);
-    await page.locator('#bad-request-retry-label').scrollIntoViewIfNeeded();
-    const layout=await enabled.evaluate(node=>{
-      const row=node.closest('.runtime-setting-row'),label=node.parentElement.getBoundingClientRect();
-      const options=row.querySelector('.capacity-retry-options').getBoundingClientRect(),bounds=row.getBoundingClientRect();
-      return {labelRight:label.right,optionsLeft:options.left,optionsRight:options.right,rowRight:bounds.right};
-    });
-    assert(layout.labelRight<=layout.optionsLeft,'the label and retry count must not overlap');
-    assert(layout.optionsRight<=layout.rowRight+1,'the count fits the settings row');
+    assert.equal(await page.getByRole('checkbox',{name:language==='zh'?'请求异常重试':'Retry request errors',exact:true}).getAttribute('id'),'bad-request-retry');
+    assert.equal(await page.getByRole('spinbutton',{name:language==='zh'?'中转入口':'Relay entry',exact:true}).getAttribute('id'),'entry-port');
     assert.equal(await page.locator('#budget-label').textContent(),language==='zh'?'大小上限':'Size limit');
     for(const width of [320,540,600,1120]){
       await page.setViewportSize({width,height:900});
+      const rows=await settings.locator('.settings-row').evaluateAll(nodes=>nodes.map(row=>{
+        const [key,controls]=row.children;
+        const names=key.getBoundingClientRect(),values=controls.getBoundingClientRect();
+        return [key.textContent,names.x,names.right,values.x,values.right,row.getBoundingClientRect().right];
+      }));
+      for(const [name,keyX,keyRight,controlsX,controlsRight,rowRight] of rows){
+        assert.equal(keyX,rows[0][1],name+' aligns with the left column');
+        assert.equal(controlsX,rows[0][3],name+' aligns with the right column');
+        assert(keyRight<controlsX&&controlsRight<=rowRight+1,name+' keeps distinct columns');
+      }
+      assert.equal(await settings.evaluate(node=>node.scrollWidth<=node.clientWidth+1),true,'Settings fit the dialog');
       const columns=await page.evaluate(()=>[
         ['#packet-size-protection','#budget-label','#budget','#budget-unit'],
         ['#capacity-retry','label[for="capacity-retry-count"]','#capacity-retry-count','#capacity-retry-count+span'],

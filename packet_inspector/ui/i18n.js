@@ -926,6 +926,7 @@ const uiI18n = (() => {
     "连接中":"Connecting",
     "接入与设置":"Settings",
     "版本与升级":"Version and updates",
+    "应用版本":"App version",
     "GitHub 仓库":"GitHub repository",
     "检查更新":"Check",
     "立即升级":"Update",
