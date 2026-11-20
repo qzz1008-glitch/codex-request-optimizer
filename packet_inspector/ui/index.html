@@ -235,36 +235,88 @@
     <div class="settings-content">
     <section id="general-settings" aria-labelledby="general-settings-title">
       <h3 id="general-settings-title">通用设置</h3>
-      <div class="settings-language-row" data-settings-field="language"><span id="settings-language-label">语言</span><div id="language-toggle" class="language-toggle" role="group" aria-labelledby="settings-language-label"><button id="language-zh" type="button" data-language="zh" aria-pressed="true" lang="zh-CN">中文</button><button id="language-en" type="button" data-language="en" aria-pressed="false" lang="en">English</button></div></div>
-      <div class="runtime-setting-row"><div class="runtime-toggle" data-settings-field="start_on_login"><input id="start-on-login" type="checkbox" aria-labelledby="start-on-login-label" aria-describedby="startup-hint"><span id="start-on-login-label">开机启动</span></div><p id="startup-hint" class="muted help runtime-inline-hint">登录 Windows 后自动启动。</p></div>
-    </section>
-    <section id="context-settings"><div class="context-heading"><h3>上下文设置</h3></div>
-      <div class="context-grid">
-        <div class="context-control" role="group" aria-labelledby="context-label" data-settings-field="context_tokens">
-          <label id="context-label" class="context-label" for="context-tokens" title="有效上下文">有效上下文</label>
-          <div class="context-value"><input id="context-tokens" type="number" min="4" max="10000" step="0.001" required aria-describedby="context-unit"><span id="context-unit" class="context-unit">k tokens</span></div>
-          <div class="context-default"><input id="context-default" type="checkbox" aria-labelledby="context-label context-default-label"><span id="context-default-label">默认</span></div>
+      <div class="settings-row" data-settings-field="language">
+        <span id="settings-language-label" class="settings-key">语言</span>
+        <div class="settings-controls">
+          <div id="language-toggle" class="language-toggle" role="group" aria-labelledby="settings-language-label">
+            <button id="language-zh" type="button" data-language="zh" aria-pressed="true" lang="zh-CN">中文</button>
+            <button id="language-en" type="button" data-language="en" aria-pressed="false" lang="en">English</button>
+          </div>
         </div>
-        <div class="context-control" role="group" aria-labelledby="compact-label" data-settings-field="compact_tokens">
-          <label id="compact-label" class="context-label" for="compact-tokens" title="自动压缩阈值">自动压缩阈值</label>
-          <div class="context-value"><input id="compact-tokens" type="number" min="1" max="10000" step="0.001" required aria-describedby="compact-unit"><span id="compact-unit" class="context-unit">k tokens</span></div>
-          <div class="context-default"><input id="compact-default" type="checkbox" aria-labelledby="compact-label compact-default-label"><span id="compact-default-label">默认</span></div>
+      </div>
+      <div class="settings-row" data-settings-field="start_on_login">
+        <span id="start-on-login-label" class="settings-key">开机启动</span>
+        <div class="settings-controls">
+          <div class="settings-checkbox"><input id="start-on-login" type="checkbox" aria-labelledby="start-on-login-label" aria-describedby="startup-hint"></div>
+          <p id="startup-hint" class="muted help runtime-inline-hint">登录 Windows 后自动启动。</p>
+        </div>
+      </div>
+    </section>
+    <section id="context-settings"><h3>上下文设置</h3>
+      <div class="context-grid">
+        <div class="settings-row" role="group" aria-labelledby="context-label" data-settings-field="context_tokens">
+          <span id="context-label" class="settings-key">有效上下文</span>
+          <div class="settings-controls">
+            <div class="context-value"><input id="context-tokens" type="number" min="4" max="10000" step="0.001" required aria-labelledby="context-label" aria-describedby="context-unit"><span id="context-unit" class="context-unit">k tokens</span></div>
+            <div class="context-default"><input id="context-default" type="checkbox" aria-labelledby="context-label context-default-label"><span id="context-default-label">默认</span></div>
+          </div>
+        </div>
+        <div class="settings-row" role="group" aria-labelledby="compact-label" data-settings-field="compact_tokens">
+          <span id="compact-label" class="settings-key">自动压缩阈值</span>
+          <div class="settings-controls">
+            <div class="context-value"><input id="compact-tokens" type="number" min="1" max="10000" step="0.001" required aria-labelledby="compact-label" aria-describedby="compact-unit"><span id="compact-unit" class="context-unit">k tokens</span></div>
+            <div class="context-default"><input id="compact-default" type="checkbox" aria-labelledby="compact-label compact-default-label"><span id="compact-default-label">默认</span></div>
+          </div>
         </div>
       </div>
       <p id="context-message" data-feedback-source data-feedback-target="settings-inline-feedback" class="help" role="status" hidden></p>
     </section>
     <section id="request-protection-settings"><h3>请求保护</h3>
-      <div class="packet-size-controls">
-        <div class="overflow-toggle" data-settings-field="packet_size_protection_enabled"><input id="packet-size-protection" type="checkbox" aria-labelledby="packet-size-protection-label"><span id="packet-size-protection-label">请求大小保护</span></div>
-        <label class="packet-size-limit" for="budget" data-settings-field="budget"><span id="budget-label">大小上限</span><span class="packet-size-value"><input id="budget" type="number" min="50.001" max="134217.728" step="0.001" value="1000" aria-labelledby="budget-label" aria-describedby="budget-unit" required disabled><span id="budget-unit" class="packet-size-unit">KB</span></span></label>
+      <div class="settings-row">
+        <span id="packet-size-protection-label" class="settings-key">请求大小保护</span>
+        <div class="settings-controls settings-compound-controls">
+          <div class="settings-checkbox" data-settings-field="packet_size_protection_enabled"><input id="packet-size-protection" type="checkbox" aria-labelledby="packet-size-protection-label"></div>
+          <div class="settings-inline-fields">
+            <div class="settings-inline-field" data-settings-field="budget">
+              <label id="budget-label" for="budget">大小上限</label>
+              <div class="settings-value-unit"><input id="budget" type="number" min="50.001" max="134217.728" step="0.001" value="1000" aria-describedby="budget-unit" required disabled><span id="budget-unit">KB</span></div>
+            </div>
+          </div>
+        </div>
       </div>
       <p id="packet-size-message" data-feedback-source data-feedback-target="settings-inline-feedback" class="help" role="status" hidden></p>
-      <div class="runtime-setting-row runtime-retry-row"><div class="runtime-toggle" data-settings-field="capacity_retry_enabled"><input id="capacity-retry" type="checkbox" aria-labelledby="capacity-retry-label"><span id="capacity-retry-label" title="模型容量不足时自动重试">容量不足重试</span></div><div class="capacity-retry-options"><div class="capacity-retry-limit" data-settings-field="capacity_retry_max_retries"><label for="capacity-retry-count">重试次数</label><input id="capacity-retry-count" type="number" min="1" max="99" step="1" value="15" inputmode="numeric" required><span>次</span></div><div class="capacity-retry-limit" data-settings-field="capacity_retry_delay_seconds"><label for="capacity-retry-delay">等待时间</label><input id="capacity-retry-delay" type="number" min="1" max="99" step="1" value="30" inputmode="numeric" required><span>秒</span></div></div></div>
-      <div class="runtime-setting-row runtime-retry-row"><div class="runtime-toggle"><input id="bad-request-retry" type="checkbox" aria-labelledby="bad-request-retry-label"><span id="bad-request-retry-label" title="仅重试通用 Bad Request；字段或参数错误保持原样。">请求异常重试</span></div><div class="capacity-retry-options"><div class="capacity-retry-limit"><label for="bad-request-retry-count">重试次数</label><input id="bad-request-retry-count" type="number" min="1" max="9" step="1" value="3" inputmode="numeric" required><span>次</span></div></div></div>
+      <div class="settings-row">
+        <span id="capacity-retry-label" class="settings-key">容量不足重试</span>
+        <div class="settings-controls settings-compound-controls">
+          <div class="settings-checkbox" data-settings-field="capacity_retry_enabled" title="模型容量不足时自动重试"><input id="capacity-retry" type="checkbox" aria-labelledby="capacity-retry-label"></div>
+          <div class="settings-inline-fields">
+            <div class="settings-inline-field" data-settings-field="capacity_retry_max_retries">
+              <label for="capacity-retry-count">重试次数</label>
+              <div class="settings-value-unit"><input id="capacity-retry-count" type="number" min="1" max="99" step="1" value="15" inputmode="numeric" required><span>次</span></div>
+            </div>
+            <div class="settings-inline-field" data-settings-field="capacity_retry_delay_seconds">
+              <label for="capacity-retry-delay">等待时间</label>
+              <div class="settings-value-unit"><input id="capacity-retry-delay" type="number" min="1" max="99" step="1" value="30" inputmode="numeric" required><span>秒</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="settings-row">
+        <span id="bad-request-retry-label" class="settings-key">请求异常重试</span>
+        <div class="settings-controls settings-compound-controls">
+          <div class="settings-checkbox" title="仅重试通用 Bad Request；字段或参数错误保持原样。"><input id="bad-request-retry" type="checkbox" aria-labelledby="bad-request-retry-label"></div>
+          <div class="settings-inline-fields">
+            <div class="settings-inline-field">
+              <label for="bad-request-retry-count">重试次数</label>
+              <div class="settings-value-unit"><input id="bad-request-retry-count" type="number" min="1" max="9" step="1" value="3" inputmode="numeric" required><span>次</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
       <p id="runtime-settings-message" data-feedback-source data-feedback-target="settings-inline-feedback" class="help" role="status" hidden></p>
-      <div class="runtime-setting-row image-mode-row">
-        <span id="image-analysis-mode-label">解图优化</span>
-        <div class="image-mode-controls">
+      <div class="settings-row">
+        <span id="image-analysis-mode-label" class="settings-key">解图优化</span>
+        <div class="settings-controls">
           <fieldset id="image-analysis-mode" class="image-mode-pills" data-settings-field="image_analysis_mode" aria-labelledby="image-analysis-mode-label" aria-describedby="image-isolation-hint">
             <label><input type="radio" name="image-analysis-mode" value="native" checked><span>原生</span></label>
             <label><input type="radio" name="image-analysis-mode" value="disabled"><span>禁用</span></label>
@@ -277,106 +329,132 @@
     </section>
     <section id="compression-settings" aria-labelledby="compression-settings-title">
       <h3 id="compression-settings-title">传输压缩</h3>
-      <div class="runtime-setting-row auto-zstd-row" data-settings-field="auto_zstd_level_enabled">
-        <div class="runtime-toggle"><input id="auto-zstd-level" type="checkbox" aria-labelledby="auto-zstd-level-label" aria-describedby="auto-zstd-level-hint" disabled><span id="auto-zstd-level-label">自动压缩等级</span></div>
-        <p id="auto-zstd-level-hint" class="help muted runtime-inline-hint">根据请求大小自动选择合适的压缩等级，开启后禁用手动选择。</p>
+      <div class="settings-row auto-zstd-row" data-settings-field="auto_zstd_level_enabled">
+        <span id="auto-zstd-level-label" class="settings-key">自动压缩等级</span>
+        <div class="settings-controls">
+          <div class="settings-checkbox"><input id="auto-zstd-level" type="checkbox" aria-labelledby="auto-zstd-level-label" aria-describedby="auto-zstd-level-hint" disabled></div>
+          <p id="auto-zstd-level-hint" class="help muted runtime-inline-hint">根据请求大小自动选择合适的压缩等级，开启后禁用手动选择。</p>
+        </div>
       </div>
       <fieldset id="manual-compression-levels">
         <legend class="sr-only">手动压缩等级</legend>
-        <div class="zstd-level-control" data-settings-field="zstd_level">
-          <label for="zstd-level-open">对话压缩等级</label>
-          <input id="zstd-level" type="hidden" value="3" disabled>
-          <button id="zstd-level-open" class="zstd-level-trigger" type="button" aria-haspopup="dialog" aria-controls="zstd-level-dialog" aria-describedby="auto-zstd-level-hint" aria-expanded="false" disabled><span id="zstd-level-value">3级</span><svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+        <div class="settings-row zstd-level-control" data-settings-field="zstd_level">
+          <span id="zstd-level-label" class="settings-key">对话压缩等级</span>
+          <div class="settings-controls">
+            <input id="zstd-level" type="hidden" value="3" disabled>
+            <button id="zstd-level-open" class="zstd-level-trigger" type="button" aria-labelledby="zstd-level-label zstd-level-value" aria-haspopup="dialog" aria-controls="zstd-level-dialog" aria-describedby="auto-zstd-level-hint" aria-expanded="false" disabled><span id="zstd-level-value">3级</span><svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+          </div>
         </div>
         <p id="zstd-level-message" data-feedback-inline class="help" role="status" hidden></p>
-        <div class="zstd-level-control" data-settings-field="image_zstd_level">
-          <label for="image-zstd-level-open">图片压缩等级</label>
-          <input id="image-zstd-level" type="hidden" value="6" disabled>
-          <button id="image-zstd-level-open" class="zstd-level-trigger" type="button" aria-haspopup="dialog" aria-controls="zstd-level-dialog" aria-describedby="auto-zstd-level-hint" aria-expanded="false" disabled><span id="image-zstd-level-value">6级</span><svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+        <div class="settings-row zstd-level-control" data-settings-field="image_zstd_level">
+          <span id="image-zstd-level-label" class="settings-key">图片压缩等级</span>
+          <div class="settings-controls">
+            <input id="image-zstd-level" type="hidden" value="6" disabled>
+            <button id="image-zstd-level-open" class="zstd-level-trigger" type="button" aria-labelledby="image-zstd-level-label image-zstd-level-value" aria-haspopup="dialog" aria-controls="zstd-level-dialog" aria-describedby="auto-zstd-level-hint" aria-expanded="false" disabled><span id="image-zstd-level-value">6级</span><svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+          </div>
         </div>
       </fieldset>
     </section>
     <section id="record-storage-settings" aria-labelledby="record-storage-title">
       <h3 id="record-storage-title">记录与存储</h3>
-      <div class="image-directory-settings" data-settings-field="storage_dir">
-        <label for="storage-dir">数据目录</label>
-        <div class="image-directory-row"><input id="storage-dir" type="text" spellcheck="false" autocomplete="off"><div class="image-directory-actions"><button id="storage-dir-open" type="button" aria-label="打开数据目录" disabled>打开</button><button id="storage-dir-reset" type="button">默认目录</button></div></div>
-        <p id="storage-dir-message" data-feedback-source data-feedback-target="settings-inline-feedback" class="help" role="status" hidden></p>
-      </div>
-      <p id="storage-paths-hint" class="help muted" hidden></p>
-      <div class="record-limit-grid">
-        <div class="record-limit-row" data-settings-field="max_packets">
-          <label for="packet-limit">记录上限</label>
-          <div class="record-limit-value">
-            <input id="packet-limit" type="number" min="10" max="100000" aria-describedby="packet-limit-unit packet-limit-usage" required>
-            <span id="packet-limit-unit" class="record-limit-unit">条</span>
-          </div>
-          <small id="packet-limit-usage" class="record-limit-usage">—</small>
+      <div class="settings-row" data-settings-field="storage_dir">
+        <span id="storage-dir-label" class="settings-key">数据目录</span>
+        <div class="settings-controls image-directory-row">
+          <input id="storage-dir" type="text" spellcheck="false" autocomplete="off" aria-labelledby="storage-dir-label">
+          <div class="image-directory-actions"><button id="storage-dir-open" type="button" aria-label="打开数据目录" disabled>打开</button><button id="storage-dir-reset" type="button">默认目录</button></div>
+          <p id="storage-dir-message" data-feedback-source data-feedback-target="settings-inline-feedback" class="help" role="status" hidden></p>
+          <p id="storage-paths-hint" class="help muted" hidden></p>
         </div>
-        <div class="record-limit-row" data-settings-field="max_storage_mb">
-          <label for="storage-limit">存储上限</label>
-          <div class="record-limit-value">
-            <input id="storage-limit" type="number" min="17" max="8590" step="1" inputmode="numeric" aria-describedby="storage-limit-unit storage-limit-usage" required>
-            <span id="storage-limit-unit" class="record-limit-unit">MB</span>
+      </div>
+      <div class="record-limit-grid">
+        <div class="settings-row" data-settings-field="max_packets">
+          <span id="packet-limit-label" class="settings-key">记录上限</span>
+          <div class="settings-controls record-limit-controls">
+            <div class="settings-value-unit">
+              <input id="packet-limit" type="number" min="10" max="100000" aria-labelledby="packet-limit-label" aria-describedby="packet-limit-unit packet-limit-usage" required>
+              <span id="packet-limit-unit">条</span>
+            </div>
+            <small id="packet-limit-usage" class="record-limit-usage">—</small>
           </div>
-          <small id="storage-limit-usage" class="record-limit-usage">—</small>
+        </div>
+        <div class="settings-row" data-settings-field="max_storage_mb">
+          <span id="storage-limit-label" class="settings-key">存储上限</span>
+          <div class="settings-controls record-limit-controls">
+            <div class="settings-value-unit">
+              <input id="storage-limit" type="number" min="17" max="8590" step="1" inputmode="numeric" aria-labelledby="storage-limit-label" aria-describedby="storage-limit-unit storage-limit-usage" required>
+              <span id="storage-limit-unit">MB</span>
+            </div>
+            <small id="storage-limit-usage" class="record-limit-usage">—</small>
+          </div>
         </div>
       </div>
     </section>
     <section id="connection-settings" aria-labelledby="connection-settings-title">
       <h3><span id="connection-settings-title">网络连接</span> <span id="connection-pending-label" class="connection-pending-label" hidden>ChatGPT 待重启</span></h3>
-      <div class="entry-port-row" data-settings-field="entry_port">
-        <label for="entry-port">中转入口</label>
-        <input id="entry-port" type="number" min="1024" max="65535" step="1" value="47844" required aria-describedby="entry-port-hint link-status">
-        <div class="entry-port-details">
-          <small id="entry-port-hint" class="entry-port-hint">本机 Codex 连接中转服务的端口</small>
-          <span id="link-status" class="entry-port-status" role="status" aria-live="polite" hidden></span>
+      <div class="settings-row entry-port-row" data-settings-field="entry_port">
+        <span id="entry-port-label" class="settings-key">中转入口</span>
+        <div class="settings-controls">
+          <input id="entry-port" type="number" min="1024" max="65535" step="1" value="47844" required aria-labelledby="entry-port-label" aria-describedby="entry-port-hint link-status">
+          <div class="entry-port-details">
+            <small id="entry-port-hint" class="entry-port-hint">本机 Codex 连接中转服务的端口</small>
+            <span id="link-status" class="entry-port-status" role="status" aria-live="polite" hidden></span>
+          </div>
         </div>
       </div>
       <p id="entry-port-message" data-feedback-source data-feedback-target="settings-inline-feedback" class="help" role="status" hidden></p>
       <div id="sharing-settings" hidden>
-        <div class="entry-port-row" data-settings-field="sharing_port">
-          <label for="sharing-port">额度共享</label>
-          <input id="sharing-port" type="number" min="1" max="65535" step="1" value="47846" required aria-describedby="sharing-port-hint">
-          <small id="sharing-port-hint" class="entry-port-hint">局域网设备借用本机 Codex 额度的端口</small>
+        <div class="settings-row entry-port-row" data-settings-field="sharing_port">
+          <span id="sharing-port-label" class="settings-key">额度共享</span>
+          <div class="settings-controls">
+            <input id="sharing-port" type="number" min="1" max="65535" step="1" value="47846" required aria-labelledby="sharing-port-label" aria-describedby="sharing-port-hint">
+            <small id="sharing-port-hint" class="entry-port-hint">局域网设备借用本机 Codex 额度的端口</small>
+          </div>
         </div>
-        <div class="entry-port-row" data-settings-field="egress_port">
-          <label for="exit-port">出口共享</label>
-          <input id="exit-port" type="number" min="1" max="65535" step="1" value="47847" required aria-describedby="exit-port-hint">
-          <small id="exit-port-hint" class="entry-port-hint">局域网设备经本机网络访问 Codex 的端口</small>
+        <div class="settings-row entry-port-row" data-settings-field="egress_port">
+          <span id="exit-port-label" class="settings-key">出口共享</span>
+          <div class="settings-controls">
+            <input id="exit-port" type="number" min="1" max="65535" step="1" value="47847" required aria-labelledby="exit-port-label" aria-describedby="exit-port-hint">
+            <small id="exit-port-hint" class="entry-port-hint">局域网设备经本机网络访问 Codex 的端口</small>
+          </div>
         </div>
       </div>
       <fieldset id="proxy-settings" data-settings-field="proxy_settings" aria-labelledby="proxy-settings-label" hidden>
-        <div class="proxy-inline-row">
-          <span id="proxy-settings-label">出口代理</span>
-          <fieldset id="proxy-mode" class="image-mode-pills">
-            <legend class="sr-only">代理模式</legend>
-            <label><input type="radio" name="proxy-mode" value="auto" checked><span>自动</span></label>
-            <label><input type="radio" name="proxy-mode" value="manual"><span>手动</span></label>
-          </fieldset>
-          <div id="proxy-detected" class="proxy-address-field">
-            <label class="sr-only" for="proxy-detected-address">代理地址</label><input id="proxy-detected-address" type="text" placeholder="直接连接" disabled>
-          </div>
-          <div id="proxy-manual" class="proxy-address-field" hidden>
-            <label class="sr-only" for="proxy-address">代理地址</label><input id="proxy-address" name="proxy-address" type="text" inputmode="url" maxlength="2048" placeholder="http://proxy:8080" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" required disabled>
-          </div>
-          <div class="proxy-test-actions">
-            <button id="proxy-test" type="button" title="测试当前配置，不保存；不发送对话或 Codex 登录凭据。">测试</button>
-            <output id="proxy-test-result" class="proxy-test-result" role="status" aria-live="polite" aria-atomic="true">
-              <span id="proxy-test-state"></span>
-              <span id="proxy-test-elapsed" hidden></span>
-            </output>
+        <div class="settings-row proxy-inline-row">
+          <span id="proxy-settings-label" class="settings-key">出口代理</span>
+          <div class="settings-controls proxy-controls">
+            <fieldset id="proxy-mode" class="image-mode-pills">
+              <legend class="sr-only">代理模式</legend>
+              <label><input type="radio" name="proxy-mode" value="auto" checked><span>自动</span></label>
+              <label><input type="radio" name="proxy-mode" value="manual"><span>手动</span></label>
+            </fieldset>
+            <div id="proxy-detected" class="proxy-address-field">
+              <label class="sr-only" for="proxy-detected-address">代理地址</label><input id="proxy-detected-address" type="text" placeholder="直接连接" disabled>
+            </div>
+            <div id="proxy-manual" class="proxy-address-field" hidden>
+              <label class="sr-only" for="proxy-address">代理地址</label><input id="proxy-address" name="proxy-address" type="text" inputmode="url" maxlength="2048" placeholder="http://proxy:8080" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" required disabled>
+            </div>
+            <div class="proxy-test-actions">
+              <button id="proxy-test" type="button" title="测试当前配置，不保存；不发送对话或 Codex 登录凭据。">测试</button>
+              <output id="proxy-test-result" class="proxy-test-result" role="status" aria-live="polite" aria-atomic="true">
+                <span id="proxy-test-state"></span>
+                <span id="proxy-test-elapsed" hidden></span>
+              </output>
+            </div>
+            <p id="proxy-detection-warning" class="help" role="status" hidden></p>
           </div>
         </div>
-        <p id="proxy-detection-warning" class="help" role="status" hidden></p>
       </fieldset>
     </section>
-    <section id="updates-settings"><h3 class="updates-heading"><span>版本与升级</span><a id="updates-repository" class="repository-link" href="https://github.com/qzz1008-glitch/codex-request-optimizer" target="_blank" rel="noopener noreferrer" title="GitHub 仓库" aria-label="GitHub 仓库"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true" focusable="false"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.65 7.65 0 0 1 4 0c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg></a></h3>
-      <div class="button-row updates-actions">
-        <button id="updates-action" type="button" aria-busy="false"><span class="update-spinner" aria-hidden="true"></span><span id="updates-action-label">检查更新</span></button>
-        <div class="updates-details">
-          <p id="updates-versions" class="muted help"></p>
-          <span id="updates-message" data-feedback-inline class="help updates-status" role="status" aria-atomic="true" hidden></span>
+    <section id="updates-settings"><h3>版本与升级</h3>
+      <div class="settings-row">
+        <span class="settings-key">应用版本</span>
+        <div class="settings-controls updates-actions">
+          <button id="updates-action" type="button" aria-busy="false"><span class="update-spinner" aria-hidden="true"></span><span id="updates-action-label">检查更新</span></button>
+          <div class="updates-details">
+            <p id="updates-versions" class="muted help"></p>
+            <span id="updates-message" data-feedback-inline class="help updates-status" role="status" aria-atomic="true" hidden></span>
+          </div>
+          <a id="updates-repository" class="repository-link" href="https://github.com/qzz1008-glitch/codex-request-optimizer" target="_blank" rel="noopener noreferrer" title="GitHub 仓库" aria-label="GitHub 仓库"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true" focusable="false"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.65 7.65 0 0 1 4 0c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg></a>
         </div>
       </div>
     </section>
