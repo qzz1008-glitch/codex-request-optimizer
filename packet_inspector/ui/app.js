@@ -61,12 +61,12 @@ globalThis.InspectorConnections = {
       const tools=element("div","connection-device-controls"),reconnect=element("button","connection-device-reconnect");
       reconnect.type="button";
       const icon=document.createElementNS("http://www.w3.org/2000/svg","svg");
-      const arrows=document.createElementNS(icon.namespaceURI,"path");
+      const plug=document.createElementNS(icon.namespaceURI,"path");
       icon.setAttribute("viewBox","0 0 24 24");
       icon.setAttribute("aria-hidden","true");
       icon.setAttribute("focusable","false");
-      arrows.setAttribute("d","M4.5 10a7.75 7.75 0 0 1 13.1-3.5L20 9m0-5v5h-5M19.5 14a7.75 7.75 0 0 1-13.1 3.5L4 15m0 5v-5h5");
-      icon.append(arrows);
+      plug.setAttribute("d","M8 3v5m8-5v5M5 8h14m-13 0v4a6 6 0 0 0 12 0V8M12 18v3");
+      icon.append(plug);
       reconnect.append(icon);
       reconnect.addEventListener("click",()=>confirm("reconnect",row.id));
       tools.append(buttons,reconnect);info.append(state,label);root.append(info,tools);list.append(root);
@@ -89,10 +89,12 @@ globalThis.InspectorConnections = {
           button.disabled=busy(row)||submitting||(row.state===desired(action)&&!row.error);
         }
         value.reconnect.classList.toggle("needs-reconnect",!!row.reload_required&&!busy(row)&&!submitting);
-        value.reconnect.setAttribute("aria-label",tr("重连")+" Codex · "+row.name);
+        const reconnectLabel=tr("重连")+" Codex";
         const nativeHint=row.codex_reconnect?.error||row.codex_reconnect?.warning;
-        value.reconnect.title=tr(nativeHint||"重载此服务器当前账号的 Codex 后台，使配置生效。");
-        value.reconnect.setAttribute("aria-description",value.reconnect.title);
+        const description=tr(nativeHint||"重载此服务器当前账号的 Codex 后台，使配置生效。");
+        value.reconnect.title=reconnectLabel+"\n"+description;
+        value.reconnect.setAttribute("aria-label",reconnectLabel+" · "+row.name);
+        value.reconnect.setAttribute("aria-description",description);
       }
       const note=get("connection-devices-status");
       text(note,tr(catalogError));note.hidden=!catalogError;
