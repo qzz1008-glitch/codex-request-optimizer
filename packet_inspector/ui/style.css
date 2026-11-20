@@ -709,7 +709,7 @@ button.other-session-group{background:#f5f2fc;border-color:#e7e0f5}
 }
 #settings-dialog .proxy-address-field{min-width:0}
 #settings-dialog .proxy-test-actions{display:flex;align-items:center;gap:8px}
-#settings-dialog #proxy-test{flex:none;width:72px;padding-inline:6px;white-space:nowrap}
+#settings-dialog :is(#proxy-test,#storage-dir-open){flex:none;inline-size:72px;padding-inline:6px;white-space:nowrap}
 #settings-dialog .proxy-controls>.help{grid-column:1/-1;margin:0}
 #settings-dialog .proxy-test-result{
   display:flex;flex-wrap:wrap;align-items:baseline;min-inline-size:0;gap:0 6px;
@@ -720,7 +720,6 @@ button.other-session-group{background:#f5f2fc;border-color:#e7e0f5}
 #settings-dialog #proxy-test-elapsed{color:var(--muted);font-size:12px;font-variant-numeric:tabular-nums}
 #settings-dialog .image-directory-row{display:grid;grid-template-columns:minmax(0,1fr) var(--settings-path-actions-width);gap:8px}
 #settings-dialog :is(.image-directory-row,.proxy-address-field) input{width:100%;min-width:0;text-align:left}
-#settings-dialog .image-directory-actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
 #settings-dialog .image-directory-row>.help{grid-column:1/-1;margin:0}
 #settings-dialog .context-value input::placeholder{font-size:13px;font-weight:400}
 #settings-dialog .context-default{display:flex;align-items:center;gap:8px;justify-self:start;min-width:0;min-block-size:var(--settings-field-height);margin:0;color:var(--muted);font-size:13px;line-height:20px}
