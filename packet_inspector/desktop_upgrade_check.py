@@ -30,8 +30,11 @@ def check_window(window, options, instance):
                 title: document.title,
                 settings: document.getElementById('settings-dialog').open,
                 versions: document.getElementById('updates-versions').textContent,
-                update_buttons: document.querySelectorAll('#updates-settings button').length === 1 &&
-                    document.querySelector('#updates-settings #updates-action') instanceof HTMLButtonElement
+                update_buttons: ['updates-check', 'updates-install'].every(id => {
+                    const button = document.querySelector('#updates-settings #' + id);
+                    return button instanceof HTMLButtonElement && button.querySelector('svg') !== null &&
+                        !!button.getAttribute('aria-label') && !button.textContent.trim();
+                })
             })""")
             if (result and result.get("settings") and result.get("update_buttons")
                     and VERSION in result.get("versions", "")):

@@ -793,12 +793,21 @@ input[type=checkbox][switch]:focus-visible{outline:2px solid var(--accent);outli
 #settings-dialog .repository-link{display:inline-flex;align-items:center;justify-content:center;flex:none;width:24px;height:24px;margin-inline-start:auto;margin-inline-end:8px;border-radius:6px;color:var(--muted)}
 #settings-dialog .repository-link:hover{color:var(--ink);background:var(--bg)}
 #settings-dialog .repository-link:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
-#settings-dialog .updates-actions{flex-wrap:nowrap;column-gap:8px;overflow-x:auto;overflow-y:hidden;overscroll-behavior-x:contain;scrollbar-width:thin}
-#settings-dialog .updates-details{display:flex;align-items:center;justify-content:flex-start;flex:0 1 13em;gap:8px;min-inline-size:11.5em;text-align:start}
-#settings-dialog #updates-versions{flex:none;max-inline-size:100%}
-#settings-dialog :is(#updates-versions,.updates-status){min-inline-size:0;margin:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-#settings-dialog #updates-action{display:inline-flex;align-items:center;justify-content:center;flex:none;inline-size:72px;gap:4px;padding-inline:6px}
-#settings-dialog #updates-action:focus-visible{outline-offset:-3px}
+#settings-dialog .updates-actions{flex-wrap:nowrap;align-items:flex-start;column-gap:8px}
+#settings-dialog .updates-controls{
+  display:flex;align-items:center;flex:1;min-inline-size:0;gap:6px;overflow-x:auto;overscroll-behavior-x:contain;scrollbar-width:thin
+}
+#settings-dialog .updates-actions .repository-link{margin-block-start:calc((var(--settings-control-height) - 24px) / 2)}
+#settings-dialog :is(#updates-versions,.updates-status){
+  flex:none;min-inline-size:0;margin:0;overflow:hidden;text-align:start;text-overflow:ellipsis;white-space:nowrap
+}
+#settings-dialog #updates-versions{max-inline-size:min(12em,100% - var(--settings-control-height) - 6px)}
+#settings-dialog .updates-status{max-inline-size:clamp(9.75em,100% - 8.5em,28em)}
+#settings-dialog .updates-icon-button{display:inline-flex;align-items:center;justify-content:center;flex:none;inline-size:var(--settings-control-height);padding:0}
+#settings-dialog .updates-icon-button svg{inline-size:16px;block-size:16px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+#settings-dialog .updates-icon-button[aria-busy=true] svg{display:none}
+#settings-dialog .updates-icon-button:focus-visible{outline-offset:-3px}
+@media(pointer:coarse){#settings-dialog #updates-settings{--settings-control-height:44px}}
 #settings-dialog>.settings-footer{
   flex:none;display:grid;grid-template-columns:minmax(0,1fr) auto auto;align-items:center;gap:12px;
   padding-block:12px;
@@ -817,9 +826,9 @@ input[type=checkbox][switch]:focus-visible{outline:2px solid var(--accent);outli
 #settings-dialog .settings-save-log li[data-state=done] .settings-step-icon{color:var(--green)}
 #settings-dialog .settings-save-log li[data-state=error]{color:var(--danger)}
 #settings-dialog #settings-save{display:inline-flex;align-items:center;justify-content:center;gap:4px;min-width:84px}
-#settings-dialog :is(#settings-save,#updates-action)[aria-busy=true]{cursor:wait;opacity:1}
+#settings-dialog :is(#settings-save,.updates-icon-button)[aria-busy=true]{cursor:wait;opacity:1}
 .settings-save-spinner,.update-spinner{display:none;flex:none;width:12px;height:12px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%}
-#settings-save[aria-busy=true] .settings-save-spinner,#updates-action[aria-busy=true] .update-spinner{display:block;animation:update-spin .8s linear infinite}
+#settings-save[aria-busy=true] .settings-save-spinner,.updates-icon-button[aria-busy=true] .update-spinner{display:block;animation:update-spin .8s linear infinite}
 @container settings-dialog (max-width:620px){
   #settings-dialog>.dialog-heading,#settings-dialog>.settings-footer,#settings-dialog>.settings-content{--settings-padding:20px}
   #settings-dialog>.settings-content{--settings-path-actions-width:142px}
@@ -1035,7 +1044,7 @@ dialog{width:min(760px,calc(var(--desktop-width) - 80px));max-height:calc(var(--
 #exit-confirm-dialog{width:min(540px,calc(100vw - 48px))}#exit-confirm-dialog h2{font-size:20px}#exit-confirm-dialog .button-row{justify-content:flex-end;flex-wrap:wrap}#exit-confirm-message{color:var(--danger)}
 #connect-confirm-dialog{width:min(460px,calc(100vw - 48px))}#connect-confirm-dialog h2{font-size:20px}#connect-confirm-dialog .button-row{justify-content:flex-end}#connect-confirm-message{color:var(--danger)}
 @keyframes update-spin{to{transform:rotate(360deg)}}
-@media(prefers-reduced-motion:reduce){.session-spinner,#updates-action[aria-busy=true] .update-spinner,#settings-save[aria-busy=true] .settings-save-spinner{animation:none}}
+@media(prefers-reduced-motion:reduce){.session-spinner,.updates-icon-button[aria-busy=true] .update-spinner,#settings-save[aria-busy=true] .settings-save-spinner{animation:none}}
 
 .diff-table .diff-field-row>td{background:var(--soft);font-weight:600;border-bottom-color:#d4def1}
 .diff-table th:first-child{padding-inline-start:16px}
