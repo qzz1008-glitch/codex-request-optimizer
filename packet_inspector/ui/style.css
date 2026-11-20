@@ -815,10 +815,9 @@ input[type=checkbox][switch]:focus-visible{outline:2px solid var(--accent);outli
 pre{max-height:55cqh}
 dialog{width:min(760px,calc(var(--desktop-width) - 80px));max-height:calc(var(--desktop-height) - 80px)}
 
-.header-compression{display:flex;align-items:center;flex-shrink:0}.compression-toggle{flex-shrink:0;padding:2px}.compression-toggle button{min-width:64px;padding:3px 14px}
-.header-compression{anchor-name:--connection-controls}
+.header-compression{display:flex;align-items:center;gap:8px;flex-shrink:0;position:relative;anchor-name:--connection-controls}.compression-toggle{flex-shrink:0;padding:2px}.compression-toggle button{min-width:64px;padding:3px 14px}
 .header-compression:focus-visible{outline:2px solid #a3baff;outline-offset:2px;border-radius:9px}
-:is(.connection-local-label,.connection-device-info strong) {
+.connection-device-info strong {
   font-size: 13px;
   font-weight: 500;
   line-height: 20px;
@@ -826,7 +825,18 @@ dialog{width:min(760px,calc(var(--desktop-width) - 80px));max-height:calc(var(--
   color: color-mix(in oklab, var(--ink) 68%, var(--muted));
   text-box: trim-both text;
 }
-.connection-local-label{margin-inline-end:8px;visibility:hidden}
+.connection-local-label {
+  flex: none;
+  border-radius: 3px;
+  background: var(--bg);
+  box-shadow: 0 0 0 4px var(--bg);
+  color: color-mix(in oklab, var(--ink) 65%, var(--muted));
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 14px;
+  white-space: nowrap;
+  visibility: hidden;
+}
 .header-compression[data-server-panel-open] .connection-local-label{visibility:visible}
 .connection-panel {
   position: fixed;
@@ -860,7 +870,7 @@ dialog{width:min(760px,calc(var(--desktop-width) - 80px));max-height:calc(var(--
   border-top: 1px solid var(--line);
 }
 .connection-device:first-child{border-top:0;padding-top:0}
-.connection-device-info{display:flex;flex:1;align-items:center;justify-content:flex-end;gap:4px;min-width:0}
+.connection-device-info{display:flex;flex:1;align-items:center;gap:4px;min-width:0}
 .connection-device-info strong {
   min-width: 0;
   overflow: hidden;
@@ -1030,7 +1040,6 @@ dialog{width:min(760px,calc(var(--desktop-width) - 80px));max-height:calc(var(--
 #settings-dialog .settings-inline-feedback .settings-feedback:has(.settings-save-log:not([hidden]))>.help{max-height:18px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 #settings-dialog .settings-inline-feedback .settings-save-log{max-height:18px;margin:0;gap:0;font-size:12px;line-height:18px;scrollbar-width:none;overscroll-behavior:contain}
 #settings-dialog .settings-inline-feedback .settings-step-label{overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
-.header-compression{position:relative}
 .restart-notice-badge{display:inline-flex;align-items:center;justify-content:center;width:100px;flex:none;min-height:34px;padding:2px 6px;border:1px solid #e6c178;border-radius:7px;background:#fff7e7;color:#875309;font-size:12px;font-weight:600;line-height:14px;white-space:normal;word-break:keep-all}
 .restart-notice-badge[data-visible="false"]{visibility:hidden;pointer-events:none}
 .restart-notice-badge:hover{background:#ffedc9;border-color:#d6a84d}
