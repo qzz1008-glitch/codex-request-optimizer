@@ -271,14 +271,20 @@
         <div class="settings-row" role="group" aria-labelledby="context-label" data-settings-field="context_tokens">
           <span id="context-label" class="settings-key">窗口上限</span>
           <div class="settings-controls">
-            <div class="context-value"><input id="context-tokens" type="number" min="4" max="10000" step="0.001" required aria-labelledby="context-label" aria-describedby="context-unit"><span id="context-unit" class="context-unit">k tokens</span></div>
+            <div class="context-value settings-value-unit">
+              <input id="context-tokens" type="number" min="4" max="10000" step="0.001" required aria-labelledby="context-label" aria-describedby="context-unit">
+              <span id="context-unit">k</span>
+            </div>
             <div class="context-default"><input id="context-default" type="checkbox" aria-labelledby="context-label context-default-label"><span id="context-default-label">默认</span></div>
           </div>
         </div>
         <div class="settings-row" role="group" aria-labelledby="compact-label" data-settings-field="compact_tokens">
           <span id="compact-label" class="settings-key">压缩阈值</span>
           <div class="settings-controls">
-            <div class="context-value"><input id="compact-tokens" type="number" min="1" max="10000" step="0.001" required aria-labelledby="compact-label" aria-describedby="compact-unit"><span id="compact-unit" class="context-unit">k tokens</span></div>
+            <div class="context-value settings-value-unit">
+              <input id="compact-tokens" type="number" min="1" max="10000" step="0.001" required aria-labelledby="compact-label" aria-describedby="compact-unit">
+              <span id="compact-unit">k</span>
+            </div>
             <div class="context-default"><input id="compact-default" type="checkbox" aria-labelledby="compact-label compact-default-label"><span id="compact-default-label">默认</span></div>
           </div>
         </div>
@@ -293,7 +299,10 @@
           <div class="settings-inline-fields">
             <div class="settings-inline-field" data-settings-field="budget">
               <label id="budget-label" for="budget">大小上限</label>
-              <div class="settings-value-unit"><input id="budget" type="number" min="50.001" max="134217.728" step="0.001" value="1000" aria-describedby="budget-unit" required disabled><span id="budget-unit">KB</span></div>
+              <label class="settings-value-unit">
+                <input id="budget" type="number" min="50.001" max="134217.728" step="0.001" value="1000" aria-labelledby="budget-label" aria-describedby="budget-unit" required disabled>
+                <span id="budget-unit">KB</span>
+              </label>
             </div>
           </div>
         </div>
@@ -305,12 +314,18 @@
           <div class="settings-checkbox" data-settings-field="capacity_retry_enabled" title="模型容量不足时自动重试"><input id="capacity-retry" type="checkbox" aria-labelledby="capacity-retry-label"></div>
           <div class="settings-inline-fields">
             <div class="settings-inline-field" data-settings-field="capacity_retry_max_retries">
-              <label for="capacity-retry-count">重试次数</label>
-              <div class="settings-value-unit"><input id="capacity-retry-count" type="number" min="1" max="99" step="1" value="15" inputmode="numeric" required><span>次</span></div>
+              <label id="capacity-retry-count-label" for="capacity-retry-count">重试次数</label>
+              <label class="settings-value-unit">
+                <input id="capacity-retry-count" type="number" min="1" max="99" step="1" value="15" inputmode="numeric" aria-labelledby="capacity-retry-count-label" aria-describedby="capacity-retry-count-unit" required>
+                <span id="capacity-retry-count-unit">次</span>
+              </label>
             </div>
             <div class="settings-inline-field" data-settings-field="capacity_retry_delay_seconds">
-              <label for="capacity-retry-delay">等待时间</label>
-              <div class="settings-value-unit"><input id="capacity-retry-delay" type="number" min="1" max="99" step="1" value="30" inputmode="numeric" required><span>秒</span></div>
+              <label id="capacity-retry-delay-label" for="capacity-retry-delay">等待时间</label>
+              <label class="settings-value-unit">
+                <input id="capacity-retry-delay" type="number" min="1" max="99" step="1" value="30" inputmode="numeric" aria-labelledby="capacity-retry-delay-label" aria-describedby="capacity-retry-delay-unit" required>
+                <span id="capacity-retry-delay-unit">秒</span>
+              </label>
             </div>
           </div>
         </div>
@@ -321,8 +336,11 @@
           <div class="settings-checkbox" title="仅重试通用 Bad Request；字段或参数错误保持原样。"><input id="bad-request-retry" type="checkbox" aria-labelledby="bad-request-retry-label"></div>
           <div class="settings-inline-fields">
             <div class="settings-inline-field">
-              <label for="bad-request-retry-count">重试次数</label>
-              <div class="settings-value-unit"><input id="bad-request-retry-count" type="number" min="1" max="9" step="1" value="3" inputmode="numeric" required><span>次</span></div>
+              <label id="bad-request-retry-count-label" for="bad-request-retry-count">重试次数</label>
+              <label class="settings-value-unit">
+                <input id="bad-request-retry-count" type="number" min="1" max="9" step="1" value="3" inputmode="numeric" aria-labelledby="bad-request-retry-count-label" aria-describedby="bad-request-retry-count-unit" required>
+                <span id="bad-request-retry-count-unit">次</span>
+              </label>
             </div>
           </div>
         </div>
@@ -384,20 +402,20 @@
         <div class="settings-row" data-settings-field="max_packets">
           <span id="packet-limit-label" class="settings-key">记录上限</span>
           <div class="settings-controls record-limit-controls">
-            <div class="settings-value-unit">
+            <label class="settings-value-unit">
               <input id="packet-limit" type="number" min="10" max="100000" aria-labelledby="packet-limit-label" aria-describedby="packet-limit-unit packet-limit-usage" required>
-              <span id="packet-limit-unit">条</span>
-            </div>
+              <span id="packet-limit-unit" data-i18n="settings.unit.requests">条</span>
+            </label>
             <small id="packet-limit-usage" class="record-limit-usage">—</small>
           </div>
         </div>
         <div class="settings-row" data-settings-field="max_storage_mb">
           <span id="storage-limit-label" class="settings-key">存储上限</span>
           <div class="settings-controls record-limit-controls">
-            <div class="settings-value-unit">
+            <label class="settings-value-unit">
               <input id="storage-limit" type="number" min="17" max="8590" step="1" inputmode="numeric" aria-labelledby="storage-limit-label" aria-describedby="storage-limit-unit storage-limit-usage" required>
               <span id="storage-limit-unit">MB</span>
-            </div>
+            </label>
             <small id="storage-limit-usage" class="record-limit-usage">—</small>
           </div>
         </div>

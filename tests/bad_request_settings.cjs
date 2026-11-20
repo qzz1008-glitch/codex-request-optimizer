@@ -36,6 +36,9 @@ async function run(){
   const interactive='input:not([type=hidden]),select,button,a[href],[tabindex]';
   assert.deepEqual(await settings.locator(interactive).evaluateAll(nodes=>
     nodes.filter(node=>!node.closest('.settings-controls')).map(node=>node.id)),[]);
+  assert.deepEqual(await settings.locator('input[type="number"]').evaluateAll(inputs=>
+    inputs.filter(input=>getComputedStyle(input).appearance!=='textfield').map(input=>input.id)),[],
+  'Numeric settings use an appearance without spinner controls');
   await settings.evaluate((section,selector)=>{
     window.settingInteractions=[];
     for(const event of ['click','focusin','change']){
@@ -59,6 +62,8 @@ async function run(){
       assert.deepEqual(names.filter(name=>/\p{Script=Han}/u.test(name)),[],'Setting names are translated');
     }
     await enabled.check();assert.equal(await count.isDisabled(),false);
+    await page.locator('#bad-request-retry-count-unit').click();
+    assert.equal(await count.evaluate(input=>input===document.activeElement),true,'The unit focuses the number field');
     await count.fill('4');
     const value=await page.evaluate(()=>({draft:readSettingsDraft(),changed:changedSettings()}));
     assert.equal(value.draft.bad_request_retry_enabled,true);
@@ -69,6 +74,8 @@ async function run(){
     assert.equal(await page.getByRole('checkbox',{name:language==='zh'?'异常重试':'Retry request errors',exact:true}).getAttribute('id'),'bad-request-retry');
     assert.equal(await page.getByRole('spinbutton',{name:language==='zh'?'中转入口':'Relay entry',exact:true}).getAttribute('id'),'entry-port');
     assert.equal(await page.locator('#budget-label').textContent(),language==='zh'?'大小上限':'Size limit');
+    assert.deepEqual(await settings.locator('#context-unit,#compact-unit').allTextContents(),['k','k']);
+    assert.equal(await page.locator('#packet-limit-unit').textContent(),language==='zh'?'条':'req.');
     for(const width of [320,540,600,1120]){
       await page.setViewportSize({width,height:900});
       const rows=await settings.locator('.settings-row').evaluateAll(nodes=>nodes.map(row=>{
@@ -83,12 +90,27 @@ async function run(){
       }
       assert.equal(await settings.evaluate(node=>node.scrollWidth<=node.clientWidth+1),true,'Settings fit the dialog');
       const columns=await page.evaluate(()=>[
-        ['#packet-size-protection','#budget-label','#budget','#budget-unit'],
-        ['#capacity-retry','label[for="capacity-retry-count"]','#capacity-retry-count','#capacity-retry-count+span'],
-        ['#bad-request-retry','label[for="bad-request-retry-count"]','#bad-request-retry-count','#bad-request-retry-count+span'],
-      ].map(selectors=>selectors.map(selector=>document.querySelector(selector).getBoundingClientRect().left)));
+        ['#packet-size-protection','#budget-label','#budget'],
+        ['#capacity-retry','#capacity-retry-count-label','#capacity-retry-count'],
+        ['#bad-request-retry','#bad-request-retry-count-label','#bad-request-retry-count'],
+      ].map(([toggle,label,input])=>[
+        document.querySelector(toggle),document.querySelector(label),document.querySelector(input).closest('.settings-value-unit'),
+      ].map(element=>element.getBoundingClientRect().left)));
       const [sizeLimit,...retryLimits]=columns;
-      for(const limit of retryLimits)assert.deepEqual(limit,sizeLimit,'The checkboxes, number labels, inputs and units share columns');
+      for(const limit of retryLimits)assert.deepEqual(limit,sizeLimit,'The checkboxes, number labels and fields share columns');
+      const unitFields=await settings.locator('.settings-value-unit').evaluateAll(fields=>fields.map(field=>{
+        const [input,unit]=field.children;
+        const box=field.getBoundingClientRect(),number=input.getBoundingClientRect(),suffix=unit.getBoundingClientRect();
+        const style=getComputedStyle(field),border=parseFloat(style.borderRightWidth);
+        const unitIsInside=border>0&&number.width>0&&number.right<suffix.left&&suffix.top>=box.top&&suffix.bottom<=box.bottom
+          &&Math.abs(box.right-suffix.right-border-parseFloat(style.paddingRight))<1;
+        return {id:input.id,width:box.width,unitIsInside};
+      }));
+      assert.equal(unitFields.length,8);
+      for(const {id,width,unitIsInside} of unitFields){
+        assert(unitIsInside,id+' shows its unit on the right inside the field');
+        if(id==='packet-limit'||id==='storage-limit')assert.equal(width,96,id+' keeps its 96px field width');
+      }
       cases++;
     }
     assert.equal(await enabled.getAttribute('data-settings-field'),null,'no native restart is needed');

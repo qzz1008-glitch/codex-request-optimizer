@@ -16,9 +16,9 @@ const prior=context.storageLimitSettings({max_storage_bytes:8589934592,storage_l
 assert.equal(prior.value,8589);assert.equal(prior.min,17);assert.equal(prior.max,8589);
 const html=fs.readFileSync('packet_inspector/ui/index.html','utf8'),i18n=fs.readFileSync('packet_inspector/ui/i18n.js','utf8');
 assert.match(html,/id="budget-unit"[^>]*>KB<\/span>/);
-assert.match(html,/<label for="packet-limit">记录上限<\/label>/);
+assert.match(html,/<span id="packet-limit-label" class="settings-key">记录上限<\/span>/);
 assert.match(html,/<input id="packet-limit"[^>]*>\s*<span id="packet-limit-unit"[^>]*>条<\/span>/);
-assert.match(html,/<label for="storage-limit">存储上限<\/label>/);
+assert.match(html,/<span id="storage-limit-label" class="settings-key">存储上限<\/span>/);
 assert.match(html,/<input id="storage-limit" type="number" min="17" max="8590" step="1"[^>]*>\s*<span id="storage-limit-unit"[^>]*>MB<\/span>/);
 assert(!/\b(?:KiB|MiB|GiB|kB)\b/.test(html+i18n));
 console.log(JSON.stringify({passed:true}));
