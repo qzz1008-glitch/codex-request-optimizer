@@ -730,7 +730,7 @@ button.other-session-group{background:#f5f2fc;border-color:#e7e0f5}
 #settings-dialog .context-default input{display:block;width:14px;height:14px;margin:0}
 #settings-dialog .record-limit-controls{display:grid;grid-template-columns:136px minmax(0,1fr)}
 #settings-dialog .record-limit-usage{text-align:start;color:var(--muted);font-size:13px;line-height:20px;font-variant-numeric:tabular-nums}
-#settings-dialog .repository-link{display:inline-flex;align-items:center;justify-content:center;flex:none;width:24px;height:24px;border-radius:6px;color:var(--muted)}
+#settings-dialog .repository-link{position:relative;inset-inline-end:8px;display:inline-flex;align-items:center;justify-content:center;flex:none;width:24px;height:24px;border-radius:6px;color:var(--muted)}
 #settings-dialog .repository-link:hover{color:var(--ink);background:var(--bg)}
 #settings-dialog .repository-link:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 #settings-dialog #updates-versions{display:flex;align-items:center;flex:none;min-width:0;min-height:var(--settings-control-height);margin:0;white-space:nowrap}
