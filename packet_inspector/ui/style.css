@@ -852,7 +852,22 @@ pre{max-height:55cqh}
 dialog{width:min(760px,calc(var(--desktop-width) - 80px));max-height:calc(var(--desktop-height) - 80px)}
 
 .header-compression{display:flex;align-items:center;gap:8px;flex-shrink:0;position:relative;anchor-name:--connection-controls}.compression-toggle{flex-shrink:0;padding:2px}.compression-toggle button{min-width:64px;padding:3px 14px}
+.compression-toggle:lang(en) button{padding-inline:7px}
 .header-compression:focus-visible{outline:2px solid #a3baff;outline-offset:2px;border-radius:9px}
+.header-compression[data-server-panel-open]{isolation:isolate}
+.header-compression[data-server-panel-open]::before {
+  content: "";
+  position: absolute;
+  inset-block: -4px;
+  left: var(--connection-frame-left);
+  width: var(--connection-frame-width);
+  box-sizing: border-box;
+  border: 1px solid var(--line);
+  border-bottom: 0;
+  border-radius: 10px 10px 0 0;
+  background: var(--panel);
+  z-index: -1;
+}
 .connection-device-info strong {
   font-size: 13px;
   font-weight: 500;
@@ -863,9 +878,6 @@ dialog{width:min(760px,calc(var(--desktop-width) - 80px));max-height:calc(var(--
 }
 .connection-local-label {
   flex: none;
-  border-radius: 3px;
-  background: var(--bg);
-  box-shadow: 0 0 0 4px var(--bg);
   color: color-mix(in oklab, var(--ink) 65%, var(--muted));
   font-size: 12px;
   font-weight: 600;
@@ -875,33 +887,37 @@ dialog{width:min(760px,calc(var(--desktop-width) - 80px));max-height:calc(var(--
 }
 .header-compression[data-server-panel-open] .connection-local-label{visibility:visible}
 .connection-panel {
+  --connection-panel-width-cap: 332px;
   position: fixed;
-  inset: auto;
+  inset: var(--connection-panel-top, 50px) auto auto;
   z-index: 40;
   box-sizing: border-box;
   width: max-content;
-  max-width: min(332px, calc(100vw - 24px));
-  max-height: calc(100dvh - 80px);
+  min-width: min(var(--connection-panel-min-width, 0px), calc(100vw - 24px));
+  max-width: min(var(--connection-panel-width-cap), var(--connection-panel-available-width, 100vw), calc(100vw - 24px));
+  max-height: calc(100dvh - var(--connection-panel-top, 50px) - 12px);
   overflow: auto;
   scrollbar-width: thin;
   scrollbar-gutter: stable;
   margin: 0;
-  padding-block: 10px;
+  padding-block: 0 6px;
   padding-inline: 6px 5px;
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-top: 0;
+  border-radius: 0 0 10px 10px;
   background: var(--panel);
   color: var(--ink);
-  box-shadow: 0 10px 32px #0003;
+  box-shadow: 0 10px 20px -7px #0003;
   text-align: start;
 }
 .connection-panel:lang(en) {
-  max-width: min(416px, calc(100vw - 24px));
+  --connection-panel-width-cap: 416px;
 }
+#connection-devices-list{border-top:1px solid var(--line);padding-top:6px}
 .connection-device {
   display: flex;
   align-items: center;
-  gap: var(--connection-device-gap, 8px);
+  gap: 8px;
   padding: 7px 0;
   border-top: 1px solid var(--line);
 }
@@ -936,6 +952,7 @@ dialog{width:min(760px,calc(var(--desktop-width) - 80px));max-height:calc(var(--
   line-height: 18px;
   white-space: nowrap;
 }
+.connection-device-actions:lang(en) button{padding-inline:5px}
 .connection-device-controls{flex-shrink:0;display:flex;align-items:center;gap:8px}
 .connection-device-reconnect {
   --reconnect-rim: #b4c7ec;
@@ -1000,8 +1017,7 @@ dialog{width:min(760px,calc(var(--desktop-width) - 80px));max-height:calc(var(--
 @supports (top: anchor(bottom)) {
   .connection-panel {
     position-anchor: --connection-controls;
-    top: calc(anchor(bottom) + 6px);
-    position-try-fallbacks: flip-block;
+    top: calc(anchor(bottom) + 4px);
   }
 }
 .connection-panel-fallback:not([hidden]){display:block}
@@ -1074,6 +1090,7 @@ dialog{width:min(760px,calc(var(--desktop-width) - 80px));max-height:calc(var(--
 #settings-dialog .settings-inline-feedback .settings-step-label{overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 .restart-notice-badge{display:inline-flex;align-items:center;justify-content:center;width:100px;flex:none;min-height:34px;padding:2px 6px;border:1px solid #e6c178;border-radius:7px;background:#fff7e7;color:#875309;font-size:12px;font-weight:600;line-height:14px;white-space:normal;word-break:keep-all}
 .restart-notice-badge[data-visible="false"]{visibility:hidden;pointer-events:none}
+.restart-notice-badge[data-visible="true"]:has(+ .header-compression[data-server-panel-open]){position:relative;z-index:1;translate:var(--connection-badge-offset,0px) 0}
 .restart-notice-badge:hover{background:#ffedc9;border-color:#d6a84d}
 .restart-notice-badge[data-state="error"]{border-color:#e4abab;background:#fff1f1;color:var(--danger)}
 .restart-notice-badge[data-state="error"]:hover{background:#ffe4e4;border-color:#ce8989}

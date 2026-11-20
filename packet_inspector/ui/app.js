@@ -7,16 +7,17 @@ globalThis.InspectorConnections = {
     const headerToggle=get("request-compression");
     const localLabel=controls.querySelector(".connection-local-label");
     const restartBadge=get("restart-notice-open");
+    const viewToggle=get("view-toggle");
     const dialog=get("devices-confirm-dialog"), list=get("connection-devices-list");
     const applyButton=get("devices-confirm-apply"), cancelButton=get("devices-confirm-cancel");
     const nativePopover="popover" in HTMLElement.prototype;
-    const anchorPositioning=CSS.supports("top: anchor(bottom)");
     const nodes=new Map(), confirmNodes=new Map(), pending=new Map(), reconnectPrompts=new Map();
     let rows=[],hasServers=false,loading=false,submitting=false,catalogError="",revision="",timer=null,closeTimer=null,hover=false;
     let openRequested=false,focusOnOpen=false;
     let plan=null,finished=false,disposed=false;
     const text=(node,value)=>{if(node.textContent!==value)node.textContent=value;};
     const isOpen=()=>nativePopover?panel.matches(":popover-open"):!panel.hidden;
+    const inDropdown=node=>controls.contains(node)||panel.contains(node)||(isOpen()&&restartBadge.contains(node));
     const busy=row=>!!row.busy;
     const desired=action=>action==="activate"?"connected":"disconnected";
     const operationError=(row,action)=>row.error||(action==="reconnect"?row.codex_reconnect?.error:"");
@@ -61,15 +62,15 @@ globalThis.InspectorConnections = {
       const tools=element("div","connection-device-controls"),reconnect=element("button","connection-device-reconnect");
       reconnect.type="button";
       const icon=document.createElementNS("http://www.w3.org/2000/svg","svg");
-      const plug=document.createElementNS(icon.namespaceURI,"path");
+      const links=document.createElementNS(icon.namespaceURI,"path");
       icon.setAttribute("viewBox","0 0 24 24");
       icon.setAttribute("aria-hidden","true");
       icon.setAttribute("focusable","false");
-      plug.setAttribute("d","M8 3v5m8-5v5M5 8h14m-13 0v4a6 6 0 0 0 12 0V8M12 18v3");
-      icon.append(plug);
+      links.setAttribute("d","M10.5 13.5a4.5 4.5 0 0 0 6.36 0l3-3a4.5 4.5 0 1 0-6.36-6.36l-1.65 1.65m1.65 4.71a4.5 4.5 0 0 0-6.36 0l-3 3a4.5 4.5 0 1 0 6.36 6.36l1.65-1.65");
+      icon.append(links);
       reconnect.append(icon);
       reconnect.addEventListener("click",()=>confirm("reconnect",row.id));
-      tools.append(buttons,reconnect);info.append(state,label);root.append(info,tools);list.append(root);
+      tools.append(reconnect,buttons);info.append(state,label);root.append(info,tools);list.append(root);
       const value={root,label,state,buttons,actions,reconnect};nodes.set(row.id,value);return value;
     }
     function render() {
@@ -131,29 +132,39 @@ globalThis.InspectorConnections = {
     function place() {
       if (!isOpen()) return;
       const trigger = controls.getBoundingClientRect();
+      const localToggle = headerToggle.getBoundingClientRect();
+      const label = localLabel.getBoundingClientRect();
       const deviceToggle = list.querySelector(".connection-device-actions");
-      const headerDivider = toggleDivider(headerToggle);
-      const labelLeft = trigger.left + localLabel.offsetLeft;
-      if (deviceToggle) {
-        const deviceInset = toggleDivider(deviceToggle) - deviceToggle.getBoundingClientRect().left;
-        const labelRight = labelLeft + localLabel.getBoundingClientRect().width;
-        const gap = headerDivider - labelRight - deviceInset;
-        panel.style.setProperty("--connection-device-gap", `${Math.max(8, gap)}px`);
-      }
-      const bounds = panel.getBoundingClientRect();
       const address = list.querySelector(".connection-device-info strong");
-      const addressInset = address ? address.getBoundingClientRect().left - bounds.left : 0;
-      const left = deviceToggle
-        ? bounds.left + headerDivider - toggleDivider(deviceToggle)
-        : trigger.right - bounds.width;
-      // When the restart badge is visible, keep the local tag clear of it.
-      const minLeft = address && restartBadge.dataset.visible === "true" ? labelLeft - addressInset : 12;
-      const panelLeft = Math.max(12, Math.min(Math.max(minLeft, left), innerWidth - bounds.width - 12));
+      const badgeVisible = restartBadge.dataset.visible === "true";
+      panel.style.setProperty("--connection-panel-top", `${trigger.bottom + 4}px`);
+      panel.style.paddingInlineEnd = "";
+      let frameEndPadding = 6;
+      if (deviceToggle) {
+        const localEnd = localToggle.right - toggleDivider(headerToggle);
+        const remoteEnd = deviceToggle.getBoundingClientRect().right - toggleDivider(deviceToggle);
+        // Align both dividers while allowing for the scrollbar and the two different button widths.
+        const edgeInset = panel.offsetWidth - panel.clientWidth - 1;
+        frameEndPadding = Math.max(frameEndPadding, edgeInset + remoteEnd - localEnd);
+        panel.style.paddingInlineEnd = `${frameEndPadding + localEnd - remoteEnd - edgeInset}px`;
+      }
+      const addressInset = address ? address.getBoundingClientRect().left - panel.getBoundingClientRect().left : 7;
+      const badgeSpace = badgeVisible ? restartBadge.offsetWidth + 16 : 8;
+      const minWidth = addressInset + label.width + badgeSpace + localToggle.width + frameEndPadding;
+      const panelRight = Math.min(innerWidth - 12, trigger.right + frameEndPadding);
+      const availableWidth = panelRight - viewToggle.getBoundingClientRect().right - 4;
+      panel.style.setProperty("--connection-panel-min-width", `${minWidth}px`);
+      panel.style.setProperty("--connection-panel-available-width", `${Math.max(minWidth, availableWidth)}px`);
+      const {width} = panel.getBoundingClientRect();
+      const panelLeft = Math.max(12, panelRight - width);
       panel.style.left = `${panelLeft}px`;
-      localLabel.style.translate = address ? `${panelLeft + addressInset - labelLeft}px` : "";
-      if (!anchorPositioning) {
-        const top = Math.max(12, Math.min(trigger.bottom + 6, innerHeight - bounds.height - 12));
-        panel.style.top = `${top}px`;
+      controls.style.setProperty("--connection-frame-left", `${panelLeft - trigger.left}px`);
+      controls.style.setProperty("--connection-frame-width", `${width}px`);
+      localLabel.style.translate = `${panelLeft + addressInset - trigger.left - localLabel.offsetLeft}px`;
+      if (badgeVisible) {
+        const gap = parseFloat(getComputedStyle(controls.parentElement).columnGap) || 0;
+        const badgeRight = trigger.left - gap;
+        restartBadge.style.setProperty("--connection-badge-offset", `${localToggle.left - 8 - badgeRight}px`);
       }
     }
     function hide() {
@@ -187,7 +198,7 @@ globalThis.InspectorConnections = {
     }
     function leave() {
       hover=false;clearTimeout(closeTimer);
-      closeTimer=setTimeout(()=>{if(!hover&&!controls.contains(document.activeElement)&&!panel.contains(document.activeElement))hide();},180);
+      closeTimer=setTimeout(()=>{if(!hover&&!inDropdown(document.activeElement))hide();},180);
     }
     function schedule() {
       clearTimeout(timer);
@@ -286,10 +297,14 @@ globalThis.InspectorConnections = {
       node.addEventListener("focusin",()=>show());
       node.addEventListener("focusout",leave);
     }
+    restartBadge.addEventListener("pointerenter",event=>{
+      if(isOpen()&&event.pointerType!=="touch"){hover=true;clearTimeout(closeTimer);}
+    });
+    restartBadge.addEventListener("pointerleave",()=>{if(isOpen())leave();});
     controls.addEventListener("keydown",event=>{
       if(event.key==="ArrowDown"){event.preventDefault();show(true);}
     });
-    document.addEventListener("pointerdown",event=>{if(!controls.contains(event.target)&&!panel.contains(event.target))hide();});
+    document.addEventListener("pointerdown",event=>{if(!inDropdown(event.target))hide();});
     document.addEventListener("keydown",event=>{if(event.key==="Escape"&&(isOpen()||openRequested)){hide();event.stopPropagation();}});
     globalThis.addEventListener("resize",place);
     const restartBadgeObserver=new MutationObserver(place);
