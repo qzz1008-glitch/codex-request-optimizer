@@ -725,6 +725,8 @@ input[type=checkbox][switch]:focus-visible{outline:2px solid var(--accent);outli
   block-size:var(--settings-field-height);padding:5px 10px;border:1px solid var(--line);
   border-radius:var(--settings-control-radius);background:var(--panel)
 }
+#request-protection-settings .settings-value-unit{inline-size:72px;gap:4px;padding-inline-start:6px}
+#request-protection-settings .settings-value-unit:has(#budget){inline-size:88px}
 #settings-dialog .settings-value-unit:focus-within{outline:2px solid var(--accent);outline-offset:2px}
 #settings-dialog .settings-value-unit:has(input:disabled){background:var(--bg)}
 #settings-dialog .settings-value-unit input{flex:1;min-inline-size:0;block-size:20px;padding:0;border:0;border-radius:0;background:transparent;outline:0;box-shadow:none}
