@@ -2493,7 +2493,7 @@ function renderUpdates() {
   const u=updateStatus;
   const supported=u?.supported!==false&&state.status?.updates_supported!==false;
   const currentVersion=u?.current_version||state.status?.version;
-  $("updates-versions").textContent=currentVersion?t("当前版本：{version}").replace("{version}",currentVersion):"";
+  $("updates-versions").textContent=currentVersion||"";
   const displayedState=updateBusy?(updateAction==="check"?"checking":"downloading"):u?.state;
   const checking=displayedState==="checking",installing=["downloading","upgrading"].includes(displayedState);
   const busy=checking||installing,available=displayedState==="available";

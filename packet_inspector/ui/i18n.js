@@ -927,7 +927,6 @@ const uiI18n = (() => {
     "立即升级":"Update",
     "检查中":"Wait",
     "升级中":"Wait",
-    "当前版本：{version}":"Current version: {version}",
     "最新版本：{version}":"Latest version: {version}",
     "可检查 GitHub 上的最新版本。":"Check GitHub for the latest release.",
     "正在检查更新…":"Checking for updates…",
