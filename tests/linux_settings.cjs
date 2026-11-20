@@ -37,15 +37,15 @@ let browser,cases=0;
     assert.equal(await modes.locator('input[value="optimized"]').isDisabled(),true);
     assert.equal(await modes.locator('input[value="native"]').isDisabled(),false);
     assert.equal(await modes.locator('input[value="disabled"]').isDisabled(),false);
-    assert.equal(await page.locator('#updates-check').isDisabled(),true);
-    assert.equal(await page.locator('#updates-install').isDisabled(),true);
+    assert.equal(await page.locator('#updates-action').isDisabled(),true);
     assert.match(await page.locator('#updates-message').textContent(),/Linux/);cases++;
   }
   await page.evaluate(()=>{delete state.status.image_analysis_modes;delete state.status.updates_supported;state.status.image_analysis_mode='optimized';updateStatus={state:'available'};fillImageAnalysisMode();renderUpdates();});
   assert.equal(await modes.locator('input[value="optimized"]').isDisabled(),false);
   assert.equal(await modes.locator('input[value="optimized"]').isChecked(),true);
   assert.equal(await hint.textContent(),'Keep only image paths in the main request.');
-  assert.equal(await page.locator('#updates-install').isDisabled(),false);cases++;
+  assert.equal(await page.locator('#updates-action').isDisabled(),false);
+  assert.equal(await page.locator('#updates-action').textContent(),'Update');cases++;
   await page.setViewportSize({width:320,height:900});
   assert.equal(await modes.evaluate(node=>node.parentElement.scrollWidth<=node.parentElement.clientWidth+1),true);
   await page.evaluate(()=>{settingsSaving=true;fillImageAnalysisMode();renderUpdates();});

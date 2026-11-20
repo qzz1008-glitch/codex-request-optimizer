@@ -30,14 +30,14 @@ def check_window(window, options, instance):
                 title: document.title,
                 settings: document.getElementById('settings-dialog').open,
                 versions: document.getElementById('updates-versions').textContent,
-                check: !!document.getElementById('updates-check'),
-                install: !!document.getElementById('updates-install')
+                update_button: document.querySelectorAll('#updates-settings button').length === 1 &&
+                    document.getElementById('updates-action') instanceof HTMLButtonElement
             })""")
-            if (result and result.get("settings") and result.get("check") and result.get("install")
+            if (result and result.get("settings") and result.get("update_button")
                     and VERSION in result.get("versions", "")):
                 break
             time.sleep(.2)
-        passed = bool(result and result["settings"] and result["check"] and result["install"]
+        passed = bool(result and result["settings"] and result["update_button"]
                       and VERSION in result["versions"]
                       and result["title"] in {"Codex 请求优化器", "Codex 请求优化器 · 开发版",
                                               "Codex Request Optimizer"})
