@@ -2465,12 +2465,13 @@ function renderUpdates() {
   const checking=displayedState==="checking",installing=["downloading","upgrading"].includes(displayedState);
   const busy=checking||installing,available=displayedState==="available";
   if(busy||available)updateFeedbackVisible=true;
-  const button=$("updates-action");
-  const buttonLabels={checking:"检查中",available:"立即升级",downloading:"升级中",upgrading:"升级中"};
-  button.disabled=settingsSaving||busy||!supported;
-  button.classList.toggle("primary",supported&&(available||installing));
-  button.setAttribute("aria-busy",String(supported&&busy));
-  $("updates-action-label").textContent=t((supported&&buttonLabels[displayedState])||"检查更新");
+  const checkButton=$("updates-check"),installButton=$("updates-install");
+  checkButton.disabled=settingsSaving||busy||!supported;
+  installButton.disabled=checkButton.disabled||!available;
+  checkButton.setAttribute("aria-busy",String(supported&&checking));
+  installButton.setAttribute("aria-busy",String(supported&&installing));
+  $("updates-check-label").textContent=t(supported&&checking?"检查中":"检查更新");
+  $("updates-install-label").textContent=t(supported&&installing?"升级中":"立即升级");
   const labels={idle:"可检查 GitHub 上的最新版本。",checking:"正在检查更新…",current:"已是最新版本。",available:"发现新版本，可以升级。",downloading:"正在下载并校验升级包…",upgrading:"正在升级，旧请求继续完成…",complete:"升级已完成。"};
   const message=$("updates-message");
   message.hidden=!updateFeedbackVisible&&supported;
@@ -2485,10 +2486,10 @@ async function loadUpdates() {
   catch(error){if(revision===updateRevision&&!updateBusy)updateStatus={...updateStatus,state:"error",error:error.message};}
   finally {updateStatusLoading=false;renderUpdates();}
 }
-async function performUpdate() {
+async function performUpdate(which) {
   if(updateStatus?.supported===false||state.status?.updates_supported===false)return;
   if(settingsSaving||updateBusy||["checking","downloading","upgrading"].includes(updateStatus?.state))return;
-  const which=updateStatus?.state==="available"?"install":"check";
+  if(which==="install"&&updateStatus?.state!=="available")return;
   updateRevision++;updateBusy=true;updateAction=which;updateFeedbackVisible=true;renderUpdates();
   try {
     updateStatus=await api("/api/updates",{action:which});
@@ -3352,7 +3353,8 @@ $("zstd-level-dialog").addEventListener("click",event=>{
 $("image-analysis-mode").addEventListener("change",()=>{fillImageAnalysisMode();});
 action("settings-save",saveSettings);
 action("ui-refresh",()=>{if(state.status?.ui_live_reload)location.reload();});
-action("updates-action",performUpdate);
+action("updates-check",()=>performUpdate("check"));
+action("updates-install",()=>performUpdate("install"));
 setInterval(()=>{if($("settings-dialog").open&&!settingsSaving&&!updateBusy&&["checking","downloading","upgrading"].includes(updateStatus?.state))loadUpdates();},2000);
 action("compression-connect",()=>requestCompressionChange("connected"));
 action("compression-disconnect",()=>requestCompressionChange("disconnected"));
