@@ -541,6 +541,28 @@ button.other-session-group{background:#f5f2fc;border-color:#e7e0f5}
 .language-toggle button:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
 .settings-button{display:grid;place-items:center;width:36px;height:36px;padding:7px;flex:none}
 .settings-button svg{display:block;width:20px;height:20px}
+input[type=checkbox][switch]{
+  appearance:none;position:relative;display:inline-block;flex:none;
+  inline-size:38px;block-size:22px;margin:0;padding:0;border:1px solid #7c899c;
+  border-radius:999px;background:#eef0f4;color:#66758b;cursor:pointer
+}
+input[type=checkbox][switch]::before{
+  content:"";position:absolute;inset-block-start:2px;inset-inline-start:2px;
+  inline-size:16px;block-size:16px;border-radius:50%;background:currentColor;pointer-events:none
+}
+input[type=checkbox][switch]:checked{border-color:var(--accent);background:var(--accent);color:var(--panel)}
+input[type=checkbox][switch]:checked::before{inset-inline-start:calc(100% - 18px)}
+input[type=checkbox][switch]:disabled{cursor:default;opacity:.55}
+input[type=checkbox][switch]:focus:not(:focus-visible){outline:none}
+input[type=checkbox][switch]:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+@media (prefers-reduced-motion:no-preference){
+  input[type=checkbox][switch]{transition:background-color .15s,border-color .15s,color .15s}
+  input[type=checkbox][switch]::before{transition:inset-inline-start .15s}
+}
+@media (forced-colors:active){
+  input[type=checkbox][switch]{--accent:Highlight;forced-color-adjust:none;border-color:ButtonText;background:ButtonFace;color:ButtonText}
+  input[type=checkbox][switch]:checked{color:HighlightText}
+}
 /* Settings share one type scale, label column, and row spacing. */
 #settings-dialog{
   --muted:#526174;
@@ -606,10 +628,8 @@ button.other-session-group{background:#f5f2fc;border-color:#e7e0f5}
 #settings-dialog input[type=number]{appearance:textfield;font-variant-numeric:tabular-nums;text-align:right}
 #settings-dialog input[type=number]::-webkit-inner-spin-button,
 #settings-dialog input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}
-#settings-dialog :is(input,select):disabled{background:var(--bg);opacity:.55;cursor:default}
+#settings-dialog :is(input:not([switch]),select):disabled{background:var(--bg);opacity:.55;cursor:default}
 #settings-dialog :is(button,input,select):focus-visible{outline:2px solid var(--accent);outline-offset:2px}
-#settings-dialog input[type=checkbox]{display:block;width:14px;height:14px;flex:none;margin:0;padding:0;accent-color:var(--accent);cursor:pointer}
-#settings-dialog input[type=checkbox]:disabled{cursor:default}
 #settings-dialog .help{margin:10px 0 0;color:var(--muted);font-size:13px;line-height:20px;overflow-wrap:anywhere}
 #settings-dialog .help.error{color:var(--danger)}
 #settings-dialog .settings-dirty{border-radius:8px;outline:2px solid var(--accent);outline-offset:3px;background-color:var(--soft)}
@@ -618,7 +638,7 @@ button.other-session-group{background:#f5f2fc;border-color:#e7e0f5}
   align-items:start;column-gap:8px;min-inline-size:0
 }
 #settings-dialog .settings-controls{display:flex;flex-wrap:wrap;align-items:center;gap:6px var(--settings-column-gap);min-inline-size:0}
-#settings-dialog .settings-checkbox{display:flex;align-items:center;min-block-size:var(--settings-field-height)}
+#settings-dialog .settings-switch{display:flex;align-items:center;min-block-size:var(--settings-field-height)}
 #settings-dialog :is(.language-toggle,.image-mode-pills){display:inline-flex;flex-wrap:wrap;justify-self:start;gap:2px;width:max-content;min-width:0;max-width:100%;margin:0;padding:2px;border:1px solid var(--line);border-radius:var(--settings-control-radius);background:var(--bg)}
 #settings-dialog :is(.language-toggle button,.image-mode-pills span){display:block;height:var(--settings-segment-height);min-height:var(--settings-segment-height);padding:3px 7px;border:0;border-radius:var(--settings-segment-radius);font-size:13px;font-weight:400;line-height:20px;text-align:center;white-space:nowrap}
 #settings-dialog .language-toggle button{min-width:66px}
@@ -721,9 +741,10 @@ button.other-session-group{background:#f5f2fc;border-color:#e7e0f5}
 #settings-dialog .image-directory-row{display:grid;grid-template-columns:minmax(0,1fr) var(--settings-path-actions-width);gap:8px}
 #settings-dialog :is(.image-directory-row,.proxy-address-field) input{width:100%;min-width:0;text-align:left}
 #settings-dialog .image-directory-row>.help{grid-column:1/-1;margin:0}
-#settings-dialog .context-value input::placeholder{font-size:13px;font-weight:400}
-#settings-dialog .context-default{display:flex;align-items:center;gap:8px;justify-self:start;min-width:0;min-block-size:var(--settings-field-height);margin:0;color:var(--muted);font-size:13px;line-height:20px}
-#settings-dialog .context-default input{display:block;width:14px;height:14px;margin:0}
+#settings-dialog .context-grid .settings-controls{flex-wrap:nowrap}
+#settings-dialog .context-value:has(input:disabled){background:#eef0f3}
+#settings-dialog .context-value input:disabled{background:transparent;color:var(--muted);opacity:1}
+#settings-dialog .context-value input::placeholder{color:var(--muted);font-size:13px}
 #settings-dialog .record-limit-controls{display:grid;grid-template-columns:136px minmax(0,1fr)}
 #settings-dialog .record-limit-usage{text-align:start;color:var(--muted);font-size:13px;line-height:20px;font-variant-numeric:tabular-nums}
 #settings-dialog .repository-link{position:relative;inset-inline-end:8px;display:inline-flex;align-items:center;justify-content:center;flex:none;width:24px;height:24px;border-radius:6px;color:var(--muted)}
