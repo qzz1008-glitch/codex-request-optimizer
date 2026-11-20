@@ -38,7 +38,7 @@ async function run(){
     fillBadRequestRetry();fillCapacityRetry();fillPacketProtection();
     fillContextSettings({context_tokens:null,compact_tokens:220000,max_context_tokens:500000});
     state.status.storage={count:10000,stored:711120000};
-    $('packet-limit').value='10000';$('storage-limit').value='1000';
+    $('packet-limit').value='100000';$('storage-limit').value='1000';
     renderStorageInfo();renderRecordLimit($('packet-limit'));renderRecordLimit($('storage-limit'));
     settingsEditing=true;settingsBaseline=readSettingsDraft();
     $('sharing-settings').hidden=false;$('proxy-settings').hidden=false;
@@ -160,26 +160,30 @@ async function run(){
         return {fieldLeft:field.left,aligned:toggle.right<field.left&&Math.abs(toggle.top+toggle.height/2-field.top-field.height/2)<1};
       }));
       assert(contextRows.every(row=>row.aligned&&row.fieldLeft===contextRows[0].fieldLeft),'Context fields line up next to their switches');
-      const unitFields=await settings.locator('.settings-value-unit:not(.record-limit-value)').evaluateAll(fields=>fields.map(field=>{
+      const unitFields=await settings.locator('.settings-value-unit').evaluateAll(fields=>fields.map(field=>{
         const [input,unit]=field.children;
         const box=field.getBoundingClientRect(),number=input.getBoundingClientRect(),suffix=unit.getBoundingClientRect();
         const style=getComputedStyle(field),border=parseFloat(style.borderRightWidth);
         const unitIsInside=border>0&&number.width>0&&number.right<suffix.left&&suffix.top>=box.top&&suffix.bottom<=box.bottom
           &&Math.abs(box.right-suffix.right-border-parseFloat(style.paddingRight))<1;
-        return {id:input.id,unitIsInside};
+        return {id:field.querySelector('input').id,unitIsInside};
       }));
-      assert.equal(unitFields.length,6);
+      assert.equal(unitFields.length,8);
       for(const {id,unitIsInside} of unitFields){
         assert(unitIsInside,id+' shows its unit on the right inside the field');
       }
       const limits=await settings.locator('.record-limit-value').evaluateAll(fields=>fields.map(field=>{
-        const prefix=field.querySelector('.record-limit-prefix'),edit=field.querySelector('.record-limit-edit');
+        const [prefix,edit]=field.children;
         const formatted=edit.querySelector('.record-limit-formatted');
-        const [box,left,right]=[field,prefix,edit].map(node=>node.getBoundingClientRect());
+        const [row,left,right]=[field,prefix,edit].map(node=>node.getBoundingClientRect());
         return {prefix:prefix.textContent,formatted:formatted.textContent,
-          fits:box.left<left.left&&left.right<right.left&&right.right<box.right&&formatted.scrollWidth<=formatted.clientWidth+1};
+          fits:left.right<right.left&&right.right<=row.right+1&&formatted.scrollWidth<=formatted.clientWidth+1,
+          separate:getComputedStyle(field).borderInlineEndWidth==='0px'&&parseFloat(getComputedStyle(edit).borderInlineEndWidth)>0};
       }));
-      assert.deepEqual(limits,[{prefix:'10,000/',formatted:'10,000',fits:true},{prefix:'711.12/',formatted:'1,000',fits:true}]);
+      assert.deepEqual(limits,[
+        {prefix:'10,000/',formatted:'100,000',fits:true,separate:true},
+        {prefix:'711.12/',formatted:'1,000',fits:true,separate:true},
+      ],`Only the limit and unit share a field at ${width}px in ${language}`);
       cases++;
     }
     assert.equal(await enabled.getAttribute('data-settings-field'),null,'no native restart is needed');

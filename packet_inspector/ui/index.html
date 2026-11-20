@@ -404,26 +404,30 @@
         <div class="settings-row" data-settings-field="max_packets">
           <span id="packet-limit-label" class="settings-key">记录条数</span>
           <div class="settings-controls">
-            <div class="settings-value-unit record-limit-value">
+            <div class="record-limit-value">
               <span class="record-limit-prefix"><span id="packet-limit-usage">—</span><span aria-hidden="true">/</span></span>
-              <div class="record-limit-edit">
-                <input id="packet-limit" type="number" min="10" max="100000" inputmode="numeric" aria-labelledby="packet-limit-label" aria-describedby="packet-limit-usage packet-limit-unit" required>
-                <span class="record-limit-formatted" aria-hidden="true"></span>
-              </div>
-              <span id="packet-limit-unit" class="sr-only" data-i18n="settings.unit.requests">条</span>
+              <label class="settings-value-unit record-limit-field">
+                <span class="record-limit-edit">
+                  <input id="packet-limit" type="number" min="10" max="100000" inputmode="numeric" aria-labelledby="packet-limit-label" aria-describedby="packet-limit-usage packet-limit-unit" required>
+                  <span class="record-limit-formatted" aria-hidden="true"></span>
+                </span>
+                <span id="packet-limit-unit" data-i18n="settings.unit.requests">条</span>
+              </label>
             </div>
           </div>
         </div>
         <div class="settings-row" data-settings-field="max_storage_mb">
           <span id="storage-limit-label" class="settings-key">存储容量</span>
           <div class="settings-controls">
-            <div class="settings-value-unit record-limit-value">
+            <div class="record-limit-value">
               <span class="record-limit-prefix"><span id="storage-limit-usage">—</span><span aria-hidden="true">/</span></span>
-              <div class="record-limit-edit">
-                <input id="storage-limit" type="number" min="17" max="8590" step="1" inputmode="numeric" aria-labelledby="storage-limit-label" aria-describedby="storage-limit-usage storage-limit-unit" required>
-                <span class="record-limit-formatted" aria-hidden="true"></span>
-              </div>
-              <span id="storage-limit-unit">MB</span>
+              <label class="settings-value-unit record-limit-field">
+                <span class="record-limit-edit">
+                  <input id="storage-limit" type="number" min="17" max="8590" step="1" inputmode="numeric" aria-labelledby="storage-limit-label" aria-describedby="storage-limit-usage storage-limit-unit" required>
+                  <span class="record-limit-formatted" aria-hidden="true"></span>
+                </span>
+                <span id="storage-limit-unit">MB</span>
+              </label>
             </div>
           </div>
         </div>

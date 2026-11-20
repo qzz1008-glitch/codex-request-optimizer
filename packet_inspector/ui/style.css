@@ -751,16 +751,20 @@ input[type=checkbox][switch]:focus-visible{outline:2px solid var(--accent);outli
 #settings-dialog .context-value:has(input:disabled){background:#eef0f3}
 #settings-dialog .context-value input:disabled{background:transparent;color:var(--muted);opacity:1}
 #settings-dialog .context-value input::placeholder{color:var(--muted);font-size:13px}
-#settings-dialog .record-limit-value{inline-size:160px;gap:3px}
-#settings-dialog .record-limit-value>.record-limit-prefix{
-  display:flex;flex:0 0 8.5ch;justify-content:flex-end;gap:3px;min-inline-size:max-content;
-  font-size:14px;font-variant-numeric:tabular-nums
+#settings-dialog .record-limit-value{
+  display:flex;align-items:center;gap:4px;inline-size:176px;max-inline-size:100%;font-variant-numeric:tabular-nums
 }
-#settings-dialog .record-limit-edit{display:grid;grid-template-columns:minmax(0,1fr);flex:1;min-inline-size:0;font-variant-numeric:tabular-nums}
-#settings-dialog .record-limit-edit:has(#storage-limit){flex:0 1 5ch}
+#settings-dialog .record-limit-prefix{
+  display:flex;flex:0 1 8.5ch;justify-content:flex-end;gap:3px;min-inline-size:max-content;
+  color:var(--muted);font-size:14px;white-space:nowrap
+}
+#settings-dialog .record-limit-field{inline-size:108px}
+#settings-dialog .record-limit-field>.record-limit-edit{display:grid;grid-template-columns:minmax(0,1fr);flex:1;min-inline-size:0}
 #settings-dialog .record-limit-edit :is(input,.record-limit-formatted){grid-area:1/1;align-self:center}
 #settings-dialog .record-limit-edit input{inline-size:100%;text-align:start}
-#settings-dialog .record-limit-formatted{visibility:hidden;pointer-events:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#settings-dialog .record-limit-edit .record-limit-formatted{
+  color:var(--ink);font-size:14px;visibility:hidden;pointer-events:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis
+}
 #settings-dialog .record-limit-edit:not(:focus-within) .record-limit-formatted{visibility:visible}
 #settings-dialog .record-limit-edit:not(:focus-within):has(.record-limit-formatted:not(:empty)) input{opacity:0}
 #settings-dialog .record-limit-edit:has(input:disabled) .record-limit-formatted{opacity:.55}
@@ -820,6 +824,9 @@ input[type=checkbox][switch]:focus-visible{outline:2px solid var(--accent);outli
   #settings-dialog #proxy-test-state{white-space:normal;overflow-wrap:anywhere}
   #settings-dialog .updates-buttons{gap:4px}
   #settings-dialog .updates-actions button{inline-size:70px;padding-inline:4px}
+  #settings-dialog .record-limit-prefix{flex-basis:7.5ch;gap:2px}
+  #settings-dialog .record-limit-field{gap:4px;padding-inline-start:6px}
+  #settings-dialog :is(.record-limit-prefix,.record-limit-edit input,.record-limit-edit .record-limit-formatted){font-size:12px}
 }
 .empty-state{margin:12cqh auto}
 .json-tree{max-height:68cqh}
