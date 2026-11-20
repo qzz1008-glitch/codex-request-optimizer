@@ -28,7 +28,7 @@ const localControls=[
   const browser=await chromium.launch({channel:'msedge',headless:true});
   try {
     for(const fallback of [false,true]) {
-      const page=await browser.newPage({viewport:{width:1200,height:800}});
+      const page=await browser.newPage({viewport:{width:1200,height:800},reducedMotion:'no-preference'});
       const address='192.168.100.254';
       const errors=[];page.on('pageerror',error=>errors.push(error.message));
       const html=fs.readFileSync('packet_inspector/ui/index.html','utf8').replace(/<script[^>]*>[\s\S]*?<\/script>/g,'').replace(/<link[^>]*>/g,'');
@@ -121,15 +121,48 @@ const localControls=[
       const assertDropdownFrame=async()=>{
         const frame=await controls.evaluate(node=>{
           const trigger=node.getBoundingClientRect(),surface=getComputedStyle(node,'::before');
-          return {left:trigger.left+parseFloat(surface.left),width:parseFloat(surface.width),bottom:trigger.bottom-parseFloat(surface.bottom)};
+          return {left:trigger.left+parseFloat(surface.left),width:parseFloat(surface.width),bottom:trigger.bottom-parseFloat(surface.bottom),topBorder:surface.borderTopWidth};
         });
         const dropdown=await panel.boundingBox();
+        assert.equal(frame.topBorder,'0px','The local row has no top border');
         assert(Math.abs(frame.left-dropdown.x)<1&&Math.abs(frame.width-dropdown.width)<1,'Both parts use the same left and right edges');
         assert(Math.abs(frame.bottom-dropdown.y)<1,'The dropdown starts flush with the local row');
         const [localActions,remoteActions]=await Promise.all([localToggle.boundingBox(),actions.first().boundingBox()]);
         const rightPadding=dropdown.x+dropdown.width-Math.max(localActions.x+localActions.width,remoteActions.x+remoteActions.width);
         assert(rightPadding>=2&&rightPadding<=12,`The right edge sits just past the action buttons (${rightPadding}px)`);
       };
+      const paused=await page.addStyleTag({content:'.header-compression::before, .connection-panel {animation-play-state: paused}'});
+      await reopenPanel();
+      const [start,middle]=await panel.evaluate(menu=>{
+        const controls=document.getElementById('connection-controls');
+        const unfold=animation=>animation.animationName==='connection-expand';
+        const frameMotion=controls.getAnimations({subtree:true}).find(unfold);
+        const menuMotion=menu.getAnimations().find(unfold);
+        const {duration}=menuMotion.effect.getTiming();
+        const maskParts=style=>style.maskSize.match(/calc\([^)]*\)|\S+/g);
+        const box=menu.getBoundingClientRect();
+        return [0,duration/2].map(time=>{
+          frameMotion.currentTime=menuMotion.currentTime=time;
+          const style=getComputedStyle(menu);
+          const [width,height]=maskParts(style);
+          const [frameWidth]=maskParts(getComputedStyle(controls,'::before'));
+          const keepsHover=menu.contains(document.elementFromPoint(box.left+30,box.top+30));
+          return {width,height,frameWidth,keepsHover,position:style.maskPosition};
+        });
+      });
+      assert.equal(start.height,'0%','The remote rows start collapsed');
+      assert.notEqual(start.width,middle.width,'The dropdown grows to the left');
+      assert.notEqual(start.height,middle.height,'The dropdown grows downward');
+      for(const state of [start,middle]){
+        assert.equal(state.width,state.frameWidth,'Both rows extend left in sync');
+        assert.match(state.position,/^calc\(100%[^)]*\) 0%$/,'The reveal is anchored at the top right');
+        assert(state.keepsHover,'The dropdown can receive the pointer during the reveal');
+      }
+      await paused.evaluate(node=>node.remove());
+      await page.emulateMedia({reducedMotion:'reduce'});
+      await reopenPanel();
+      assert.equal(await panel.evaluate(menu=>getComputedStyle(menu).animationName),'none','Reduced motion opens the dropdown immediately');
+      await page.emulateMedia({reducedMotion:'no-preference'});
       const waitForReconnectPrompt=async()=>{
         await page.getByRole('dialog',{name:'现在重新连接 Codex？'}).waitFor({state:'visible'});
         assert.equal(await page.locator('#devices-confirm-apply').textContent(),'立即重连');
@@ -230,6 +263,7 @@ const localControls=[
       await page.setViewportSize({width:700,height:700});
       await controls.focus();await page.keyboard.press('ArrowDown');await panel.waitFor({state:'visible'});
       assert.equal(await reconnect.evaluate(button=>button===document.activeElement),true,'ArrowDown focuses the first available server action');
+      assert.equal(await panel.evaluate(menu=>getComputedStyle(menu).animationName),'none','Keyboard navigation gets an immediately visible focus target');
       const narrow=await panel.boundingBox();assert(narrow.x>=0&&narrow.x+narrow.width<=701&&narrow.y>=0&&narrow.y+narrow.height<=701);
       await page.keyboard.press('Escape');await panel.waitFor({state:'hidden'});
       await page.evaluate(()=>fixture.unavailable=true);
