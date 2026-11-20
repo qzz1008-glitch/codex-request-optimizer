@@ -60,9 +60,14 @@ async function run(){
   assert.equal(await updates.locator('.settings-key').textContent(),language==='zh'?'软件更新':'Software update');
   const before=await geometry(page,updateLayout);
   const [row,check,install,current]=before;
+  const [repository,hint]=await geometry(page,['updates-repository','startup-hint']);
   assert.equal(check[1],install[1],'The two update buttons share a row');
-  assert(check[0]+check[2]<=install[0]&&install[0]+install[2]<=current[0],'Both buttons sit before the version');
+  assert(check[0]+check[2]<=install[0]&&install[0]+install[2]<=repository[0]&&repository[0]+repository[2]<=current[0],'Update controls sit before the version');
   assert(install[0]+install[2]<=row[0]+row[2]+1,'Both buttons fit inside the visible update row');
+  if(width>320){
+   const hintInset=await page.locator('#startup-hint').evaluate(node=>parseFloat(getComputedStyle(node).paddingInlineEnd));
+   assert(Math.abs(current[0]+current[2]-(hint[0]+hint[2]-hintInset))<=1,'The current version aligns with the right-aligned settings hints');
+  }
   for(const status of ['checking','current','available','downloading','upgrading','complete','error']){
    await page.evaluate(status=>{updateStatus={state:status,current_version:'1.0.0',latest_version:'1.1.0',error:'Synthetic update error '.repeat(30)};renderUpdates();},status);
    const checking=status==='checking',installing=['downloading','upgrading'].includes(status);
@@ -77,7 +82,7 @@ async function run(){
    await noPopup(page);assert(await page.locator('#updates-message').isVisible());
    assert.equal(await page.locator('#updates-message').getAttribute('title'),await page.locator('#updates-message').textContent());
    const [version,result]=await geometry(page,['updates-versions','updates-message']);
-   assert(result[0]>=version[0]+version[2]&&Math.abs(result[1]+result[3]/2-version[1]-version[3]/2)<=1);
+   assert(result[0]+result[2]<=version[0]&&Math.abs(result[1]+result[3]/2-version[1]-version[3]/2)<=1);
    assert.deepEqual(await geometry(page,updateLayout),before);
   }cases++;
  }}
