@@ -10,6 +10,8 @@ const html=read('index.html').replace(/<script\b[^>]*>[\s\S]*?<\/script>/g,'').r
 const controls=source.slice(source.indexOf('function contextMessage('),source.indexOf('let updateStatus=null'));
 const protection=source.slice(source.indexOf('function fillPacketProtection()'),source.indexOf('async function applyLinkAction('));
 const draft=source.slice(source.indexOf('function readSettingsDraft()'),source.indexOf('function setSettingsMessage('));
+const formats=source.slice(source.indexOf('const nf = '),source.indexOf('let workspaceView='));
+const storage=source.slice(source.indexOf('function renderStorageInfo()'),source.indexOf('function signed('));
 let browser,cases=0;
 async function run(){
   browser=await chromium.launch({executablePath,headless:true});
@@ -27,13 +29,17 @@ async function run(){
       packet_size_protection_enabled:false,budget_bytes:1000000,auto_zstd_level_enabled:false,
     }};
     window.contextSettings=null;window.contextCustomValues=new Map();
-    window.fillZstdLevel=()=>{};
+    window.fillZstdLevel=()=>{};window.renderRecordScope=()=>{};
+    window.setText=(node,value)=>node.textContent=value;
     window.settingsBaseline=null;
   });
-  await page.addScriptTag({content:controls+'\n'+protection+'\n'+draft});
+  await page.addScriptTag({content:[controls,protection,draft,formats,storage].join('\n')});
   await page.evaluate(()=>{
     fillBadRequestRetry();fillCapacityRetry();fillPacketProtection();
     fillContextSettings({context_tokens:null,compact_tokens:220000,max_context_tokens:500000});
+    state.status.storage={count:10000,stored:711120000};
+    $('packet-limit').value='10000';$('storage-limit').value='1000';
+    renderStorageInfo();renderRecordLimit($('packet-limit'));renderRecordLimit($('storage-limit'));
     settingsEditing=true;settingsBaseline=readSettingsDraft();
     $('sharing-settings').hidden=false;$('proxy-settings').hidden=false;
     $('settings-dialog').showModal();
@@ -122,6 +128,8 @@ async function run(){
     assert.equal(await page.getByRole('switch',{name:language==='zh'?'异常重试':'Retry request errors',exact:true}).getAttribute('id'),'bad-request-retry');
     assert.equal(await context.getAttribute('placeholder'),language==='zh'?'默认':'Default');
     assert.equal(await page.getByRole('spinbutton',{name:language==='zh'?'中转入口':'Relay entry',exact:true}).getAttribute('id'),'entry-port');
+    assert.equal(await page.getByRole('spinbutton',{name:language==='zh'?'记录条数':'Request count',exact:true}).getAttribute('id'),'packet-limit');
+    assert.equal(await page.getByRole('spinbutton',{name:language==='zh'?'存储容量':'Storage capacity',exact:true}).getAttribute('id'),'storage-limit');
     assert.equal(await page.locator('#budget-label').textContent(),language==='zh'?'大小上限':'Size limit');
     assert.deepEqual(await settings.locator('#context-unit,#compact-unit').allTextContents(),['k','k']);
     assert.equal(await page.locator('#packet-limit-unit').textContent(),language==='zh'?'条':'req.');
@@ -152,19 +160,26 @@ async function run(){
         return {fieldLeft:field.left,aligned:toggle.right<field.left&&Math.abs(toggle.top+toggle.height/2-field.top-field.height/2)<1};
       }));
       assert(contextRows.every(row=>row.aligned&&row.fieldLeft===contextRows[0].fieldLeft),'Context fields line up next to their switches');
-      const unitFields=await settings.locator('.settings-value-unit').evaluateAll(fields=>fields.map(field=>{
+      const unitFields=await settings.locator('.settings-value-unit:not(.record-limit-value)').evaluateAll(fields=>fields.map(field=>{
         const [input,unit]=field.children;
         const box=field.getBoundingClientRect(),number=input.getBoundingClientRect(),suffix=unit.getBoundingClientRect();
         const style=getComputedStyle(field),border=parseFloat(style.borderRightWidth);
         const unitIsInside=border>0&&number.width>0&&number.right<suffix.left&&suffix.top>=box.top&&suffix.bottom<=box.bottom
           &&Math.abs(box.right-suffix.right-border-parseFloat(style.paddingRight))<1;
-        return {id:input.id,width:box.width,unitIsInside};
+        return {id:input.id,unitIsInside};
       }));
-      assert.equal(unitFields.length,8);
-      for(const {id,width,unitIsInside} of unitFields){
+      assert.equal(unitFields.length,6);
+      for(const {id,unitIsInside} of unitFields){
         assert(unitIsInside,id+' shows its unit on the right inside the field');
-        if(id==='packet-limit'||id==='storage-limit')assert.equal(width,96,id+' keeps its 96px field width');
       }
+      const limits=await settings.locator('.record-limit-value').evaluateAll(fields=>fields.map(field=>{
+        const prefix=field.querySelector('.record-limit-prefix'),edit=field.querySelector('.record-limit-edit');
+        const formatted=edit.querySelector('.record-limit-formatted');
+        const [box,left,right]=[field,prefix,edit].map(node=>node.getBoundingClientRect());
+        return {prefix:prefix.textContent,formatted:formatted.textContent,
+          fits:box.left<left.left&&left.right<right.left&&right.right<box.right&&formatted.scrollWidth<=formatted.clientWidth+1};
+      }));
+      assert.deepEqual(limits,[{prefix:'10,000/',formatted:'10,000',fits:true},{prefix:'711.12/',formatted:'1,000',fits:true}]);
       cases++;
     }
     assert.equal(await enabled.getAttribute('data-settings-field'),null,'no native restart is needed');
@@ -172,6 +187,21 @@ async function run(){
     assert.equal(await count.isDisabled(),true);
     assert.deepEqual(await page.evaluate(()=>changedSettings()),[],'an unchecked count does not leave a dirty draft');cases++;
   }
+  const storageLimit=page.locator('#storage-limit');
+  const displayedLimit=storageLimit.locator('..').locator('.record-limit-formatted');
+  assert.equal(await displayedLimit.isVisible(),true);
+  await storageLimit.fill('1200');
+  assert.equal(await displayedLimit.isVisible(),false,'Editing shows the native numeric input');
+  await page.evaluate(()=>{
+    renderRecordLimit($('storage-limit'));
+    state.status.storage={count:10001,stored:1711120000};renderStorageInfo();
+  });
+  assert.equal(await storageLimit.inputValue(),'1200','A storage refresh preserves the edit');
+  await storageLimit.blur();
+  assert.equal(await displayedLimit.isVisible(),true);
+  assert.equal(await displayedLimit.textContent(),'1,200');
+  assert.equal(await page.locator('#storage-limit-usage').textContent(),'1,711.12');
+  assert.equal(await page.evaluate(()=>readSettingsDraft().max_storage_mb),'1200');cases++;
   await page.evaluate(()=>{state.status.bad_request_retry_supported=false;fillBadRequestRetry();});
   assert.equal(await enabled.isDisabled(),true);assert.equal(await count.isDisabled(),true);cases++;
   await page.evaluate(()=>{settingsEditing=false;state.status={bad_request_retry_supported:true,bad_request_retry_enabled:true,bad_request_retry_max_retries:7};fillBadRequestRetry();});

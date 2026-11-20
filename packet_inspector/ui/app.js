@@ -506,6 +506,7 @@ initializeWindowControls();
 history.replaceState(null, "", "/");
 const state = { status: null, packets: [], sessions: [], selected: null, detail: null, tab: "headers", diffAvailable: null, path: "", text: null, older: false, polling: false, detailVersion: "", detailRequest: 0, listVersion: "", sessionVersion: "", sort: "created", direction: "desc", filters: {kind:"",status:"",thread:""}, canLoadMore: false, listRequest: 0, listController: null, listRevision: null, filterRevision: null };
 const nf = new Intl.NumberFormat("zh-CN");
+const storageUsageFormat = new Intl.NumberFormat("zh-CN", {minimumFractionDigits:2, maximumFractionDigits:2});
 let workspaceView="records",tokenTrendView=null;
 let requestBodyCache=null, requestBodyExportUrl="", requestBodySequence=0;
 let treeQueryTimer=null,requestBodyView=null,requestBodyHighlight=null;
@@ -893,11 +894,15 @@ async function refreshRecordScope(storage) {
 }
 function renderStorageInfo() {
   const {count, stored} = state.status?.storage ?? {};
-  setText($("packet-limit-usage"), Number.isSafeInteger(count) && count >= 0
-    ? t("已记录 {count} 条").replace("{count}", nf.format(count)) : "—");
+  setText($("packet-limit-usage"), Number.isSafeInteger(count) && count >= 0 ? nf.format(count) : "—");
   setText($("storage-limit-usage"), Number.isFinite(stored) && stored >= 0
-    ? t("已使用 {size}").replace("{size}", compact(stored)) : "—");
+    ? storageUsageFormat.format(stored / 1_000_000) : "—");
   renderRecordScope();
+}
+function renderRecordLimit(input) {
+  const value = input.valueAsNumber;
+  const formatted = input.parentElement.querySelector(".record-limit-formatted");
+  setText(formatted, input.validity.valid && value >= 1000 ? nf.format(value) : "");
 }
 function signed(n) { return (n > 0 ? "+" : "") + bytes(n); }
 function kind(n) { return names[n] || n; }
@@ -1767,7 +1772,11 @@ function fillSettings() {
     $("sharing-port").value=s.sharing_port??47846;
     $("exit-port").value=s.egress_port??47847;
   }
-  for(const id of ["storage-limit","packet-limit"])$(id).disabled=settingsSaving;
+  for(const id of ["storage-limit","packet-limit"]){
+    const input=$(id);
+    input.disabled=settingsSaving;
+    renderRecordLimit(input);
+  }
   $("sharing-settings").hidden=!s.sharing_settings_supported;
   for(const id of ["sharing-port","exit-port"])$(id).disabled=settingsSaving||!s.sharing_settings_supported;
   $("start-on-login").disabled=settingsSaving||!s.start_on_login_supported;
@@ -3352,7 +3361,10 @@ $("settings-dialog").addEventListener("close",()=>{
 for(const id of ["capacity-retry-count","capacity-retry-delay"])$(id).addEventListener("input",event=>{
   if(event.target.valueAsNumber>99)event.target.value="99";
 });
-$("settings-dialog").querySelector(".settings-content").addEventListener("input",()=>updateSettingsSaveState());
+$("settings-dialog").querySelector(".settings-content").addEventListener("input",event=>{
+  if(event.target.matches("#packet-limit, #storage-limit"))renderRecordLimit(event.target);
+  updateSettingsSaveState();
+});
 $("settings-dialog").querySelector(".settings-content").addEventListener("change",()=>updateSettingsSaveState());
 $("zstd-level").addEventListener("change",fillZstdLevel);
 $("image-zstd-level").addEventListener("change",fillZstdLevel);

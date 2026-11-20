@@ -14,11 +14,34 @@ for(const [bytes,mb] of [[16777216,17],[512000000,512],[512000123,513],[85899345
 }
 const prior=context.storageLimitSettings({max_storage_bytes:8589934592,storage_limit_min_bytes:16777216,storage_limit_max_bytes:8589934592});
 assert.equal(prior.value,8589);assert.equal(prior.min,17);assert.equal(prior.max,8589);
+const usage={};
+Object.assign(context,{state:{},$:id=>id,setText:(id,value)=>{usage[id]=String(value);},renderRecordScope(){}});
+const formats=source.slice(source.indexOf('const nf = '),source.indexOf('let workspaceView='));
+const renderStart=source.indexOf('function renderStorageInfo()'),renderEnd=source.indexOf('function signed(',renderStart);
+vm.runInContext(formats+source.slice(renderStart,renderEnd),context);
+for(const [storage,count,size] of [
+  [{count:10000,stored:711_120_000},'10,000','711.12'],
+  [{count:10250,stored:1_711_120_000},'10,250','1,711.12'],
+  [{count:0,stored:250_000},'0','0.25'],
+  [{count:-1,stored:NaN},'—','—'],
+  [{},'—','—']
+]){
+  context.state.status={storage};
+  context.renderStorageInfo();
+  assert.equal(usage['packet-limit-usage'],count);
+  assert.equal(usage['storage-limit-usage'],size);
+}
+const parentElement={querySelector:()=> 'formatted'};
+for(const [valueAsNumber,valid,formatted] of [[10000,true,'10,000'],[1000,true,'1,000'],[999,true,''],[10000,false,''],[NaN,false,'']]){
+  context.renderRecordLimit({valueAsNumber,validity:{valid},parentElement});
+  assert.equal(usage.formatted,formatted);
+}
 const html=fs.readFileSync('packet_inspector/ui/index.html','utf8'),i18n=fs.readFileSync('packet_inspector/ui/i18n.js','utf8');
 assert.match(html,/id="budget-unit"[^>]*>KB<\/span>/);
-assert.match(html,/<span id="packet-limit-label" class="settings-key">记录上限<\/span>/);
-assert.match(html,/<input id="packet-limit"[^>]*>\s*<span id="packet-limit-unit"[^>]*>条<\/span>/);
-assert.match(html,/<span id="storage-limit-label" class="settings-key">存储上限<\/span>/);
-assert.match(html,/<input id="storage-limit" type="number" min="17" max="8590" step="1"[^>]*>\s*<span id="storage-limit-unit"[^>]*>MB<\/span>/);
+assert.match(html,/<span id="packet-limit-label" class="settings-key">记录条数<\/span>/);
+assert.match(html,/<span id="storage-limit-label" class="settings-key">存储容量<\/span>/);
+assert.match(html,/<span id="packet-limit-unit" class="sr-only"[^>]*>条<\/span>/);
+assert.match(html,/<input id="storage-limit" type="number" min="17" max="8590" step="1"/);
+assert.match(html,/<span id="storage-limit-unit">MB<\/span>/);
 assert(!/\b(?:KiB|MiB|GiB|kB)\b/.test(html+i18n));
 console.log(JSON.stringify({passed:true}));
