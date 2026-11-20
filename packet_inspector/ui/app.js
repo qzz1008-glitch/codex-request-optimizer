@@ -1753,9 +1753,6 @@ function fillSettings() {
   if(!settingsEditing) {
     storageInput.value=storage.value;$("packet-limit").value=s.max_packets;
     $("start-on-login").checked=!!s.start_on_login;
-    $("capacity-retry").checked=!!s.capacity_retry_enabled;
-    $("capacity-retry-count").value=s.capacity_retry_max_retries??15;
-    $("capacity-retry-delay").value=s.capacity_retry_delay_seconds??30;
     $("sharing-port").value=s.sharing_port??47846;
     $("exit-port").value=s.egress_port??47847;
   }
@@ -1763,9 +1760,7 @@ function fillSettings() {
   $("sharing-settings").hidden=!s.sharing_settings_supported;
   for(const id of ["sharing-port","exit-port"])$(id).disabled=settingsSaving||!s.sharing_settings_supported;
   $("start-on-login").disabled=settingsSaving||!s.start_on_login_supported;
-  $("capacity-retry").disabled=settingsSaving||!s.capacity_retry_supported;
-  $("capacity-retry-count").disabled=settingsSaving||s.capacity_retry_mode!=="native"||!Number.isInteger(s.capacity_retry_max_retries);
-  $("capacity-retry-delay").disabled=settingsSaving||s.capacity_retry_mode!=="native"||!Number.isInteger(s.capacity_retry_delay_seconds);
+  fillCapacityRetry();
   fillBadRequestRetry();
   fillProxySettings();
   fillImageAnalysisMode();
@@ -1773,7 +1768,7 @@ function fillSettings() {
   $("runtime-settings-message").hidden=!!s.capacity_retry_supported;
   $("runtime-settings-message").textContent=s.capacity_retry_supported?"":t("当前中转暂不支持此功能。");
   renderConnectionActions();
-  renderCompressionMode();renderLanguageSelection();fillZstdLevel();fillStorageDirectories();fillPacketProtection();syncContextDefaults();
+  renderCompressionMode();renderLanguageSelection();fillZstdLevel();fillStorageDirectories();fillPacketProtection();syncContextControls();
   updateSettingsSaveState(false);
 }
 function selectedProxyMode() {
@@ -2212,41 +2207,42 @@ function providerStatus(s) {
   return s.profile.active?t("已配置接入"):t("尚未接入");
 }
 function contextMessage(text,error=false) { const node=$("context-message");uiI18n.text(node,text);node.className="help"+(error?" error":"");node.hidden=!node.textContent; }
-function syncContextDefaults() {
+function syncContextControls() {
+  const unavailable=settingsSaving||!contextSettings;
   for(const key of ["context","compact"]) {
-    const unavailable=settingsSaving||!contextSettings;
-    const input=$(key+"-tokens"),useDefault=$(key+"-default").checked;
-    $(key+"-default").disabled=unavailable;
-    if(useDefault) {
-      if(input.value&&input.validity.valid)contextCustomValues.set(key,input.value);
-      input.value="";
-    }
-    input.disabled=unavailable;
-    input.readOnly=useDefault;
+    const toggle=$(key+"-custom");
+    toggle.disabled=unavailable;
+    $(key+"-tokens").disabled=unavailable||!toggle.checked;
   }
-}
-function editContextValue(key) {
-  if(!settingsEditing||settingsSaving||!contextSettings)return;
-  const useDefault=$(key+"-default");
-  if(!useDefault.checked)return;
-  useDefault.checked=false;
-  $(key+"-tokens").value=contextCustomValues.get(key)||"";
-  syncContextDefaults();contextMessage("");updateSettingsSaveState();
+  renderContextPlaceholders();
 }
 function fillContextSettings(data) {
   contextSettings=data;
   const maximum=data.max_context_tokens/1000;
-  renderContextPlaceholders();
   for(const [key,value] of [["context",data.context_tokens],["compact",data.compact_tokens]]) {
-    if(!settingsEditing)$(key+"-default").checked=value==null;
-    $(key+"-tokens").max=String(maximum);
+    const input=$(key+"-tokens");
+    input.max=String(maximum);
     if(!settingsEditing) {
-      $(key+"-tokens").value=value==null?"":String(value/1000);
-      if(value!=null)contextCustomValues.set(key,String(value/1000));
+      $(key+"-custom").checked=value!=null;
+      input.value=value==null?"":String(value/1000);
+      if(value!=null)contextCustomValues.set(key,input.value);
     }
   }
-  syncContextDefaults();
+  syncContextControls();
 }
+function fillCapacityRetry() {
+  const s=state.status,enabled=$("capacity-retry"),count=$("capacity-retry-count"),delay=$("capacity-retry-delay");
+  if(!settingsEditing) {
+    enabled.checked=!!s.capacity_retry_enabled;
+    count.value=s.capacity_retry_max_retries??15;
+    delay.value=s.capacity_retry_delay_seconds??30;
+  }
+  enabled.disabled=settingsSaving||!s.capacity_retry_supported;
+  const editable=!enabled.disabled&&enabled.checked&&s.capacity_retry_mode==="native";
+  count.disabled=!editable||!Number.isInteger(s.capacity_retry_max_retries);
+  delay.disabled=!editable||!Number.isInteger(s.capacity_retry_delay_seconds);
+}
+$("capacity-retry").addEventListener("change",fillCapacityRetry);
 function fillBadRequestRetry() {
   const s=state.status,enabled=$("bad-request-retry"),count=$("bad-request-retry-count");
   if(!settingsEditing){enabled.checked=!!s.bad_request_retry_enabled;count.value=s.bad_request_retry_max_retries??3;}
@@ -2255,13 +2251,24 @@ function fillBadRequestRetry() {
 }
 $("bad-request-retry").addEventListener("change",fillBadRequestRetry);
 function renderContextPlaceholders() {
-  if(!contextSettings)return;
-  for(const key of ["context","compact"])$(key+"-tokens").placeholder="";
+  for(const key of ["context","compact"])$(key+"-tokens").placeholder=$(key+"-custom").checked?"":t("默认");
 }
 async function loadContextSettings() {
   contextMessage("");
   try {fillContextSettings(await api("/api/context-settings"));}
-  catch(error) {contextSettings=null;syncContextDefaults();contextMessage(()=>t("上下文配置读取失败：")+t(error.message),true);}
+  catch(error) {contextSettings=null;syncContextControls();contextMessage(()=>t("上下文配置读取失败：")+t(error.message),true);}
+}
+for(const key of ["context","compact"]) {
+  const input=$(key+"-tokens"),toggle=$(key+"-custom");
+  input.addEventListener("input",()=>contextMessage(""));
+  toggle.addEventListener("change",()=>{
+    if(toggle.checked)input.value=contextCustomValues.get(key)||"";
+    else {
+      if(input.value&&input.validity.valid)contextCustomValues.set(key,input.value);
+      input.value="";
+    }
+    syncContextControls();contextMessage("");
+  });
 }
 let updateStatus=null, updateBusy=false, updateAction="", updateFeedbackVisible=false;
 let updateRevision=0,updateStatusLoading=false;
@@ -2288,7 +2295,12 @@ function readSettingsDraft() {
     max_packets:$("packet-limit").value,
     language:settingsLanguage??uiI18n.language
   };
-  for(const key of ["context","compact"])draft[key+"_tokens"]=$(key+"-default").checked?null:$(key+"-tokens").value;
+  if(settingsBaseline&&!draft.packet_size_protection_enabled)draft.budget=settingsBaseline.budget;
+  if(settingsBaseline&&!draft.capacity_retry_enabled) {
+    draft.capacity_retry_max_retries=settingsBaseline.capacity_retry_max_retries;
+    draft.capacity_retry_delay_seconds=settingsBaseline.capacity_retry_delay_seconds;
+  }
+  for(const key of ["context","compact"])draft[key+"_tokens"]=$(key+"-custom").checked?$(key+"-tokens").value:null;
   return draft;
 }
 function changedSettings(draft=readSettingsDraft()) {
@@ -2446,7 +2458,7 @@ async function saveSettings() {
     for(const [node,disabled] of controls)if(node.isConnected)node.disabled=disabled;
     $("settings-dialog").setAttribute("aria-busy","false");
     renderSettingsSaveProgress();
-    fillSettings();renderContextPlaceholders();renderUpdates();renderStatus();updateSettingsSaveState(false);
+    fillSettings();renderUpdates();renderStatus();updateSettingsSaveState(false);
     if(error)setSettingsMessage(()=>t(saved?"部分设置已保存，剩余修改未保存：":"保存失败：")+t(error.message),true);
     else finishSettingsSave();
   }
@@ -3369,24 +3381,13 @@ function fillPacketProtection() {
   $("packet-size-protection").disabled=settingsSaving||!supported;
   $("budget").disabled=$("packet-size-protection").disabled||!$("packet-size-protection").checked;
   automatic.disabled=$("packet-size-protection").disabled||!$("packet-size-protection").checked||!autoSupported;
-  automatic.closest(".settings-checkbox").title=!autoSupported?t("当前中转暂不支持按请求大小自动压缩。"):!$("packet-size-protection").checked?t("请先开启请求大小保护"):"";
+  automatic.closest(".settings-switch").title=!autoSupported?t("当前中转暂不支持按请求大小自动压缩。"):!$("packet-size-protection").checked?t("请先开启请求大小保护"):"";
   $("packet-size-message").hidden=supported;
   if(!supported)$("packet-size-message").textContent=t("当前中转暂不支持此功能。");
   fillZstdLevel();
 }
 $("packet-size-protection").addEventListener("change",fillPacketProtection);
 $("auto-zstd-level").addEventListener("change",fillZstdLevel);
-for(const key of ["context","compact"]) {
-  const input=$(key+"-tokens"),useDefault=$(key+"-default");
-  input.closest(".context-value").addEventListener("click",()=>{
-    editContextValue(key);if(!input.disabled)input.focus();
-  });
-  input.addEventListener("input",()=>contextMessage(""));
-  useDefault.addEventListener("change",()=>{
-    if(!useDefault.checked)input.value=contextCustomValues.get(key)||"";
-    syncContextDefaults();contextMessage("");
-  });
-}
 async function applyLinkAction(which) {
   linkRevision++;
   try {

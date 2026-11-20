@@ -1,4 +1,4 @@
-/* Real settings controls: opt-in, editable count, old workers and bilingual layout. */
+/* Settings switches, dependent fields, old workers and bilingual layout. */
 const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path');
 let chromium;
 try{({chromium}=require('playwright'));}catch(_){console.log(JSON.stringify({skipped:'Playwright is not installed'}));process.exit(0);}
@@ -7,7 +7,8 @@ const executablePath=process.env.CRO_TEST_BROWSER||(process.platform==='win32'&&
 if(!fs.existsSync(executablePath)){console.log(JSON.stringify({skipped:'No browser engine is installed'}));process.exit(0);}
 const root=path.join(__dirname,'../packet_inspector/ui'),read=name=>fs.readFileSync(path.join(root,name),'utf8'),source=read('app.js');
 const html=read('index.html').replace(/<script\b[^>]*>[\s\S]*?<\/script>/g,'').replace(/<link\b[^>]*>/g,'');
-const controls=source.slice(source.indexOf('function fillBadRequestRetry()'),source.indexOf('function renderContextPlaceholders()'));
+const controls=source.slice(source.indexOf('function contextMessage('),source.indexOf('let updateStatus=null'));
+const protection=source.slice(source.indexOf('function fillPacketProtection()'),source.indexOf('async function applyLinkAction('));
 const draft=source.slice(source.indexOf('function readSettingsDraft()'),source.indexOf('function setSettingsMessage('));
 let browser,cases=0;
 async function run(){
@@ -20,19 +21,66 @@ async function run(){
   await page.evaluate(()=>{
     window.$=id=>document.getElementById(id);window.settingsSaving=false;window.settingsEditing=false;
     window.settingsLanguage=null;window.selectedImageAnalysisMode=()=> 'native';
-    window.state={status:{bad_request_retry_enabled:false,bad_request_retry_supported:true}};
+    window.state={status:{
+      bad_request_retry_enabled:false,bad_request_retry_supported:true,
+      capacity_retry_supported:true,capacity_retry_mode:'native',capacity_retry_max_retries:15,capacity_retry_delay_seconds:30,
+      packet_size_protection_enabled:false,budget_bytes:1000000,auto_zstd_level_enabled:false,
+    }};
+    window.contextSettings=null;window.contextCustomValues=new Map();
+    window.fillZstdLevel=()=>{};
     window.settingsBaseline=null;
   });
-  await page.addScriptTag({content:controls+'\n'+draft});
+  await page.addScriptTag({content:controls+'\n'+protection+'\n'+draft});
   await page.evaluate(()=>{
-    fillBadRequestRetry();settingsEditing=true;settingsBaseline=readSettingsDraft();
+    fillBadRequestRetry();fillCapacityRetry();fillPacketProtection();
+    fillContextSettings({context_tokens:null,compact_tokens:220000,max_context_tokens:500000});
+    settingsEditing=true;settingsBaseline=readSettingsDraft();
     $('sharing-settings').hidden=false;$('proxy-settings').hidden=false;
     $('settings-dialog').showModal();
   });
   const enabled=page.locator('#bad-request-retry'),count=page.locator('#bad-request-retry-count');
   assert.equal(await enabled.isChecked(),false);assert.equal(await enabled.isDisabled(),false);
   assert.equal(await count.inputValue(),'3');assert.equal(await count.isDisabled(),true);cases++;
+  const contextSwitch=page.locator('#context-custom'),context=page.locator('#context-tokens');
+  const compactSwitch=page.locator('#compact-custom'),compact=page.locator('#compact-tokens');
+  assert.equal(await contextSwitch.isChecked(),false);assert.equal(await context.isDisabled(),true);
+  await page.locator('#context-unit').click({force:true});
+  assert.equal(await contextSwitch.isChecked(),false,'A disabled input cannot enable the window override');
+  await contextSwitch.press('Space');
+  assert.equal(await context.isDisabled(),false);
+  assert.equal(await context.evaluate(node=>node.validity.valueMissing),true);
+  await context.fill('250.5');
+  assert.equal(await page.evaluate(()=>readSettingsDraft().context_tokens),'250.5');
+  await contextSwitch.uncheck();
+  assert.equal(await context.isDisabled(),true);
+  assert.equal(await page.evaluate(()=>readSettingsDraft().context_tokens),null);
+  await contextSwitch.check();assert.equal(await context.inputValue(),'250.5');
+  await contextSwitch.uncheck();
+  assert.equal(await compactSwitch.isChecked(),true);assert.equal(await compact.inputValue(),'220');
+  await compactSwitch.uncheck();assert.equal(await compact.isDisabled(),true);
+  assert.equal(await page.evaluate(()=>readSettingsDraft().compact_tokens),null);
+  await compactSwitch.check();assert.equal(await compact.inputValue(),'220');cases++;
+  for(const [toggleId,fieldIds] of [
+    ['packet-size-protection',['budget']],
+    ['capacity-retry',['capacity-retry-count','capacity-retry-delay']],
+  ]){
+    const toggle=page.locator('#'+toggleId);
+    for(const id of fieldIds)assert.equal(await page.locator('#'+id).isDisabled(),true);
+    await toggle.check();
+    for(const id of fieldIds){
+      const field=page.locator('#'+id);
+      assert.equal(await field.isDisabled(),false);
+      await field.fill('');
+    }
+    await toggle.uncheck();
+    for(const id of fieldIds)assert.equal(await page.locator('#'+id).isDisabled(),true);
+    assert.deepEqual(await page.evaluate(()=>changedSettings()),[],'Disabled inputs do not replace saved values');
+    cases++;
+  }
+  await page.evaluate(()=>{settingsEditing=false;fillPacketProtection();fillCapacityRetry();settingsEditing=true;});
   const settings=page.locator('#settings-dialog .settings-content');
+  assert.equal(await settings.getByRole('switch').count(),7);
+  assert.equal(await settings.getByRole('checkbox').count(),0);
   const interactive='input:not([type=hidden]),select,button,a[href],[tabindex]';
   assert.deepEqual(await settings.locator(interactive).evaluateAll(nodes=>
     nodes.filter(node=>!node.closest('.settings-controls')).map(node=>node.id)),[]);
@@ -54,7 +102,7 @@ async function run(){
   }
   assert.deepEqual(await page.evaluate(()=>settingInteractions),[],'Clicking a key never activates or focuses a setting');cases++;
   for(const language of ['zh','en']){
-    await page.evaluate(language=>{uiI18n.setLanguage(language,{persist:false});settingsLanguage=language;settingsBaseline=readSettingsDraft();},language);
+    await page.evaluate(language=>{uiI18n.setLanguage(language,{persist:false});renderContextPlaceholders();settingsLanguage=language;settingsBaseline=readSettingsDraft();},language);
     const names=await settings.locator('.settings-key').allTextContents();
     if(language==='zh'){
       assert.deepEqual(names.filter(name=>!/^\p{Script=Han}{4}$/u.test(name)),[],'Every Chinese setting name has four characters');
@@ -71,7 +119,8 @@ async function run(){
     assert.deepEqual(value.changed.sort(),['bad_request_retry_enabled','bad_request_retry_max_retries']);
     await count.fill('10');assert.equal(await count.evaluate(node=>node.checkValidity()),false);
     await count.fill('9');assert.equal(await count.evaluate(node=>node.checkValidity()),true);
-    assert.equal(await page.getByRole('checkbox',{name:language==='zh'?'异常重试':'Retry request errors',exact:true}).getAttribute('id'),'bad-request-retry');
+    assert.equal(await page.getByRole('switch',{name:language==='zh'?'异常重试':'Retry request errors',exact:true}).getAttribute('id'),'bad-request-retry');
+    assert.equal(await context.getAttribute('placeholder'),language==='zh'?'默认':'Default');
     assert.equal(await page.getByRole('spinbutton',{name:language==='zh'?'中转入口':'Relay entry',exact:true}).getAttribute('id'),'entry-port');
     assert.equal(await page.locator('#budget-label').textContent(),language==='zh'?'大小上限':'Size limit');
     assert.deepEqual(await settings.locator('#context-unit,#compact-unit').allTextContents(),['k','k']);
@@ -97,7 +146,12 @@ async function run(){
         document.querySelector(toggle),document.querySelector(label),document.querySelector(input).closest('.settings-value-unit'),
       ].map(element=>element.getBoundingClientRect().left)));
       const [sizeLimit,...retryLimits]=columns;
-      for(const limit of retryLimits)assert.deepEqual(limit,sizeLimit,'The checkboxes, number labels and fields share columns');
+      for(const limit of retryLimits)assert.deepEqual(limit,sizeLimit,'The switches, number labels and fields share columns');
+      const contextRows=await settings.locator('.context-grid .settings-controls').evaluateAll(rows=>rows.map(row=>{
+        const [toggle,field]=Array.from(row.children,child=>child.getBoundingClientRect());
+        return {fieldLeft:field.left,aligned:toggle.right<field.left&&Math.abs(toggle.top+toggle.height/2-field.top-field.height/2)<1};
+      }));
+      assert(contextRows.every(row=>row.aligned&&row.fieldLeft===contextRows[0].fieldLeft),'Context fields line up next to their switches');
       const unitFields=await settings.locator('.settings-value-unit').evaluateAll(fields=>fields.map(field=>{
         const [input,unit]=field.children;
         const box=field.getBoundingClientRect(),number=input.getBoundingClientRect(),suffix=unit.getBoundingClientRect();
