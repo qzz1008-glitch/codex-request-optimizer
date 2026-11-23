@@ -915,6 +915,38 @@ function eventRows(){return [
   result.setActive(false);frames.shift()();await new Promise(resolve=>setTimeout(resolve,5));assert.equal(reads,0);
   result.setActive(true);assert.equal(reads,0);frames.shift()();await new Promise(resolve=>setTimeout(resolve,5));assert.equal(reads,1);
  });
+ await test('chart activation waits for the visible workspace slide and skips obsolete switches',async()=>{
+  const elements=new Map(['records-view','token-trend-view','sharing-view','view-records','view-trends','view-sharing'].map(id=>[id,new Node('div')]));
+  const frames=[],timers=[],activations=[];
+  let finishTrends,finishSharing;
+  const trends=new Promise(resolve=>finishTrends=resolve),sharing=new Promise(resolve=>finishSharing=resolve);
+  elements.get('token-trend-view').getAnimations=()=>[{transitionProperty:'opacity'},{transitionProperty:'transform',finished:trends}];
+  elements.get('sharing-view').getAnimations=()=>[{transitionProperty:'transform',finished:sharing}];
+  const start=source.indexOf('function activateTrendsAfterSlide(');
+  const {setWorkspaceView}=vm.runInNewContext(source.slice(start,source.indexOf('$("view-records").onclick=',start))+'\nthis;',{
+   workspaceView:'records',trendActivation:null,tokenTrendView:{setActive:active=>activations.push(active)},state:{tab:'headers'},
+   $:id=>elements.get(id),hideSessionTitleTooltip(){},cancelTokenRead(){},localStorage:{setItem(){}},
+   requestAnimationFrame:callback=>frames.push(callback),setTimeout:callback=>timers.push(callback),InspectorSharing:{setActive(){}}
+  });
+
+  setWorkspaceView('trends');setWorkspaceView('trends');
+  assert.equal(elements.get('view-trends').attrs['aria-pressed'],'true');
+  assert.deepEqual(activations,[]);assert.equal(frames.length,0);
+  finishTrends();await Promise.resolve();
+  assert.equal(frames.length,1);assert.equal(activations.length,0);
+  frames.shift()();assert.equal(activations.length,0);timers.shift()();
+  assert.deepEqual(activations,[true]);
+
+  setWorkspaceView('sharing');setWorkspaceView('trends');await Promise.resolve();
+  assert.deepEqual(activations,[true,false]);assert.equal(frames.length,0);
+  finishSharing();await Promise.resolve();
+  assert.equal(frames.length,1);
+  setWorkspaceView('records');
+  elements.get('token-trend-view').getAnimations=()=>[];
+  setWorkspaceView('trends');
+  frames.shift()();timers.shift()();assert.deepEqual(activations,[true,false,false]);
+  frames.shift()();timers.shift()();assert.deepEqual(activations,[true,false,false,true]);
+ });
  await test('progressive pages paint before completion, zoom locally and roll back a failed snapshot',async()=>{
   let release,entered,reads=0;const second=new Promise(resolve=>entered=resolve),old=packet(900,{created:now-10,upstream_usage:{input_tokens:100}});
   const {result,frames}=rendered([old],{api:async()=>{if(++reads===1)return Array.from({length:300},(_,i)=>packet(i+1));entered();return new Promise(resolve=>release=resolve);}});

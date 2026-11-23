@@ -530,6 +530,7 @@ const state = { status: null, packets: [], sessions: [], selected: null, detail:
 const nf = new Intl.NumberFormat("zh-CN");
 const storageUsageFormat = new Intl.NumberFormat("zh-CN", {minimumFractionDigits:2, maximumFractionDigits:2});
 let workspaceView="records",tokenTrendView=null;
+let trendActivation=null;
 let requestBodyCache=null, requestBodyExportUrl="", requestBodySequence=0;
 let treeQueryTimer=null,requestBodyView=null,requestBodyHighlight=null;
 let requestBodyTextMode=true;
@@ -4216,6 +4217,22 @@ class TokenTrendView {
   }
 }
 tokenTrendView=new TokenTrendView({api,status:()=>state.status,sessions:sessionGroups,peek:listTokens,read:readListTokens,isGeneration:isTrendGeneration});
+function activateTrendsAfterSlide(pane) {
+  if(trendActivation)return;
+  const ticket={};trendActivation=ticket;
+  const activate=()=>{
+    if(trendActivation!==ticket)return;
+    trendActivation=null;
+    tokenTrendView.setActive(true);
+  };
+  const afterPaint=()=>{
+    if(trendActivation===ticket)requestAnimationFrame(()=>setTimeout(activate,0));
+  };
+  // Rendering large cached charts can block the frames that move the view.
+  const slide=pane?.getAnimations().find(animation=>animation.transitionProperty==="transform");
+  if(slide)slide.finished.then(afterPaint,afterPaint);
+  else afterPaint();
+}
 function setWorkspaceView(view) {
   hideSessionTitleTooltip();
   const wasSharing=workspaceView==="sharing";
@@ -4234,7 +4251,8 @@ function setWorkspaceView(view) {
   $("view-records").setAttribute("aria-pressed",String(workspaceView==="records"));$("view-trends").setAttribute("aria-pressed",String(workspaceView==="trends"));
   $("view-sharing")?.setAttribute("aria-pressed",String(sharing));
   try {localStorage.setItem("packet-inspector-view",workspaceView);} catch(_) {}
-  tokenTrendView.setActive(trends);
+  if(trends)activateTrendsAfterSlide(wasSharing?$("sharing-view"):$("token-trend-view"));
+  else {trendActivation=null;tokenTrendView.setActive(false);}
   globalThis.InspectorSharing?.setActive(sharing);
   if(sharing&&!globalThis.InspectorSharing&&$("sharing-message")) {
     $("sharing-message").textContent=t("当前后台不支持共享，请更新软件后使用。");$("sharing-message").hidden=false;
