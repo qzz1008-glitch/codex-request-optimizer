@@ -15,7 +15,7 @@ import threading
 import time
 from types import SimpleNamespace
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, call, patch
 from urllib.error import HTTPError
 from urllib.request import Request, build_opener, ProxyHandler
 
@@ -434,7 +434,7 @@ class RemoteScriptTests(unittest.TestCase):
             {"key": "wsl", "target": "wsl", "scope": "distribution"}]}
 
     @contextmanager
-    def ssh_app_server(self, *, invalid=None, exits=True, replacement=True):
+    def ssh_app_server(self, *, invalid=None, exits=True, replacement=True, signals_to_exit=1):
         self.enable_native()
         self.native_mode = "unmanaged"
         self.socket.parent.mkdir(exist_ok=True)
@@ -454,7 +454,7 @@ class RemoteScriptTests(unittest.TestCase):
         samples = {
             "cmdline": cmdline.replace(b"unix://", b"stdio://") if invalid == "transport" else cmdline,
             "environ": b"CODEX_HOME=" + str(home).encode("utf-8") + b"\0",
-            "status": "SigCgt:\t0\n" if invalid == "signal" else "SigCgt:\t1\n",
+            "status": "SigCgt:\t1\n" if invalid == "signal" else f"SigCgt:\t{1 << (signal.SIGTERM - 1):x}\n",
         }
 
         def open_path(path, *args, **kwargs):
@@ -486,15 +486,18 @@ class RemoteScriptTests(unittest.TestCase):
                 return io.BytesIO(b"HTTP/1.1 101 Switching Protocols\r\n\r\n")
             def recv(self, size): return b"\x88\x00"
 
+        signals = 0
+
         def stop_backend(*args):
-            nonlocal peer_pid
-            if exits:
+            nonlocal peer_pid, signals
+            signals += 1
+            if exits and signals == signals_to_exit:
                 peer_pid = new_pid if replacement else None
 
         send_signal = Mock(side_effect=stop_backend)
         closed_fds = Mock()
         poller = Mock()
-        poller.poll.return_value = [(old_pid + 10000, 1)] if exits else []
+        poller.poll.side_effect = lambda _: [(old_pid + 10000, 1)] if peer_pid != old_pid else []
         with (
             patch("pathlib.Path.open", new=open_path),
             patch("pathlib.Path.stat", new=stat_path),
@@ -503,7 +506,6 @@ class RemoteScriptTests(unittest.TestCase):
             patch("select.poll", return_value=poller, create=True),
             patch("select.POLLIN", 1, create=True),
             patch("signal.pidfd_send_signal", send_signal, create=True),
-            patch("signal.SIGHUP", 1, create=True),
             patch("socket.socket", return_value=Peer()),
             patch("socket.AF_UNIX", 1, create=True),
             patch("socket.SO_PEERCRED", 17, create=True),
@@ -552,7 +554,7 @@ class RemoteScriptTests(unittest.TestCase):
             self.assertTrue(probe["reload_required"])
             send_signal.assert_not_called()
             result = self.execute("reconnect")
-            send_signal.assert_called_once_with(12100, signal.SIGHUP)
+            send_signal.assert_called_once_with(12100, signal.SIGTERM)
             self.assertEqual([call.args[0] for call in closed_fds.call_args_list], [12100, 12100, 12200, 12100])
         self.assertEqual(result["codex_reconnect"]["state"], "reloaded")
         self.assertFalse(result["reload_required"])
@@ -560,12 +562,18 @@ class RemoteScriptTests(unittest.TestCase):
         self.assertTrue(all(args[0] == str(self.native_cli) for args, _ in self.native_calls))
         self.assertEqual(self.status["restart_notice"]["items"][0]["target"], "wsl")
 
+    def test_tunnel_reconnect_stops_a_busy_backend_with_a_second_sigterm(self):
+        with self.ssh_app_server(signals_to_exit=2) as (send_signal, _):
+            result = self.execute("tunnel_reconnect", home=str(self.root.resolve()), uid=1000)
+            self.assertEqual(send_signal.call_args_list, [call(12100, signal.SIGTERM)] * 2)
+        self.assertEqual(result["state"], "reloaded")
+
     def test_ssh_reconnect_rejects_an_unrelated_or_unverifiable_listener(self):
         reasons = {
             "uid": "属于当前 SSH 账号",
             "home": "配置目录与当前连接不匹配",
             "transport": "启动参数检查",
-            "signal": "SIGHUP",
+            "signal": "SIGTERM",
         }
         for invalid, reason in reasons.items():
             with self.subTest(invalid=invalid), self.ssh_app_server(invalid=invalid) as (send_signal, _):
@@ -608,8 +616,9 @@ class RemoteScriptTests(unittest.TestCase):
                 self.calls.clear()
                 with patch("time.monotonic", side_effect=(0, 99, 100, 101)), patch("time.sleep"):
                     result = self.execute("reconnect")
-                send_signal.assert_called_once()
+                self.assertEqual(send_signal.call_count, 1 if exits else 2)
                 self.assertEqual(result["codex_reconnect"]["state"], "unconfirmed")
+                self.assertIn("重连结果未确认" if exits else "旧后台退出超时", result["codex_reconnect"]["error"])
                 self.assertTrue(result["reload_required"])
                 self.assertFalse(any(body for _, body in self.calls))
 

@@ -10,7 +10,7 @@ SSH_LABEL_BATCH = 32
 LINUX_IMAGE_SCRIPT = Path(__file__).with_name("linux_image_control.py").read_text(encoding="utf-8")
 
 SCRIPT = LABEL_READER + "\n" + LINUX_IMAGE_SCRIPT + r'''
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 import base64, hashlib, json, os, pathlib, re, select, shutil, signal, socket, stat, struct, subprocess, tempfile, time
 from http.client import HTTPException, HTTPResponse
 from urllib.parse import urlsplit
@@ -22,7 +22,9 @@ RECONNECT_PROCESS_CHANGED = "远程 Codex 后台进程刚发生变化，请等 C
 RECONNECT_STATUS_UNAVAILABLE = "无法读取远程 Codex 后台状态。"
 RECONNECT_NOT_READY = "远程 Codex 后台尚未就绪，请等 ChatGPT 恢复连接后再试。"
 RECONNECT_UNCONFIRMED = "重连结果未确认，请刷新状态后检查；待生效提醒已保留。"
-SSH_DRAIN_TIMEOUT = 60
+RECONNECT_EXIT_TIMEOUT = "远程 Codex 旧后台退出超时，待生效提醒已保留。"
+SSH_FORCE_SIGNAL_DELAY_MS = 500
+SSH_EXIT_TIMEOUT = 10
 SSH_RECONNECT_TIMEOUT = 100
 
 class ReconnectProbeError(ValueError):
@@ -100,11 +102,10 @@ def verified_ssh_app_server(home, socket_path):
         server_home = pathlib.Path(os.fsdecode(server_home))
         if not server_home.is_absolute() or server_home.resolve() != home.resolve():
             raise ReconnectProbeError("远程 Codex 后台的配置目录与当前连接不匹配。")
-        # Codex handles SIGHUP as a graceful-only drain, including repeated requests.
         with (process / "status").open() as status:
             caught = next((int(line.split()[1], 16) for line in status if line.startswith("SigCgt:")), 0)
-        if not caught & (1 << (signal.SIGHUP - 1)):
-            raise ReconnectProbeError("远程 Codex 后台未注册重载所需的 SIGHUP 处理程序。")
+        if not caught & (1 << (signal.SIGTERM - 1)):
+            raise ReconnectProbeError("远程 Codex 后台未注册重连所需的 SIGTERM 处理程序。")
         confirm_ssh_process(socket_path, identity)
         yield identity, pidfd
     finally:
@@ -194,9 +195,15 @@ def restart_ssh_app_server(cli, env, socket_path, expected_identity):
             raise ReconnectProbeError(RECONNECT_PROCESS_CHANGED)
         exit_event = select.poll()
         exit_event.register(pidfd, select.POLLIN)
-        signal.pidfd_send_signal(pidfd, signal.SIGHUP)
-        if not exit_event.poll(SSH_DRAIN_TIMEOUT * 1000):
-            raise ValueError(RECONNECT_UNCONFIRMED)
+        # A second SIGTERM asks Codex to finish shutdown even with active turns.
+        with suppress(ProcessLookupError, FileNotFoundError):
+            signal.pidfd_send_signal(pidfd, signal.SIGTERM)
+            if not exit_event.poll(SSH_FORCE_SIGNAL_DELAY_MS):
+                if ssh_process_identity(identity[0]) != identity:
+                    raise ReconnectProbeError(RECONNECT_PROCESS_CHANGED)
+                signal.pidfd_send_signal(pidfd, signal.SIGTERM)
+        if not exit_event.poll(SSH_EXIT_TIMEOUT * 1000):
+            raise ReconnectProbeError(RECONNECT_EXIT_TIMEOUT)
         # Desktop owns the proxy and may need its WebSocket heartbeat to detect the disconnect.
         deadline = time.monotonic() + SSH_RECONNECT_TIMEOUT
         while True:
