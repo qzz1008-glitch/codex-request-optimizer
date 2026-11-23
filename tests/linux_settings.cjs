@@ -93,22 +93,47 @@ let browser,cases=0;
     assert.equal(await save.isDisabled(),true);cases++;
   }
   await page.evaluate(()=>{
-    state.status={image_analysis_mode:'native',linux_data_directories:{'ssh-build':'/srv/cache','offline':'/srv/offline'},
+    uiI18n.floatingFeedback();
+    state.status={image_analysis_mode:'native',linux_data_directories:{'ssh-build':'~/saved','offline':'~/offline'},
       wsl_connection:{targets:[{id:'wsl:ubuntu',distribution:'Ubuntu'}]}};
     settingsEditing=false;settingsBaseline=null;
-    renderLinuxStorageTargets({targets:[{kind:'ssh',id:'ssh-build',name:'Build server'}]});
+    renderLinuxStorageTargets({targets:[{kind:'ssh',id:'ssh-build',name:'192.0.2.10'}]});
     fillImageAnalysisMode();settingsBaseline=readSettingsDraft();settingsEditing=true;updateSettingsSaveState();
   });
-  const sshFolder=page.getByRole('textbox',{name:'Build server',exact:true});
+  const sshFolder=page.getByRole('textbox',{name:'192.0.2.10',exact:true});
   const wslFolder=page.getByRole('textbox',{name:'WSL · Ubuntu',exact:true});
-  assert.equal(await sshFolder.inputValue(),'/srv/cache');
-  assert.equal(await wslFolder.getAttribute('placeholder'),'~/.cache/codex-request-optimizer');
+  const linuxControls=page.getByRole('group',{name:'Linux data folders',exact:true});
+  const checkTargetRow=async folder=>{
+    const input=await folder.boundingBox();
+    const label=await folder.locator('xpath=../label').boundingBox();
+    assert(label.x+label.width<=input.x);
+    assert(Math.abs(label.y+label.height/2-input.y-input.height/2)<1);
+  };
+  assert.equal((await linuxControls.boundingBox()).x,(await page.locator('#storage-dir').boundingBox()).x);
+  await checkTargetRow(sshFolder);
+  await checkTargetRow(wslFolder);
+  const sshInput=await sshFolder.boundingBox();
+  const linuxHint=await page.locator('#linux-storage-hint').boundingBox();
+  assert.equal((await wslFolder.boundingBox()).x,sshInput.x);
+  assert(linuxHint.x>=sshInput.x+sshInput.width);
+  assert.equal(await sshFolder.inputValue(),'~/saved');
+  assert.equal(await wslFolder.getAttribute('placeholder'),'Default folder');
   assert.equal(await wslFolder.getAttribute('aria-describedby'),'linux-storage-hint');
-  await sshFolder.fill('');await wslFolder.fill('~/cache');
+  for(const invalid of ['~/cache','relative/cache','C:/cache','/srv\\cache']){
+    await wslFolder.fill(invalid);
+    await page.evaluate(()=>{updateSettingsSaveState();return saveSettings();});
+    assert.equal(await wslFolder.getAttribute('aria-invalid'),'true');
+    assert.equal(await wslFolder.evaluate(input=>document.activeElement===input),true);
+    assert.match(await page.locator('#settings-message').textContent(),/Enter an absolute Linux path starting with \//);
+    assert.deepEqual(await page.evaluate(()=>imageSaves),[]);
+  }
+  await sshFolder.fill('');await wslFolder.fill(' /srv/cache path ');
   await page.evaluate(()=>{updateSettingsSaveState();return saveSettings();});
   assert.deepEqual(await page.evaluate(()=>imageSaves.splice(0)),
-    [{path:'/api/settings',values:{linux_data_directories:{offline:'/srv/offline','wsl:ubuntu':'~/cache'}}}]);cases++;
+    [{path:'/api/settings',values:{linux_data_directories:{offline:'~/offline','wsl:ubuntu':'/srv/cache path'}}}]);cases++;
   await page.setViewportSize({width:320,height:900});
+  await checkTargetRow(sshFolder);
+  await checkTargetRow(wslFolder);
   assert.equal(await toggle.evaluate(node=>node.closest('.settings-controls').scrollWidth<=node.closest('.settings-controls').clientWidth+1),true);
   await page.evaluate(()=>{settingsSaving=true;fillImageAnalysisMode();renderUpdates();});
   assert.equal(await toggle.isDisabled(),true);cases++;

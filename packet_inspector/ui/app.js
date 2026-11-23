@@ -2226,13 +2226,15 @@ function renderLinuxStorageTargets(remote) {
   $("linux-storage-settings").hidden=!status.linux_data_directories||!targets.size;
   const list=$("linux-storage-targets"),rows=[];
   for(const [identity,{name,storage}] of targets) {
-    const input=el("input"), label=el("label","settings-key",name),row=el("div","linux-storage-row");
+    const input=el("input"),label=el("label","",name),row=el("div","linux-storage-row");
     input.id="linux-data-dir-"+rows.length;input.name=input.id;label.htmlFor=input.id;
+    label.title=name;
     input.type="text";input.maxLength=1024;input.spellcheck=false;input.autocomplete="off";
     input.setAttribute("autocapitalize","none");input.setAttribute("autocorrect","off");
     input.dataset.linuxStorageTarget=identity;
-    input.placeholder="~/.cache/codex-request-optimizer";
+    input.placeholder=t("默认目录");
     input.value=status.linux_data_directories?.[identity]||"";
+    input.addEventListener("input",()=>input.setCustomValidity(""));
     const describedBy=["linux-storage-hint"];
     row.append(label,input);
     if(storage?.error) {
@@ -2248,7 +2250,7 @@ function linuxStorageDraft() {
   const values=new Map(Object.entries(state.status.linux_data_directories||{}));
   for(const input of $("linux-storage-targets").querySelectorAll("input")) {
     const value=input.value.trim(),key=input.dataset.linuxStorageTarget;
-    if(value&&value!==input.placeholder)values.set(key,value);
+    if(value)values.set(key,value);
     else values.delete(key);
   }
   return JSON.stringify(Object.fromEntries([...values].sort(([a],[b])=>a.localeCompare(b))));
@@ -2446,6 +2448,12 @@ async function saveSettings() {
   if(legacyImageAnalysisPending())changed.add("image_analysis_mode");
   if(!changed.size)return;
   for(const input of $("settings-dialog").querySelectorAll(".settings-content input:not(:disabled)")) {
+    const target=input.dataset.linuxStorageTarget;
+    if(target&&changed.has("linux_data_directories")) {
+      const value=input.value.trim(),previous=s.linux_data_directories?.[target];
+      const valid=!value||value===previous||(value.startsWith("/")&&!/[\u0000-\u001f\\]/.test(value));
+      input.setCustomValidity(valid?"":"数据目录须为 Linux 绝对路径。");
+    }
     if(!input.reportValidity())return;
   }
   const protectionSupported="packet_size_protection_enabled" in s,storage=storageLimitSettings(s);
@@ -3369,6 +3377,7 @@ async function setInterfaceLanguage(language,{persist=true}={}) {
   const changed=language!==uiI18n.language;
   uiI18n.setLanguage(language,{persist});
   if(!changed)return;
+  for(const input of $("linux-storage-targets").querySelectorAll("input"))input.placeholder=t("默认目录");
   globalThis.InspectorConnectionControls?.render();
   const revision=++interfaceLanguageRevision;
   const buttons=document.querySelectorAll("#language-toggle button");

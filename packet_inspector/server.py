@@ -193,7 +193,10 @@ class InspectorServer(ThreadingHTTPServer):
         self.settings.pop("ui_token", None)
         self.settings["image_analysis_mode"] = image_mode(saved)
         self.settings["image_isolation_enabled"] = self.settings["image_analysis_mode"] == "optimized"
-        self.settings["linux_data_directories"] = linux_data_directories(saved.get("linux_data_directories", {}))
+        saved_linux_directories = saved.get("linux_data_directories", {})
+        self.settings["linux_data_directories"] = linux_data_directories(
+            saved_linux_directories, previous=saved_linux_directories
+        )
         for key, default in (("zstd_level", DEFAULT_ZSTD_LEVEL), ("image_zstd_level", DEFAULT_IMAGE_ZSTD_LEVEL)):
             try:
                 self.settings[key] = validate_zstd_level(self.settings[key])
@@ -1203,7 +1206,9 @@ class Handler(BaseHTTPRequestHandler):
                 candidate = dict(self.server.settings)
                 candidate.update(checked_paths)
                 if "linux_data_directories" in data:
-                    candidate["linux_data_directories"] = linux_data_directories(data["linux_data_directories"])
+                    candidate["linux_data_directories"] = linux_data_directories(
+                        data["linux_data_directories"], previous=self.server.settings["linux_data_directories"]
+                    )
                 image_isolation = self.server.image_isolation
                 if "image_save_dir" in data:
                     directory = resolve_image_directory(self.server.data_dir, data["image_save_dir"])

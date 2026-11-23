@@ -631,7 +631,9 @@ const uiI18n = (() => {
     "存储位置":"Storage location",
     "数据目录":"Data folder",
     "Linux 数据目录":"Linux data folders",
-    "填写绝对路径或以 ~/ 开头。留空使用默认目录。":"Enter an absolute path or start with ~/. Leave blank to use the default.",
+    "以 / 开头，留空使用默认目录。":"Start with /. Leave blank for the default.",
+    "默认目录":"Default folder",
+    "数据目录须为 Linux 绝对路径。":"Enter an absolute Linux path starting with /.",
     "数据目录须为 Linux 绝对路径或以 ~/ 开头。":"Enter an absolute Linux path or start with ~/.",
     "打开数据目录":"Open data folder",
     "数据目录不能与独立目录同时设置。":"The data folder cannot be set together with separate folders.",
@@ -1472,6 +1474,7 @@ const uiI18n = (() => {
     const validating=new WeakSet();
     function validationText(input) {
       const value=input.validity;
+      if(value.customError)return t(input.validationMessage);
       if(value.valueMissing)return t("请填写此项。");
       if(value.rangeUnderflow)return t("不能小于 {value}。").replace("{value}",input.min);
       if(value.rangeOverflow)return t("不能大于 {value}。").replace("{value}",input.max);

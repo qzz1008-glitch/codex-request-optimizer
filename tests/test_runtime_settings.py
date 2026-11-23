@@ -32,6 +32,26 @@ class RuntimeSettingsTests(unittest.TestCase):
                                    "capacity_retry_max_retries": 3, "capacity_retry_delay_seconds": 50})
         self.server.startup_state_known = True
 
+    def test_linux_data_directory_updates_require_absolute_paths(self):
+        previous = dict(self.server.settings)
+        self.addCleanup(self.server.save_settings, previous)
+        saved = {"ssh-existing": "~/old", "wsl:ubuntu": "/srv/old"}
+        self.server.save_settings({**previous, "linux_data_directories": saved})
+
+        for invalid in ("~/new", "~/.cache/codex-request-optimizer", "relative/path", "C:/cache", "/srv\\cache", "/a\nb"):
+            with self.subTest(invalid=invalid):
+                status, _ = self.api("/api/settings", {"linux_data_directories": {**saved, "ssh-existing": invalid}})
+                self.assertEqual(status, 400)
+                self.assertEqual(self.server.settings["linux_data_directories"], saved)
+
+        status, result = self.api("/api/settings", {"linux_data_directories": {
+            **saved, "wsl:ubuntu": " ", "ssh-new": " /srv/new data ",
+        }})
+        self.assertEqual(status, 200)
+        expected = {"ssh-existing": "~/old", "ssh-new": "/srv/new data"}
+        self.assertEqual(result["linux_data_directories"], expected)
+        self.assertEqual(json.loads(self.server.settings_path.read_text(encoding="utf8"))["linux_data_directories"], expected)
+
     def test_fractional_storage_limits_are_rounded_and_stay_normalized(self):
         previous = dict(self.server.settings)
         def restore():

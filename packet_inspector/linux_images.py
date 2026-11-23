@@ -28,17 +28,22 @@ IMAGE_NAMES = re.compile(rb"/(i-[0-9a-f]{30}\.(?:png|jpg|webp|gif))\b")
 MCP_TOOL = ["mcp_servers", TOOL_SERVER]
 
 
-def linux_data_directories(values):
+def linux_data_directories(values, *, previous=None):
+    """Normalize saved data directories. New overrides require absolute paths."""
     if not isinstance(values, dict) or len(values) > 80:
         raise ValueError("Linux 数据目录设置无效。")
+    previous = previous or {}
     result = {}
     for key, value in values.items():
         if not isinstance(key, str) or not 0 < len(key) <= 256 or not isinstance(value, str) or len(value) > 1024:
             raise ValueError("Linux 数据目录设置无效。")
         path = value.strip()
-        if path and (not path.startswith(("/", "~/")) or "\\" in path or any(ord(char) < 32 for char in path)):
-            raise ValueError("数据目录须为 Linux 绝对路径或以 ~/ 开头。")
-        if path and path != LINUX_IMAGE_DATA_DIR:
+        if not path:
+            continue
+        saved_home_path = path.startswith("~/") and path == previous.get(key, "").strip()
+        if (not path.startswith("/") and not saved_home_path) or "\\" in path or any(ord(char) < 32 for char in path):
+            raise ValueError("数据目录须为 Linux 绝对路径。")
+        if path != LINUX_IMAGE_DATA_DIR:
             result[key] = path
     return result
 
