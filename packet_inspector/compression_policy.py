@@ -14,11 +14,11 @@ ORIGINAL, FAST, HIGH = 0, 1, 17
 
 
 def select_phase(previous, uncompressed_bytes, budget_bytes):
-    """One selection rule for both main requests and read-only auxiliaries.
+    """Initial phase selection for main requests and read-only auxiliaries.
 
     Small plaintext -> original; unknown large plaintext -> initial size split;
-    known high -> high; known original/fast -> fast. Wire size can only promote
-    the *next* request in finish(), never change the current selection.
+    known high -> high; known original/fast -> fast. finish() uses the first
+    wire size to determine the next request's phase.
     """
     if below_auto_zstd_threshold(uncompressed_bytes, budget_bytes):
         return ORIGINAL

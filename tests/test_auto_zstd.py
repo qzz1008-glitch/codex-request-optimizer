@@ -481,11 +481,44 @@ class AutomaticRelayTests(unittest.TestCase):
         self.enable()
         self.assertEqual(self.api('/api/settings', {'budget_bytes': 50001})[0], 200)
         raw = encode({'input': base64.b64encode(random.Random(4).randbytes(180000)).decode()})
+        fast, high = [len(zstandard.ZstdCompressor(level=level).compress(raw)) for level in (1, 16)]
         before = len(self.up.requests)
-        status, _ = self.relay(raw, headers={'session_id': 'uncompressible-session'})
+        with patch('zstandard.ZstdCompressor', wraps=zstandard.ZstdCompressor) as compressor:
+            status, _ = self.relay(raw, headers={'session_id': 'uncompressible-session'})
+            self.assertEqual([call.kwargs['level'] for call in compressor.call_args_list], [1, 16])
         self.assertEqual(status, 413)
         self.assertEqual(len(self.up.requests), before)
-        self.assertEqual(self.latest()[0]['relay_error'], 'overflow_unsupported_input')
+        meta, _ = self.latest()
+        self.assertEqual(meta['relay_error'], 'overflow_unsupported_input')
+        self.assertEqual(meta['relay_auto_zstd_fast_wire_bytes'], fast)
+        self.assertEqual(meta['transport_wire_bytes'], min(fast, high))
+        self.assertEqual(meta['transport_zstd_level'], 16 if high < fast else 1)
+
+    def test_fast_phase_recompresses_once_before_size_protection_and_keeps_high_phase(self):
+        self.enable()
+        budget = 750000
+        self.assertEqual(self.api('/api/settings', {'budget_bytes': budget})[0], 200)
+        # Repeat data beyond the fast compressor's window but within level 16's.
+        text = base64.b64encode(random.Random(23).randbytes(500000)).decode()
+        raw = encode({'input': text * 2})
+        headers = {'session_id': 'same-request-high-compression'}
+        before = len(self.up.requests)
+        with patch('zstandard.ZstdCompressor', wraps=zstandard.ZstdCompressor) as compressor:
+            self.assertEqual(self.relay(raw, headers=headers)[0], 200)
+            self.assertEqual([call.kwargs['level'] for call in compressor.call_args_list], [1, 16])
+        self.assertEqual(len(self.up.requests), before + 1)
+        uploaded = self.up.requests[-1]['body']
+        self.assertLess(len(uploaded), budget * 9 // 10)
+        self.assertEqual(zstandard.ZstdDecompressor().decompress(uploaded), raw)
+        meta, _ = self.latest()
+        self.assertGreater(meta['relay_auto_zstd_fast_wire_bytes'], budget)
+        self.assertEqual(meta['transport_zstd_level'], 16)
+        self.assertEqual(meta['transport_wire_bytes'], len(uploaded))
+        self.assertIsNone(meta.get('usage_override_request_bytes'))
+        self.assertEqual(meta['relay_auto_zstd_next_phase'], 17)
+        with patch('zstandard.ZstdCompressor', wraps=zstandard.ZstdCompressor) as compressor:
+            self.assertEqual(self.relay(raw, headers=headers)[0], 200)
+            compressor.assert_called_once_with(level=16)
 
     def test_unseen_large_session_starts_in_high_mode_without_a_previous_packet(self):
         self.enable()

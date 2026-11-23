@@ -42,8 +42,8 @@ from .background_session_labels import SessionLabelUpdates
 from .ssh_session_labels import SshSessionLabels
 from .storage import DEFAULT_STORAGE_BYTES, Store
 from .storage_paths import resolve_directory, path_settings, grouped_paths
-from .transport import (AUTO_IMAGE_ZSTD_LEVEL, DEFAULT_IMAGE_ZSTD_LEVEL, DEFAULT_ZSTD_LEVEL,
-                        PreparedRequest, prepare_request_info, validate_zstd_level)
+from .transport import (AUTO_IMAGE_ZSTD_LEVEL, AUTO_ZSTD_HIGH_LEVEL, DEFAULT_IMAGE_ZSTD_LEVEL, DEFAULT_ZSTD_LEVEL,
+                        MIN_ZSTD_LEVEL, prepare_request_info, validate_zstd_level)
 from .request_types import is_json_image_request
 from .image_upload import optimize_image_request
 from .compression_policy import CompressionPolicy, INITIAL_HIGH_BYTES, is_main_request
@@ -1655,7 +1655,7 @@ class Handler(BaseHTTPRequestHandler):
                             capture_meta["request_kind"] = kind
                     except (ValueError, TypeError):
                         capture_meta = {}
-                zstd_level = 1
+                zstd_level = MIN_ZSTD_LEVEL
                 thread = capture_meta.get("thread_id")
                 uncompressed_bytes = len(rewritten[0]) if rewritten is not None else capture_meta.get("decoded_bytes")
                 if type(uncompressed_bytes) is int:
@@ -1672,17 +1672,33 @@ class Handler(BaseHTTPRequestHandler):
                                relay_auto_zstd_budget_bytes=budget)
                     else:
                         zstd_level = self.server.compression_policy.level(auto_key, uncompressed_bytes, budget)
-            source_body = body
-            if rewritten is not None:
-                changed, image_meta = rewritten
+
+            def encode_transport(level):
+                if rewritten is None:
+                    return prepare_request_info(body, headers, self.command, suffix, compression, level,
+                                                auto_zstd_level=auto_zstd_level, budget_bytes=budget)
                 try:
-                    outbound_body, outbound_encoding, applied_zstd_level = encode_changed_info(
-                        changed, headers, suffix, compression, zstd_level,
+                    return encode_changed_info(
+                        rewritten[0], headers, suffix, compression, level,
                         auto_zstd_level=auto_zstd_level, budget_bytes=budget)
                 except (ImageIsolationFailure, ImportError):
                     raise
                 except Exception:
                     raise ImageIsolationFailure("image_preparation_failed", "图片隔离准备失败，原请求未发送。", 503) from None
+
+            encoded = encode_transport(zstd_level)
+            first_wire_bytes = len(encoded.body)
+            if auto_eligible and auto_zstd_level and zstd_level == MIN_ZSTD_LEVEL and first_wire_bytes > budget:
+                high = encode_transport(AUTO_ZSTD_HIGH_LEVEL)
+                if len(high.body) < first_wire_bytes:
+                    encoded = high
+                    zstd_level = AUTO_ZSTD_HIGH_LEVEL
+                update(relay_auto_zstd_fast_wire_bytes=first_wire_bytes)
+            outbound_body, outbound_encoding, applied_zstd_level = encoded
+
+            source_body = body
+            if rewritten is not None:
+                changed, image_meta = rewritten
                 update(relay_zstd_level=applied_zstd_level, **image_meta)
                 transport_input_bytes = len(changed)
                 source_body = outbound_body
@@ -1692,14 +1708,11 @@ class Handler(BaseHTTPRequestHandler):
                 input_encoding = self.headers.get("Content-Encoding", "identity").strip().lower()
                 transport_input_bytes = (len(body) if input_encoding in {"", "identity"}
                                          else capture_meta.get("decoded_bytes"))
-                encoded = prepare_request_info(body, headers, self.command, suffix, compression, zstd_level,
-                                                auto_zstd_level=auto_zstd_level, budget_bytes=budget)
-                outbound_body, outbound_encoding, applied_zstd_level = encoded
             linux_image_analysis = bool(image_worker and image_origin)
             if protection_enabled and (json_image or linux_image_analysis) and self.command == "POST" and compression == "zstd":
-                prepared_image, upload_meta = optimize_image_request(body, headers, suffix,
-                    PreparedRequest(outbound_body, outbound_encoding, applied_zstd_level), budget_bytes=budget,
-                     zstd_level=AUTO_IMAGE_ZSTD_LEVEL if auto_zstd_level else zstd_level, analysis=linux_image_analysis)
+                prepared_image, upload_meta = optimize_image_request(
+                    body, headers, suffix, encoded, budget_bytes=budget,
+                    zstd_level=AUTO_IMAGE_ZSTD_LEVEL if auto_zstd_level else zstd_level, analysis=linux_image_analysis)
                 outbound_body, outbound_encoding, applied_zstd_level = prepared_image
                 transport_input_bytes = upload_meta.pop("transport_input_bytes", transport_input_bytes)
                 update(**upload_meta)
@@ -1711,7 +1724,8 @@ class Handler(BaseHTTPRequestHandler):
             update(transport_content_encoding=outbound_encoding, transport_zstd_level=applied_zstd_level,
                    transport_input_bytes=transport_input_bytes, transport_wire_bytes=len(outbound_body))
             if auto_decision is not None:
-                next_phase = self.server.compression_policy.finish(auto_key, auto_decision, len(outbound_body), budget)
+                # Promote the next request from the first pass even if level 16 brought this one under budget.
+                next_phase = self.server.compression_policy.finish(auto_key, auto_decision, first_wire_bytes, budget)
                 update(relay_auto_zstd_next_phase=next_phase)
             if protection_enabled and not image_worker:
                 trigger_size = usage_trigger_size(body, dict(self.headers.items()), self.command, suffix, len(outbound_body), budget)
