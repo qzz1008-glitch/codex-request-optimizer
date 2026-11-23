@@ -5,9 +5,10 @@ import ctypes
 from ctypes import wintypes
 import os
 
+from .window_subclass import WM_NCDESTROY, window_subclass_api
+
 
 HSHELL_FLASH = 0x8006
-WM_NCDESTROY = 0x82
 
 
 class FlashWindowInfo(ctypes.Structure):
@@ -46,10 +47,8 @@ class TaskbarAttention:
             return
         # before_show runs on the native UI thread, as required by SetWindowSubclass.
         user = self.user = ctypes.WinDLL("user32", use_last_error=True)
-        common = self.common = ctypes.WinDLL("comctl32", use_last_error=True)
-        callback_type = ctypes.WINFUNCTYPE(ctypes.c_ssize_t, wintypes.HWND, wintypes.UINT,
-                                          wintypes.WPARAM, wintypes.LPARAM,
-                                          ctypes.c_size_t, ctypes.c_size_t)
+        common, callback_type = window_subclass_api()
+        self.common = common
         user.RegisterWindowMessageW.argtypes = [wintypes.LPCWSTR]
         user.RegisterWindowMessageW.restype = wintypes.UINT
         user.RegisterShellHookWindow.argtypes = [wintypes.HWND]
@@ -58,12 +57,6 @@ class TaskbarAttention:
         user.DeregisterShellHookWindow.restype = wintypes.BOOL
         user.FlashWindowEx.argtypes = [ctypes.POINTER(FlashWindowInfo)]
         user.FlashWindowEx.restype = wintypes.BOOL
-        common.SetWindowSubclass.argtypes = [wintypes.HWND, callback_type, ctypes.c_size_t, ctypes.c_size_t]
-        common.SetWindowSubclass.restype = wintypes.BOOL
-        common.RemoveWindowSubclass.argtypes = [wintypes.HWND, callback_type, ctypes.c_size_t]
-        common.RemoveWindowSubclass.restype = wintypes.BOOL
-        common.DefSubclassProc.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
-        common.DefSubclassProc.restype = ctypes.c_ssize_t
         self.shell_message = user.RegisterWindowMessageW("SHELLHOOK")
         if not self.shell_message:
             raise ctypes.WinError(ctypes.get_last_error())

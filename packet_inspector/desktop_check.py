@@ -1,9 +1,10 @@
 """Native WebView2 integration checks, restricted to an isolated data directory."""
 from __future__ import annotations
 
+import ctypes
+from ctypes import wintypes
 import json
 import time
-import ctypes
 
 
 def check_window(window, options, instance, ui):
@@ -54,18 +55,32 @@ def check_window(window, options, instance, ui):
             assert loads[0] == prior, "release unexpectedly reloaded"
 
     try:
+        import win32api
+        import win32gui
+
         ready()
         wait_until(lambda: window.evaluate_js("document.documentElement.classList.contains('desktop-titlebar')"),
                    "desktop title bar did not initialize")
         user = ctypes.WinDLL("user32", use_last_error=True)
         user.GetWindowLongW.argtypes = [ctypes.c_void_p, ctypes.c_int]
         user.GetWindowLongW.restype = ctypes.c_long
+        user.IsZoomed.argtypes = [ctypes.c_void_p]
+        user.IsZoomed.restype = wintypes.BOOL
         hwnd = int(window.native.Handle.ToInt64())
 
         def native_frame():
             style = user.GetWindowLongW(hwnd, -16)
             assert not style & 0x00C00000, "duplicate native caption is still visible"
             assert style & 0x00040000, "native resize border was removed"
+
+        def fits_work_area():
+            if not user.IsZoomed(hwnd):
+                return False
+            _, _, width, height = win32gui.GetClientRect(hwnd)
+            visible = (*win32gui.ClientToScreen(hwnd, (0, 0)),
+                       *win32gui.ClientToScreen(hwnd, (width, height)))
+            work = win32api.GetMonitorInfo(win32api.MonitorFromWindow(hwnd, 2))["Work"]
+            return visible == work
 
         native_frame()
         header = window.evaluate_js("""(() => {
@@ -75,10 +90,14 @@ def check_window(window, options, instance, ui):
             fits:groups.every(n=>{const b=n.getBoundingClientRect();return b.left>=r.left&&b.right<=r.right&&b.top>=r.top&&b.bottom<=r.bottom;})};
         })()""")
         assert header == {"height": 48, "controls": True, "fits": True}, header
+        # WinForms records state for a hidden window without applying the native bounds.
+        window.show()
+        wait_until(lambda: win32gui.IsWindowVisible(hwnd), "desktop window did not show")
         window.evaluate_js("document.getElementById('window-maximize').click(); true")
         wait_until(lambda: str(window.native.WindowState) == "Maximized", "maximize button did not maximize")
         wait_until(lambda: window.evaluate_js("document.documentElement.classList.contains('desktop-maximized')"),
                    "maximize icon did not update")
+        wait_until(fits_work_area, "maximized window extends beyond the monitor work area")
         window.evaluate_js("document.getElementById('window-maximize').click(); true")
         wait_until(lambda: str(window.native.WindowState) == "Normal", "restore button did not restore")
         native_frame()
@@ -92,7 +111,8 @@ def check_window(window, options, instance, ui):
                    "close button did not use the existing tray lifecycle")
         assert not lifecycle.closed.is_set(), "close button destroyed the desktop process"
         window.restore()
-        report.update(single_title_bar=True, native_resize_border=True, window_buttons=True)
+        report.update(single_title_bar=True, native_resize_border=True,
+                      maximized_to_work_area=True, window_buttons=True)
         attention = window._optimizer_lifecycle.attention
         assert attention.hwnd, "taskbar attention suppression was not installed"
         report["taskbar_attention_suppression"] = True

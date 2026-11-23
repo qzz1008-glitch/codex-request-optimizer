@@ -12,7 +12,7 @@ from urllib.request import urlopen
 from tests.test_packet_inspector import RelayTests
 
 ROOT = Path(__file__).resolve().parents[2]
-REQUIRED_CHECKS = ("single_title_bar", "native_resize_border", "window_buttons")
+REQUIRED_CHECKS = ("single_title_bar", "native_resize_border", "maximized_to_work_area", "window_buttons")
 
 
 def verify(executable, mode):
