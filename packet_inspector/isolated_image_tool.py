@@ -89,7 +89,8 @@ def analyze(arguments, metadata):
         parent = metadata.get("threadId")
         if isinstance(parent, str) and THREAD_ID.fullmatch(parent):
             command += ["-c", "responses_api_metadata.codex_inspector_parent_thread_id=" + json_quote(parent.lower())]
-        subprocess.run([*command, "--image", str(image), "-"], cwd=work,
+        # --image accepts multiple paths. Put the stdin prompt marker first.
+        subprocess.run([*command, "-", "--image", str(image)], cwd=work,
                        input=PROMPT + "\n\nRequest: " + instruction, encoding="utf-8",
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=240, check=True)
         with result.open(encoding="utf-8") as stream:

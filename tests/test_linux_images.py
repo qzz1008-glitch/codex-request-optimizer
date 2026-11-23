@@ -138,7 +138,7 @@ class LinuxToolTests(unittest.TestCase):
                 self.assertIn("read-only", argv)
                 self.assertIn('mcp_servers={"isolated_vision"={enabled=false,command="/usr/bin/python3"}}', argv)
                 self.assertIn('responses_api_metadata.codex_inspector_parent_thread_id="' + metadata["threadId"] + '"', argv)
-                self.assertEqual(Path(argv[argv.index("--image") + 1]), image)
+                self.assertEqual(argv[-3:], ["-", "--image", str(image)])
                 Path(argv[argv.index("--output-last-message") + 1]).write_text("Only text", encoding="utf-8")
                 return subprocess.CompletedProcess(argv, 0)
 
