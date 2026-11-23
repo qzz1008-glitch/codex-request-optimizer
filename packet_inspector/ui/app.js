@@ -2232,16 +2232,16 @@ function renderLinuxStorageTargets(remote) {
     input.type="text";input.maxLength=1024;input.spellcheck=false;input.autocomplete="off";
     input.setAttribute("autocapitalize","none");input.setAttribute("autocorrect","off");
     input.dataset.linuxStorageTarget=identity;
-    input.placeholder=t("默认目录");
+    input.placeholder=storage?.data_dir===""&&storage.directory?.endsWith("/images")
+      ? storage.directory.slice(0,-"/images".length)||"/"
+      : "~/.cache/codex-request-optimizer";
     input.value=status.linux_data_directories?.[identity]||"";
     input.addEventListener("input",()=>input.setCustomValidity(""));
-    const describedBy=["linux-storage-hint"];
     row.append(label,input);
     if(storage?.error) {
       const message=el("p","help error",t(storage.error));message.id=input.id+"-message";
-      row.append(message);describedBy.push(message.id);
+      row.append(message);input.setAttribute("aria-describedby",message.id);
     }
-    input.setAttribute("aria-describedby",describedBy.join(" "));
     rows.push(row);
   }
   list.replaceChildren(...rows);
@@ -3377,7 +3377,6 @@ async function setInterfaceLanguage(language,{persist=true}={}) {
   const changed=language!==uiI18n.language;
   uiI18n.setLanguage(language,{persist});
   if(!changed)return;
-  for(const input of $("linux-storage-targets").querySelectorAll("input"))input.placeholder=t("默认目录");
   globalThis.InspectorConnectionControls?.render();
   const revision=++interfaceLanguageRevision;
   const buttons=document.querySelectorAll("#language-toggle button");

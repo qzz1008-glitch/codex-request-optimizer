@@ -631,8 +631,6 @@ const uiI18n = (() => {
     "存储位置":"Storage location",
     "数据目录":"Data folder",
     "Linux 数据目录":"Linux data folders",
-    "以 / 开头，留空使用默认目录。":"Start with /. Leave blank for the default.",
-    "默认目录":"Default folder",
     "数据目录须为 Linux 绝对路径。":"Enter an absolute Linux path starting with /.",
     "数据目录须为 Linux 绝对路径或以 ~/ 开头。":"Enter an absolute Linux path or start with ~/.",
     "打开数据目录":"Open data folder",

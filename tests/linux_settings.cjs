@@ -95,9 +95,11 @@ let browser,cases=0;
   await page.evaluate(()=>{
     uiI18n.floatingFeedback();
     state.status={image_analysis_mode:'native',linux_data_directories:{'ssh-build':'~/saved','offline':'~/offline'},
-      wsl_connection:{targets:[{id:'wsl:ubuntu',distribution:'Ubuntu'}]}};
+      wsl_connection:{targets:[{id:'wsl:ubuntu',distribution:'Ubuntu',
+        image_storage:{data_dir:'',directory:'/home/test/.cache/codex-request-optimizer/images'}}]}};
     settingsEditing=false;settingsBaseline=null;
-    renderLinuxStorageTargets({targets:[{kind:'ssh',id:'ssh-build',name:'192.0.2.10'}]});
+    renderLinuxStorageTargets({targets:[{kind:'ssh',id:'ssh-build',name:'192.0.2.10',
+      image_storage:{data_dir:'~/saved',directory:'/home/test/saved/images',error:'Storage error'}}]});
     fillImageAnalysisMode();settingsBaseline=readSettingsDraft();settingsEditing=true;updateSettingsSaveState();
   });
   const sshFolder=page.getByRole('textbox',{name:'192.0.2.10',exact:true});
@@ -113,12 +115,13 @@ let browser,cases=0;
   await checkTargetRow(sshFolder);
   await checkTargetRow(wslFolder);
   const sshInput=await sshFolder.boundingBox();
-  const linuxHint=await page.locator('#linux-storage-hint').boundingBox();
   assert.equal((await wslFolder.boundingBox()).x,sshInput.x);
-  assert(linuxHint.x>=sshInput.x+sshInput.width);
+  assert.equal(await linuxControls.locator('#linux-storage-hint').count(),0);
   assert.equal(await sshFolder.inputValue(),'~/saved');
-  assert.equal(await wslFolder.getAttribute('placeholder'),'Default folder');
-  assert.equal(await wslFolder.getAttribute('aria-describedby'),'linux-storage-hint');
+  assert.equal(await sshFolder.getAttribute('placeholder'),'~/.cache/codex-request-optimizer');
+  assert.equal(await sshFolder.getAttribute('aria-describedby'),'linux-data-dir-0-message');
+  assert.equal(await wslFolder.inputValue(),'');
+  assert.equal(await wslFolder.getAttribute('placeholder'),'/home/test/.cache/codex-request-optimizer');
   for(const invalid of ['~/cache','relative/cache','C:/cache','/srv\\cache']){
     await wslFolder.fill(invalid);
     await page.evaluate(()=>{updateSettingsSaveState();return saveSettings();});
