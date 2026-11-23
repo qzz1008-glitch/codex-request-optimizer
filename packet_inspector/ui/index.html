@@ -111,7 +111,7 @@
                 <span id="json-copy-feedback" class="json-copy-feedback" role="status"></span>
                 <a id="json-export" class="json-action" title="导出 JSON" aria-label="导出 JSON" download>
                   <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                    <path id="ui-icon-download" d="M12 3v12m-4-4 4 4 4-4M4 16v4h16v-4"/>
+                    <path d="M12 3v12m-4-4 4 4 4-4M4 16v4h16v-4"/>
                   </svg>
                 </a>
               </div>
@@ -264,7 +264,10 @@
             </button>
             <span id="updates-message" data-feedback-inline class="help updates-status" role="status" aria-atomic="true" hidden></span>
             <button id="updates-install" class="updates-icon-button primary" type="button" title="立即升级" aria-label="立即升级" aria-busy="false" hidden>
-              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#ui-icon-download"></use></svg>
+              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <circle cx="12" cy="12" r="9"/>
+                <path d="M12 16V8M8.5 11.5 12 8l3.5 3.5"/>
+              </svg>
               <span class="update-spinner" aria-hidden="true"></span>
             </button>
           </div>

@@ -445,6 +445,7 @@ class StdioRuntimeTests(unittest.TestCase):
         tool = replies[1]["result"]["tools"][0]
         self.assertEqual(tool["name"], "analyze_image")
         self.assertEqual(tool["inputSchema"]["required"], ["path"])
+        self.assertNotIn("model", tool["inputSchema"]["properties"])
         self.assertEqual(replies[2]["result"], {})
 
     def test_invalid_input_is_text_only_and_calls_are_bounded(self):
@@ -463,23 +464,47 @@ class StdioRuntimeTests(unittest.TestCase):
         self.assertEqual(replies[0]["error"]["code"], -32700)
         self.assertEqual(replies[-1]["error"]["code"], -32601)
 
-    def test_parent_identity_uses_each_mcp_call_not_shared_process_environment(self):
+    def test_parent_identity_and_model_come_from_each_mcp_call(self):
         parent = "01a15d9a-f5e3-73c1-b4e7-87b3c5db9a3c"
         other = "01a166b7-e4a7-7550-8eaa-06e64a78e986"
         report = self.powershell("""
-function Invoke-ImageAnalysis($Arguments, [string]$ParentThreadId) { return ('parent=' + $ParentThreadId) }
+function Invoke-ImageAnalysis($Arguments, [string]$ParentThreadId, $ParentModel) {
+    return ('parent=' + $ParentThreadId + ' model=' + $ParentModel)
+}
 $env:CODEX_THREAD_ID = '00000000-0000-0000-0000-000000000099'
 $null = Invoke-McpRequest ([pscustomobject]@{jsonrpc='2.0';id=1;method='initialize';params=@{}})
+$model = 'gpt-6.1-sol'
 $results = @(foreach ($value in @('""" + parent.upper() + """','""" + other + """','invalid',$null,17,@('""" + parent + """'),
     ('""" + parent + """' + "`n"),('""" + parent + """' + '";ignored=true'))) {
     $request = [pscustomobject]@{jsonrpc='2.0';id=2;method='tools/call';params=[pscustomobject]@{
-        name='analyze_image';arguments=[pscustomobject]@{path='not-read.png'};_meta=[pscustomobject]@{threadId=$value}}}
+        name='analyze_image';arguments=[pscustomobject]@{path='not-read.png'};_meta=[pscustomobject]@{
+            threadId=$value;'x-codex-turn-metadata'=[pscustomobject]@{model=$model}}}}
     $reply = Invoke-McpRequest $request
     $reply.result.content[0].text
+    $model = 'gpt-6.2-astra'
 })
-@{parents=$results} | ConvertTo-Json -Compress
+@{calls=$results} | ConvertTo-Json -Compress
 """)
-        self.assertEqual(report["parents"], ["parent=" + parent, "parent=" + other, *["parent="] * 6])
+        self.assertEqual(report["calls"], [
+            f"parent={parent} model=gpt-6.1-sol", f"parent={other} model=gpt-6.2-astra",
+            *["parent= model=gpt-6.2-astra"] * 6,
+        ])
+
+    def test_missing_or_invalid_turn_model_is_an_error_and_tool_arguments_cannot_set_it(self):
+        messages = [self.initialize()]
+        for i, turn in enumerate([None, {}, {"model": ["gpt-6.1-sol"]}, {"model": "two names"}], 2):
+            messages.append({"jsonrpc": "2.0", "id": i, "method": "tools/call", "params": {
+                "name": "analyze_image", "arguments": {"path": "C:/not-read.png"},
+                "_meta": {"x-codex-turn-metadata": turn},
+            }})
+        messages.append({"jsonrpc": "2.0", "id": 6, "method": "tools/call", "params": {
+            "name": "analyze_image", "arguments": {"path": "C:/not-read.png", "model": "gpt-6.2-astra"},
+            "_meta": {"x-codex-turn-metadata": {"model": "gpt-6.1-sol"}},
+        }})
+        replies = [row["result"] for row in self.stdio(messages)[1:]]
+        self.assertTrue(all(row["isError"] for row in replies))
+        self.assertTrue(all("did not supply a valid model" in row["content"][0]["text"] for row in replies[:-1]))
+        self.assertIn("Invalid image tool arguments", replies[-1]["content"][0]["text"])
 
     def powershell(self, body):
         wrapper = self.root / "check.ps1"
@@ -509,9 +534,10 @@ function Invoke-ToolProcess($Executable, $Arguments, $TimeoutSeconds, $WorkingDi
     [IO.File]::WriteAllText($result,'Visible error text',[Text.Encoding]::UTF8)
     return @{ExitCode=0;Output=''}
 }
-$value = Invoke-ImageAnalysis ([pscustomobject]@{path='""" + path + """';instruction='Read the error'}) '01a15d9a-f5e3-73c1-b4e7-87b3c5db9a3c'
+$value = Invoke-ImageAnalysis ([pscustomobject]@{path='""" + path + """';instruction='Read the error'}) '01a15d9a-f5e3-73c1-b4e7-87b3c5db9a3c' 'gpt-6.1-sol'
 $arguments = $script:ObservedArguments
 @{answer=$value;ephemeral=('--ephemeral' -in $arguments);image=$arguments[[array]::IndexOf($arguments,'--image')+1];
+  model=@($arguments | Where-Object {$_ -like '--model=*'});
   override=$arguments[[array]::IndexOf($arguments,'-c')+1];
   prompt=$script:ObservedInputText;stdinPrompt=('-' -in $arguments);
   metadata=@($arguments | Where-Object {$_ -like 'responses_api_metadata.*'});
@@ -519,6 +545,7 @@ $arguments = $script:ObservedArguments
 """)
         self.assertEqual(report["answer"], "Visible error text")
         self.assertTrue(report["ephemeral"])
+        self.assertEqual(report["model"], ["--model=gpt-6.1-sol"])
         self.assertTrue(report["stdinPrompt"])
         self.assertIn("\n\nRequest: Read the error", report["prompt"])
         self.assertEqual(Path(report["image"]).resolve(), image.resolve())
@@ -565,7 +592,7 @@ function Invoke-ToolProcess($Executable, $Arguments, $TimeoutSeconds, $WorkingDi
     [IO.File]::WriteAllText($result,'Analysis completed')
     return @{ExitCode=0;Output=''}
 }
-$answer = Invoke-ImageAnalysis ([pscustomobject]@{path='""" + path + """'}) $null
+$answer = Invoke-ImageAnalysis ([pscustomobject]@{path='""" + path + """'}) $null 'gpt-6.2-astra'
 $arguments = $script:ObservedArguments
 $upload = $arguments[[array]::IndexOf($arguments,'--image')+1]
 @{answer=$answer;upload=$upload;uploadExists=(Test-Path -LiteralPath $upload);
@@ -612,7 +639,7 @@ $upload = $arguments[[array]::IndexOf($arguments,'--image')+1]
                                  "$env:CODEX_TEST_ECHO='" + str(echo).replace("'", "''") + "'\n"
                                  "$env:CODEX_CLI_PATH='" + str(wrapper).replace("'", "''") + "'\n"
                                  "$request=ConvertFrom-Json -InputObject '" + request.replace("'", "''") + "'\n"
-                                 "Invoke-ImageAnalysis $request $null\n")
+                                 "Invoke-ImageAnalysis $request $null 'gpt-6.1-sol'\n")
         arguments = report["args"]
         self.assertEqual(arguments[arguments.index("--image") + 1], str(image.resolve()))
         self.assertIn("-", arguments)
@@ -638,7 +665,8 @@ function Invoke-ToolProcess($Executable, $Arguments, $TimeoutSeconds, $WorkingDi
 }
 $reply=Invoke-McpRequest ([pscustomobject]@{jsonrpc='2.0';id=1;method='initialize';params=@{protocolVersion='2025-06-18'}})
 $reply=Invoke-McpRequest ([pscustomobject]@{jsonrpc='2.0';id=2;method='tools/call';params=@{name='analyze_image';
-    arguments=[pscustomobject]@{path='""" + path + """';instruction='Read synthetic text'}}})
+    arguments=[pscustomobject]@{path='""" + path + """';instruction='Read synthetic text'};
+    _meta=@{'x-codex-turn-metadata'=@{model='gpt-6.1-sol'}}}})
 @{error=$reply.result.isError;detail=$reply.result.content[0].text} | ConvertTo-Json -Compress
 """)
         self.assertTrue(report["error"])

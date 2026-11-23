@@ -905,7 +905,7 @@ const uiI18n = (() => {
     "使用原生图片解析":"Use native image analysis.",
     "保存后恢复原生图片解析。":"Save to restore native image analysis.",
     "当前中转仅支持原生图片解析。":"This relay supports native image analysis only.",
-    "主请求仅保留图片路径":"Keep only image paths in the main request.",
+    "独立会话解析图片，为主会话留出更多上下文空间。识图结果可能遗漏少量细节。":"Analyze images in a separate session to free up context in the main session. Some visual details may be missed.",
     "保存目录":"Save folder",
     "图片保存路径已保存，立即用于新保存的图片。":"Image folder saved. Newly saved images use it immediately.",
     "当前中转暂不支持图片隔离，请升级中转后启用。":"Upgrade the forwarding service to enable image isolation.",
