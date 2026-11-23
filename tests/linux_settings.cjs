@@ -57,7 +57,7 @@ let browser,cases=0;
   await page.evaluate(()=>{delete state.status.image_analysis_modes;delete state.status.updates_supported;state.status.image_analysis_mode='optimized';updateStatus={state:'available'};fillImageAnalysisMode();renderUpdates();});
   assert.equal(await toggle.isDisabled(),false);
   assert.equal(await toggle.isChecked(),true);
-  assert.equal(await hint.textContent(),'A separate session analyzes images, keeping the main request smaller and leaving more context for text. Some visual details may be missed.');
+  assert.equal(await hint.textContent(),'Analyze images in a separate session to shrink the main request and free up context for text. Some details may be missed.');
   assert.equal(await page.locator('#updates-check').isDisabled(),false);
   assert(await page.locator('#updates-install').isVisible());
   assert.equal(await page.locator('#updates-install').isDisabled(),false);
