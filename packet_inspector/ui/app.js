@@ -1896,7 +1896,7 @@ function fillImageAnalysisMode() {
   const canSwitch=nativeSupported&&imageAnalysisModeSupported("optimized");
   if(!settingsEditing)input.checked=imageAnalysisMode()==="optimized";
   input.disabled=settingsSaving||!canSwitch;
-  let hint=input.checked?"主请求仅保留图片路径":"使用原生图片解析";
+  let hint=input.checked?"独立会话解析图片，为主会话留出更多上下文空间。识图结果可能遗漏少量细节。":"使用原生图片解析";
   if(!input.checked&&legacyImageAnalysisPending())hint="保存后恢复原生图片解析。";
   else if(!canSwitch)hint=nativeSupported?"当前中转仅支持原生图片解析。":"当前中转暂不支持此功能。";
   uiI18n.text($("image-isolation-hint"),hint);
