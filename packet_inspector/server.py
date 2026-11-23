@@ -66,6 +66,7 @@ from .usage_trigger import (raw_chunks, request_size as usage_trigger_size,
 from .overflow import CheckpointStream, OverflowCompactor, OverflowFailure, encode_changed_info
 from .image_config import IMAGE_MODES, ImageToolConfig, WORKER_HEADER, image_mode
 from .image_isolation import ImageIsolation, ImageIsolationFailure, check_image_directory, resolve_image_directory, is_analysis_request
+from .linux_images import LinuxImageTransfer, SETTINGS_BYTES, linux_data_directories
 from .sharing import Sharing, SharingError, forwarding_headers, allowed_request as sharing_request_allowed
 from .sharing_errors import prepare_shared_error
 from .shared_egress import SharedEgress
@@ -192,6 +193,7 @@ class InspectorServer(ThreadingHTTPServer):
         self.settings.pop("ui_token", None)
         self.settings["image_analysis_mode"] = image_mode(saved)
         self.settings["image_isolation_enabled"] = self.settings["image_analysis_mode"] == "optimized"
+        self.settings["linux_data_directories"] = linux_data_directories(saved.get("linux_data_directories", {}))
         for key, default in (("zstd_level", DEFAULT_ZSTD_LEVEL), ("image_zstd_level", DEFAULT_IMAGE_ZSTD_LEVEL)):
             try:
                 self.settings[key] = validate_zstd_level(self.settings[key])
@@ -242,7 +244,9 @@ class InspectorServer(ThreadingHTTPServer):
         self.provider_next_scan = 0
         self.upgrade_draining = False
         self.session_label_updates = SessionLabelUpdates()
-        self.wsl = WslConnection(self.data_dir, label_updates=self.session_label_updates)
+        self.wsl = WslConnection(self.data_dir, label_updates=self.session_label_updates,
+                                 image_settings=self.linux_image_settings)
+        self.linux_images = LinuxImageTransfer()
         self.token_windows = TokenWindows()
         self.cache_dir = resolve_directory(self.data_dir, self.settings["cache_dir"])
         self.log_dir = resolve_directory(self.data_dir, self.settings["log_dir"])
@@ -296,7 +300,8 @@ class InspectorServer(ThreadingHTTPServer):
         self._startup_step("background.initialize")
         self.analysis_stop = threading.Event()
         self.connection_resume = ConnectionResume(self)
-        self.remote_relays = RemoteRelays(self.data_dir / "ssh-connections", lambda: self.endpoint) if os.name == "nt" else None
+        self.remote_relays = (RemoteRelays(self.data_dir / "ssh-connections", lambda: self.endpoint,
+                                          image_settings=self.linux_image_settings) if os.name == "nt" else None)
         self.connections = Connections(self.link.config.parent, self.connection_profile, self.set_connection,
                                        transport=self.remote_relays,
                                        cache_path=self.cache_dir / "remote-connections.json")
@@ -652,6 +657,21 @@ class InspectorServer(ThreadingHTTPServer):
             staging.replace(self.settings_path)
             self.settings = value
 
+    def linux_image_settings(self, identity):
+        settings = self.settings
+        return settings["image_analysis_mode"], settings["linux_data_directories"].get(identity, "")
+
+    def refresh_linux_images(self, previous, candidate):
+        before, after = (settings["linux_data_directories"] for settings in (previous, candidate))
+        targets = None if previous["image_analysis_mode"] != candidate["image_analysis_mode"] else {
+            key for key in before.keys() | after.keys() if before.get(key) != after.get(key)}
+        if targets is None or targets:
+            self.connections.refresh_images(targets)
+            with self.provider_guard:
+                changed = self.wsl.refresh_images(targets)
+                if changed:
+                    self._record_connection_notice({"wsl": {"targets": changed}})
+
     @property
     def ui_url(self):
         return f"http://127.0.0.1:{self.port}/"
@@ -743,6 +763,7 @@ class InspectorServer(ThreadingHTTPServer):
                                           or resolve_image_directory(self.data_dir, self.settings["image_save_dir"])
                                           != self.image_isolation.directory),
                 "image_isolation_enabled": self.settings["image_isolation_enabled"],
+                "linux_data_directories": self.settings["linux_data_directories"],
                 "image_analysis_mode": self.settings["image_analysis_mode"],
                 "image_analysis_modes": list(self.image_config.available_modes()),
                 "image_isolation_supported": True, "image_tool": self.image_config.status(),
@@ -1173,7 +1194,7 @@ class Handler(BaseHTTPRequestHandler):
             proxies, mode = self.server.proxy_config.preview(data)
             self._json(200, self.server.proxy_tester.test(proxies, mode, self.server.connection_profile()["upstream"]))
         elif path == "/api/settings" and self.command == "POST":
-            data = json.loads(self._body(8192))
+            data = json.loads(self._body(SETTINGS_BYTES))
             checked_paths = path_settings(self.server.data_dir, data)
             with self.server.provider_guard, self.server.guard:
                 if self.server.sharing_handover.pending:
@@ -1181,6 +1202,8 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 candidate = dict(self.server.settings)
                 candidate.update(checked_paths)
+                if "linux_data_directories" in data:
+                    candidate["linux_data_directories"] = linux_data_directories(data["linux_data_directories"])
                 image_isolation = self.server.image_isolation
                 if "image_save_dir" in data:
                     directory = resolve_image_directory(self.server.data_dir, data["image_save_dir"])
@@ -1294,6 +1317,7 @@ class Handler(BaseHTTPRequestHandler):
                                                    self.server.settings["max_packets"])
                 if candidate["auto_zstd_level_enabled"] != previous["auto_zstd_level_enabled"]:
                     self.server.compression_policy.clear()
+            self.server.refresh_linux_images(previous, candidate)
             self._json(200, self.server.status())
         elif path == "/api/link" and self.command == "POST":
             data = json.loads(self._body(8192))
@@ -1533,10 +1557,11 @@ class Handler(BaseHTTPRequestHandler):
             zstd_level = self.server.settings["image_zstd_level" if json_image else "zstd_level"]
             protection_enabled = self.server.settings["packet_size_protection_enabled"]
             budget = self.server.settings["budget_bytes"]
-            image_enabled = self.server.settings["image_isolation_enabled"] and not ssh_upstream
+            image_enabled = self.server.settings["image_isolation_enabled"]
             image_isolation = self.server.image_isolation
             image_configured = self.server.image_config.state.get("enabled", False)
-            image_worker = not ssh_upstream and self.server.image_config.is_worker(self.headers.get(WORKER_HEADER, ""))
+            image_origin = ssh_origin or wsl_origin
+            image_worker = not image_origin and self.server.image_config.is_worker(self.headers.get(WORKER_HEADER, ""))
             auto_zstd_level = (protection_enabled and self.server.settings["auto_zstd_level_enabled"]
                                and compression == "zstd" and not image_worker)
             auto_eligible = (auto_zstd_level and self.command == "POST"
@@ -1597,16 +1622,25 @@ class Handler(BaseHTTPRequestHandler):
         compression_scope = hashlib.sha256(upstream.encode()).hexdigest()
         auto_key, auto_decision = None, None
         try:
-            if image_enabled and not image_configured:
+            if image_enabled and not image_origin and not image_configured:
                 raise ImageIsolationFailure("image_configuration_missing", "图片隔离配置不完整，请在设置中重新启用。", 503)
             rewritten = None
             if image_enabled and not image_worker and self.command == "POST" and urlsplit(suffix).path.rstrip("/").endswith(("/responses", "/responses/compact")):
-                try:
-                    rewritten = image_isolation.rewrite(body, headers)
-                except (ImageIsolationFailure, ImportError):
-                    raise
-                except Exception:
-                    raise ImageIsolationFailure("image_preparation_failed", "图片隔离准备失败，原请求未发送。", 503) from None
+                if image_origin:
+                    target = (self.server.remote_relays.image_target(ssh_origin) if ssh_origin
+                              else self.server.wsl.image_target(wsl_origin))
+                    if target:
+                        try:
+                            rewritten = self.server.linux_images.rewrite(body, headers, target, image_origin)
+                        except (OSError, ValueError, TypeError, ImportError):
+                            update(image_isolation_error="linux_image_upload_unconfirmed")
+                else:
+                    try:
+                        rewritten = image_isolation.rewrite(body, headers)
+                    except (ImageIsolationFailure, ImportError):
+                        raise
+                    except Exception:
+                        raise ImageIsolationFailure("image_preparation_failed", "图片隔离准备失败，原请求未发送。", 503) from None
             if auto_eligible:
                 if capture_meta.get("inspection") != "json":
                     try:
@@ -1661,10 +1695,11 @@ class Handler(BaseHTTPRequestHandler):
                 encoded = prepare_request_info(body, headers, self.command, suffix, compression, zstd_level,
                                                 auto_zstd_level=auto_zstd_level, budget_bytes=budget)
                 outbound_body, outbound_encoding, applied_zstd_level = encoded
-            if protection_enabled and json_image and self.command == "POST" and compression == "zstd":
+            linux_image_analysis = bool(image_worker and image_origin)
+            if protection_enabled and (json_image or linux_image_analysis) and self.command == "POST" and compression == "zstd":
                 prepared_image, upload_meta = optimize_image_request(body, headers, suffix,
                     PreparedRequest(outbound_body, outbound_encoding, applied_zstd_level), budget_bytes=budget,
-                    zstd_level=AUTO_IMAGE_ZSTD_LEVEL if auto_zstd_level else zstd_level)
+                     zstd_level=AUTO_IMAGE_ZSTD_LEVEL if auto_zstd_level else zstd_level, analysis=linux_image_analysis)
                 outbound_body, outbound_encoding, applied_zstd_level = prepared_image
                 transport_input_bytes = upload_meta.pop("transport_input_bytes", transport_input_bytes)
                 update(**upload_meta)
@@ -1683,7 +1718,8 @@ class Handler(BaseHTTPRequestHandler):
                 if trigger_size is not None:
                     update(usage_override_request_bytes=trigger_size, usage_override_trigger_bytes=trigger_threshold(budget))
             if image_worker:
-                image_isolation.observe_request(body, dict(self.headers.items()))
+                if not image_origin:
+                    image_isolation.observe_request(body, dict(self.headers.items()))
                 update(image_isolation_worker=True)
             if protection_enabled and not image_worker and self.command == "POST" and urlsplit(suffix).path.rstrip("/").endswith("/responses"):
                 outbound_body, outbound_encoding, overflow_meta = self.server.overflow.prepare(

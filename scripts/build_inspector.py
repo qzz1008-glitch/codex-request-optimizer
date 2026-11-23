@@ -120,6 +120,8 @@ def compile_executable(snapshot, mode, portable_dev, work, stage, licenses):
              "--add-data",str(source/"packet_inspector"/"update_channel.json")+os.pathsep+"packet_inspector",
              "--add-data",str(source/"packet_inspector"/"compress_image.ps1")+os.pathsep+"packet_inspector",
              "--add-data",str(source/"packet_inspector"/"isolated_image_tool.ps1")+os.pathsep+"packet_inspector",
+             "--add-data",str(source/"packet_inspector"/"isolated_image_tool.py")+os.pathsep+"packet_inspector",
+             "--add-data",str(source/"packet_inspector"/"linux_image_control.py")+os.pathsep+"packet_inspector",
              "--add-data",str(source/"packet_inspector"/"windows_install.ps1")+os.pathsep+"packet_inspector",
               "--add-data",str(source/"packet_inspector"/"provider_migration_worker.py")+os.pathsep+"packet_inspector",
               "--add-data",str(licenses)+os.pathsep+"THIRD_PARTY_LICENSES",

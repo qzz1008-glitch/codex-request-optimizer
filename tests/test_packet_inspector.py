@@ -858,6 +858,51 @@ class RelayTests(unittest.TestCase):
             self.assertNotIn("extra-never-store",r["meta"])
         self.assertNotIn(b"body-secret-do-not-store",encode(v))
 
+    def test_wsl_relay_waits_for_image_upload_before_forwarding_and_preserves_image_on_failure(self):
+        from packet_inspector.linux_images import LinuxImageTarget
+        from tests.test_linux_images import DIRECTORY, NAME, image_input
+
+        source = encode({"input": [{"role": "user", "content": [image_input()]}]})
+        routes = {"wsl": {"upstream": self.server.settings["upstream"], "wsl_connection_key": "fixture-account"}}
+        entered, available = threading.Event(), threading.Event()
+        sent = []
+
+        def upload(operation, **options):
+            self.assertEqual(operation, "image_store")
+            self.assertEqual(list(options["entries"]), [NAME])
+            entered.set()
+            if not available.wait(HTTP_TIMEOUT):
+                raise ValueError("fixture upload timed out")
+            return {"directory": DIRECTORY, "confirmed": [NAME]}
+
+        target = LinuxImageTarget(DIRECTORY, upload)
+        with patch.dict(self.server.settings, {"provider_routes": routes, "image_isolation_enabled": True}), \
+                patch.object(self.server.wsl, "image_target", return_value=target) as locate:
+            count = len(self.up.requests)
+            pending = threading.Thread(target=lambda: sent.append(self.relay(source, "/p/wsl/responses")))
+            pending.start()
+            try:
+                self.assertTrue(entered.wait(HTTP_TIMEOUT))
+                self.assertEqual(len(self.up.requests), count)
+            finally:
+                available.set()
+                pending.join(timeout=HTTP_TIMEOUT)
+            self.assertEqual(sent[0][0], 200)
+            locate.assert_called_with("fixture-account")
+            expected = [{"type": "input_text", "text": DIRECTORY + "/" + NAME}]
+            self.assertEqual(json.loads(self.up.requests[-1]["body"])["input"][0]["content"], expected)
+            meta, _ = self.latest()
+            self.assertEqual(meta["image_paths"], [DIRECTORY + "/" + NAME])
+
+            def failed(*args, **kwargs):
+                raise ValueError("fixture SSH write failed")
+
+            locate.return_value = LinuxImageTarget(DIRECTORY, failed)
+            self.assertEqual(self.relay(source, "/p/wsl/responses")[0], 200)
+            self.assertEqual(self.up.requests[-1]["body"], source)
+            meta, _ = self.latest()
+            self.assertEqual(meta["image_isolation_error"], "linux_image_upload_unconfirmed")
+
     def test_hot_compression_covers_generation_and_compaction_without_rewriting(self):
         previous=self.server.settings["auto_detect_providers"]
         try:

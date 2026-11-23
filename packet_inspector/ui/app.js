@@ -2212,6 +2212,45 @@ function fillStorageDirectories() {
   $("storage-paths-hint").textContent=s.storage_paths_pending?t("目录已保存，重启本软件后生效，原目录数据保留。"):"";
   fillDirectoryOpenButtons();
 }
+function renderLinuxStorageTargets(remote) {
+  const status=state.status;
+  const wsl=status.wsl_connection||{},targets=new Map();
+  for(const row of remote?.targets||[]) {
+    if(row.kind==="ssh")targets.set(row.id,{name:row.name,storage:row.image_storage});
+  }
+  for(const row of [...(wsl.deferred||[]),...(wsl.detected||[]),...(wsl.targets||[])]) {
+    if(row.id)targets.set(row.id,{name:"WSL · "+row.distribution,storage:row.image_storage});
+  }
+  $("linux-storage-settings").hidden=!status.linux_data_directories||!targets.size;
+  const list=$("linux-storage-targets"),rows=[];
+  for(const [identity,{name,storage}] of targets) {
+    const input=el("input"), label=el("label","settings-key",name),row=el("div","linux-storage-row");
+    input.id="linux-data-dir-"+rows.length;input.name=input.id;label.htmlFor=input.id;
+    input.type="text";input.maxLength=1024;input.spellcheck=false;input.autocomplete="off";
+    input.setAttribute("autocapitalize","none");input.setAttribute("autocorrect","off");
+    input.dataset.linuxStorageTarget=identity;
+    input.placeholder="~/.cache/codex-request-optimizer";
+    input.value=status.linux_data_directories?.[identity]||"";
+    const describedBy=["linux-storage-hint"];
+    row.append(label,input);
+    if(storage?.error) {
+      const message=el("p","help error",t(storage.error));message.id=input.id+"-message";
+      row.append(message);describedBy.push(message.id);
+    }
+    input.setAttribute("aria-describedby",describedBy.join(" "));
+    rows.push(row);
+  }
+  list.replaceChildren(...rows);
+}
+function linuxStorageDraft() {
+  const values=new Map(Object.entries(state.status.linux_data_directories||{}));
+  for(const input of $("linux-storage-targets").querySelectorAll("input")) {
+    const value=input.value.trim(),key=input.dataset.linuxStorageTarget;
+    if(value&&value!==input.placeholder)values.set(key,value);
+    else values.delete(key);
+  }
+  return JSON.stringify(Object.fromEntries([...values].sort(([a],[b])=>a.localeCompare(b))));
+}
 function fillDirectoryOpenButtons() {
   $("storage-dir-open").disabled=settingsSaving||!state.status.open_directory_supported||directoryOpening.has("storage-dir");
 }
@@ -2337,6 +2376,7 @@ function readSettingsDraft() {
     bad_request_retry_max_retries:$("bad-request-retry").checked?$("bad-request-retry-count").value:String(state.status.bad_request_retry_max_retries??3),
     image_analysis_mode:selectedImageAnalysisMode(),
     storage_dir:$("storage-dir").value,
+    linux_data_directories:state.status.linux_data_directories?linuxStorageDraft():"{}",
     max_storage_mb:$("storage-limit").value,
     max_packets:$("packet-limit").value,
     language:settingsLanguage??uiI18n.language
@@ -2425,6 +2465,7 @@ async function saveSettings() {
       "image_analysis_mode" in s?draft.image_analysis_mode:draft.image_analysis_mode==="optimized",
       imageAnalysisModeSupported(draft.image_analysis_mode,s)],
     ["storage_dir","storage_dir",draft.storage_dir===s.data_dir?"":draft.storage_dir,s.storage_dir_supported],
+    ["linux_data_directories","linux_data_directories",JSON.parse(draft.linux_data_directories),!!s.linux_data_directories],
     ["max_storage_mb","max_storage_bytes",storage.toBackend(draft.max_storage_mb),true],
     ["max_packets","max_packets",Number(draft.max_packets),true]
   ].filter(([field,,,supported])=>supported&&changed.has(field));
@@ -2446,7 +2487,7 @@ async function saveSettings() {
       });
     }
     if(entries.length) {
-      const label=entries.some(([field])=>field==="storage_dir")?"存储位置":
+      const label=entries.some(([field])=>["storage_dir","linux_data_directories"].includes(field))?"存储位置":
         entries.some(([field])=>field==="image_analysis_mode")?"图片与运行设置":
         entries.some(([field])=>field==="start_on_login")?"开机启动与运行设置":"运行设置";
       await runSettingsSaveStep(label,async()=>{
@@ -2560,6 +2601,8 @@ async function openSettings() {
   updateFeedbackVisible=updateBusy||["available","checking","downloading","upgrading"].includes(updateStatus?.state);
   try {
     await Promise.all([refreshStatus(true),loadContextSettings(),loadUpdates()]);
+    if(state.status.linux_data_directories)renderLinuxStorageTargets(await api("/api/connections").catch(()=>null));
+    else $("linux-storage-settings").hidden=true;
     settingsLanguage=uiI18n.language;
     settingsBaseline=readSettingsDraft();settingsEditing=true;
     resetSettingsSaveProgress();
@@ -2640,7 +2683,7 @@ function requestBasicsPanel(m) {
     fact(facts,t("独立会话 ID"),m.thread_id||"—");
     if(specialKind==="image_analysis") {
       const body=requestBodyView&&requestBodyView.id===m.id?requestBodyView.body:null;
-      section.append(renderImageInfo(requestImagePaths(m,body)));
+      section.append(renderImageInfo(requestImagePaths(m,body),!!(m.ssh_connection_key||m.wsl_connection_key)));
     }
   }
   return section;
@@ -2734,7 +2777,7 @@ function requestProtectionPanel(m) {
   const optimization=item("optimization","optimization");
   if(optimization) {
     const body=requestBodyView&&requestBodyView.id===m.id?requestBodyView.body:null,paths=requestImagePaths(m,body);
-    if(paths.length)optimization.append(renderImagePaths(paths,{showDirectoryRow:false}));
+    if(paths.length)optimization.append(renderImagePaths(paths,{showDirectoryRow:false,remote:!!(m.ssh_connection_key||m.wsl_connection_key)}));
     else fact(optimization,t("图片路径"),"—");
   }
   return steps;
@@ -3284,20 +3327,22 @@ function imagePathAction(kind,path) {
   };
   return button;
 }
-function renderImageInfo(paths) {
+function renderImageInfo(paths,remote) {
   const images=el("div");images.id="request-image-info";
   if(!paths.length) {images.append(el("p","muted",t("未记录图片路径")));return images;}
-  images.append(renderImagePaths(paths));return images;
+  images.append(renderImagePaths(paths,{remote}));return images;
 }
-function renderImagePaths(paths,{showDirectoryRow=true}={}) {
+function renderImagePaths(paths,{showDirectoryRow=true,remote=false}={}) {
   const images=el("div","image-paths");
   for(const group of imagePathGroups(paths)) {
     const section=el("section","image-path-group");section.dataset.renderKey="image-folder:"+group.directory;
+    const opensLocally=!remote||!group.directory.startsWith("/");
     if(showDirectoryRow) {
       section.setAttribute("aria-label",t("图片目录")+"："+group.directory);
       const directory=el("code","image-path-directory",group.directory);directory.title=group.directory;
       const heading=el("div","image-path-directory-row");
-      heading.append(directory,imagePathAction("directory",group.directory));
+      heading.append(directory);
+      if(opensLocally)heading.append(imagePathAction("directory",group.directory));
       section.append(heading);
     }
     const list=el("ul","image-path-list");
@@ -3305,7 +3350,9 @@ function renderImagePaths(paths,{showDirectoryRow=true}={}) {
       const item=el("li","image-path-item"),filename=el("code","image-path-name",name);
       item.dataset.renderKey="image:"+path;
       filename.title=path;
-      item.append(filename,imagePathAction("image",path),imagePathAction("reveal",path));list.append(item);
+      item.append(filename);
+      if(opensLocally)item.append(imagePathAction("image",path),imagePathAction("reveal",path));
+      list.append(item);
     }
     section.append(list);images.append(section);
   }

@@ -160,7 +160,8 @@ class SshControl:
         script = "INPUT = " + repr(payload) + "\n" + SCRIPT
         try:
             result = subprocess.run(arguments, input=script.encode(), capture_output=True,
-                timeout=(12 if action == "tunnel_labels" else
+                timeout=(30 if action and action.startswith("tunnel_image_") else
+                         12 if action == "tunnel_labels" else
                          240 if action in {"reconnect", "tunnel_reconnect"} else 90 if action else 30),
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         except subprocess.TimeoutExpired:
@@ -231,6 +232,14 @@ class Connections:
                 host = entry["host"]
                 if host and not entry.get("busy") and needs_resume(host):
                     self._launch(entry)
+
+    def refresh_images(self, target_ids=None):
+        with self.guard:
+            # The periodic probe reconciles targets currently busy or offline.
+            for identity, entry in self.entries.items():
+                if (entry["host"] and entry.get("state") == "connected" and not entry.get("busy")
+                        and (target_ids is None or identity in target_ids) and not self.closed):
+                    self._launch(entry, "images")
 
     def _local(self):
         try:

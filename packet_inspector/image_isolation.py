@@ -186,26 +186,8 @@ class ImageIsolation:
             return None
 
     def _store(self, image_url, protected):
-        if not isinstance(image_url, str):
-            raise ImageIsolationFailure("image_reference_unsupported", "图片缺少可保存的内嵌内容；请提供本地图片文件。")
-        match = re.fullmatch(r"data:(image/(?:png|jpeg|webp|gif));base64,([A-Za-z0-9+/=\r\n]+)", image_url)
-        if not match:
-            raise ImageIsolationFailure("image_reference_unsupported", "图片隔离只接受内嵌图片；远程 URL 和文件 ID 未转发。")
-        if len(match[2]) > (MAX_IMAGE_BYTES + 2) // 3 * 4 + 4096:
-            raise ImageIsolationFailure("image_too_large", f"图片超过独立解析的 {MAX_IMAGE_BYTES / 1000000:g} MB 限制。", 413)
-        try:
-            payload = base64.b64decode(match[2].replace("\r", "").replace("\n", ""), validate=True)
-        except (ValueError, binascii.Error):
-            raise ImageIsolationFailure("image_invalid_data", "图片编码无效，未上传原始图片。") from None
-        if not payload or len(payload) > MAX_IMAGE_BYTES:
-            raise ImageIsolationFailure("image_too_large", "图片为空或超过独立解析的大小限制。", 413)
-        signature_ok = {"image/png": payload.startswith(b"\x89PNG\r\n\x1a\n"),
-                        "image/jpeg": payload.startswith(b"\xff\xd8\xff"),
-                        "image/gif": payload.startswith((b"GIF87a", b"GIF89a")),
-                        "image/webp": payload[:4] == b"RIFF" and payload[8:12] == b"WEBP"}
-        if not signature_ok[match[1]]:
-            raise ImageIsolationFailure("image_invalid_data", "图片格式与声明不一致，未上传原始图片。")
-        return self._store_payload(payload, MIME_EXTENSIONS[match[1]], protected)
+        payload, extension = decode_inline_image(image_url)
+        return self._store_payload(payload, extension, protected)
 
     def _store_payload(self, payload, extension, protected):
         digest = hashlib.sha256(payload).hexdigest()
@@ -403,4 +385,27 @@ class ImageIsolation:
                          "image_paths": sorted(str(path.resolve()) for path in image_paths),
                          "image_path_rewrites": {source: target for source, target in copied.items() if source != target},
                          "image_isolation_decoded_before": len(decoded),
-                         "image_isolation_decoded_after": len(changed)}
+                          "image_isolation_decoded_after": len(changed)}
+
+
+def decode_inline_image(image_url):
+    if not isinstance(image_url, str):
+        raise ImageIsolationFailure("image_reference_unsupported", "图片缺少可保存的内嵌内容；请提供本地图片文件。")
+    match = re.fullmatch(r"data:(image/(?:png|jpeg|webp|gif));base64,([A-Za-z0-9+/=\r\n]+)", image_url)
+    if not match:
+        raise ImageIsolationFailure("image_reference_unsupported", "图片隔离只接受内嵌图片；远程 URL 和文件 ID 未转发。")
+    if len(match[2]) > (MAX_IMAGE_BYTES + 2) // 3 * 4 + 4096:
+        raise ImageIsolationFailure("image_too_large", f"图片超过独立解析的 {MAX_IMAGE_BYTES / 1000000:g} MB 限制。", 413)
+    try:
+        payload = base64.b64decode(match[2].replace("\r", "").replace("\n", ""), validate=True)
+    except (ValueError, binascii.Error):
+        raise ImageIsolationFailure("image_invalid_data", "图片编码无效，未上传原始图片。") from None
+    if not payload or len(payload) > MAX_IMAGE_BYTES:
+        raise ImageIsolationFailure("image_too_large", "图片为空或超过独立解析的大小限制。", 413)
+    signature_ok = {"image/png": payload.startswith(b"\x89PNG\r\n\x1a\n"),
+                    "image/jpeg": payload.startswith(b"\xff\xd8\xff"),
+                    "image/gif": payload.startswith((b"GIF87a", b"GIF89a")),
+                    "image/webp": payload[:4] == b"RIFF" and payload[8:12] == b"WEBP"}
+    if not signature_ok[match[1]]:
+        raise ImageIsolationFailure("image_invalid_data", "图片格式与声明不一致，未上传原始图片。")
+    return payload, MIME_EXTENSIONS[match[1]]

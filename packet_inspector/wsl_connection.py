@@ -1,8 +1,4 @@
-"""Explicit, reversible connection of running local WSL Codex installations.
-
-No listeners, tunnels, WSL settings or Linux tools are installed. Linux SQLite
-indexes are queried inside WSL, so their WAL/locking semantics stay native.
-"""
+"""Reversible connection of WSL Codex and read-only access to its SQLite indexes."""
 from __future__ import annotations
 
 import hashlib
@@ -21,9 +17,13 @@ from urllib.parse import urlsplit
 
 from .background_session_labels import BackgroundSessionLabels
 from .config_link import ConfigLink, PROVIDER
+from .connection_plan import ConfigEdit, ConfigSnapshot, ConfigurationBatch
+from .linux_images import LinuxImageTarget, linux_image_edits, probe_image_directory
 from .native_state import LABEL_READER
 from .providers import ProviderManager
 from .network_diagnostics import safe_text
+from .remote_control import LINUX_IMAGE_SCRIPT
+from .router import atomic_json
 from .session_summary import external_labels
 
 
@@ -48,6 +48,21 @@ if Path(sys.argv[1]).resolve() == Path(request["home"]).resolve():
 else:
     result = {"error": "codex_home_changed"}
 print("CPI_LABELS=" + json.dumps(result, ensure_ascii=True))
+'''
+
+IMAGE_SCRIPT = LINUX_IMAGE_SCRIPT + r'''
+import json
+expected = Path(REQUEST.pop("home")).resolve()
+actual = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex").resolve()
+try:
+    if expected != actual or actual.stat().st_uid != os.getuid():
+        raise ValueError("WSL 登录账号或 Codex 配置目录已变化，请重新接入。")
+    response = linux_image_control(actual, REQUEST)
+except ValueError as exc:
+    response = {"error": str(exc)[:240]}
+except OSError as exc:
+    response = {"error": "无法读写 WSL 图片目录（" + type(exc).__name__ + "）。"}
+print("CPI_IMAGES=" + json.dumps(response))
 '''
 
 
@@ -193,6 +208,22 @@ class LocalWsl:
             raise WslError("codex_home_changed")
         return result
 
+    def images(self, distribution, home, action, **options):
+        validate_target(distribution, home)
+        request = {"home": home, "action": action, **options}
+        script = "REQUEST = " + repr(request) + "\n" + IMAGE_SCRIPT
+        text = self.run(["-d", distribution, "--exec", "sh", "-lc", "cd / && exec python3 -I -S -"],
+                        data=script.encode("utf-8"), timeout=30)
+        lines = [line.removeprefix("CPI_IMAGES=") for line in text.splitlines() if line.startswith("CPI_IMAGES=")]
+        if len(lines) != 1:
+            raise WslError("image_operation_unconfirmed")
+        result = json.loads(lines[0])
+        if not isinstance(result, dict):
+            raise WslError("image_operation_unconfirmed")
+        if result.get("error"):
+            raise ValueError(result["error"])
+        return result
+
     def migrate_providers(self, distribution, home, aliases):
         # Native Linux SQLite owns its WAL locks; never write it through UNC.
         request = {"home": home, "backup_dir": str(PurePosixPath(home) / "provider-migration-backups"),
@@ -212,7 +243,7 @@ class LocalWsl:
 
 
 class WslConnection:
-    def __init__(self, data_dir, backend=None, *, label_updates=None):
+    def __init__(self, data_dir, backend=None, *, label_updates=None, image_settings=None):
         self.directory = Path(data_dir) / "wsl-connections"
         self.backend = backend or LocalWsl()
         self.result = {"targets": [], "warnings": [], "changed": False, "reload_required": False}
@@ -225,6 +256,70 @@ class WslConnection:
         self._discovered_running = None
         self._label_targets = []
         self._metadata_errors = {}
+        self.image_settings = image_settings
+        self.image_targets = {}
+
+    def image_target(self, key):
+        return self.image_targets.get(key)
+
+    def _images(self, directory, target, link, active):
+        if self.image_settings is None:
+            return {}, False
+        key = directory.name
+        mode, data_dir = self.image_settings("wsl:" + key) if active else ("native", "")
+        previous_path = directory / "image-tool.json"
+
+        def send(operation, **options):
+            return self.backend.images(target["distribution"], target["home"], operation, **options)
+
+        status = {"data_dir": data_dir, "directory": "", "error": ""}
+        if active:
+            try:
+                status["directory"] = probe_image_directory(send, data_dir)
+            except (OSError, ValueError) as exc:
+                status["error"] = safe_text(getattr(exc, "detail", "") or str(exc), limit=240)
+        changed = False
+        ready = None
+        try:
+            if mode != "optimized" or status["directory"]:
+                saved = json.loads(previous_path.read_text(encoding="utf-8")) if previous_path.exists() else {}
+                previous = [*saved.get("pending", []), *saved.get("fields", [])]
+                raw = ConfigSnapshot.read(link.config)
+                edit, fields, uninstall = linux_image_edits(raw.content, previous, mode, send)
+                if edit is not None:
+                    atomic_json(previous_path, {"fields": previous, "pending": fields})
+                    ConfigurationBatch((raw,), (ConfigEdit(raw, edit.decode("utf-8-sig")),)).apply(link)
+                    changed = True
+                if changed or fields != previous or "pending" in saved:
+                    atomic_json(previous_path, {"fields": fields})
+                if mode == "optimized":
+                    ready = LinuxImageTarget(status["directory"], send)
+                elif uninstall:
+                    send("image_uninstall")
+        except (OSError, ValueError) as exc:
+            status["error"] = safe_text(getattr(exc, "detail", "") or str(exc), limit=240)
+        if ready:
+            self.image_targets[key] = ready
+        else:
+            self.image_targets.pop(key, None)
+        return status, changed
+
+    def refresh_images(self, target_ids=None):
+        """Apply image settings to the current connection without relinking providers."""
+        with self._lock:
+            changed = []
+            selections = {item.get("id"): item for item in self.result["targets"] if item.get("active")}
+            for directory, target in self._targets():
+                identity = "wsl:" + directory.name
+                if identity not in selections or target_ids is not None and identity not in target_ids:
+                    continue
+                current = selections[identity]
+                storage, updated = self._images(directory, target,
+                    ConfigLink(Path(target["config"]), directory / "link.json"), True)
+                current["image_storage"] = storage
+                if updated:
+                    changed.append({**current, "changed": True})
+            return changed
 
     def _distributions(self, *, refresh=False):
         if refresh or time.monotonic() - self._running_at > 15:
@@ -304,11 +399,12 @@ class WslConnection:
                     result["warnings"].append(warning("WSL", exc))
                 return result
             detected, warnings = self._discover(running)
-            result["detected"] = [target for _, target, _ in detected]
+            result["detected"] = [{**target, "id": "wsl:" + directory.name} for directory, target, _ in detected]
             result["warnings"].extend(warnings)
             if connected:
                 candidates = detected
-                result["deferred"] = [target for _, target in self._targets() if target["distribution"] not in running][:16]
+                result["deferred"] = [{**target, "id": "wsl:" + directory.name}
+                                      for directory, target in self._targets() if target["distribution"] not in running][:16]
             else:
                 candidates = []
                 for directory, target in self._targets():
@@ -333,6 +429,7 @@ class WslConnection:
                         update = manager.sync(routes, publish_routes, retry_limit=retry_limit,
                             session_migrator=lambda aliases: self.backend.migrate_providers(
                                 target["distribution"], target["home"], aliases))
+                        storage, image_changed = self._images(directory, target, link, True)
                     else:
                         if not config.is_file() or any(not Path(name).is_file() for name in link._state().get("files", {})):
                             raise WslError("restore_pending")
@@ -344,17 +441,22 @@ class WslConnection:
                             manager.sync(routes, publish_routes,
                                 session_migrator=lambda aliases: self.backend.migrate_providers(
                                     target["distribution"], target["home"], aliases))
+                        storage, image_changed = self._images(directory, target, link, False)
                         update = link.restore()
-                    result["targets"].append({**target, "active": connected, "changed": bool(update.get("reload_required")),
-                                              "migrated_sessions": update.get("session_migration", {}).get("changed", 0)})
-                    result["changed"] |= bool(update.get("reload_required"))
-                    result["reload_required"] |= bool(update.get("reload_required"))
+                    changed = bool(update.get("reload_required") or image_changed)
+                    result["targets"].append({**target, "id": "wsl:" + directory.name, "active": connected,
+                                               "changed": changed, "image_storage": storage,
+                                               "migrated_sessions": update.get("session_migration", {}).get("changed", 0)})
+                    result["changed"] |= changed
+                    result["reload_required"] |= changed
                     result["warnings"].extend({"distribution": target["distribution"],
                                                **{key: item[key] for key in ("reason", "file", "detail") if key in item}}
                                               for item in update.get("warnings", []))
                 except (OSError, ValueError) as exc:
                     result["warnings"].append(warning(target["distribution"], exc))
             self.labels.clear()
+            if not connected:
+                self.image_targets.clear()
             return result
 
     def reconcile_sessions(self, endpoint, upstream, routes):

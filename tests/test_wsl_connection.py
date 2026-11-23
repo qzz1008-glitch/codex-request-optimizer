@@ -52,6 +52,18 @@ class FakeWsl:
         if self.probe_error:
             raise WslError(self.probe_error)
 
+    def images(self, distribution, home, action, **options):
+        if action == "image_probe":
+            folder = options["data_dir"] or "/home/test/.cache/codex-request-optimizer"
+            return {"directory": folder + "/images"}
+        if action == "image_tool":
+            return {"command": "/usr/bin/python3", "args": ["-I", home + "/tools/server.py"]}
+        if action == "image_uninstall":
+            return {}
+        if action == "image_store":
+            return {"directory": options["data_dir"] + "/images", "confirmed": list(options["entries"])}
+        raise AssertionError(action)
+
     def labels(self, distribution, home, ids):
         self.queries += 1
         config_home = str(self.config(distribution, home).parent)
@@ -67,6 +79,29 @@ class FakeWsl:
 
 
 class WslConnectionTests(unittest.TestCase):
+    def test_image_modes_stage_paths_and_restore_managed_config(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            backend = FakeWsl(root)
+            mode, storage = ["optimized"], ["/home/test/custom-data"]
+            wsl = WslConnection(root, backend, image_settings=lambda _: (mode[0], storage[0]))
+            update = wsl.apply(True, ENDPOINT, UPSTREAM, {}, lambda _: None)
+            target = update["targets"][0]
+            identity = target["id"].removeprefix("wsl:")
+            self.assertEqual(wsl.image_target(identity).directory, "/home/test/custom-data/images")
+            data = tomllib.loads(backend.config_path.read_text(encoding="utf8"))
+            self.assertFalse(data["features"]["view_image"])
+            self.assertIn("isolated_vision", data["mcp_servers"])
+            self.assertIn("linux_tool", data["mcp_servers"])
+
+            mode[0] = "native"
+            self.assertTrue(wsl.refresh_images())
+            self.assertIsNone(wsl.image_target(identity))
+            data = tomllib.loads(backend.config_path.read_text(encoding="utf8"))
+            self.assertNotIn("view_image", data["features"])
+            self.assertNotIn("isolated_vision", data["mcp_servers"])
+            self.assertIn("linux_tool", data["mcp_servers"])
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)

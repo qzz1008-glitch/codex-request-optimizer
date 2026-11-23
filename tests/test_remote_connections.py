@@ -861,6 +861,44 @@ class WindowsRemoteRelayTests(unittest.TestCase):
         self.assertNotIn("tunnel_write", self.calls)
         self.assertFalse(self.relays.needs_resume())
 
+    def test_linux_image_directory_is_probed_and_tool_is_managed_per_ssh_account(self):
+        import tomllib
+
+        settings = ["native", "/home/test/custom-data"]
+        self.relays.image_settings = lambda identity: tuple(settings)
+        real_ssh = self.relays.ssh
+        image_calls = []
+
+        def ssh(host, action, **options):
+            if action.startswith("tunnel_image_"):
+                self.assertEqual(options["uid"], self.uid)
+                self.assertEqual(Path(options["home"]), self.remote_home.resolve())
+                image_calls.append(action)
+                if action == "tunnel_image_probe":
+                    return {"directory": options["data_dir"] + "/images"}
+                if action == "tunnel_image_tool":
+                    return {"command": "/usr/bin/python3", "args": ["-I", "/home/test/server.py"]}
+                if action == "tunnel_image_uninstall":
+                    return {}
+            return real_ssh(host, action, **options)
+
+        self.relays.ssh = ssh
+        connected = self.relays(self.host, "activate")
+        self.assertEqual(image_calls, ["tunnel_image_probe"])
+        key = connected["account_key"]
+        self.assertIsNone(self.relays.image_target(key))
+        settings[0] = "optimized"
+        result = self.relays(self.host, "images")
+        self.assertTrue(result["reload_required"])
+        self.assertEqual(self.relays.image_target(key).directory, "/home/test/custom-data/images")
+        current = tomllib.loads(self.config.read_text(encoding="utf8"))
+        self.assertFalse(current["features"]["view_image"])
+        self.assertIn("isolated_vision", current["mcp_servers"])
+        self.assertEqual(self.relays(self.host, "restore")["state"], "disconnected")
+        self.assertIsNone(self.relays.image_target(key))
+        self.assertEqual(tomllib.loads(self.config.read_text(encoding="utf8")),
+                         tomllib.loads(self.original.decode("utf8")))
+
     def test_config_connect_restore_and_reconnect_after_optimizer_restart(self):
         linked = self.relays(self.host, "activate")
         self.assertEqual(linked["state"], "connected")

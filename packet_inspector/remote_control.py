@@ -1,11 +1,15 @@
 """Fixed, standard-library-only script sent over the user's existing SSH session."""
+from pathlib import Path
+
 from .entry_port import DEFAULT_PORT
 from .native_state import LABEL_READER
 
 RESULT_PREFIX = "INSPECTOR_CONNECTION_RESULT:"
 SSH_LABEL_BATCH = 32
 
-SCRIPT = LABEL_READER + r'''
+LINUX_IMAGE_SCRIPT = Path(__file__).with_name("linux_image_control.py").read_text(encoding="utf-8")
+
+SCRIPT = LABEL_READER + "\n" + LINUX_IMAGE_SCRIPT + r'''
 from contextlib import contextmanager
 import base64, hashlib, json, os, pathlib, re, select, shutil, signal, socket, stat, struct, subprocess, tempfile, time
 from http.client import HTTPException, HTTPResponse
@@ -323,6 +327,8 @@ def tunnel_control(home, options):
         return value
     if any(options.get(key) != value for key, value in account.items()):
         raise ValueError("SSH 登录账号或 Codex 配置目录已变化，请重新确认操作。")
+    if action.startswith("tunnel_image_"):
+        return linux_image_control(home, options)
     if action == "tunnel_probe":
         port, token = options["port"], options["token"]
         if type(port) is not int or not 1024 <= port <= 65535 or not re.fullmatch(r"[0-9a-f]{48}", token):
@@ -364,6 +370,8 @@ def control():
         except ValueError as exc:
             return {"error": str(exc)[:1000]}
         except OSError as exc:
+            if options["action"].startswith("tunnel_image_"):
+                return {"error": "无法读写远端图片目录（" + type(exc).__name__ + "）。"}
             return {"error": "无法读写远程 Codex 配置（" + type(exc).__name__ + "）。"}
     origins = []
     def add(value):

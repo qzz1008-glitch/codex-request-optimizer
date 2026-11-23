@@ -26,6 +26,7 @@ from .service_restart import RestartRequests, perform_restart
 from .storage_paths import resolve_directory
 from .request_context import local_image_path
 from .proxy_settings import MAX_PROXY_SETTINGS_BYTES
+from .linux_images import SETTINGS_BYTES
 
 UI_DIR = Path(__file__).with_name("ui")
 UI_FILES = {"/": ("index.html", "text/html; charset=utf-8"),
@@ -555,7 +556,7 @@ class UIHandler(BaseHTTPRequestHandler):
         if self.command == "POST":
             try:
                 length = int(self.headers.get("Content-Length", "0"))
-                limit = {"/api/proxy-settings": MAX_PROXY_SETTINGS_BYTES,
+                limit = {"/api/settings": SETTINGS_BYTES, "/api/proxy-settings": MAX_PROXY_SETTINGS_BYTES,
                          "/api/proxy-test": MAX_PROXY_SETTINGS_BYTES, "/api/connections": 16384}.get(path, 8192)
                 if self.headers.get("Transfer-Encoding") or not 0 <= length <= limit:
                     raise ValueError()

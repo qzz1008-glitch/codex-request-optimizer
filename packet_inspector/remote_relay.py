@@ -17,6 +17,8 @@ import tomlkit
 
 from .config_link import validate_upstream
 from .configuration_layers import merge_layers
+from .linux_images import LinuxImageTarget, linux_image_edits, probe_image_directory
+from .network_diagnostics import safe_text
 from .provider_defaults import API_UPSTREAM, provider_upstream
 from .providers import _get, _put
 from .remote_connections import SshControl
@@ -209,7 +211,7 @@ class TunnelGateway(ThreadingHTTPServer):
 
 
 class RemoteRelays:
-    def __init__(self, directory, endpoint, *, ssh=None, start=None):
+    def __init__(self, directory, endpoint, *, ssh=None, start=None, image_settings=None):
         self.directory = Path(directory)
         self.endpoint = endpoint
         self.ssh = ssh or SshControl()
@@ -217,6 +219,8 @@ class RemoteRelays:
         self.gateway = None
         self.processes = {}
         self.current_accounts = {}
+        self.image_settings = image_settings
+        self.image_targets = {}
         self.retry_at = {}
         self.guard = threading.RLock()
         self.closed = False
@@ -281,6 +285,65 @@ class RemoteRelays:
         if result.get("error") and (action != "reconnect" or "state" not in result):
             raise ValueError(result["error"])
         return result
+
+    def image_target(self, key):
+        with self.guard:
+            entry = self.image_targets.get(key)
+            if entry and key in self.current_accounts.values():
+                return entry[2]
+        return None
+
+    def _images(self, host, key, record, files, account, active, action):
+        if not self.image_settings or not record:
+            return None
+        mode, data_dir = self.image_settings(host.id) if active else ("native", "")
+        desired = mode, data_dir
+        with self.guard:
+            cached = self.image_targets.get(key)
+        if active and action not in {"activate", "images"} and cached and cached[0] == desired:
+            return cached[1]
+        if not active and action != "restore":
+            return None
+
+        def send(operation, **options):
+            return self._call(host, operation, **account, **options)
+
+        status = {"data_dir": data_dir, "directory": "", "error": ""}
+        target = None
+        if active:
+            try:
+                status["directory"] = probe_image_directory(send, data_dir)
+            except (OSError, ValueError) as exc:
+                status["error"] = safe_text(str(exc), limit=240)
+        try:
+            if mode != "optimized" or status["directory"]:
+                previous = [*record.get("image_pending", []), *record.get("image_fields", [])]
+                edit, fields, uninstall = linux_image_edits(files["config.toml"], previous, mode, send)
+                if edit is not None:
+                    record["image_pending"] = fields
+                    self._save(key, record)
+                    expected = {name: hashlib.sha256(raw).hexdigest() if raw is not None else None
+                                for name, raw in files.items()}
+                    changes = {"config.toml": base64.b64encode(edit).decode("ascii")}
+                    outcome = send("write", expected=expected, updates=changes)
+                    files["config.toml"] = edit
+                    record["reload_required"] = bool(outcome["changed"] or record.get("reload_required"))
+                if edit is not None or fields or previous:
+                    record["image_fields"] = fields
+                    record.pop("image_pending", None)
+                    self._save(key, record)
+                if mode == "optimized":
+                    target = LinuxImageTarget(status["directory"], send)
+                elif uninstall:
+                    send("image_uninstall")
+        except (OSError, ValueError) as exc:
+            status["error"] = safe_text(str(exc), limit=240)
+        with self.guard:
+            if active:
+                self.image_targets[key] = (desired, status, target)
+            else:
+                self.image_targets.pop(key, None)
+        return status
 
     def _drop(self, key):
         process = self.processes.pop(key, None)
@@ -354,6 +417,9 @@ class RemoteRelays:
         account_key = f"{device}-{account_hash}"
         with self.guard:
             key, record = self._account_record(device, account_key, account)
+            previous_account = self.current_accounts.get(device)
+            if previous_account != key:
+                self.image_targets.pop(previous_account, None)
             self.current_accounts[device] = key
         files = {name: base64.b64decode(raw, validate=True) if raw is not None else None
                  for name, raw in snapshot["files"].items()}
@@ -365,6 +431,7 @@ class RemoteRelays:
                 active |= any(_get(document, field["keys"]) == (True, field["applied"])
                               for field in managed if isinstance(field["applied"], str))
         changed = False
+        images = self._images(host, key, record, files, account, False, action) if action == "restore" else None
         if action in {"activate", "restore"}:
             if action == "activate":
                 if not record:
@@ -396,6 +463,7 @@ class RemoteRelays:
                     updates = {name: base64.b64encode(raw).decode("ascii") for name, raw in edits.items()}
                     outcome = self._call(host, "write", expected=expected, updates=updates, **account)
                     changed = bool(outcome["changed"])
+                    files.update(edits)
                 active = bool(endpoint)
                 if endpoint:
                     record["reload_required"] = bool(changed or record.get("reload_required"))
@@ -405,9 +473,13 @@ class RemoteRelays:
                 self._save(key, record)
         elif active:
             self._ensure(host, key, record)
+        if action != "restore":
+            images = self._images(host, key, record, files, account, active, action)
         result = {"state": "connected" if active else "disconnected", "can_connect": True, "account_key": account_key,
                   "can_disconnect": bool(active), "reload_required": bool(
                       record.get("reload_required") or active and "previous_fields" in record)}
+        if images is not None:
+            result["image_storage"] = images
         if action == "reconnect":
             reconnect = self._call(host, "reconnect", **account)
             result["codex_reconnect"] = reconnect

@@ -101,13 +101,32 @@ def resized_uri(item, size):
         resized.close()
 
 
-def optimize_image_request(raw, headers, path, prepared, *, budget_bytes, zstd_level):
+def image_references(value, analysis):
+    if not isinstance(value, dict):
+        return
+    if not analysis:
+        items = value.get("images")
+        if isinstance(items, list):
+            for position, item in enumerate(items):
+                yield reference(item, "/images/" + str(position))
+        return
+    inputs = value.get("input")
+    if isinstance(inputs, list):
+        for position, item in enumerate(inputs):
+            if not isinstance(item, dict) or item.get("role") != "user" or not isinstance(item.get("content"), list):
+                continue
+            for index, part in enumerate(item["content"]):
+                if isinstance(part, dict) and part.get("type") == "input_image":
+                    yield reference(part.get("image_url"), f"/input/{position}/content/{index}/image_url")
+
+
+def optimize_image_request(raw, headers, path, prepared, *, budget_bytes, zstd_level, analysis=False):
     """Estimate once, correct at most once; every pass starts from originals.
 
     No image files or caches are created. The caller has already selected the
     single zstd level used throughout this request, including resized bodies.
     """
-    if not is_json_image_request(path, headers) or len(prepared.body) <= budget_bytes:
+    if not (analysis or is_json_image_request(path, headers)) or len(prepared.body) <= budget_bytes:
         return prepared, {}
     encoding = next((value for key, value in headers.items() if key.lower() == "content-encoding"), "identity")
     if encoding.strip().lower() not in {"", "identity", "zstd"}:
@@ -119,17 +138,14 @@ def optimize_image_request(raw, headers, path, prepared, *, budget_bytes, zstd_l
     try:
         decoded = decode_body(raw, encoding)
         value = json.loads(decoded)
-        if not isinstance(value, dict) or not isinstance(value.get("images"), list):
-            raise UnsupportedImage("no_inline_images")
-        for position, item in enumerate(value["images"]):
-            uri, pointer = reference(item, "/images/"+str(position))
+        for uri, pointer in image_references(value, analysis):
             if isinstance(uri, str) and uri.lower().startswith("data:"):
                 images.append(read_image(uri, pointer))
                 if sum(image.image.width*image.image.height for image in images) > MAX_PIXELS:
                     raise UnsupportedImage("image_pixel_limit")
         if not images:
             raise UnsupportedImage("no_inline_images")
-        if value.get("mask") is not None:
+        if not analysis and value.get("mask") is not None:
             uri, pointer = reference(value["mask"], "/mask")
             if not uri or not (images[0].path == "/images/0" or images[0].path.startswith("/images/0/")):
                 raise UnsupportedImage("unsupported_mask_reference")

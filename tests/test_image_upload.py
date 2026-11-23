@@ -120,6 +120,21 @@ class ImageUploadTests(unittest.TestCase):
         self.assertIs(result, original)
         self.assertEqual(metrics, {})
 
+    def test_linux_analysis_resizes_worker_upload_without_changing_prompt(self):
+        raw = json.dumps({"input": [{"role": "user", "content": [
+            {"type": "input_text", "text": "Describe this image"},
+            {"type": "input_image", "image_url": image_uri()},
+        ]}]}).encode()
+        path = "/responses"
+        prepared = prepare_request_info(raw, HEADERS, "POST", path, "zstd", 6)
+        changed, metrics = optimize_image_request(raw, HEADERS, path, prepared,
+            budget_bytes=BUDGET, zstd_level=6, analysis=True)
+        self.assertTrue(metrics["image_upload_optimized"])
+        self.assertLessEqual(len(changed.body), BUDGET)
+        result = json.loads(decode_body(changed.body, changed.encoding))["input"][0]["content"]
+        self.assertEqual(result[0]["text"], "Describe this image")
+        self.assertEqual(result[1]["type"], "input_image")
+
     def test_invalid_animated_and_ambiguous_mask_inputs_are_not_modified(self):
         cases = [({"images":[{"image_url":"data:image/png;base64,AAAA"}]}, "invalid_image"),
                  ({"images":[{"image_url":"https://example.invalid/reference.png"}]}, "no_inline_images"),

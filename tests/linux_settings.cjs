@@ -32,6 +32,7 @@ let browser,cases=0;
     $('settings-dialog').showModal();
   });
   await page.addScriptTag({content:source.slice(source.indexOf('function imageAnalysisMode('),source.indexOf('function fillZstdLevel('))+
+    '\n'+source.slice(source.indexOf('function renderLinuxStorageTargets('),source.indexOf('function fillDirectoryOpenButtons('))+
     '\n'+source.slice(source.indexOf('function readSettingsDraft('),source.indexOf('async function loadUpdates('))});
   await page.evaluate(()=>{
     $('image-analysis-mode').addEventListener('change',()=>{fillImageAnalysisMode();updateSettingsSaveState();});
@@ -88,6 +89,22 @@ let browser,cases=0;
     assert.equal(await page.evaluate(()=>imageAnalysisMode()),after);
     assert.equal(await save.isDisabled(),true);cases++;
   }
+  await page.evaluate(()=>{
+    state.status={image_analysis_mode:'native',linux_data_directories:{'ssh-build':'/srv/cache','offline':'/srv/offline'},
+      wsl_connection:{targets:[{id:'wsl:ubuntu',distribution:'Ubuntu'}]}};
+    settingsEditing=false;settingsBaseline=null;
+    renderLinuxStorageTargets({targets:[{kind:'ssh',id:'ssh-build',name:'Build server'}]});
+    fillImageAnalysisMode();settingsBaseline=readSettingsDraft();settingsEditing=true;updateSettingsSaveState();
+  });
+  const sshFolder=page.getByRole('textbox',{name:'Build server',exact:true});
+  const wslFolder=page.getByRole('textbox',{name:'WSL · Ubuntu',exact:true});
+  assert.equal(await sshFolder.inputValue(),'/srv/cache');
+  assert.equal(await wslFolder.getAttribute('placeholder'),'~/.cache/codex-request-optimizer');
+  assert.equal(await wslFolder.getAttribute('aria-describedby'),'linux-storage-hint');
+  await sshFolder.fill('');await wslFolder.fill('~/cache');
+  await page.evaluate(()=>{updateSettingsSaveState();return saveSettings();});
+  assert.deepEqual(await page.evaluate(()=>imageSaves.splice(0)),
+    [{path:'/api/settings',values:{linux_data_directories:{offline:'/srv/offline','wsl:ubuntu':'~/cache'}}}]);cases++;
   await page.setViewportSize({width:320,height:900});
   assert.equal(await toggle.evaluate(node=>node.closest('.settings-controls').scrollWidth<=node.closest('.settings-controls').clientWidth+1),true);
   await page.evaluate(()=>{settingsSaving=true;fillImageAnalysisMode();renderUpdates();});
