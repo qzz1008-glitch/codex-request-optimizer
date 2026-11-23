@@ -336,7 +336,7 @@
           <div class="settings-switch" data-settings-field="image_analysis_mode">
             <input id="image-analysis-mode" type="checkbox" switch role="switch" aria-labelledby="image-analysis-mode-label" aria-describedby="image-isolation-hint">
           </div>
-          <p id="image-isolation-hint" class="muted help runtime-inline-hint" aria-live="polite">使用原生图片解析</p>
+          <p id="image-isolation-hint" class="muted help runtime-inline-hint" aria-live="polite">图片随主请求发送，主会话可直接分析画面细节。图片会增加请求大小，并占用上下文空间。</p>
         </div>
       </div>
       <p id="image-isolation-message" data-feedback-source data-feedback-target="settings-inline-feedback" class="help" role="status" hidden></p>

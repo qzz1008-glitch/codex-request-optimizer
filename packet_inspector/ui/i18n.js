@@ -902,7 +902,7 @@ const uiI18n = (() => {
     "设置已保存。以下配置仍需重启 ChatGPT App 后生效：":"Settings saved. Restart the ChatGPT App to apply these settings:",
     "我知道了":"Got it",
     "图片处理":"Image handling",
-    "使用原生图片解析":"Use native image analysis.",
+    "图片随主请求发送，主会话可直接分析画面细节。图片会增加请求大小，并占用上下文空间。":"Images are sent with the main request for direct visual analysis. They increase request size and use context space.",
     "保存后恢复原生图片解析。":"Save to restore native image analysis.",
     "当前中转仅支持原生图片解析。":"This relay supports native image analysis only.",
     "独立会话解析图片，为主会话留出更多上下文空间。识图结果可能遗漏少量细节。":"Analyze images in a separate session to free up context in the main session. Some visual details may be missed.",

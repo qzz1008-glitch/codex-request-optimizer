@@ -81,6 +81,9 @@ let browser,cases=0;
       await toggle.press('Space');
     }
     assert.equal(await toggle.isChecked(),after==='optimized');
+    if(before==='optimized'){
+      assert.equal(await hint.textContent(),'Images are sent with the main request for direct visual analysis. They increase request size and use context space.');
+    }
     assert.deepEqual(await page.evaluate(()=>imageSaves),[],'Choosing a mode does not save it');
     assert.equal(await save.isDisabled(),false);
     await page.evaluate(()=>saveSettings());
