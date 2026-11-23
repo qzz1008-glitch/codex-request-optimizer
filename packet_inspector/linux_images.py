@@ -69,7 +69,7 @@ def probe_image_directory(send, data_dir):
 
 
 def linux_image_edits(raw, previous, mode, send):
-    """Return a config edit and the owned fields needed for exact restoration."""
+    """Return the config edit, owned fields, uninstall intent and script change."""
     document = tomlkit.parse((raw or b"").decode("utf-8-sig"))
     original = document.unwrap()
     for field in previous:
@@ -82,6 +82,7 @@ def linux_image_edits(raw, previous, mode, send):
                     _put(document, keys, None, False)
 
     fields = []
+    files_changed = False
 
     def change(keys, value):
         present, before = _get(document, keys)
@@ -96,10 +97,12 @@ def linux_image_edits(raw, previous, mode, send):
             raise ValueError("该设备已有独立图片工具配置，请先确认现有配置。")
         source = (Path(__file__).with_name("isolated_image_tool.py").read_text(encoding="utf-8")
                   if mode == "optimized" else "")
-        registration = send("image_tool", mode=mode, source=source)
+        installation = send("image_tool", mode=mode, source=source)
         if mode == "optimized":
+            registration = installation.get("registration", {})
             if not registration.get("command"):
                 raise ValueError("Linux 未确认图片工具安装。")
+            files_changed = installation.get("files_changed") is True
             change(MCP_TOOL, registration)
         elif _get(document, MCP_TOOL)[0]:
             change([*MCP_TOOL, "enabled"], False)
@@ -112,9 +115,9 @@ def linux_image_edits(raw, previous, mode, send):
                 change(["profiles", name, "features", "view_image"], False)
     uninstall = not _get(document, MCP_TOOL)[0] and any(field["keys"] == MCP_TOOL for field in previous)
     if document.unwrap() == original:
-        return None, fields, uninstall
+        return None, fields, uninstall, files_changed
     bom = b"\xef\xbb\xbf" if (raw or b"").startswith(b"\xef\xbb\xbf") else b""
-    return bom + tomlkit.dumps(document).encode("utf-8"), fields, uninstall
+    return bom + tomlkit.dumps(document).encode("utf-8"), fields, uninstall, files_changed
 
 
 class LinuxImageTransfer:

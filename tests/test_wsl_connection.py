@@ -34,6 +34,7 @@ class FakeWsl:
         self.root = root
         self.distributions = ["Ubuntu-Test"]
         self.probe_error = None
+        self.image_tool_changed = False
         self.queries = 0
         self.config_path = root / "linux" / "config.toml"
         self.config_path.parent.mkdir()
@@ -57,7 +58,9 @@ class FakeWsl:
             folder = options["data_dir"] or "/home/test/.cache/codex-request-optimizer"
             return {"directory": folder + "/images"}
         if action == "image_tool":
-            return {"command": "/usr/bin/python3", "args": ["-I", home + "/tools/server.py"]}
+            changed, self.image_tool_changed = self.image_tool_changed, False
+            return {"registration": {"command": "/usr/bin/python3", "args": ["-I", home + "/tools/server.py"]},
+                    "files_changed": changed}
         if action == "image_uninstall":
             return {}
         if action == "image_store":

@@ -285,7 +285,7 @@ class WslConnection:
                 saved = json.loads(previous_path.read_text(encoding="utf-8")) if previous_path.exists() else {}
                 previous = [*saved.get("pending", []), *saved.get("fields", [])]
                 raw = ConfigSnapshot.read(link.config)
-                edit, fields, uninstall = linux_image_edits(raw.content, previous, mode, send)
+                edit, fields, uninstall, changed = linux_image_edits(raw.content, previous, mode, send)
                 if edit is not None:
                     atomic_json(previous_path, {"fields": previous, "pending": fields})
                     ConfigurationBatch((raw,), (ConfigEdit(raw, edit.decode("utf-8-sig")),)).apply(link)

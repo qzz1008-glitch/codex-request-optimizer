@@ -5,12 +5,14 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
 
 from packet_inspector.analyzer import encode
 from packet_inspector.isolated_image_tool import ImageTool, analyze
+from packet_inspector.linux_image_control import linux_image_runtime
 from packet_inspector.linux_images import LinuxImageTarget, LinuxImageTransfer, linux_image_edits
 
 
@@ -88,6 +90,25 @@ class ImageTransferTests(unittest.TestCase):
 
 
 class LinuxToolTests(unittest.TestCase):
+    def test_installer_reports_actual_script_changes_with_the_same_registration(self):
+        with tempfile.TemporaryDirectory() as folder:
+            home = Path(folder).resolve()
+            tool_dir = home / "tools" / "codex-inspector-image-tool"
+            tool_dir.mkdir(parents=True)
+            with patch.dict(os.environ, {"CODEX_CLI_PATH": sys.executable}), \
+                 patch("packet_inspector.linux_image_control.linux_private_directory"), \
+                 patch("packet_inspector.linux_image_control.shutil.which", return_value=sys.executable), \
+                 patch("packet_inspector.linux_image_control.subprocess.run",
+                       return_value=subprocess.CompletedProcess([], 0, stdout="view_image stable false\n")):
+                original = linux_image_runtime(home, "optimized", "# previous tool\n")
+                updated = linux_image_runtime(home, "optimized", "# new tool\n")
+                unchanged = linux_image_runtime(home, "optimized", "# new tool\n")
+            self.assertEqual([result["files_changed"] for result in (original, updated, unchanged)],
+                             [True, True, False])
+            self.assertEqual(original["registration"], updated["registration"])
+            self.assertEqual(updated["registration"], unchanged["registration"])
+            self.assertEqual((tool_dir / "server.py").read_text(encoding="utf8"), "# new tool\n")
+
     def test_restores_only_its_own_native_and_mcp_fields(self):
         initial = b'[features]\nview_image = true\nother = true\n'
 
@@ -95,16 +116,19 @@ class LinuxToolTests(unittest.TestCase):
             self.assertEqual(operation, "image_tool")
             self.assertEqual(mode, "optimized")
             compile(source, "server.py", "exec")
-            return {"command": "/usr/bin/python3", "args": ["-I", "/home/test/.codex/tools/server.py"]}
+            return {"registration": {"command": "/usr/bin/python3", "args": ["-I", "/home/test/.codex/tools/server.py"]},
+                    "files_changed": True}
 
-        changed, fields, uninstall = linux_image_edits(initial, [], "optimized", install)
+        changed, fields, uninstall, files_changed = linux_image_edits(initial, [], "optimized", install)
         self.assertFalse(uninstall)
+        self.assertTrue(files_changed)
         self.assertIn(b"view_image = false", changed)
         self.assertIn(b"[mcp_servers.isolated_vision]", changed)
-        self.assertIsNone(linux_image_edits(changed, fields, "optimized", install)[0])
+        self.assertEqual(linux_image_edits(changed, fields, "optimized", install), (None, fields, False, True))
         changed = changed.replace(b"other = true", b"other = false")
-        restored, owned, uninstall = linux_image_edits(changed, fields, "native", self.fail)
+        restored, owned, uninstall, files_changed = linux_image_edits(changed, fields, "native", self.fail)
         self.assertTrue(uninstall)
+        self.assertFalse(files_changed)
         self.assertIn(b"view_image = true", restored)
         self.assertIn(b"other = false", restored)
         self.assertNotIn(b"isolated_vision", restored)

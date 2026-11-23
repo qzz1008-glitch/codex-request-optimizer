@@ -264,6 +264,31 @@ class ConnectionResumeTests(unittest.TestCase):
         self.assertEqual(second.connection_resume.status()["state"], "complete")
         self.assertTrue(second.connection_resume.status()["result"]["wsl"]["targets"])
 
+    def test_upgrade_resumes_wsl_image_tool_and_marks_existing_reload_notice(self):
+        self.connected()
+        self.server.save_settings({**self.server.settings, "image_analysis_mode": "optimized"})
+        self.resume.step()
+        notices = self.server.restart_notices
+        notices.acknowledge("wsl", notices.snapshot()["revision"])
+        before = self.backend.config_path.read_bytes()
+        self.backend.image_tool_changed = True
+        candidate = self.make_server(worker_id="2" * 32, public_port=self.server.public_port)
+        candidate.connection_resume.ready = True
+        state = self.root / "data" / "router-state.json"
+        state.write_text(json.dumps({"active": "1" * 32}), encoding="utf8")
+        candidate.worker_control({"action": "upgrade_prepare"})
+        candidate.worker_control({"action": "activate", "maintenance": False})
+        candidate.connection_resume.step()
+        self.assertTrue(self.backend.image_tool_changed)
+
+        state.write_text(json.dumps({"active": candidate.worker_id}), encoding="utf8")
+        candidate.connection_resume.step()
+        result = candidate.connection_resume.status()["result"]
+        self.assertFalse(self.backend.image_tool_changed)
+        self.assertEqual(self.backend.config_path.read_bytes(), before)
+        self.assertTrue(result["wsl"]["reload_required"])
+        self.assertIn({"key": "wsl", "target": "wsl", "scope": "Ubuntu-Test"}, result["restart_notice"]["items"])
+
     def test_manual_disconnect_cancels_pending_automatic_work(self):
         self.connected()
         self.resume.schedule()

@@ -350,7 +350,7 @@ class InspectorServer(ThreadingHTTPServer):
                 self.sharing_handover.poll()
                 processed = self._maintenance_step() if self.maintenance_enabled else 0
             self.connection_resume.step()
-            if self.worker_state == "active" and self.connection_resume.ready:
+            if self.remote_relays and self.connection_resume.is_active():
                 self.connections.resume()
             self.analysis_stop.wait(0.02 if processed else 2)
 
@@ -384,8 +384,10 @@ class InspectorServer(ThreadingHTTPServer):
         if managed_mode in {"optimized", "disabled"} and self.settings["image_analysis_mode"] == managed_mode:
             try:
                 if managed_mode == "optimized" or self.image_config.needs_native_refresh():
-                    with self.image_config.change(managed_mode):
+                    with self.image_config.change(managed_mode) as changed:
                         pass
+                    if changed:
+                        self.restart_notices.mark("image_analysis_mode")
             except (OSError, ValueError) as exc:
                 self.image_config.installation_error = clean_text(str(exc))[:250]
         self.configuration_prepared = True

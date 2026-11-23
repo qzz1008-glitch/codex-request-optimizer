@@ -45,7 +45,7 @@ class ConnectionResume:
             self.deferred_wsl.clear()
             self.current = {"id": "", "state": "idle", "result": {}, "error": ""}
 
-    def _active(self):
+    def is_active(self):
         server = self.server
         if not self.ready or server.worker_state != "active" or server.upgrade_draining or server.analysis_stop.is_set():
             return False
@@ -64,7 +64,7 @@ class ConnectionResume:
             return self.schedule()
 
     def _publish_routes(self, routes):
-        if not self._active():
+        if not self.is_active():
             raise ValueError("当前后台已切换，已停止同步。")
         with self.server.guard:
             self.server.save_settings({**self.server.settings, "provider_routes": routes})
@@ -98,7 +98,7 @@ class ConnectionResume:
                 **{key: result.get(key, [])[:16] for key in ("targets", "detected", "warnings", "deferred")}}
 
     def _watch_deferred(self):
-        if not self.deferred_wsl or time.monotonic() < self.next_wsl_scan or not self._active():
+        if not self.deferred_wsl or time.monotonic() < self.next_wsl_scan or not self.is_active():
             return
         self.next_wsl_scan = time.monotonic() + 30
         server = self.server
@@ -123,11 +123,11 @@ class ConnectionResume:
                 self.pending = True
         if not self.pending:
             self._watch_deferred()
-        if not self.pending or not self._active():
+        if not self.pending or not self.is_active():
             return
         server = self.server
         with server.provider_guard:
-            if not self.pending or not self._active():
+            if not self.pending or not self.is_active():
                 return
             with self.guard:
                 self.pending = False
@@ -194,7 +194,7 @@ class ConnectionResume:
                                 "retry_in_seconds": delay, "updated": time.time(),
                                 "duration_ms": round((time.monotonic() - started) * 1000)}
                 record = {**self.current, "worker_id": server.worker_id}
-            if not self._active():
+            if not self.is_active():
                 return
             try:
                 # One bounded snapshot; startup checks do not append a log or

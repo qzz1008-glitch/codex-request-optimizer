@@ -66,6 +66,7 @@ class ImageToolInstallation:
     def install(self, cli):
         previous = self._owned()
         registration = self.registration(cli)
+        changed = False
         digests = {}
         for name, source in ASSETS.items():
             raw = Path(__file__).with_name(source).read_bytes()
@@ -73,10 +74,16 @@ class ImageToolInstallation:
             target = self.directory / name
             if not target.exists() or target.read_bytes() != raw:
                 self._write(target, raw)
+                changed = True
         for name in RETIRED_ASSETS.intersection(previous.get("files", {})):
-            (self.directory / name).unlink(missing_ok=True)
-        self._write(self.manifest, json.dumps({"owner": OWNER, "schema": 1, "files": digests}, indent=2).encode())
-        return registration
+            target = self.directory / name
+            if target.exists():
+                target.unlink()
+                changed = True
+        state = {"owner": OWNER, "schema": 1, "files": digests}
+        if state != previous:
+            self._write(self.manifest, json.dumps(state, indent=2).encode())
+        return registration, changed
 
     def matches(self, registration):
         return bool(isinstance(registration, dict) and registration.get("command")

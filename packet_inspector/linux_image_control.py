@@ -131,7 +131,7 @@ def linux_image_runtime(home, mode, source):
     else:
         raise ValueError("远端 Codex 未提供可验证的图片工具开关，原配置已保留。")
     if mode == "disabled":
-        return {}
+        return {"registration": {}, "files_changed": False}
     python = shutil.which("python3")
     if not python:
         raise ValueError("远端未找到 Python 3，图片工具未安装。")
@@ -156,7 +156,8 @@ def linux_image_runtime(home, mode, source):
             raise ValueError("远端图片工具配置验证失败，原配置已保留。") from None
         if result.returncode:
             raise ValueError("远端 Codex 未接受图片工具配置，原配置已保留。")
-    if code != previous:
+    files_changed = code != previous
+    if files_changed:
         linux_write_private(tool, code)
         try:
             state = {"owner": LINUX_TOOL_OWNER, "sha256": hashlib.sha256(code).hexdigest()}
@@ -167,7 +168,7 @@ def linux_image_runtime(home, mode, source):
             else:
                 linux_write_private(tool, previous)
             raise
-    return registration
+    return {"registration": registration, "files_changed": files_changed}
 
 
 def linux_image_control(home, options):

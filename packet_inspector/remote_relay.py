@@ -318,7 +318,9 @@ class RemoteRelays:
         try:
             if mode != "optimized" or status["directory"]:
                 previous = [*record.get("image_pending", []), *record.get("image_fields", [])]
-                edit, fields, uninstall = linux_image_edits(files["config.toml"], previous, mode, send)
+                edit, fields, uninstall, files_changed = linux_image_edits(files["config.toml"], previous, mode, send)
+                if files_changed:
+                    record["reload_required"] = True
                 if edit is not None:
                     record["image_pending"] = fields
                     self._save(key, record)
@@ -328,7 +330,7 @@ class RemoteRelays:
                     outcome = send("write", expected=expected, updates=changes)
                     files["config.toml"] = edit
                     record["reload_required"] = bool(outcome["changed"] or record.get("reload_required"))
-                if edit is not None or fields or previous:
+                if files_changed or edit is not None or fields or previous:
                     record["image_fields"] = fields
                     record.pop("image_pending", None)
                     self._save(key, record)

@@ -886,7 +886,8 @@ class WindowsRemoteRelayTests(unittest.TestCase):
                 if action == "tunnel_image_probe":
                     return {"directory": options["data_dir"] + "/images"}
                 if action == "tunnel_image_tool":
-                    return {"command": "/usr/bin/python3", "args": ["-I", "/home/test/server.py"]}
+                    return {"registration": {"command": "/usr/bin/python3", "args": ["-I", "/home/test/server.py"]},
+                            "files_changed": True}
                 if action == "tunnel_image_uninstall":
                     return {}
             return real_ssh(host, action, **options)
@@ -907,6 +908,46 @@ class WindowsRemoteRelayTests(unittest.TestCase):
         self.assertIsNone(self.relays.image_target(key))
         self.assertEqual(tomllib.loads(self.config.read_text(encoding="utf8")),
                          tomllib.loads(self.original.decode("utf8")))
+
+    def test_optimizer_resume_updates_ssh_image_tool_and_keeps_reconnect_manual(self):
+        images = []
+        files_changed = True
+
+        def ssh(host, action, **options):
+            nonlocal files_changed
+            if action == "tunnel_image_probe":
+                return {"directory": "/home/test/images"}
+            if action == "tunnel_image_tool":
+                images.append(options["source"])
+                changed, files_changed = files_changed, False
+                return {"registration": {"command": "/usr/bin/python3", "args": ["-I", "/home/test/server.py"]},
+                        "files_changed": changed}
+            if action == "tunnel_reconnect":
+                self.calls.append(action)
+                return {"state": "reloaded", "codex_restart": {"supported": True}}
+            return self.ssh(host, action, **options)
+
+        self.relays.ssh = ssh
+        self.relays.image_settings = lambda _: ("optimized", "")
+        key = self.relays(self.host, "activate")["account_key"]
+        self.assertFalse(self.relays(self.host, "reconnect")["reload_required"])
+        before = self.config.read_bytes()
+        self.relays.close()
+        self.calls.clear()
+        images.clear()
+        files_changed = True
+        resumed = self.manager()
+        resumed.ssh = ssh
+        resumed.image_settings = self.relays.image_settings
+        self.assertTrue(resumed.needs_resume(self.host))
+        self.assertTrue(resumed(self.host, None)["reload_required"])
+        self.assertTrue(dict(resumed.records())[key]["reload_required"])
+        self.assertEqual(len(images), 1)
+        self.assertEqual(before, self.config.read_bytes())
+        self.assertNotIn("tunnel_write", self.calls)
+        self.assertNotIn("tunnel_reconnect", self.calls)
+        self.assertFalse(resumed(self.host, "reconnect")["reload_required"])
+        self.assertFalse(resumed(self.host, "images")["reload_required"])
 
     def test_config_connect_restore_and_reconnect_after_optimizer_restart(self):
         linked = self.relays(self.host, "activate")

@@ -157,7 +157,9 @@ class ImageToolConfig:
         if not cli:
             raise ValueError("未找到 Codex CLI，无法安装独立图片工具。请先安装或打开 Codex 桌面版，或安装 Codex CLI 后重试。")
         verify_view_image_feature(cli)
-        registration = self.installation.install(cli) if old_tool is None else None
+        registration = None
+        if old_tool is None:
+            registration, _ = self.installation.install(cli)
         fields = [("features", "view_image")]
         if TOOL_SERVER not in data.get("mcp_servers", {}):
             fields.append(("mcp_servers", TOOL_SERVER))
@@ -186,7 +188,7 @@ class ImageToolConfig:
         return profile_updated, candidate
 
     def _refresh_managed_tool(self):
-        """Migrate our HTTP registration and update installed stdio assets."""
+        """Refresh the managed registration and tool scripts, reporting each change separately."""
         before, data, config_raw = read_configuration(self.link.config)
         current = data.get("mcp_servers", {}).get(TOOL_SERVER)
         managed = self.state.get("managed_mcp")
@@ -198,20 +200,21 @@ class ImageToolConfig:
             raise ValueError("原生图片工具开关已被修改，未覆盖用户配置。")
         manage_registration = bool(managed or adopted)
         if not manage_registration and feature_owned and not legacy_setting:
-            return False
+            return False, False
         if managed and current != managed:
             raise ValueError("独立图片工具注册已被修改，未覆盖用户配置。")
         cli = self.state.get("cli")
         registration = current
+        files_changed = False
         if manage_registration:
             if not cli or not Path(cli).is_file():
                 cli = find_codex_cli()
             if not cli:
                 raise ValueError("未找到 Codex CLI，无法更新独立图片工具。请先安装或打开 Codex 桌面版后重试。")
-            registration = self.installation.install(cli)
+            registration, files_changed = self.installation.install(cli)
         if (managed == registration and self.state.get("schema_version") == 5
                 and self.state.get("cli") == str(cli) and feature_owned and not legacy_setting):
-            return False
+            return False, files_changed
         document = tomlkit.parse(before)
         remove_legacy_image_setting(document)
         if manage_registration:
@@ -243,7 +246,7 @@ class ImageToolConfig:
             if manage_registration:
                 self._validate(candidate)
             self._save(candidate)
-            return True
+            return True, files_changed
         except BaseException:
             if written:
                 if read_configuration(self.link.config)[0] != updated:
@@ -308,23 +311,24 @@ class ImageToolConfig:
                     self._restore_disabled(tomlkit.parse(before), data, previous)
                 config_raw = self.link.config.read_bytes() if self.link.config.exists() else None
                 state_raw = self.path.read_bytes() if self.path.exists() else None
-                changed = state_saved = False
+                configuration_changed = files_changed = state_saved = False
                 applied = None
                 try:
-                    changed = self._refresh_managed_tool() if mode == "optimized" else False
+                    if mode == "optimized":
+                        configuration_changed, files_changed = self._refresh_managed_tool()
                     applied = self.link.config.read_bytes() if self.link.config.exists() else None
                     if self.state.get("native_capability") != capability:
                         candidate = {**self.state, "native_capability": capability}
                         self._save(candidate)
                         state_saved = True
                     self.installation_error = ""
-                    yield changed
+                    yield configuration_changed or files_changed
                 except BaseException:
-                    if changed:
+                    if configuration_changed:
                         if self.link.config.read_bytes() != applied:
                             raise ValueError("图片工具迁移期间配置被修改，未覆盖用户更改。") from None
                         restore_file(self.link.config, config_raw)
-                    if changed or state_saved:
+                    if configuration_changed or state_saved:
                         restore_file(self.path, state_raw)
                         self.state = previous
                     raise

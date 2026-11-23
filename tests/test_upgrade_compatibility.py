@@ -1,4 +1,5 @@
 """Upgrade configuration changes are explicit, reversible and mode preserving."""
+import hashlib
 import json
 from pathlib import Path
 import tempfile
@@ -41,6 +42,23 @@ class ConfigurationUpgradeTests(unittest.TestCase):
         self.settings.write_text(json.dumps({"image_analysis_mode": "disabled", "relay_token": "preserve"}), encoding="utf8")
         self.probe.reset_mock()
 
+    def older_image_tool(self):
+        cli = self.root / "codex"
+        cli.touch()
+        manager = ImageToolConfig(ConfigLink(self.config, self.data / "codex-link.json"), self.data, lambda: "")
+        with patch("packet_inspector.image_config.find_codex_cli", return_value=str(cli)), \
+             patch.object(manager, "_validate"), manager.change("optimized"):
+            pass
+        script = manager.installation.directory / "server.ps1"
+        old = b"# Earlier managed image tool\n"
+        script.write_bytes(old)
+        manifest = manager.installation.manifest
+        state = json.loads(manifest.read_text(encoding="utf8"))
+        state["files"][script.name] = hashlib.sha256(old).hexdigest()
+        manifest.write_text(json.dumps(state), encoding="utf8")
+        self.settings.write_text(json.dumps({"image_analysis_mode": "optimized"}), encoding="utf8")
+        return script
+
     def test_default_native_mode_does_not_create_optional_configuration(self):
         before = self.config.read_bytes()
         with configuration_upgrade(self.data, self.config) as result:
@@ -77,6 +95,39 @@ class ConfigurationUpgradeTests(unittest.TestCase):
         with configuration_upgrade(self.data, self.config):
             self.assertFalse(notices.snapshot()["items"])
         self.assertTrue(any(item["key"] == "image_analysis_mode" for item in notices.snapshot()["items"]))
+
+    def test_asset_only_upgrade_preserves_config_and_marks_restart_once(self):
+        with patch("packet_inspector.image_tool_install.find_powershell", return_value="powershell.exe"), \
+             patch.object(ImageToolConfig, "available_modes", return_value=("optimized",)):
+            script = self.older_image_tool()
+            before, old = self.config.read_bytes(), script.read_bytes()
+            notices = RestartNotices(self.data, self.config)
+            with configuration_upgrade(self.data, self.config) as result:
+                self.assertTrue(result["image_tools"]["changed"])
+                self.assertNotEqual(script.read_bytes(), old)
+                self.assertFalse(notices.snapshot()["items"])
+            self.assertEqual(self.config.read_bytes(), before)
+            marked = notices.snapshot()
+            self.assertTrue(any(item["key"] == "image_analysis_mode" for item in marked["items"]))
+            with configuration_upgrade(self.data, self.config) as result:
+                self.assertFalse(result["image_tools"]["changed"])
+            self.assertEqual(notices.snapshot()["revision"], marked["revision"])
+
+    def test_asset_only_upgrade_rollback_preserves_concurrent_config_edit(self):
+        with patch("packet_inspector.image_tool_install.find_powershell", return_value="powershell.exe"), \
+             patch.object(ImageToolConfig, "available_modes", return_value=("optimized",)):
+            script = self.older_image_tool()
+            manifest = script.with_name("installation.json")
+            old = script.read_bytes(), manifest.read_bytes()
+            edited = b'user_value="preserve"\n' + self.config.read_bytes()
+            with self.assertRaisesRegex(RuntimeError, "handover failed"):
+                with configuration_upgrade(self.data, self.config) as result:
+                    self.assertTrue(result["image_tools"]["changed"])
+                    self.config.write_bytes(edited)
+                    raise RuntimeError("handover failed")
+            self.assertEqual((script.read_bytes(), manifest.read_bytes()), old)
+            self.assertEqual(self.config.read_bytes(), edited)
+            self.assertFalse(RestartNotices(self.data, self.config).snapshot()["items"])
 
     def test_external_configuration_edits_are_preserved_on_rollback(self):
         self.disabled()

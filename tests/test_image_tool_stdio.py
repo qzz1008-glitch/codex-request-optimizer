@@ -421,7 +421,7 @@ class StdioRuntimeTests(unittest.TestCase):
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
         installation = ImageToolInstallation(self.root)
-        self.registration = installation.install("not-a-real-codex")
+        self.registration, _ = installation.install("not-a-real-codex")
         self.script = Path(self.registration["args"][-1])
 
     def stdio(self, messages):
