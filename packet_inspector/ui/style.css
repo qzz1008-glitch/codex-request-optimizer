@@ -769,7 +769,7 @@ input[type=checkbox][switch]:focus-visible{outline:2px solid var(--accent);outli
 #settings-dialog #proxy-test-elapsed{color:var(--muted);font-size:12px;font-variant-numeric:tabular-nums}
 #settings-dialog .proxy-address-field input{width:100%;min-width:0;text-align:left}
 #settings-dialog .storage-directory-controls{
-  --storage-directory-columns:fit-content(42%) minmax(0,1fr) var(--settings-path-actions-width);
+  --storage-directory-columns:fit-content(42%) minmax(0,1fr) max-content;
   display:grid;grid-template-columns:var(--storage-directory-columns);row-gap:var(--settings-row-gap)
 }
 #settings-dialog :is(.storage-directory-row,#linux-storage-targets){
@@ -846,7 +846,6 @@ input[type=checkbox][switch]:focus-visible{outline:2px solid var(--accent);outli
   #settings-dialog>.settings-content{--settings-path-actions-width:142px}
   #settings-dialog:lang(en)>.settings-content{--settings-label-width:160px}
   #settings-dialog .proxy-test-actions{gap:6px}
-  #settings-dialog .storage-directory-controls{--storage-directory-columns:fit-content(42%) minmax(0,1fr) max-content}
 }
 @container settings-dialog (max-width:560px){
   #settings-dialog .proxy-controls{grid-template-columns:minmax(0,1fr) var(--settings-path-actions-width);column-gap:8px}

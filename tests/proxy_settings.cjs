@@ -209,7 +209,8 @@ let browser,cases=0;
       const openDirectory=await page.locator('#storage-dir-open').boundingBox();
       assert.equal(controls[3].width,openDirectory.width,'The test and open buttons share a width');
       if(width>=1120){
-        assert.equal(controls[3].x,openDirectory.x,'The test and open buttons start in the same column');
+        const directories=await page.locator('.storage-directory-controls').boundingBox();
+        assert.equal(openDirectory.x+openDirectory.width,directories.x+directories.width,'The open button only reserves its own width');
       }
       const rowBox=await proxyRow.boundingBox();
       const actionsBox=await proxyRow.locator('.proxy-test-actions').boundingBox();
