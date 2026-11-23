@@ -1897,8 +1897,8 @@ function fillImageAnalysisMode() {
   if(!settingsEditing)input.checked=imageAnalysisMode()==="optimized";
   input.disabled=settingsSaving||!canSwitch;
   let hint=input.checked
-    ?"独立会话识图，主请求更小，上下文可容纳更多文本。可能遗漏少量图像细节。"
-    :"图片随主请求发送，请求更大，上下文可容纳更少文本。可直接分析图像细节。";
+    ?"图片由独立会话解析，主请求更小，上下文可容纳更多文本。图像细节可能略有遗漏。"
+    :"图片由主会话解析，主请求更大，上下文可容纳更少文本。图像细节可直接分析。";
   if(!input.checked&&legacyImageAnalysisPending())hint="保存后恢复原生图片解析。";
   else if(!canSwitch)hint=nativeSupported?"当前中转仅支持原生图片解析。":"当前中转暂不支持此功能。";
   uiI18n.text($("image-isolation-hint"),hint);

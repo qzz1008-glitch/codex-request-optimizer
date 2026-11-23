@@ -57,7 +57,7 @@ let browser,cases=0;
   await page.evaluate(()=>{delete state.status.image_analysis_modes;delete state.status.updates_supported;state.status.image_analysis_mode='optimized';updateStatus={state:'available'};fillImageAnalysisMode();renderUpdates();});
   assert.equal(await toggle.isDisabled(),false);
   assert.equal(await toggle.isChecked(),true);
-  assert.equal(await hint.textContent(),'Analyze images in a separate session to shrink the main request and free up context for text. Some details may be missed.');
+  assert.equal(await hint.textContent(),'A separate session analyzes images. The main request is smaller, leaving more room for text in the context window. Some visual details may be missed.');
   assert.equal(await page.locator('#updates-check').isDisabled(),false);
   assert(await page.locator('#updates-install').isVisible());
   assert.equal(await page.locator('#updates-install').isDisabled(),false);
@@ -82,7 +82,7 @@ let browser,cases=0;
     }
     assert.equal(await toggle.isChecked(),after==='optimized');
     if(before==='optimized'){
-      assert.equal(await hint.textContent(),'The main request includes images, increasing its size and leaving less context for text. The model can analyze visual details directly.');
+      assert.equal(await hint.textContent(),'The main session analyzes images. The main request is larger, leaving less room for text in the context window. Visual details can be analyzed directly.');
     }
     assert.deepEqual(await page.evaluate(()=>imageSaves),[],'Choosing a mode does not save it');
     assert.equal(await save.isDisabled(),false);
