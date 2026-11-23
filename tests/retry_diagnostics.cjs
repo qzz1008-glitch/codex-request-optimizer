@@ -255,12 +255,30 @@ assert.deepEqual(overviewTitles(),['基本信息','转发处理','请求保护']
 assert.equal(basicFacts()['独立会话名称'],'示例会话');
 assert.equal(basicFacts()['独立会话 ID'],'image-session');
 assert.equal(basicFacts()['任务类型'],undefined);
-const imageInfo=rendered.children[0].children.find(child=>child.id==='request-image-info');
-assert.deepEqual(descendants(imageInfo).filter(child=>child.tag==='code').map(child=>child.text),[folder,'example.png']);
+function imagePathField(label='图片路径'){
+  const basic=rendered.children[0];
+  assert.equal(basic.children.length,2,'The path belongs inside the basic information list');
+  const list=basic.children[1],row=list.lastChild;
+  assert.equal(list.tag,'dl');
+  assert.equal(row.children[0].tag,'dt');
+  assert.equal(row.children[0].text,label);
+  assert.equal(row.lastChild.tag,'dd');
+  return row.lastChild;
+}
+assert.deepEqual(descendants(imagePathField()).filter(child=>child.tag==='code').map(child=>child.text),[image]);
+const remoteImage='/tmp/synthetic-image-request/target-preview.png';
+english=true;
+context.renderHeaders({source:'live',request_kind:'image_analysis',ssh_connection_key:'server',image_paths:[remoteImage]});
+const remoteField=imagePathField('Image paths');
+assert.deepEqual(descendants(remoteField).filter(child=>child.tag==='code').map(child=>child.text),[remoteImage]);
+assert.equal(descendants(remoteField).filter(child=>child.tag==='button').length,0);
+english=false;
+context.renderHeaders({source:'live',request_kind:'image_analysis'});
+assert.equal(imagePathField().text,'—');
 context.renderHeaders({source:'live',request_kind:'title_generation',thread_id:'title-session'});
 assert.equal(basicFacts()['独立会话 ID'],'title-session');
 assert.equal(basicFacts()['独立会话名称'],undefined);
-assert.equal(descendants(rendered).some(child=>child.id==='request-image-info'),false);
+assert.equal(basicFacts()['图片路径'],undefined);
 context.sessionSummaries.push({thread_id:'index-session',title:'会话索引 · 原会话',title_source:'index_task'});
 context.renderHeaders({source:'live',thread_id:'index-session'});
 assert.equal(basicFacts()['独立会话 ID'],'index-session');

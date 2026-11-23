@@ -28,7 +28,8 @@ const paths=[directory+filename,directory+"参考图 & icon.PNG","C:\\Other\\sec
     {"x-codex-turn-metadata":JSON.stringify(marker)},{"x-codex-client-metadata":marker}]) {
     const original=Array.from(context.requestImagePaths(oldMeta,{...body,[field]:value}));
     assert.deepEqual(original,[paths[0]],"An old relay's temporary upload path must yield to the explicit source");
-    const sourceActions=buttons(context.renderImageInfo(original));
+    const info=context.renderImagePaths(original),sourceActions=buttons(info);
+    assert.deepEqual(descendants(info,"code").map(node=>node.textContent),[paths[0]]);
     await click(sourceActions[0]);await click(sourceActions[1]);
     assert.deepEqual(requests.splice(0).map(({route,data})=>[route,data.path]),[
       ["/api/open-directory",directory],["/api/open-image",paths[0]]]);
@@ -52,7 +53,7 @@ const paths=[directory+filename,directory+"参考图 & icon.PNG","C:\\Other\\sec
     image_path_rewrites:{[clipboardPath]:temporary[0]}};
   const actual=Array.from(context.requestImagePaths(optimized,original));
   assert.deepEqual(actual,saved,"Only the permanent context paths are displayed for optimized requests");
-  assert.deepEqual(descendants(context.renderImageInfo(actual),"code").map(node=>node.textContent),
+  assert.deepEqual(descendants(context.renderImagePaths(actual),"code").map(node=>node.textContent),
     [savedDirectory,...saved.map(path=>path.slice(savedDirectory.length))]);
   assert.deepEqual(Array.from(context.requestImagePaths({image_isolation_removed:1,image_paths:[saved[0]]},original)),
     [saved[0]],"The original clipboard path must not be added back");
@@ -62,7 +63,7 @@ const paths=[directory+filename,directory+"参考图 & icon.PNG","C:\\Other\\sec
   assert.deepEqual(Array.from(context.requestImagePaths({image_paths:temporary},null)),[]);
   assert.deepEqual(Array.from(context.requestImagePaths({}, {client_metadata:{...marker,
     codex_inspector_image_source_path:temporary[0]}})),[],"Retired paths are also hidden in old image analysis records");
-  const info=context.renderImageInfo(paths),actions=buttons(info);
+  const info=context.renderImagePaths(paths),actions=buttons(info);
   assert.equal(actions.length,8,"One folder action per directory and viewer/folder actions beside every image");
   assert.deepEqual(actions.map(button=>button.title),["打开路径","查看图片","在文件夹中显示","查看图片","在文件夹中显示","打开路径","查看图片","在文件夹中显示"]);
   assert.deepEqual(descendants(info,"code").map(node=>node.textContent),[directory,filename,"参考图 & icon.PNG","C:\\Other\\","second.webp"]);
@@ -78,31 +79,31 @@ const paths=[directory+filename,directory+"参考图 & icon.PNG","C:\\Other\\sec
   assert.deepEqual(requests.splice(0).map(({route,data})=>[route,data.path]),[
     ["/api/reveal-image",paths[0]],["/api/reveal-image",paths[1]],["/api/reveal-image",paths[2]]]);
   const clipboard=directory+"codex-clipboard-03e0b476-9b71-4aab-8be6-dd96754b0f1d.png";
-  await click(buttons(context.renderImageInfo([clipboard]))[2]);
-  assert.deepEqual(requests.splice(0).map(({route,data})=>[route,data.path]),[["/api/reveal-image",clipboard]],"The full file path must be used even when its displayed name is shortened");
+  await click(buttons(context.renderImagePaths([clipboard],{showDirectoryRow:false}))[1]);
+  assert.deepEqual(requests.splice(0).map(({route,data})=>[route,data.path]),[["/api/reveal-image",clipboard]],"The full file path must be used even when only the filename is displayed");
 
   let finish;
   context.api=(route,data)=>{requests.push({route,data});return new Promise(resolve=>{finish=resolve;});};
-  const live=actions[1],replacement=buttons(context.renderImageInfo(paths))[1];
+  const live=actions[1],replacement=buttons(context.renderImagePaths(paths))[1];
   live.onclick=replacement.onclick; // The real DOM reconciler refreshes handlers on retained buttons.
   const pending=click(live);
   assert.equal(live.disabled,true);assert.equal(live.attributes["aria-busy"],"true");
-  const refreshed=buttons(context.renderImageInfo(paths))[1];assert.equal(refreshed.disabled,true);
+  const refreshed=buttons(context.renderImagePaths(paths))[1];assert.equal(refreshed.disabled,true);
   await click(refreshed);assert.equal(requests.length,1,"Polling and repeated clicks must not open duplicate viewers");
   finish({opened:true});await pending;
   assert.equal(live.disabled,false);assert.equal(live.attributes["aria-busy"],"false");
-  assert.equal(buttons(context.renderImageInfo(paths))[1].disabled,false);
+  assert.equal(buttons(context.renderImagePaths(paths))[1].disabled,false);
 
   context.api=async()=>{throw Error("图片不存在。");};
   await click(live);assert.deepEqual(errors,["图片不存在。"]);assert.equal(live.disabled,false);
   context.state.status.open_image_supported=false;
-  const unsupported=buttons(context.renderImageInfo(paths));
+  const unsupported=buttons(context.renderImagePaths(paths));
   assert.equal(unsupported[0].disabled,false);assert.equal(unsupported[1].disabled,true);assert.equal(unsupported[2].disabled,false);
   await click(unsupported[1]);assert.equal(errors.length,1);
   delete context.state.status.reveal_image_supported;
-  const legacy=buttons(context.renderImageInfo(paths));
+  const legacy=buttons(context.renderImagePaths(paths));
   assert.equal(legacy[2].disabled,true);assert.equal(legacy[2].title,"更新桌面程序后可在文件夹中选中图片。");
   await click(legacy[2]);assert.equal(errors.length,1,"An old desktop must not silently open only the folder");
-  assert.equal(buttons(context.renderImageInfo([])).length,0);
+  assert.equal(buttons(context.renderImagePaths([])).length,0);
   console.log("image info actions passed");
 })().catch(error=>{console.error(error);process.exitCode=1;});

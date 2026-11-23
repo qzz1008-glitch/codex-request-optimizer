@@ -1149,7 +1149,6 @@ const uiI18n = (() => {
     "压缩事件不推测 Token 数值":"Token usage is not inferred for compaction events",
     "用量缺失或等待确认":"Usage is missing or pending",
     "未保存原生会话名称":"Native session name unavailable",
-    "未记录图片路径":"Image path not recorded",
     "未知状态":"Unknown status",
     "筛选":"Filter ",
     "全部":"All",

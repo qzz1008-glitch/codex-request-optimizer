@@ -365,11 +365,11 @@ button.other-session-group{background:#f5f2fc;border-color:#e7e0f5}
 }
 .detail-content .detail-section>:is(h2,h3){margin:0 0 6px;font-size:13px;font-weight:600;letter-spacing:normal}
 .detail-content .detail-section>p{margin:0}
-#request-image-info{margin-block-start:6px}
-#request-image-info>p{margin:0}
 .request-overview-facts{margin:0}
 .request-overview-facts dt{color:var(--muted);flex:none;white-space:nowrap}
 .request-overview-facts dd{margin:0}
+.detail-content .fact-row>.image-path-value{text-align:start}
+.image-path-value .image-path-item{padding-block:2px}
 .request-result-success{color:var(--green);font-weight:600}
 .detail-content .request-error-detail>dd{text-align:start;white-space:pre-wrap;color:var(--danger)}
 .detail-note{display:block;margin-block-end:6px}

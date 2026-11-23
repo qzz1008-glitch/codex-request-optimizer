@@ -2684,7 +2684,6 @@ function requestBasicsPanel(m) {
   if(typeof errorReason==="string"&&errorReason)fact(facts,t("错误原因"),t(errorReason)).classList.add("request-error-detail");
   if(m.source!=="live")fact(facts,t("数据来源"),t("历史重建（大小为估算）"));
   if(m.details_evicted)fact(facts,t("请求详情"),t("已回收"));
-  section.append(facts);
   const session=sessionSummaries.find(row=>row.thread_id===m.thread_id);
   const specialKind=[purposeFromMetadata(m),auxiliarySessionKind(session)].find(kind=>kind&&kind!=="subagent");
   if(specialKind) {
@@ -2693,9 +2692,15 @@ function requestBasicsPanel(m) {
     fact(facts,t("独立会话 ID"),m.thread_id||"—");
     if(specialKind==="image_analysis") {
       const body=requestBodyView&&requestBodyView.id===m.id?requestBodyView.body:null;
-      section.append(renderImageInfo(requestImagePaths(m,body),!!(m.ssh_connection_key||m.wsl_connection_key)));
+      const paths=requestImagePaths(m,body);
+      const value=fact(facts,t("图片路径"),paths.length?"":"—").lastChild;
+      if(paths.length) {
+        value.classList.add("image-path-value");
+        value.append(renderImagePaths(paths,{remote:!!(m.ssh_connection_key||m.wsl_connection_key)}));
+      }
     }
   }
+  section.append(facts);
   return section;
 }
 function requestForwardingPanel(m) {
@@ -3337,17 +3342,13 @@ function imagePathAction(kind,path) {
   };
   return button;
 }
-function renderImageInfo(paths,remote) {
-  const images=el("div");images.id="request-image-info";
-  if(!paths.length) {images.append(el("p","muted",t("未记录图片路径")));return images;}
-  images.append(renderImagePaths(paths,{remote}));return images;
-}
 function renderImagePaths(paths,{showDirectoryRow=true,remote=false}={}) {
   const images=el("div","image-paths");
+  const singlePath=showDirectoryRow&&paths.length===1;
   for(const group of imagePathGroups(paths)) {
     const section=el("section","image-path-group");section.dataset.renderKey="image-folder:"+group.directory;
     const opensLocally=!remote||!group.directory.startsWith("/");
-    if(showDirectoryRow) {
+    if(showDirectoryRow&&!singlePath) {
       section.setAttribute("aria-label",t("图片目录")+"："+group.directory);
       const directory=el("code","image-path-directory",group.directory);directory.title=group.directory;
       const heading=el("div","image-path-directory-row");
@@ -3357,11 +3358,14 @@ function renderImagePaths(paths,{showDirectoryRow=true,remote=false}={}) {
     }
     const list=el("ul","image-path-list");
     for(const {name,path} of group.files) {
-      const item=el("li","image-path-item"),filename=el("code","image-path-name",name);
+      const item=el("li","image-path-item"),filename=el("code","image-path-name",singlePath?path:name);
       item.dataset.renderKey="image:"+path;
       filename.title=path;
       item.append(filename);
-      if(opensLocally)item.append(imagePathAction("image",path),imagePathAction("reveal",path));
+      if(opensLocally) {
+        if(singlePath)item.append(imagePathAction("directory",group.directory));
+        item.append(imagePathAction("image",path),imagePathAction("reveal",path));
+      }
       list.append(item);
     }
     section.append(list);images.append(section);
