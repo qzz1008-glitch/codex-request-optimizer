@@ -67,12 +67,16 @@ class WindowLifecycleTests(unittest.TestCase):
 
     def test_tray_thread_queues_the_entire_restore_and_activation_on_the_ui_thread(self):
         self.window.native.WindowState = "Minimized"
+        self.lifecycle.hidden.set()
+        calls = Mock()
+        calls.attach_mock(self.window.show, "show")
+        calls.attach_mock(self.window.restore, "restore")
+        calls.attach_mock(self.window.native.Activate, "activate")
         queued = self.queue_show()
-        self.window.restore.assert_not_called()
+        self.assertEqual(calls.mock_calls, [])
         queued()
-        self.window.restore.assert_called_once()
-        self.window.show.assert_called_once()
-        self.window.native.Activate.assert_called_once()
+        self.assertEqual([call[0] for call in calls.mock_calls], ["show", "restore", "activate"])
+        self.assertFalse(self.lifecycle.hidden.is_set())
 
     def test_custom_menu_open_exit_and_restart_all_activate_the_same_main_window(self):
         panel = TrayPanel(Mock(), "http://127.0.0.1/", ".", self.lifecycle.show)

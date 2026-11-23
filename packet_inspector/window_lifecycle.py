@@ -143,9 +143,10 @@ class WindowLifecycle:
         form = self.window.native
         if os.name == "nt" and (form.IsDisposed or form.Disposing or window_exit_requested(self.window)):
             return
-        if str(self.window.native.WindowState) == "Minimized":
-            self.window.restore()
+        # WinForms must show a hidden minimized form before it can restore its normal bounds.
         self.window.show()
+        if str(form.WindowState) == "Minimized":
+            self.window.restore()
         if os.name == "nt":
             form.BringToFront()
             form.Activate()
