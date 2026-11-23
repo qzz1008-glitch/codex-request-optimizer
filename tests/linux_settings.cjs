@@ -102,21 +102,31 @@ let browser,cases=0;
       image_storage:{data_dir:'~/saved',directory:'/home/test/saved/images',error:'Storage error'}}]});
     fillImageAnalysisMode();settingsBaseline=readSettingsDraft();settingsEditing=true;updateSettingsSaveState();
   });
-  const sshFolder=page.getByRole('textbox',{name:'192.0.2.10',exact:true});
-  const wslFolder=page.getByRole('textbox',{name:'WSL · Ubuntu',exact:true});
-  const linuxControls=page.getByRole('group',{name:'Linux data folders',exact:true});
+  const directories=page.getByRole('group',{name:'Data folder',exact:true});
+  const localFolder=directories.getByRole('textbox',{name:'Local',exact:true});
+  const sshFolder=directories.getByRole('textbox',{name:'192.0.2.10',exact:true});
+  const wslFolder=directories.getByRole('textbox',{name:'WSL · Ubuntu',exact:true});
   const checkTargetRow=async folder=>{
     const input=await folder.boundingBox();
     const label=await folder.locator('xpath=../label').boundingBox();
+    assert(input.width>=24);
     assert(label.x+label.width<=input.x);
     assert(Math.abs(label.y+label.height/2-input.y-input.height/2)<1);
+    return input;
   };
-  assert.equal((await linuxControls.boundingBox()).x,(await page.locator('#storage-dir').boundingBox()).x);
-  await checkTargetRow(sshFolder);
-  await checkTargetRow(wslFolder);
-  const sshInput=await sshFolder.boundingBox();
-  assert.equal((await wslFolder.boundingBox()).x,sshInput.x);
-  assert.equal(await linuxControls.locator('#linux-storage-hint').count(),0);
+  const checkDirectoryAlignment=async()=>{
+    const local=await checkTargetRow(localFolder);
+    const ssh=await checkTargetRow(sshFolder);
+    const wsl=await checkTargetRow(wslFolder);
+    assert(local.y<ssh.y&&ssh.y<wsl.y);
+    for(const input of [ssh,wsl]){
+      assert.equal(input.x,local.x);
+      assert.equal(input.width,local.width);
+    }
+  };
+  await checkDirectoryAlignment();
+  assert.equal(await page.getByText('Linux data folders',{exact:true}).count(),0);
+  assert.equal(await directories.locator('#linux-storage-hint').count(),0);
   assert.equal(await sshFolder.inputValue(),'~/saved');
   assert.equal(await sshFolder.getAttribute('placeholder'),'~/.cache/codex-request-optimizer');
   assert.equal(await sshFolder.getAttribute('aria-describedby'),'linux-data-dir-0-message');
@@ -134,10 +144,14 @@ let browser,cases=0;
   await page.evaluate(()=>{updateSettingsSaveState();return saveSettings();});
   assert.deepEqual(await page.evaluate(()=>imageSaves.splice(0)),
     [{path:'/api/settings',values:{linux_data_directories:{offline:'~/offline','wsl:ubuntu':'/srv/cache path'}}}]);cases++;
-  await page.setViewportSize({width:320,height:900});
-  await checkTargetRow(sshFolder);
-  await checkTargetRow(wslFolder);
+  for(const width of [600,320]){
+    await page.setViewportSize({width,height:900});
+    await checkDirectoryAlignment();
+  }
   assert.equal(await toggle.evaluate(node=>node.closest('.settings-controls').scrollWidth<=node.closest('.settings-controls').clientWidth+1),true);
+  await page.evaluate(()=>{state.status.wsl_connection={};renderLinuxStorageTargets(null);});
+  assert.equal(await page.locator('#linux-storage-targets').isVisible(),false);
+  assert(await localFolder.isVisible());
   await page.evaluate(()=>{settingsSaving=true;fillImageAnalysisMode();renderUpdates();});
   assert.equal(await toggle.isDisabled(),true);cases++;
   console.log(JSON.stringify({linux_settings:'passed',browser_cases:cases}));

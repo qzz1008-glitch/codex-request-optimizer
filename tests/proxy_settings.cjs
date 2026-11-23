@@ -25,7 +25,7 @@ let browser,cases=0;
       detected:{source:'environment',http:{address:'http://alternate.invalid:8080'},
         https:{address:'http://regional.invalid:8080'},bypass:'localhost'},
       effective:{}}}};
-    window.selectedImageAnalysisMode=()=>'native';window.storageLimitSettings=()=>({toBackend:Number});
+    window.storageLimitSettings=()=>({toBackend:Number});
     window.fillSettings=()=>fillProxySettings();window.renderContextPlaceholders=()=>{};window.renderUpdates=()=>{};
     window.renderStatus=()=>{};window.renderSettingsSaveProgress=()=>{};window.resetSettingsSaveProgress=()=>{};
     window.renderLanguageSelection=()=>{};window.renderConnectionActions=()=>{};window.updateSettingsSaveState=()=>{};
@@ -52,7 +52,7 @@ let browser,cases=0;
     for(const input of $('settings-dialog').querySelectorAll('input'))input.disabled=true;
   });
   await page.addScriptTag({content:[
-    extract('function selectedProxyMode()','function imageAnalysisMode('),
+    extract('function selectedProxyMode()','function fillImageAnalysisMode('),
     extract('function readSettingsDraft()','function setSettingsMessage('),
     extract('function finishSettingsSave()','function renderUpdates('),
     extract('function discardSettingsDraft()','function closeSettings()'),
@@ -60,7 +60,7 @@ let browser,cases=0;
   ].join('\n')});
   await page.evaluate(()=>{fillProxySettings();settingsBaseline=readSettingsDraft();settingsEditing=true;$('settings-dialog').showModal();});
   const sections=await page.locator('.settings-content>section').evaluateAll(nodes=>nodes.map(node=>node.id));
-  assert.deepEqual(sections.slice(-2),['record-storage-settings','connection-settings']);
+  assert.deepEqual(sections.slice(-2),['connection-settings','record-storage-settings']);
   assert.equal(await page.locator('#connection-settings > fieldset#proxy-settings').count(),1);
   assert.deepEqual(await page.locator('#connection-settings .entry-port-row input').evaluateAll(nodes=>nodes.map(node=>node.id)),
     ['entry-port','sharing-port','exit-port']);cases++;
@@ -201,10 +201,10 @@ let browser,cases=0;
       if(width>=600){
         const portLabel=await page.locator('#entry-port-label').boundingBox();
         const port=await page.locator('#entry-port').boundingBox();
-        const directory=await page.locator('#storage-dir').boundingBox();
+        const localDevice=await page.locator('label[for="storage-dir"]').boundingBox();
         assert.equal(controls[0].x,portLabel.x,'The proxy label aligns with settings labels');
         assert.equal(controls[1].x,port.x,'The proxy controls start in the same column as the port input');
-        assert.equal(controls[1].x,directory.x,'The proxy controls start in the same column as the directory input');
+        assert.equal(controls[1].x,localDevice.x,'The proxy and directory controls start in the same column');
       }
       const openDirectory=await page.locator('#storage-dir-open').boundingBox();
       assert.equal(controls[3].width,openDirectory.width,'The test and open buttons share a width');

@@ -452,19 +452,17 @@
     </section>
     <section id="record-storage-settings" aria-labelledby="record-storage-title">
       <h3 id="record-storage-title">记录与存储</h3>
-      <div class="settings-row" data-settings-field="storage_dir">
+      <div class="settings-row">
         <span id="storage-dir-label" class="settings-key">数据目录</span>
-        <div class="settings-controls image-directory-row">
-          <input id="storage-dir" type="text" spellcheck="false" autocomplete="off" aria-labelledby="storage-dir-label">
-          <button id="storage-dir-open" type="button" aria-label="打开数据目录" disabled>打开</button>
-          <p id="storage-dir-message" data-feedback-source data-feedback-target="settings-inline-feedback" class="help" role="status" hidden></p>
-          <p id="storage-paths-hint" class="help muted" hidden></p>
-        </div>
-      </div>
-      <div id="linux-storage-settings" class="settings-row" data-settings-field="linux_data_directories" hidden>
-        <span id="linux-storage-label" class="settings-key">Linux 数据目录</span>
-        <div class="settings-controls" role="group" aria-labelledby="linux-storage-label">
-          <div id="linux-storage-targets"></div>
+        <div class="settings-controls storage-directory-controls" role="group" aria-labelledby="storage-dir-label">
+          <div class="storage-directory-row" data-settings-field="storage_dir">
+            <label for="storage-dir">本机</label>
+            <input id="storage-dir" type="text" spellcheck="false" autocomplete="off">
+            <button id="storage-dir-open" type="button" aria-label="打开数据目录" disabled>打开</button>
+            <p id="storage-dir-message" data-feedback-source data-feedback-target="settings-inline-feedback" class="help" role="status" hidden></p>
+            <p id="storage-paths-hint" class="help muted" hidden></p>
+          </div>
+          <div id="linux-storage-targets" data-settings-field="linux_data_directories" hidden></div>
         </div>
       </div>
       <div class="record-limit-grid">

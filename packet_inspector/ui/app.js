@@ -2223,10 +2223,10 @@ function renderLinuxStorageTargets(remote) {
   for(const row of [...(wsl.deferred||[]),...(wsl.detected||[]),...(wsl.targets||[])]) {
     if(row.id)targets.set(row.id,{name:"WSL · "+row.distribution,storage:row.image_storage});
   }
-  $("linux-storage-settings").hidden=!status.linux_data_directories||!targets.size;
   const list=$("linux-storage-targets"),rows=[];
+  list.hidden=!status.linux_data_directories||!targets.size;
   for(const [identity,{name,storage}] of targets) {
-    const input=el("input"),label=el("label","",name),row=el("div","linux-storage-row");
+    const input=el("input"),label=el("label","",name),row=el("div","storage-directory-row");
     input.id="linux-data-dir-"+rows.length;input.name=input.id;label.htmlFor=input.id;
     label.title=name;
     input.type="text";input.maxLength=1024;input.spellcheck=false;input.autocomplete="off";
@@ -2612,7 +2612,7 @@ async function openSettings() {
   try {
     await Promise.all([refreshStatus(true),loadContextSettings(),loadUpdates()]);
     if(state.status.linux_data_directories)renderLinuxStorageTargets(await api("/api/connections").catch(()=>null));
-    else $("linux-storage-settings").hidden=true;
+    else $("linux-storage-targets").hidden=true;
     settingsLanguage=uiI18n.language;
     settingsBaseline=readSettingsDraft();settingsEditing=true;
     resetSettingsSaveProgress();

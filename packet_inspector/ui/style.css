@@ -767,19 +767,20 @@ input[type=checkbox][switch]:focus-visible{outline:2px solid var(--accent);outli
 #settings-dialog .proxy-test-result.success{color:var(--green)}
 #settings-dialog .proxy-test-result.error{color:var(--danger)}
 #settings-dialog #proxy-test-elapsed{color:var(--muted);font-size:12px;font-variant-numeric:tabular-nums}
-#settings-dialog .image-directory-row{display:grid;grid-template-columns:minmax(0,1fr) var(--settings-path-actions-width);gap:8px}
-#settings-dialog :is(.image-directory-row,.proxy-address-field) input{width:100%;min-width:0;text-align:left}
-#settings-dialog .image-directory-row>.help{grid-column:1/-1;margin:0}
-#settings-dialog #linux-storage-targets{
-  display:grid;grid-template-columns:fit-content(42%) minmax(0,1fr);
-  flex:1 1 16em;gap:var(--settings-row-gap) var(--settings-column-gap);min-inline-size:0
+#settings-dialog .proxy-address-field input{width:100%;min-width:0;text-align:left}
+#settings-dialog .storage-directory-controls{
+  --storage-directory-columns:fit-content(42%) minmax(0,1fr) var(--settings-path-actions-width);
+  display:grid;grid-template-columns:var(--storage-directory-columns);row-gap:var(--settings-row-gap)
 }
-#settings-dialog .linux-storage-row{
-  grid-column:1/-1;display:grid;grid-template-columns:subgrid;align-items:center;row-gap:4px
+#settings-dialog :is(.storage-directory-row,#linux-storage-targets){
+  grid-column:1/-1;display:grid;
+  grid-template-columns:var(--storage-directory-columns);grid-template-columns:subgrid
 }
-#settings-dialog .linux-storage-row label{min-inline-size:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-#settings-dialog .linux-storage-row input{inline-size:100%;min-inline-size:0;text-align:start}
-#settings-dialog .linux-storage-row .help{grid-column:2;margin:0}
+#settings-dialog #linux-storage-targets{row-gap:var(--settings-row-gap)}
+#settings-dialog .storage-directory-row{align-items:center;row-gap:4px}
+#settings-dialog .storage-directory-row>label{min-inline-size:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#settings-dialog .storage-directory-row>input{inline-size:100%;min-inline-size:0;text-align:start}
+#settings-dialog .storage-directory-row>.help{grid-column:2/-1;margin:0}
 #settings-dialog .context-grid .settings-controls{flex-wrap:nowrap}
 #settings-dialog .context-value:has(input:disabled){background:#eef0f3}
 #settings-dialog .context-value input:disabled{background:transparent;color:var(--muted);opacity:1}
@@ -845,6 +846,7 @@ input[type=checkbox][switch]:focus-visible{outline:2px solid var(--accent);outli
   #settings-dialog>.settings-content{--settings-path-actions-width:142px}
   #settings-dialog:lang(en)>.settings-content{--settings-label-width:160px}
   #settings-dialog .proxy-test-actions{gap:6px}
+  #settings-dialog .storage-directory-controls{--storage-directory-columns:fit-content(42%) minmax(0,1fr) max-content}
 }
 @container settings-dialog (max-width:560px){
   #settings-dialog .proxy-controls{grid-template-columns:minmax(0,1fr) var(--settings-path-actions-width);column-gap:8px}
@@ -852,8 +854,9 @@ input[type=checkbox][switch]:focus-visible{outline:2px solid var(--accent);outli
 }
 @container settings-dialog (max-width:500px){
   #settings-dialog>.settings-content{--settings-section-indent:12px}
-  #settings-dialog :is(.image-directory-row,.settings-compound-controls){grid-template-columns:minmax(0,1fr)}
-  #settings-dialog .settings-compound-controls{row-gap:0}
+  #settings-dialog .settings-compound-controls{grid-template-columns:minmax(0,1fr);row-gap:0}
+  #settings-dialog .storage-directory-controls{--storage-directory-columns:fit-content(42%) minmax(0,1fr)}
+  #settings-dialog #storage-dir-open{grid-column:2}
   #settings-dialog .settings-inline-field{inline-size:min(180px,100%);grid-template-columns:min(var(--settings-inline-label-width),40%) minmax(0,1fr)}
   #settings-dialog .settings-feedback{grid-column:1/-1}
   #settings-dialog #settings-restore{grid-column:2}
