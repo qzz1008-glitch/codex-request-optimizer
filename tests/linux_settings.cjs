@@ -82,7 +82,7 @@ let browser,cases=0;
     }
     assert.equal(await toggle.isChecked(),after==='optimized');
     if(before==='optimized'){
-      assert.equal(await hint.textContent(),'Images are sent with the main request for direct visual analysis. They increase request size and use context space.');
+      assert.equal(await hint.textContent(),'Images are sent with the main request for direct analysis. The request is larger and leaves less context for text.');
     }
     assert.deepEqual(await page.evaluate(()=>imageSaves),[],'Choosing a mode does not save it');
     assert.equal(await save.isDisabled(),false);
