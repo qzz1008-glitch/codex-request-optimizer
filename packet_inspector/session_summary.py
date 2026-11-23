@@ -73,10 +73,6 @@ def index_task_title(body):
     return titles[0][:512] if len(titles) == 1 and titles[0] else None
 
 
-def image_analysis_request(body):
-    return temporary_request_kind(body) == "image_analysis"
-
-
 def number(value):
     return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
 
@@ -559,9 +555,8 @@ class SessionSummaries:
                 has_metadata = any(isinstance(field, dict) and field.get("name") in {"client_metadata", "metadata"}
                                    for field in meta.get("top_fields", []))
                 if not has_metadata and not any(isinstance(item, dict) and item.get("kind") == "message:user"
-                           and isinstance(item.get("label"), str) and item["label"].startswith(
-                               (INDEX_TASK_PREFIX, "<image name=", "You are a one-shot image analyst.",
-                                "You are an isolated one-shot image analyst.")) for item in items):
+                           and isinstance(item.get("label"), str) and item["label"].startswith(INDEX_TASK_PREFIX)
+                           for item in items):
                     return context or None
                 content_row = db.execute("SELECT CASE WHEN length(content)<=2097152 THEN content END "
                                          "FROM packets WHERE id=? AND thread=?", (packet_id, thread)).fetchone()

@@ -7,10 +7,10 @@ import unittest
 from unittest.mock import patch
 import zlib
 
-from packet_inspector.session_summary import SessionSummaries, image_analysis_request
+from packet_inspector.session_summary import SessionSummaries
 from packet_inspector.token_window import TokenWindows
 from packet_inspector.analyzer import inspect_request
-from packet_inspector.request_context import IMAGE_ANALYST_PREFIXES, INDEX_TASK_PREFIX, NEXT_MESSAGE_PREFIX, TITLE_REQUEST_PREFIX
+from packet_inspector.request_context import INDEX_TASK_PREFIX, NEXT_MESSAGE_PREFIX, TITLE_REQUEST_PREFIX
 from packet_inspector.storage import Store
 from tests.test_token_window import THREAD, event
 
@@ -630,11 +630,18 @@ class SessionSummaryTests(unittest.TestCase):
         self.assertIsNone(row["title"])
 
     def image_request(self, *, remove_native=True, text=None):
-        text = text or '<image name=[Image #1] path="C:\\example.png">\n</image>\n' + IMAGE_ANALYST_PREFIXES[0]
-        self.index_request(remove_native=remove_native, last_user=text)
+        analysis = text is None
+        text = text or '<image name=[Image #1] path="C:\\example.png">\n</image>\nDescribe the attachment.'
+        body = {"input": [{"role": "user", "content": text}]}
+        if analysis:
+            body["client_metadata"] = {"x-codex-turn-metadata": json.dumps({
+                "codex_inspector_request_kind": "image_analysis"})}
+        self.index_request(remove_native=remove_native, raw=zlib.compress(json.dumps({"body": body}).encode()))
+        meta = {"input_items": [{"kind": "message:user", "label": text[:140]}]}
+        if analysis:
+            meta["top_fields"] = [{"name": "client_metadata"}]
         with closing(sqlite3.connect(self.capture / "packets.sqlite")) as db:
-            db.execute("UPDATE packets SET meta=?", (json.dumps({"input_items": [
-                {"kind": "message:user", "label": text[:140]}]}),))
+            db.execute("UPDATE packets SET meta=?", (json.dumps(meta),))
             db.commit()
 
     def test_temporary_image_task_has_kind_without_inventing_native_title(self):
@@ -657,7 +664,7 @@ class SessionSummaryTests(unittest.TestCase):
         child = "00000000-0000-0000-0000-000000000001"
         capture = self.root / "image-capture"
         store = Store(capture, max_count=10, max_detail_count=0)
-        body = {"input": [{"role": "user", "content": IMAGE_ANALYST_PREFIXES[0]}],
+        body = {"input": [{"role": "user", "content": "Describe the attachment."}],
                 "client_metadata": {"x-codex-turn-metadata": json.dumps({
                     "codex_inspector_request_kind": "image_analysis", "codex_inspector_parent_thread_id": THREAD})}}
         meta, content = inspect_request(json.dumps(body).encode(), {"x-codex-thread-id": child}, "/responses")
@@ -757,20 +764,6 @@ class SessionSummaryTests(unittest.TestCase):
                     row = next(r for r in self.reader.read(self.capture)["sessions"] if r["thread_id"] == THREAD)
                 self.assertIsNone(row["title"])
                 self.assertEqual(row["session_kind"], kind)
-
-    def test_image_task_detection_requires_latest_user_and_known_prompt(self):
-        for prefix in IMAGE_ANALYST_PREFIXES:
-            for content in (prefix, [{"type": "input_text", "text": prefix}]):
-                with self.subTest(content=content):
-                    body = {"input": [{"role": "user", "content": content}]}
-                    self.assertTrue(image_analysis_request(body))
-        for text in ("Continue the actual task", "A quote: " + IMAGE_ANALYST_PREFIXES[0],
-                     '<image name=[Image #1] path="C:\\example.png">' + IMAGE_ANALYST_PREFIXES[0]):
-            with self.subTest(text=text):
-                body = {"input": [{"role": "user", "content": IMAGE_ANALYST_PREFIXES[0]},
-                                  {"role": "user", "content": text}]}
-                self.assertFalse(image_analysis_request(body))
-
 
 if __name__ == "__main__":
     unittest.main()

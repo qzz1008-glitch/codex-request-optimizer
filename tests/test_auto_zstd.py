@@ -547,7 +547,7 @@ class AutomaticRelayTests(unittest.TestCase):
         self.assertEqual(self.latest()[0]['relay_auto_zstd_next_phase'], 17)
 
     def test_auxiliary_and_native_compaction_dispatches_cannot_release_high_phase(self):
-        from packet_inspector.request_context import NEXT_MESSAGE_PREFIX, TITLE_REQUEST_PREFIX, IMAGE_ANALYST_PREFIXES
+        from packet_inspector.request_context import NEXT_MESSAGE_PREFIX, TITLE_REQUEST_PREFIX
         self.enable()
         raw = encode({'input': base64.b64encode(random.Random(22).randbytes(280000)).decode()})
         headers = {'session_id': 'auxiliary-phase-session'}
@@ -557,10 +557,11 @@ class AutomaticRelayTests(unittest.TestCase):
             for kind in ('prewarm', 'memory', 'compaction')
         ] + [
             ({'input': [{'role': 'user', 'content': prefix}]}, '/responses')
-            for prefix in (NEXT_MESSAGE_PREFIX, TITLE_REQUEST_PREFIX, IMAGE_ANALYST_PREFIXES[0])
+            for prefix in (NEXT_MESSAGE_PREFIX, TITLE_REQUEST_PREFIX)
         ] + [
             ({'input': json.loads(raw)['input'], 'client_metadata': {'request_kind': 'compaction'}}, '/responses'),
             ({'input': 'tiny', 'client_metadata': {'thread_source': 'session_index'}}, '/responses'),
+            ({'input': 'tiny', 'client_metadata': {'codex_inspector_request_kind': 'image_analysis'}}, '/responses'),
             ({'input': 'tiny'}, '/alpha/search'),
             ({'input': 'tiny'}, '/responses/compact'),
             ({'input': 'tiny', 'client_metadata': {'request_kind': 'compaction'}}, '/reject/responses'),

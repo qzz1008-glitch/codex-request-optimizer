@@ -4,7 +4,6 @@ from copy import deepcopy
 import json
 import os
 from pathlib import Path
-import secrets
 import subprocess
 import tomllib
 
@@ -20,7 +19,7 @@ from .build_info import build_info
 TOOL_SERVER = "isolated_vision"
 VISION_PROVIDER = "codex_isolated_vision"
 VISION_PROFILE = "isolated-vision"
-WORKER_HEADER = "X-Codex-Isolated-Vision"
+LEGACY_IMAGE_WORKER_HEADER = "X-Codex-Isolated-Vision"
 IMAGE_MODES = ("native", "disabled", "optimized")
 
 
@@ -67,10 +66,6 @@ class ImageToolConfig:
         self.state = json.loads(self.path.read_text(encoding="utf8")) if self.path.exists() else {}
         if self.state and self.state.get("config") != str(link.config.resolve()):
             raise ValueError("图片工具配置属于另一个 Codex 配置文件。")
-
-    def is_worker(self, value):
-        token = self.state.get("worker_token", "")
-        return bool(token and value and secrets.compare_digest(value.encode("utf8"), token.encode("ascii")))
 
     def status(self):
         return {"enabled": bool(self.state.get("enabled")), "mode": self.mode(), "server": TOOL_SERVER,

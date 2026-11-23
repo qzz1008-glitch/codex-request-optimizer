@@ -64,7 +64,7 @@ from .loopback_proxy import repair_loopback_proxy
 from .usage_trigger import (raw_chunks, request_size as usage_trigger_size,
                             trigger_threshold, DEFAULT_BUDGET_BYTES, MIN_BUDGET_BYTES)
 from .overflow import CheckpointStream, OverflowCompactor, OverflowFailure, encode_changed_info
-from .image_config import IMAGE_MODES, ImageToolConfig, WORKER_HEADER, image_mode
+from .image_config import IMAGE_MODES, LEGACY_IMAGE_WORKER_HEADER, ImageToolConfig, image_mode
 from .image_isolation import ImageIsolation, ImageIsolationFailure, check_image_directory, resolve_image_directory, is_analysis_request
 from .linux_images import LinuxImageTransfer, SETTINGS_BYTES, linux_data_directories
 from .sharing import Sharing, SharingError, forwarding_headers, allowed_request as sharing_request_allowed
@@ -1554,6 +1554,8 @@ class Handler(BaseHTTPRequestHandler):
                                       "message": "Use HTTP POST for Responses API requests through this relay."}})
             return
         started = time.monotonic()
+        response_path = urlsplit(suffix).path.rstrip("/")
+        writes_responses = self.command == "POST" and response_path.endswith(("/responses", "/responses/compact"))
         with self.server.guard:
             # Disconnected clients may briefly retain an old relay URL until
             # ChatGPT restarts. Keep forwarding them without extra zstd work.
@@ -1566,18 +1568,14 @@ class Handler(BaseHTTPRequestHandler):
             image_isolation = self.server.image_isolation
             image_configured = self.server.image_config.state.get("enabled", False)
             image_origin = ssh_origin or wsl_origin
-            image_worker = not image_origin and self.server.image_config.is_worker(self.headers.get(WORKER_HEADER, ""))
             auto_zstd_level = (protection_enabled and self.server.settings["auto_zstd_level_enabled"]
-                               and compression == "zstd" and not image_worker)
-            auto_eligible = (auto_zstd_level and self.command == "POST"
-                             and not json_image and urlsplit(suffix).path.rstrip("/").endswith("/responses")
+                               and compression == "zstd")
+            auto_eligible = (auto_zstd_level and writes_responses and not json_image and response_path.endswith("/responses")
                              and self.headers.get("Content-Encoding", "identity").strip().lower() in {"", "identity", "zstd"})
-            auto_ticket = self.server.compression_policy.reserve() if auto_eligible and not json_image else None
-        if (image_enabled and not image_worker and self.command == "POST"
-                and urlsplit(suffix).path.rstrip("/").endswith(("/responses", "/responses/compact"))
-                and is_analysis_request(body, self.headers)):
-            image_worker = True
-            auto_zstd_level, auto_ticket = False, None
+            auto_ticket = self.server.compression_policy.reserve() if auto_eligible else None
+        image_worker = image_enabled and writes_responses and is_analysis_request(body, self.headers)
+        if image_worker:
+            auto_zstd_level, auto_eligible, auto_ticket = False, False, None
         packet_id = None
         capture_meta = {}
         if self.server.settings["capture_enabled"]:
@@ -1603,7 +1601,7 @@ class Handler(BaseHTTPRequestHandler):
                     self.server.capture_errors += 1
         connection_tokens = {s.strip().lower() for s in self.headers.get("Connection", "").split(",")}
         headers = {k: v for k, v in self.headers.items()
-                   if k.lower() not in HOP | connection_tokens | {"host", "content-length", "x-codex-inspector-packet-id", WORKER_HEADER.lower(), EGRESS_HEADER.lower(), CLIENT_HEADER.lower()}}
+                   if k.lower() not in HOP | connection_tokens | {"host", "content-length", "x-codex-inspector-packet-id", LEGACY_IMAGE_WORKER_HEADER.lower(), EGRESS_HEADER.lower(), CLIENT_HEADER.lower()}}
         if shared_client:
             headers = forwarding_headers(headers)
             headers["Authorization"] = "Bearer " + remote["token"]
@@ -1627,10 +1625,10 @@ class Handler(BaseHTTPRequestHandler):
         compression_scope = hashlib.sha256(upstream.encode()).hexdigest()
         auto_key, auto_decision = None, None
         try:
-            if image_enabled and not image_origin and not image_configured:
+            if image_enabled and not image_worker and not image_origin and not image_configured:
                 raise ImageIsolationFailure("image_configuration_missing", "图片隔离配置不完整，请在设置中重新启用。", 503)
             rewritten = None
-            if image_enabled and not image_worker and self.command == "POST" and urlsplit(suffix).path.rstrip("/").endswith(("/responses", "/responses/compact")):
+            if image_enabled and not image_worker and writes_responses:
                 if image_origin:
                     target = (self.server.remote_relays.image_target(ssh_origin) if ssh_origin
                               else self.server.wsl.image_target(wsl_origin))
@@ -1740,7 +1738,7 @@ class Handler(BaseHTTPRequestHandler):
                 if not image_origin:
                     image_isolation.observe_request(body, dict(self.headers.items()))
                 update(image_isolation_worker=True)
-            if protection_enabled and not image_worker and self.command == "POST" and urlsplit(suffix).path.rstrip("/").endswith("/responses"):
+            if protection_enabled and not image_worker and writes_responses and response_path.endswith("/responses"):
                 outbound_body, outbound_encoding, overflow_meta = self.server.overflow.prepare(
                     outbound_body, outbound_encoding, source_body, headers, suffix, upstream, compression, budget,
                     lambda compact_body, encoding: self._checkpoint(upstream, suffix, headers, compact_body, encoding,
@@ -1786,7 +1784,6 @@ class Handler(BaseHTTPRequestHandler):
             settings = self.server.settings
             return settings["capacity_retry_enabled"], settings["capacity_retry_delay_seconds"]
         native_policy = current_retry_policy if capacity_retry else None
-        response_path = urlsplit(suffix).path.rstrip("/")
         bad_request_retry_enabled = (retry_settings["bad_request_retry_enabled"] and self.command == "POST"
                                      and response_path.endswith(("/responses", "/responses/compact")))
         diagnostic = None

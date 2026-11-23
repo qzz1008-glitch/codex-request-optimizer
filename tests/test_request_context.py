@@ -3,7 +3,7 @@ import unittest
 
 from packet_inspector.analyzer import inspect_request
 from packet_inspector.request_context import (
-    IMAGE_ANALYST_PREFIXES, NEXT_MESSAGE_PREFIX, TITLE_REQUEST_PREFIX,
+    NEXT_MESSAGE_PREFIX, TITLE_REQUEST_PREFIX,
     is_delegation_notice, is_native_context_item, local_image_path, request_image_paths,
     request_session_context, temporary_kind_from_metadata, temporary_request_kind,
 )
@@ -86,8 +86,8 @@ class RequestContextTests(unittest.TestCase):
                                    {"kind": "message:user", "label": NEXT_MESSAGE_PREFIX[:140]}]}, "next_message_suggestion")):
             self.assertEqual(temporary_kind_from_metadata(meta), expected)
         self.assertEqual(temporary_kind_from_metadata({"session_kind": "subagent"}), "subagent")
-        body = {"input": [{"role": "user", "content": IMAGE_ANALYST_PREFIXES[0]}],
-                "client_metadata": {"thread_source": "subagent"}}
+        body = {"client_metadata": {"thread_source": "subagent", "x-codex-turn-metadata": json.dumps({
+            "codex_inspector_request_kind": "image_analysis"})}}
         self.assertEqual(request_session_context(body)["session_kind"], "image_analysis")
 
     def test_storage_exposes_one_purpose_for_list_and_detail_and_preserves_unknown_fields(self):
@@ -174,8 +174,7 @@ class RequestContextTests(unittest.TestCase):
 
     def test_only_latest_user_explicit_helper_prompt_sets_purpose(self):
         for prefix, kind in ((NEXT_MESSAGE_PREFIX, "next_message_suggestion"),
-                             (TITLE_REQUEST_PREFIX, "title_generation"),
-                             (IMAGE_ANALYST_PREFIXES[0], "image_analysis")):
+                             (TITLE_REQUEST_PREFIX, "title_generation")):
             with self.subTest(kind=kind):
                 body = {"input": [{"role": "user", "content": prefix}]}
                 self.assertEqual(temporary_request_kind(body), kind)
@@ -194,8 +193,8 @@ class RequestContextTests(unittest.TestCase):
                 with self.subTest(field=field, container=container):
                     self.assertEqual(request_session_context({field: container}), {
                         "session_kind": "image_analysis", "parent_thread_id": parent})
-        self.assertEqual(request_session_context({}, {"X-Codex-Turn-Metadata": json.dumps(marker)}), {
-            "session_kind": "image_analysis", "parent_thread_id": parent})
+        self.assertEqual(request_session_context({}, {"X-Codex-Turn-Metadata": json.dumps(marker)}), {})
+        self.assertEqual(request_session_context({"client_metadata": {"thread_source": "image_analysis"}}), {})
         for value in (None, [], "invalid", 42):
             self.assertNotIn("parent_thread_id", request_session_context({"client_metadata": {
                 **marker, "codex_inspector_parent_thread_id": value}}))
