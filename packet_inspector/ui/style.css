@@ -747,7 +747,9 @@ input[type=checkbox][switch]:focus-visible{outline:2px solid var(--accent);outli
   border-radius:var(--settings-control-radius);background:var(--panel)
 }
 #request-protection-settings .settings-value-unit{inline-size:72px;gap:4px;padding-inline-start:6px}
-#request-protection-settings .settings-value-unit:has(:is(#budget,#capacity-retry-count,#bad-request-retry-count)){inline-size:88px}
+#request-protection-settings .settings-value-unit:has(:is(#budget,#capacity-retry-count,#bad-request-retry-count)){
+  inline-size:64px;gap:2px;padding-inline:3px
+}
 #settings-dialog .settings-value-unit:focus-within{outline:2px solid var(--accent);outline-offset:2px}
 #settings-dialog .settings-value-unit:has(input:disabled){background:var(--bg)}
 #settings-dialog .settings-value-unit input{flex:1;min-inline-size:0;block-size:20px;padding:0;border:0;border-radius:0;background:transparent;outline:0;box-shadow:none}
@@ -793,12 +795,12 @@ input[type=checkbox][switch]:focus-visible{outline:2px solid var(--accent);outli
   display:flex;flex:0 1 8.5ch;justify-content:flex-end;gap:3px;min-inline-size:max-content;
   color:var(--muted);font-size:14px;white-space:nowrap
 }
-#settings-dialog .record-limit-field{inline-size:108px}
+#settings-dialog .record-limit-field{inline-size:72px;gap:1px;padding-inline:1px}
 #settings-dialog .record-limit-field>.record-limit-edit{display:grid;grid-template-columns:minmax(0,1fr);flex:1;min-inline-size:0}
 #settings-dialog .record-limit-edit :is(input,.record-limit-formatted){grid-area:1/1;align-self:center}
 #settings-dialog .record-limit-edit input{inline-size:100%;text-align:start}
 #settings-dialog .record-limit-edit .record-limit-formatted{
-  color:var(--ink);font-size:14px;visibility:hidden;pointer-events:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis
+  color:var(--ink);font-size:13px;visibility:hidden;pointer-events:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis
 }
 #settings-dialog .record-limit-edit:not(:focus-within) .record-limit-formatted{visibility:visible}
 #settings-dialog .record-limit-edit:not(:focus-within):has(.record-limit-formatted:not(:empty)) input{opacity:0}
@@ -865,7 +867,6 @@ input[type=checkbox][switch]:focus-visible{outline:2px solid var(--accent);outli
   #settings-dialog .proxy-controls{grid-template-columns:minmax(0,1fr)}
   #settings-dialog #proxy-test-state{white-space:normal;overflow-wrap:anywhere}
   #settings-dialog .record-limit-prefix{flex-basis:7.5ch;gap:2px}
-  #settings-dialog .record-limit-field{gap:4px;padding-inline-start:6px}
   #settings-dialog :is(.record-limit-prefix,.record-limit-edit input,.record-limit-edit .record-limit-formatted){font-size:12px}
 }
 .empty-state{margin:12cqh auto}
