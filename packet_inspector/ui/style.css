@@ -594,6 +594,7 @@ input[type=checkbox][switch]:focus-visible{outline:2px solid var(--accent);outli
   --settings-section-indent:16px;
   --settings-row-gap:10px;
   --settings-field-height:32px;
+  --settings-compact-value-size:12px;
   --settings-control-height:var(--settings-field-height);
   --settings-control-radius:8px;
   --settings-segment-height:26px;
@@ -759,18 +760,23 @@ input[type=checkbox][switch]:focus-visible{outline:2px solid var(--accent);outli
   align-items:center;column-gap:6px;max-inline-size:100%
 }
 #settings-dialog .settings-value-unit{
-  display:flex;align-items:center;gap:8px;inline-size:96px;min-inline-size:0;max-inline-size:100%;
+  display:flex;align-items:center;gap:4px;inline-size:96px;min-inline-size:0;max-inline-size:100%;
   block-size:var(--settings-field-height);padding:5px 10px;border:1px solid var(--line);
-  border-radius:var(--settings-control-radius);background:var(--panel)
+  border-radius:var(--settings-control-radius);background:var(--panel);
+  font-size:14px;line-height:20px;font-variant-numeric:tabular-nums
 }
-#request-protection-settings .settings-value-unit{inline-size:72px;gap:4px;padding-inline-start:6px}
-#request-protection-settings .settings-value-unit:has(:is(#budget,#capacity-retry-count,#bad-request-retry-count)){
-  inline-size:64px;gap:2px;padding-inline:3px
+#request-protection-settings .settings-value-unit,
+#settings-dialog .record-limit-field{
+  inline-size:72px;gap:2px;padding-inline:2px 4px;font-size:var(--settings-compact-value-size)
 }
+#request-protection-settings .settings-value-unit:has(:is(#budget,#capacity-retry-count,#bad-request-retry-count)){inline-size:64px}
 #settings-dialog .settings-value-unit:focus-within{outline:2px solid var(--accent);outline-offset:2px}
 #settings-dialog .settings-value-unit:has(input:disabled){background:var(--bg)}
-#settings-dialog .settings-value-unit input{flex:1;min-inline-size:0;block-size:20px;padding:0;border:0;border-radius:0;background:transparent;outline:0;box-shadow:none}
-#settings-dialog .settings-value-unit>span{flex:none;color:var(--muted);font-size:12px;white-space:nowrap}
+#settings-dialog .settings-value-unit input{
+  flex:1;min-inline-size:0;block-size:20px;padding:0;border:0;border-radius:0;background:transparent;
+  outline:0;box-shadow:none;font:inherit;text-align:end
+}
+#settings-dialog .settings-value-unit>span:last-child{flex:none;color:var(--muted);white-space:nowrap}
 #settings-dialog .runtime-inline-hint{flex:1 1 12em;min-width:0;margin:0}
 #settings-dialog .proxy-controls{
   display:grid;grid-template-columns:max-content minmax(0,1fr) var(--settings-path-actions-width)
@@ -804,20 +810,20 @@ input[type=checkbox][switch]:focus-visible{outline:2px solid var(--accent);outli
 #settings-dialog .context-grid .settings-controls{flex-wrap:nowrap}
 #settings-dialog .context-value:has(input:disabled){background:#eef0f3}
 #settings-dialog .context-value input:disabled{background:transparent;color:var(--muted);opacity:1}
-#settings-dialog .context-value input::placeholder{color:var(--muted);font-size:13px}
+#settings-dialog .context-value input::placeholder{color:var(--muted)}
 #settings-dialog .record-limit-value{
-  display:flex;align-items:center;gap:4px;inline-size:176px;max-inline-size:100%;font-variant-numeric:tabular-nums
+  display:flex;align-items:center;gap:4px;inline-size:176px;max-inline-size:100%;
+  font-size:var(--settings-compact-value-size);line-height:20px;font-variant-numeric:tabular-nums
 }
 #settings-dialog .record-limit-prefix{
   display:flex;flex:0 1 8.5ch;justify-content:flex-end;gap:3px;min-inline-size:max-content;
-  color:var(--muted);font-size:14px;white-space:nowrap
+  color:var(--muted);white-space:nowrap
 }
-#settings-dialog .record-limit-field{inline-size:72px;gap:1px;padding-inline:1px}
 #settings-dialog .record-limit-field>.record-limit-edit{display:grid;grid-template-columns:minmax(0,1fr);flex:1;min-inline-size:0}
-#settings-dialog .record-limit-edit :is(input,.record-limit-formatted){grid-area:1/1;align-self:center}
-#settings-dialog .record-limit-edit input{inline-size:100%;text-align:start}
+#settings-dialog .record-limit-edit :is(input,.record-limit-formatted){grid-area:1/1;align-self:center;text-align:end}
+#settings-dialog .record-limit-edit input{inline-size:100%}
 #settings-dialog .record-limit-edit .record-limit-formatted{
-  color:var(--ink);font-size:13px;visibility:hidden;pointer-events:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis
+  color:var(--ink);visibility:hidden;pointer-events:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis
 }
 #settings-dialog .record-limit-edit:not(:focus-within) .record-limit-formatted{visibility:visible}
 #settings-dialog .record-limit-edit:not(:focus-within):has(.record-limit-formatted:not(:empty)) input{opacity:0}
@@ -884,7 +890,6 @@ input[type=checkbox][switch]:focus-visible{outline:2px solid var(--accent);outli
   #settings-dialog .proxy-controls{grid-template-columns:minmax(0,1fr)}
   #settings-dialog #proxy-test-state{white-space:normal;overflow-wrap:anywhere}
   #settings-dialog .record-limit-prefix{flex-basis:7.5ch;gap:2px}
-  #settings-dialog :is(.record-limit-prefix,.record-limit-edit input,.record-limit-edit .record-limit-formatted){font-size:12px}
 }
 .empty-state{margin:12cqh auto}
 .json-tree{max-height:68cqh}
