@@ -23,7 +23,7 @@ class InstallationSettingsTests(unittest.TestCase):
         self.addCleanup(server.server_close)
         return server
 
-    def test_first_install_enables_only_zstd_optional_feature(self):
+    def test_standalone_relay_keeps_optional_features_off_without_installation(self):
         original = self.config.read_bytes()
         server = self.server()
         status = server.status()
