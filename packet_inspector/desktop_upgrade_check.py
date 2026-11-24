@@ -12,30 +12,36 @@ def check_window(window, options, instance):
     closed = threading.Event()
     window.events.closed += closed.set
     try:
-        # The native loaded event precedes the asynchronous status/first-run check.
-        deadline = time.monotonic() + 15
-        while time.monotonic() < deadline:
-            if window.evaluate_js("""typeof state !== 'undefined' && !!state.status?.version &&
-                (typeof connectChecking === 'undefined' || !connectChecking)"""):
-                break
-            time.sleep(.1)
-        else:
-            raise TimeoutError("desktop status did not finish initializing")
-        window.evaluate_js("if(document.getElementById('connect-confirm-dialog')?.open)document.getElementById('connect-confirm-cancel').click(); true")
-        window.evaluate_js("document.getElementById('settings-open').click()")
+        # Opening settings is blocked while the asynchronous first-run prompt is prepared.
         result = None
-        deadline = time.monotonic() + 15
+        deadline = time.monotonic() + 30
         while time.monotonic() < deadline:
-            result = window.evaluate_js("""({
-                title: document.title,
-                settings: document.getElementById('settings-dialog').open,
-                versions: document.getElementById('updates-versions').textContent,
-                update_buttons: ['updates-check', 'updates-install'].every(id => {
-                    const button = document.querySelector('#updates-settings #' + id);
-                    return button instanceof HTMLButtonElement && button.querySelector('svg') !== null &&
-                        !!button.getAttribute('aria-label') && !button.textContent.trim();
-                })
-            })""")
+            result = window.evaluate_js("""(() => {
+                const statusReady = typeof state !== 'undefined' && !!state.status?.version;
+                const settings = document.getElementById('settings-dialog');
+                const connection = document.getElementById('connect-confirm-dialog');
+                const connectionBusy = statusReady && (firstRunChecking || connectChecking);
+                if (statusReady && !connectionBusy) {
+                    if (connection.open) {
+                        document.getElementById('connect-confirm-cancel').click();
+                    } else if (!settings.open && !settingsOpening) {
+                        document.getElementById('settings-open').click();
+                    }
+                }
+                return {
+                    title: document.title,
+                    status_ready: statusReady,
+                    connection_busy: connectionBusy,
+                    connection_prompt: connection.open,
+                    settings: settings.open,
+                    versions: document.getElementById('updates-versions').textContent,
+                    update_buttons: ['updates-check', 'updates-install'].every(id => {
+                        const button = document.querySelector('#updates-settings #' + id);
+                        return button instanceof HTMLButtonElement && button.querySelector('svg') !== null &&
+                            !!button.getAttribute('aria-label') && !button.textContent.trim();
+                    })
+                };
+            })()""")
             if (result and result.get("settings") and result.get("update_buttons")
                     and VERSION in result.get("versions", "")):
                 break
