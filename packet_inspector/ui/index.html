@@ -206,21 +206,6 @@
     <p id="compression-confirm-message" data-feedback-inline class="help error confirmation-feedback" role="alert" hidden></p>
     <div class="button-row"><button id="compression-confirm-cancel" type="button" autofocus>保持接入</button><button id="compression-confirm-apply" class="primary" type="button">确认断开</button></div>
   </dialog>
-  <dialog id="first-run-protection-dialog" aria-labelledby="first-run-protection-title" aria-describedby="first-run-protection-description">
-    <h2 id="first-run-protection-title">开启请求保护？</h2>
-    <p id="first-run-protection-description">开启后会同时启用以下功能，可在设置中逐项调整。</p>
-    <ul class="first-run-protections">
-      <li><strong>大小保护</strong><span>请求超限时尝试压缩旧上下文。</span></li>
-      <li><strong>容量重试</strong><span>模型容量不足时等待后重试。</span></li>
-      <li><strong>异常重试</strong><span>遇到通用 Bad Request 时自动重试。</span></li>
-      <li><strong>解图优化</strong><span>由独立工具解析图片，减小主请求。</span></li>
-    </ul>
-    <p id="first-run-protection-message" data-feedback-inline class="help error confirmation-feedback" role="alert" hidden></p>
-    <form method="dialog" class="button-row">
-      <button id="first-run-protection-skip" type="submit" autofocus>暂不开启</button>
-      <button id="first-run-protection-enable" class="primary" type="button">开启请求保护</button>
-    </form>
-  </dialog>
   <dialog id="connect-confirm-dialog" aria-labelledby="connect-confirm-title" aria-describedby="connect-confirm-description connect-confirm-hint">
     <h2 id="connect-confirm-title">接入 Codex</h2>
     <p id="connect-confirm-description">将接入本机的 Codex，包括检测到的 WSL 配置。</p>

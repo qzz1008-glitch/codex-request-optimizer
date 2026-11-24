@@ -225,21 +225,60 @@ class UpgradeTests(unittest.TestCase):
         self.engine._stop_candidate.assert_not_called()
         self.assertEqual(json.loads((self.data / "upgrade-result.json").read_text(encoding="utf8"))["state"], "failed")
 
-    def test_fresh_install_queues_first_launch_and_cold_upgrade_clears_it(self):
+    def test_fresh_install_applies_protection_defaults_and_cold_upgrade_preserves_choices(self):
         pending = self.data / FIRST_RUN_PENDING
-        with patch("packet_inspector.upgrade.local_json", side_effect=ConnectionRefusedError), \
+        settings_file = self.data / "settings.json"
+        protection = {"packet_size_protection_enabled": True, "capacity_retry_enabled": True,
+                      "bad_request_retry_enabled": True}
+        writes = []
+
+        def api(_port, path, values=None, **_kwargs):
+            if path != "/api/settings":
+                raise ConnectionRefusedError()
+            install_entry.assert_called_once()
+            self.assertFalse(pending.exists())
+            writes.append(values)
+            saved = json.loads(settings_file.read_text(encoding="utf8")) if settings_file.exists() else {}
+            atomic_json(settings_file, {**saved, **values})
+
+        with patch("packet_inspector.upgrade.local_json", side_effect=api), \
                 patch("packet_inspector.upgrade.socket.socket") as socket_factory, \
-                patch.object(self.engine, "_install_entry"):
+                patch.object(self.engine, "_install_entry") as install_entry:
             socket_factory.return_value.__enter__.return_value.connect_ex.return_value = 10061
             self.engine.run()
             self.assertTrue(pending.is_file())
+            self.assertEqual(json.loads(settings_file.read_text(encoding="utf8")),
+                             {**protection, "image_analysis_mode": "optimized"})
 
             # A stopped installation still has saved settings, even without a live entry.
-            atomic_json(self.data / "settings.json", {"capacity_retry_enabled": False})
+            choices = {**dict.fromkeys(protection, False), "image_analysis_mode": "native"}
+            atomic_json(settings_file, choices)
             self.engine.run()
             self.assertFalse(pending.exists())
-            self.assertEqual(json.loads((self.data / "settings.json").read_text(encoding="utf8")),
-                             {"capacity_retry_enabled": False})
+            self.assertEqual(json.loads(settings_file.read_text(encoding="utf8")), choices)
+        self.assertEqual(writes, [protection, {"image_analysis_mode": "optimized"}])
+
+    def test_unavailable_image_tool_does_not_prevent_the_protection_defaults_or_first_connection(self):
+        writes = []
+
+        def api(_port, path, values=None, **_kwargs):
+            if path != "/api/settings":
+                raise ConnectionRefusedError()
+            if "image_analysis_mode" in values:
+                raise ValueError("control HTTP 400")
+            writes.append(values)
+
+        with patch("packet_inspector.upgrade.local_json", side_effect=api), \
+                patch("packet_inspector.upgrade.socket.socket") as socket_factory, \
+                patch.object(self.engine, "_install_entry"):
+            socket_factory.return_value.__enter__.return_value.connect_ex.return_value = 10061
+            result = self.engine.run()
+        self.assertEqual(result["state"], "complete")
+        self.assertTrue((self.data / FIRST_RUN_PENDING).exists())
+        self.assertEqual(writes, [{"packet_size_protection_enabled": True, "capacity_retry_enabled": True,
+                                  "bad_request_retry_enabled": True}])
+        journal = json.loads((self.data / "upgrade-result.json").read_text(encoding="utf8"))
+        self.assertEqual(journal["first_install_settings_errors"], {"image_analysis_mode": "control HTTP 400"})
 
     def test_routed_upgrade_refreshes_installation_then_commits_the_new_tray(self):
         atomic_json(self.data / "router-state.json", {"active": "1" * 32, "token": "fixture-control"})

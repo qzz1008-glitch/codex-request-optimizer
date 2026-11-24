@@ -412,6 +412,23 @@ class Upgrade:
                     path.unlink(missing_ok=True)
             raise
 
+    def _apply_first_install_defaults(self):
+        self._report("正在应用首次安装的请求保护设置…")
+        # Persist request protection independently of optional CLI provisioning.
+        defaults = {
+            "request_protection": {
+                "packet_size_protection_enabled": True,
+                "capacity_retry_enabled": True,
+                "bad_request_retry_enabled": True,
+            },
+            "image_analysis_mode": {"image_analysis_mode": "optimized"},
+        }
+        for name, settings in defaults.items():
+            try:
+                local_json(self.port, "/api/settings", settings, timeout=60)
+            except (OSError, ValueError, http.client.HTTPException) as exc:
+                self.journal.setdefault("first_install_settings_errors", {})[name] = str(exc)[:250]
+
     def _run(self):
         sharing_restart = None
         self._stage("validate", "正在校验升级包…")
@@ -548,6 +565,8 @@ class Upgrade:
             compatibility.close()
             if sharing_restart is not None:
                 self._sharing_record("complete")
+            if first_install:
+                self._apply_first_install_defaults()
             first_run = self.data_dir / FIRST_RUN_PENDING
             try:
                 if first_install:
