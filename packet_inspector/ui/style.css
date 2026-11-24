@@ -596,10 +596,10 @@ input[type=checkbox][switch]:focus-visible{outline:2px solid var(--accent);outli
   --settings-padding:28px;
   --settings-section-indent:16px;
   --settings-row-gap:10px;
-  --settings-field-height:32px;
+  --settings-field-height:30px;
   --settings-control-height:var(--settings-field-height);
   --settings-control-radius:8px;
-  --settings-segment-height:26px;
+  --settings-segment-height:calc(var(--settings-control-height) - 6px);
   --settings-segment-radius:6px;
   width:min(760px,calc(100vw - 32px));
   max-height:min(calc(var(--desktop-height) - 64px),calc(100dvh - 32px));
@@ -661,10 +661,10 @@ input[type=checkbox][switch]:focus-visible{outline:2px solid var(--accent);outli
 #settings-dialog :is(button,input,select){font:inherit}
 #settings-dialog button{
   display:inline-flex;align-items:center;justify-content:center;min-block-size:var(--settings-control-height);
-  padding:4px 10px;border-radius:var(--settings-control-radius);font-size:var(--settings-label-size);line-height:1.5
+  padding:3px 10px;border-radius:var(--settings-control-radius);font-size:var(--settings-label-size);line-height:1.5
 }
 #settings-dialog :is(input:where(:not([type=checkbox],[type=radio],[type=hidden])),select,.settings-value-unit){
-  block-size:var(--settings-field-height);margin:0;padding:5px 10px;border:1px solid var(--line);
+  min-block-size:var(--settings-field-height);margin:0;padding:5px 10px;border:1px solid var(--line);
   border-radius:var(--settings-control-radius);background:var(--panel);color:var(--ink);
   font-size:var(--settings-detail-size);line-height:1.5;text-align:start
 }
@@ -780,7 +780,7 @@ input[type=checkbox][switch]:focus-visible{outline:2px solid var(--accent);outli
 #settings-dialog .settings-value-unit:focus-within{outline:2px solid var(--accent);outline-offset:2px}
 #settings-dialog .settings-value-unit:has(input:disabled){background:var(--bg)}
 #settings-dialog .settings-value-unit input{
-  flex:1;min-inline-size:0;block-size:1.5em;padding:0;border:0;border-radius:0;background:transparent;
+  flex:1;min-inline-size:0;min-block-size:0;padding:0;border:0;border-radius:0;background:transparent;
   outline:0;box-shadow:none;font:inherit;text-align:end
 }
 #settings-dialog .settings-value-unit input:disabled{background:transparent}
@@ -795,7 +795,7 @@ input[type=checkbox][switch]:focus-visible{outline:2px solid var(--accent);outli
 #settings-dialog .proxy-controls>.help{grid-column:1/-1;margin:0}
 #settings-dialog .proxy-test-result{
   display:flex;flex-wrap:wrap;align-items:baseline;min-inline-size:0;gap:0 6px;
-  line-height:calc(4 / 3);white-space:nowrap
+  line-height:1.25;white-space:nowrap
 }
 #settings-dialog .proxy-test-result.success{color:var(--green)}
 #settings-dialog .proxy-test-result.error{color:var(--danger)}
