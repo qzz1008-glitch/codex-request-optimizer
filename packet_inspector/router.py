@@ -565,24 +565,70 @@ def main(argv=None):
         raise
 
 
+def open_desktop(args, state, trace):
+    from .window_lifecycle import request_main_window
+
+    executable = Path(sys.executable).resolve()
+    versions = (args.data_dir / "bin" / "versions").resolve()
+    instance = None
+    if (os.name == "nt" and getattr(sys, "frozen", False) and executable.is_relative_to(versions)
+            and state.get("protocol") == PROTOCOL and Path(state["config"]).resolve() == args.config.resolve()
+            and Path(worker_info(args.data_dir, state["active"])["executable"]).resolve() == executable):
+        from .desktop import SingleWindow, run
+        # Reserve the window before starting the relay. The worker's tray warmup
+        # then finds this host instead of extracting another copy of the EXE.
+        instance = SingleWindow(args.data_dir)
+
+    desktop_args = ["--data-dir", str(args.data_dir), "--config", str(args.config)]
+    try:
+        if instance and instance.existing:
+            instance.signal()
+            trace.step("desktop.activate")
+            trace.ready()
+            return 0
+        if instance:
+            replacement_port = None
+
+            def prepare_entry():
+                nonlocal replacement_port
+                port = ensure_entry(args, state, trace)
+                current = json.loads((args.data_dir / "router-state.json").read_text(encoding="utf8"))
+                worker = worker_info(args.data_dir, current["active"])
+                if Path(worker["executable"]).resolve() != executable:
+                    replacement_port = port
+                    return None
+                trace.step("desktop.reuse_launcher")
+                trace.ready()
+                return port
+
+            result = run(desktop_args, entry_window=instance, prepare_entry=prepare_entry)
+            if replacement_port is None:
+                return result
+            port = replacement_port
+        else:
+            port = ensure_entry(args, state, trace)
+    finally:
+        if instance:
+            instance.close()
+
+    if request_main_window(args.data_dir):
+        trace.step("desktop.activate")
+    else:
+        trace.step("desktop.launch")
+        current = json.loads((args.data_dir / "router-state.json").read_text(encoding="utf8"))
+        worker = worker_info(args.data_dir, current["active"])
+        subprocess.Popen([worker["executable"], *desktop_args, "--port", str(port)], env=startup_environment(),
+                         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    trace.ready()
+    return 0
+
+
 def run_entry(args, trace):
     trace.record.update(background=args.background, tray=args.tray)
     trace.step("entry.configuration")
     state = json.loads((args.data_dir / "router-state.json").read_text(encoding="utf8"))
     if not args.background:
-        port = ensure_entry(args, state, trace)
-        from .window_lifecycle import request_main_window
-        if request_main_window(args.data_dir):
-            trace.step("desktop.activate")
-        else:
-            trace.step("desktop.launch")
-            state = json.loads((args.data_dir / "router-state.json").read_text(encoding="utf8"))
-            worker = worker_info(args.data_dir, state["active"])
-            subprocess.Popen([worker["executable"], "--data-dir", str(args.data_dir), "--config", str(args.config),
-                              "--port", str(port)], env=startup_environment(),
-                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-        trace.ready()
-        return 0
+        return open_desktop(args, state, trace)
     port = startup_port(args, state)
     trace.step("entry.bind", port=port)
     try:

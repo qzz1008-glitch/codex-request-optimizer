@@ -7,9 +7,12 @@ import subprocess
 import sys
 import tempfile
 import threading
+from types import SimpleNamespace
 import unittest
+from unittest.mock import Mock, patch
 
 from packet_inspector.desktop import SingleWindow
+from packet_inspector.router import PROTOCOL, atomic_json, open_desktop
 from packet_inspector.window_lifecycle import request_window_exit, request_main_window, request_tray_panel, tray_panel_host_running, tray_panel_ready
 
 
@@ -57,6 +60,63 @@ raise SystemExit(desktop.run(sys.argv[2:]))
         reopened = SingleWindow(self.folder)
         self.addCleanup(reopened.close)
         self.assertFalse(reopened.existing)
+
+    def test_installed_shortcut_reserves_the_window_before_starting_the_relay(self):
+        options = SimpleNamespace(data_dir=self.folder, config=self.folder / "config.toml", port=None)
+        binary = self.folder / "bin" / "versions" / "test" / "CodexPacketInspector.exe"
+        state = {"protocol": PROTOCOL, "config": str(options.config), "active": "test"}
+        atomic_json(self.folder / "router-state.json", state)
+
+        def start_relay(*_args):
+            self.assertTrue(tray_panel_host_running(self.folder))
+            # A second shortcut can signal the reserved host during cold start.
+            self.assertEqual(open_desktop(options, state, Mock()), 0)
+            return 49123
+
+        def reuse_launcher(arguments, *, entry_window, prepare_entry):
+            self.assertFalse(entry_window.existing)
+            self.assertNotIn("--port", arguments)
+            self.assertEqual(prepare_entry(), 49123)
+            return 0
+
+        with patch.object(sys, "frozen", True, create=True), patch.object(sys, "executable", str(binary)), \
+                patch("packet_inspector.router.worker_info", return_value={"executable": str(binary)}), \
+                patch("packet_inspector.router.ensure_entry", side_effect=start_relay) as ensure, \
+                patch("packet_inspector.desktop.run", side_effect=reuse_launcher) as desktop, \
+                patch("packet_inspector.router.subprocess.Popen") as launch:
+            self.assertEqual(open_desktop(options, state, Mock()), 0)
+
+        ensure.assert_called_once()
+        desktop.assert_called_once()
+        launch.assert_not_called()
+        self.assertFalse(tray_panel_host_running(self.folder))
+
+    def test_installed_shortcut_hands_off_if_the_active_build_changes(self):
+        options = SimpleNamespace(data_dir=self.folder, config=self.folder / "config.toml", port=None)
+        versions = self.folder / "bin" / "versions"
+        current = versions / "current" / "CodexPacketInspector.exe"
+        updated = versions / "updated" / current.name
+        state = {"protocol": PROTOCOL, "config": str(options.config), "active": "current"}
+        atomic_json(self.folder / "router-state.json", {**state, "active": "updated"})
+
+        def reuse_launcher(_arguments, *, entry_window, prepare_entry):
+            self.assertFalse(entry_window.existing)
+            self.assertIsNone(prepare_entry())
+            return 0
+
+        with patch.object(sys, "frozen", True, create=True), patch.object(sys, "executable", str(current)), \
+                patch("packet_inspector.router.worker_info",
+                      side_effect=lambda _data, identity: {"executable": str({"current": current, "updated": updated}[identity])}), \
+                patch("packet_inspector.router.ensure_entry", return_value=49123), \
+                patch("packet_inspector.desktop.run", side_effect=reuse_launcher), \
+                patch("packet_inspector.router.subprocess.Popen") as launch:
+            self.assertEqual(open_desktop(options, state, Mock()), 0)
+
+        launch.assert_called_once()
+        command = launch.call_args.args[0]
+        self.assertEqual(command[0], str(updated))
+        self.assertEqual(command[-2:], ["--port", "49123"])
+        self.assertFalse(tray_panel_host_running(self.folder))
 
     def test_direct_main_window_signal_reaches_only_its_existing_profile(self):
         owner = SingleWindow(self.folder)

@@ -114,6 +114,18 @@ class StartupDiagnosticsTests(unittest.TestCase):
         self.assertGreaterEqual(self.clock.elapsed, 55)
         self.assertEqual(self.records()[0]["state"], "ready")
 
+    def test_managed_desktop_waits_for_the_same_entry_without_starting_a_direct_service(self):
+        options = SimpleNamespace(data_dir=self.data, config=self.config, port=47844, upstream=None)
+        status = {"data_dir": str(self.data), "profile": {"config_path": str(self.config)}}
+        health = {"app": "codex-packet-inspector", "router_protocol": router.PROTOCOL}
+        replies = [URLError(ConnectionRefusedError()), health, status, {"app": "codex-packet-inspector"}]
+        with patch.object(desktop, "local_api", side_effect=replies), \
+                patch.object(desktop, "start_process") as start:
+            self.assertEqual(desktop.ensure_service(options, start_background=False), status)
+            with self.assertRaises(RuntimeError):
+                desktop.ensure_service(options, start_background=False)
+        start.assert_not_called()
+
     def test_nested_children_share_the_remaining_deadline(self):
         environment = diagnostics.startup_environment()
         with patch.dict(os.environ, environment):

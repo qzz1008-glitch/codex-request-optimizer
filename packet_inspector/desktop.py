@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 import ctypes
 from ctypes import wintypes
 import json
@@ -52,16 +53,16 @@ def start_process(arguments):
                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
 
 
-def ensure_service(options):
+def ensure_service(options, *, start_background=True):
     trace = StartupTrace(options.data_dir, "desktop")
     try:
-        return _ensure_service(options, trace)
+        return _ensure_service(options, trace, start_background=start_background)
     except Exception as exc:
         trace.fail(exc)
         raise
 
 
-def _ensure_service(options, trace):
+def _ensure_service(options, trace, *, start_background=True):
     child = None
     trace.step("service.wait", port=options.port)
 
@@ -69,6 +70,10 @@ def _ensure_service(options, trace):
         health = local_api(options.port, "/health")
         if health.get("app") != "codex-packet-inspector":
             raise RuntimeError("此端口被其他程序占用，请先释放端口。")
+        if not start_background:
+            from .router import PROTOCOL
+            if health.get("router_protocol") != PROTOCOL:
+                raise RuntimeError("此端口未由中转入口管理。")
         status = local_api(options.port, "/api/status")
         if Path(status["data_dir"]).resolve() != options.data_dir.resolve():
             raise RuntimeError("此端口正在使用另一个数据目录。")
@@ -96,7 +101,8 @@ def _ensure_service(options, trace):
         return RuntimeError("后台服务未能启动，请查看日志目录中的 startup 文件夹。")
 
     return wait_for_startup(ready, startup_wait_seconds(),
-        errors=(URLError, TimeoutError, ConnectionError, OSError), timeout=failed, on_retry=retry, interval=.15)
+        errors=(URLError, TimeoutError, ConnectionError, OSError), timeout=failed,
+        on_retry=retry if start_background else None, interval=.15)
 
 
 def tray_available(data_dir, status):
@@ -180,7 +186,7 @@ class SingleWindow:
                 setattr(self, name, None)
 
 
-def run(arguments):
+def run(arguments, *, entry_window=None, prepare_entry=None):
     if os.name != "nt":
         raise RuntimeError("桌面窗口当前支持 Windows。其他平台可使用 --background 启动服务。")
     parser = argument_parser()
@@ -201,7 +207,7 @@ def run(arguments):
                 or not options.desktop_check_ui.resolve().is_relative_to(options.data_dir.resolve())):
             raise ValueError("测试前端只允许用于隔离的开发版桌面验证。")
         ui_dir = validate_ui_dir(options.desktop_check_ui.resolve())
-    instance = SingleWindow(options.data_dir)
+    instance = entry_window if entry_window is not None else SingleWindow(options.data_dir)
     ui = None
     try:
         if instance.existing:
@@ -210,13 +216,27 @@ def run(arguments):
             elif not options.tray_preload:
                 instance.signal()
             return 0
+        entry = None
+        if prepare_entry is not None:
+            # The installed shortcut already owns this window. Prepare the
+            # entry while WebView starts, then navigate only after validation.
+            launcher = ThreadPoolExecutor(max_workers=1, thread_name_prefix="entry-start")
+            entry = launcher.submit(prepare_entry)
+            launcher.shutdown(wait=False)
         profile = resolve_profile(profile, options.data_dir)
         if not options.desktop_check_ui:
             ui_dir = profile.ui_dir
-        status = ensure_service(options)
-        remember_profile(options.data_dir, profile)
-        ui = DesktopUI(options.port, ui_dir=ui_dir, live_reload=profile.development,
-                       exit_data_dir=options.data_dir).start()
+        status = {}
+
+        def start_ui():
+            nonlocal status, ui
+            status = ensure_service(options, start_background=entry is None)
+            remember_profile(options.data_dir, profile)
+            ui = DesktopUI(options.port, ui_dir=ui_dir, live_reload=profile.development,
+                           exit_data_dir=options.data_dir).start()
+
+        if entry is None:
+            start_ui()
         import webview
 
         webview.settings["ALLOW_DOWNLOADS"] = True
@@ -225,16 +245,12 @@ def run(arguments):
         # Explicitly require Chromium. Do not fall back to an external browser or IE.
         title = "Codex 请求优化器 · 开发版" if profile.development else "Codex 请求优化器"
         chrome = WindowChrome()
-        main_loaded = not (options.tray_panel or options.tray_preload)
+        main_loaded = entry is None and not (options.tray_panel or options.tray_preload)
         window = webview.create_window(title, ui.ui_url if main_loaded else "about:blank",
                                        **window_geometry(ui_dir), maximized=False,
                                        js_api=chrome, text_select=True, background_color="#f5f7fb", hidden=bool(options.desktop_check or not main_loaded))
         chrome._bind(window)
-        loaded = threading.Event()
         lifecycle = WindowLifecycle(window, lambda: tray_available(options.data_dir, status))
-        ui.exit_callback = lifecycle.exit
-        window.events.closed += ui.exit_requests.window_closed
-        window.events.loaded += loaded.set
 
         def show():
             nonlocal main_loaded
@@ -248,16 +264,35 @@ def run(arguments):
                 pass
 
         from .tray_panel import TrayPanel
-        panel = TrayPanel(webview.create_window, ui.ui_url, options.data_dir, show, ready_changed=instance.set_panel_ready)
-        window.events.closed += panel.destroy
+        startup_error = None
 
         def workers():
+            nonlocal main_loaded, startup_error
+            if entry is not None:
+                try:
+                    port = entry.result()
+                    if port is None:
+                        lifecycle.exit()  # The active build changed during startup.
+                        return
+                    options.port = port
+                    start_ui()
+                    window.load_url(ui.ui_url)
+                    main_loaded = True
+                    lifecycle.show()
+                except Exception as exc:
+                    startup_error = exc
+                    lifecycle.exit()
+                    return
+            ui.exit_callback = lifecycle.exit
+            window.events.closed += ui.exit_requests.window_closed
+            panel = TrayPanel(webview.create_window, ui.ui_url, options.data_dir, show, ready_changed=instance.set_panel_ready)
+            window.events.closed += panel.destroy
             threading.Thread(target=instance.watch, args=(show, lifecycle.exit, panel.show), daemon=True).start()
             if options.tray_panel:
                 panel.show()
             else:
                 panel.prepare()
-            if not lifecycle.wait_loaded(loaded):
+            if not lifecycle.wait_loaded(window.events.loaded):
                 if options.desktop_check and not lifecycle.exiting.is_set() and not lifecycle.closed.is_set():
                     options.desktop_check.write_text(json.dumps({"passed": False, "error": "page_load_timeout"}), encoding="utf-8")
                     lifecycle.exit()
@@ -279,6 +314,8 @@ def run(arguments):
                     return
 
         webview.start(workers, gui="edgechromium", private_mode=True, debug=False, icon=str(APP_ICON))
+        if startup_error is not None:
+            raise startup_error
         return 0
     finally:
         if ui is not None:
