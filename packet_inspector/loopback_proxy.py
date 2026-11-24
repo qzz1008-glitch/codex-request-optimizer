@@ -1,16 +1,28 @@
-"""Repair only local-address proxy exclusions, at an explicit connect action."""
+"""Repair local-address proxy exclusions used by Codex."""
 import ctypes
 from ctypes import wintypes
 import os
+from pathlib import Path
+import re
+import tempfile
 import threading
 
 
 WINDOWS_LOCAL = ("127.0.0.1", "localhost", "[::1]")
 ENV_LOCAL = (*WINDOWS_LOCAL, "::1")
+PROXY_ENV_NAMES = ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY")
 INTERNET_SETTINGS = r"Software\Microsoft\Windows\CurrentVersion\Internet Settings"
 MACHINE_ENVIRONMENT = r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment"
 PROXY_POLICY = r"Software\Policies\Microsoft\Windows\CurrentVersion\Internet Settings"
 GUARD = threading.Lock()
+# Consume complete assignments, including quoted multiline values, so a line
+# inside another setting's value cannot be mistaken for NO_PROXY.
+_DOTENV_QUOTED = re.compile(r"""'[^']*'|"(?:\\[^\r\n]|[^"\\])*["]""")
+_DOTENV_ASSIGNMENT = re.compile(
+    r"^[ \t]*(?:export[ \t]+)?(?P<key>[a-zA-Z_][a-zA-Z0-9_.]*)[ \t]*=[ \t]*"
+    rf"""(?P<value>(?:(?!#)(?:{_DOTENV_QUOTED.pattern}|\\[^\r\n]|[^ \t\r\n'"\\])+)?)[ \t]*(?:#[^\r\n]*)?\r?$""",
+    re.M,
+)
 
 
 class ProxyRepairError(ValueError):
@@ -30,6 +42,74 @@ def append_entries(original, entries, separator):
             result += (separator if result and not result.endswith(separator) else "") + entry
             current.add(entry.lower())
     return result
+
+
+def _dotenv_change(path, before, proxy_configured, relay_host):
+    try:
+        original = path.read_bytes()
+    except FileNotFoundError:
+        return None
+    text = original.decode("utf-8-sig", errors="surrogateescape")
+    settings = {match["key"].upper(): match for match in _DOTENV_ASSIGNMENT.finditer(text)
+                if not any("\udc80" <= char <= "\udcff" for char in match["value"])}
+    override = settings.get("NO_PROXY")
+    dotenv_proxy = any(name in settings and settings[name]["value"] not in ("", "''", '""')
+                       for name in PROXY_ENV_NAMES)
+    if override is not None and (proxy_configured or dotenv_proxy):
+        start, end = override.span("value")
+        if _DOTENV_QUOTED.fullmatch(override["value"]):
+            start += 1
+            end -= 1
+        value = text[start:end]
+        replacement = append_entries(value, (relay_host,), ",")
+        if replacement == value:
+            return None
+        if not value and text[end:end + 1] == "#":
+            replacement += " "
+        edited = text[:start] + replacement + text[end:]
+    elif override is None and dotenv_proxy:
+        # A fresh desktop launch inherits the saved user value over the system
+        # value. A launch from a shell may only have a process value.
+        saved = before["user_no_proxy"] or before["machine_no_proxy"]
+        value = saved[0] if saved is not None else before["process_no_proxy"] or ""
+        if append_entries(value, (relay_host,), ",") == value:
+            return None
+        # Let Codex expand the actual inherited value on each start. Copying
+        # a registry or Optimizer value here would freeze its current rules.
+        newline = "\r\n" if "\r\n" in text else "\n"
+        prefix = "" if not text or text.endswith("\n") else newline
+        edited = text + prefix + 'NO_PROXY="${NO_PROXY},' + relay_host + '"' + newline
+    else:
+        return None
+    encoding = "utf-8-sig" if original.startswith(b"\xef\xbb\xbf") else "utf8"
+    return original, edited.encode(encoding, errors="surrogateescape")
+
+
+def _replace_dotenv(path, original, edited):
+    # Resolve an existing link so an atomic replacement does not overwrite it.
+    # Use ReplaceFile on Windows to retain the original file's access controls.
+    path = path.resolve(strict=True)
+    stream = tempfile.NamedTemporaryFile(dir=path.parent, prefix=".env.", suffix=".tmp", delete=False)
+    staging = Path(stream.name)
+    try:
+        with stream:
+            stream.write(edited)
+            stream.flush()
+            os.fsync(stream.fileno())
+        if path.read_bytes() != original:
+            raise ValueError("Codex .env changed during connection")
+        if os.name == "nt":
+            replace = ctypes.WinDLL("kernel32", use_last_error=True).ReplaceFileW
+            replace.argtypes = [wintypes.LPCWSTR] * 3 + [wintypes.DWORD, ctypes.c_void_p, ctypes.c_void_p]
+            replace.restype = wintypes.BOOL
+            if not replace(str(path), str(staging), None, 0, None, None):
+                raise ctypes.WinError(ctypes.get_last_error())
+        else:
+            staging.replace(path)
+        if path.read_bytes() != edited:
+            raise ValueError("could not verify Codex .env update")
+    finally:
+        staging.unlink(missing_ok=True)
 
 
 class _OptionValue(ctypes.Union):
@@ -94,11 +174,10 @@ class WindowsProxySettings:
         for entry in (registry_bypass, user_no_proxy, machine_no_proxy):
             if entry and (entry[1] not in {reg.REG_SZ, reg.REG_EXPAND_SZ} or not isinstance(entry[0], str)):
                 raise ValueError("unsupported proxy exclusion value type")
-        env_names = ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY")
-        process_proxy = any(os.environ.get(name) for name in env_names)
+        process_proxy = any(os.environ.get(name) for name in PROXY_ENV_NAMES)
         registered_proxy = False
         for root, path in ((reg.HKEY_CURRENT_USER, "Environment"), (reg.HKEY_LOCAL_MACHINE, MACHINE_ENVIRONMENT)):
-            registered_proxy |= any(bool((self._registry_value(root, path, name) or ("",))[0]) for name in env_names)
+            registered_proxy |= any(bool((self._registry_value(root, path, name) or ("",))[0]) for name in PROXY_ENV_NAMES)
         return {"native": native, "registry_bypass": registry_bypass,
                 "user_no_proxy": user_no_proxy, "machine_no_proxy": machine_no_proxy,
                 "process_no_proxy": os.environ.get("NO_PROXY"), "process_proxy": process_proxy,
@@ -167,9 +246,12 @@ class WindowsProxySettings:
         return result
 
 
-def repair_loopback_proxy(backend=None):
+def repair_loopback_proxy(backend=None, *, codex_home=None, relay_host=None, codex_only=False):
     if backend is None and os.name != "nt":
         return {"state": "not_applicable", "changed": False}
+    dotenv = Path(codex_home) / ".env" if codex_home is not None and relay_host in ENV_LOCAL else None
+    if codex_only and (dotenv is None or not dotenv.exists()):
+        return {"state": "not_needed", "changed": False}
     report = {"state": "checking", "changed": False, "changes": []}
     with GUARD:
         try:
@@ -180,8 +262,15 @@ def repair_loopback_proxy(backend=None):
             pac = bool(native["pac"] or native["flags"] & 12)
             report["sources"] = {"windows_manual": manual, "windows_auto_proxy": pac,
                                  "environment": bool(before["environment_proxy"])}
-            if not (manual or pac or before["environment_proxy"]):
-                report["state"] = "not_needed"
+            proxy_configured = bool(manual or pac or before["environment_proxy"])
+            edit = _dotenv_change(dotenv, before, proxy_configured, relay_host) if dotenv is not None else None
+            if edit is not None:
+                report["changes"].append({"setting": "codex_dotenv_NO_PROXY", "address": relay_host, "applied": False})
+                _replace_dotenv(dotenv, *edit)
+                report["changes"][-1]["applied"] = True
+                report["changed"] = True
+            if codex_only or not proxy_configured:
+                report["state"] = "repaired" if report["changed"] else "not_needed"
                 return report
             # An explicit environment NO_PROXY takes precedence over Windows
             # bypass rules. Repair both when that configuration is already used.
@@ -224,7 +313,7 @@ def repair_loopback_proxy(backend=None):
                     backend.write_process_no_proxy(before, process_value)
                     report["changes"][-1]["applied"] = True
                     report["changed"] = True
-            report["notifications"] = backend.notify(proxy_changed, environment_changed) if report["changed"] else {}
+            report["notifications"] = backend.notify(proxy_changed, environment_changed) if proxy_changed or environment_changed else {}
             report["state"] = "repaired" if report["changed"] else "ok"
             return report
         except Exception as exc:

@@ -9,6 +9,8 @@ import unittest
 from unittest.mock import patch
 
 from packet_inspector.server import InspectorServer
+from packet_inspector.loopback_proxy import repair_loopback_proxy
+from tests.test_loopback_proxy import FakeWindows
 from tests.test_wsl_connection import FakeWsl
 
 
@@ -23,7 +25,8 @@ class ConnectionResumeTests(unittest.TestCase):
         self.server = self.make_server()
         self.resume = self.server.connection_resume
         self.resume.ready = True
-        self.repair = patch("packet_inspector.server.repair_loopback_proxy")
+        self.repair = patch("packet_inspector.server.repair_loopback_proxy",
+                            return_value={"state": "not_needed", "changed": False})
         self.repair_mock = self.repair.start()
         self.addCleanup(self.repair.stop)
         self.cloud_probe = patch("packet_inspector.network_diagnostics.NetworkDiagnostics._probe")
@@ -60,7 +63,7 @@ class ConnectionResumeTests(unittest.TestCase):
         self.assertEqual(self.server.settings["zstd_level"], 16)
         self.assertEqual(self.server.settings["budget_bytes"], 812000)
         self.assertEqual(tomllib.loads(self.config.read_text(encoding="utf8"))["model_auto_compact_token_limit"], 250000)
-        self.repair_mock.assert_not_called()
+        self.repair_mock.assert_called_once_with(codex_home=self.config.parent, relay_host="127.0.0.1", codex_only=True)
         self.cloud_mock.assert_not_called()
         report = json.loads((self.root / "data" / "connection-resume.json").read_text(encoding="utf8"))
         self.assertEqual(report["id"], event["id"])
@@ -84,6 +87,26 @@ class ConnectionResumeTests(unittest.TestCase):
         self.resume.step()
         self.assertFalse(self.resume.status()["result"]["reload_required"])
         self.assertEqual(before, (self.config.read_bytes(), self.backend.config_path.read_bytes()))
+
+    def test_connected_startup_repairs_dotenv_without_rewriting_provider_or_windows_proxy(self):
+        self.connected()
+        self.resume.step()
+        snapshot = self.config.read_bytes()
+        dotenv = self.config.parent / ".env"
+        dotenv.write_bytes(b"HTTP_PROXY=http://corp-proxy.invalid:8080\nNO_PROXY=localhost\n")
+        windows = FakeWindows()
+        self.repair_mock.side_effect = lambda **kwargs: repair_loopback_proxy(windows, **kwargs)
+        self.server.connection_reload_required = False
+        self.resume.schedule()
+        self.resume.step()
+        result = self.resume.status()["result"]
+        self.assertEqual(self.config.read_bytes(), snapshot)
+        self.assertTrue(result["active"])
+        self.assertTrue(result["local_reload_required"])
+        self.assertTrue(result["loopback_proxy"]["changed"])
+        self.assertTrue(any(item["key"] == "connection" for item in result["restart_notice"]["items"]))
+        self.assertTrue(dotenv.read_bytes().endswith(b"NO_PROXY=localhost,127.0.0.1\n"))
+        self.assertFalse(windows.writes)
 
     def test_upgrade_reconciliation_migrates_old_provider_and_requests_restart_without_a_toml_change(self):
         self.connected()

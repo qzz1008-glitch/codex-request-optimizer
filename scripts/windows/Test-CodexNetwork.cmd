@@ -78,32 +78,34 @@ function Get-ProxyContext {
     $registry = Get-ItemProperty -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings' -ErrorAction SilentlyContinue
     $environment = @{}
     foreach ($item in Get-ChildItem Env:) {
-        if ($item.Name -match '^(\w+)_proxy$' -and $item.Value) { $environment[$Matches[1].ToLowerInvariant()] = $item.Value }
+        if ($item.Name -match '^(https?|no|all|node_use_env)_proxy$' -and $item.Value) { $environment[$Matches[1].ToLowerInvariant()] = $item.Value }
     }
-    $map = @{}
-    $environmentProxy = @($environment.Keys | Where-Object { $_ -ne 'no' }).Count -gt 0
-    $source = 'direct'
-    if ($environmentProxy) {
-        foreach ($key in $environment.Keys) { if ($key -ne 'no') { $map[$key] = $environment[$key] } }
-        $source = 'environment'
-    } elseif ($registry -and $registry.ProxyEnable -and $registry.ProxyServer) {
+    $windows = @{}
+    if ($registry -and $registry.ProxyEnable -and $registry.ProxyServer) {
         $server = [string]$registry.ProxyServer
         if ($server.Contains('=')) {
             foreach ($part in $server.Split(';')) {
-                if ($part -match '^\s*(\w+)=(.+?)\s*$') { $map[$Matches[1].ToLowerInvariant()] = $Matches[2] }
+                if ($part -match '^\s*(https?)=(.+?)\s*$') { $windows[$Matches[1].ToLowerInvariant()] = $Matches[2] }
             }
-        } else { $map['http'] = $server; $map['https'] = $server }
-        $source = 'windows_manual'
+        } else { $windows['http'] = $server; $windows['https'] = $server }
+    }
+    $map = @{}
+    $sources = @{}
+    foreach ($scheme in @('http', 'https')) {
+        if ($environment[$scheme]) {
+            $map[$scheme] = $environment[$scheme]; $sources[$scheme] = 'environment'
+        } elseif ($windows[$scheme]) {
+            $map[$scheme] = $windows[$scheme]; $sources[$scheme] = 'windows_manual'
+        }
     }
     $safeEnvironment = @{}
     foreach ($key in $environment.Keys) {
         $value = [string]$environment[$key]
-        if ($key -ne 'no' -and $value -notmatch '^\w+://') { $value = 'http://' + $value }
+        if ($key -in @('http', 'https', 'all') -and $value -notmatch '^\w+://') { $value = 'http://' + $value }
         $safeEnvironment[$key] = Protect-Text $value
     }
     return @{
-        map = $map; source = $source; environment = $safeEnvironment
-        bypass_mode = $(if ($environment.Count) { 'environment' } else { 'windows' })
+        map = $map; sources = $sources; environment = $safeEnvironment
         no_proxy = [string]$environment['no']
         windows_enabled = [bool]($registry -and $registry.ProxyEnable)
         windows_server = Protect-Text $(if ($registry) { $registry.ProxyServer } else { '' })
@@ -118,10 +120,12 @@ function Get-Route([uri]$Uri, [hashtable]$Context, [switch]$Direct) {
     $bypass = [bool]$Direct
     $reason = $(if ($Direct) { 'explicit_direct' } else { 'no_proxy_for_scheme' })
     $matchedRule = ''
+    $source = $Context.sources[$Uri.Scheme]
+    if (-not $source) { $source = 'direct' }
     $hostName = $Uri.Host.Trim('[', ']').ToLowerInvariant()
     $parsedIP = $null
     if ([Net.IPAddress]::TryParse($hostName, [ref]$parsedIP)) { $hostName = $parsedIP.ToString() }
-    if (-not $bypass -and $Context.bypass_mode -eq 'environment') {
+    if (-not $bypass -and $Context.no_proxy) {
         foreach ($part in $Context.no_proxy.Split(',')) {
             $entry = $part.Trim().ToLowerInvariant()
             if ($entry -eq '*') { $bypass = $true; $matchedRule = $part.Trim(); break }
@@ -136,7 +140,7 @@ function Get-Route([uri]$Uri, [hashtable]$Context, [switch]$Direct) {
                 $bypass = $true; $matchedRule = $part.Trim(); break
             }
         }
-    } elseif (-not $bypass) {
+    } elseif (-not $bypass -and $source -eq 'windows_manual') {
         foreach ($part in $Context.windows_bypass.Split(';')) {
             $entry = $part.Trim()
             if (-not $entry) { continue }
@@ -159,9 +163,9 @@ function Get-Route([uri]$Uri, [hashtable]$Context, [switch]$Direct) {
         $safeProxy = $proxy
         $reason = 'proxy_for_' + $Uri.Scheme
     }
-    if ($matchedRule) { $reason = $(if ($Context.bypass_mode -eq 'environment') { 'no_proxy_match' } else { 'windows_bypass_match' }) }
+    if ($matchedRule) { $reason = $(if ($Context.no_proxy) { 'no_proxy_match' } else { 'windows_bypass_match' }) }
     return @{ proxy = $proxy; mode = $(if ($proxy) { 'proxy' } else { 'direct' }); endpoint = $safeProxy
-        bypass = $bypass; source = $Context.source; reason = $reason; matched_rule = $matchedRule }
+        bypass = $bypass; source = $source; reason = $reason; matched_rule = $matchedRule }
 }
 
 function Get-ExceptionDetails([Exception]$Exception) {

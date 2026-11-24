@@ -15,7 +15,6 @@ import ssl
 import sys
 import threading
 import time
-from urllib import request as urllib_request
 from urllib.error import HTTPError
 from urllib.parse import parse_qs, urlsplit
 from urllib.request import Request, build_opener, HTTPRedirectHandler, ProxyHandler
@@ -534,6 +533,10 @@ class InspectorServer(ThreadingHTTPServer):
             self.provider_next_scan = time.monotonic() + 30
             return result
 
+    def repair_local_loopback(self, *, codex_only=False):
+        return repair_loopback_proxy(codex_home=self.link.config.parent,
+                                     relay_host=urlsplit(self.endpoint).hostname, codex_only=codex_only)
+
     def set_connection(self, connected):
         with self.provider_guard:
             if self.sharing_handover.pending:
@@ -547,7 +550,7 @@ class InspectorServer(ThreadingHTTPServer):
             result = None
             try:
                 if connected:
-                    proxy_repair = repair_loopback_proxy()
+                    proxy_repair = self.repair_local_loopback()
                     self.save_settings({**self.settings, "auto_detect_providers": True})
                     result = self.sync_providers(notify_restart=False)
                     result["local_reload_required"] = bool(result.get("reload_required") or proxy_repair["changed"])
@@ -587,7 +590,7 @@ class InspectorServer(ThreadingHTTPServer):
             except Exception as exc:
                 if result and result.get("local_reload_required"):
                     self._record_connection_notice(result)
-                elif proxy_repair and proxy_repair.get("changed"):
+                elif (proxy_repair or getattr(exc, "report", {})).get("changed"):
                     self.restart_notices.mark("connection")
                 if connected:
                     self.network_diagnostics.connection(before, self._diagnostic_profile(),

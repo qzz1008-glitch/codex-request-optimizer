@@ -6,6 +6,7 @@ import threading
 import time
 
 from .network_diagnostics import safe_text
+from .loopback_proxy import ProxyRepairError
 from .providers import ProviderManager
 from . import VERSION
 
@@ -157,6 +158,18 @@ class ConnectionResume:
                     server.connection_reload_required |= reload_required
                     self.deferred_wsl = {item["distribution"] for item in wsl.get("deferred", [])}
                     self.next_wsl_scan = time.monotonic() + 30
+                    if not server.sharing.remote:
+                        try:
+                            loopback = server.repair_local_loopback(codex_only=True)
+                        except ProxyRepairError as exc:
+                            result["loopback_proxy"] = exc.report
+                            raise
+                        if loopback.get("changes"):
+                            result["loopback_proxy"] = loopback
+                        if loopback["changed"]:
+                            result.update(changed=True, local_reload_required=True, reload_required=True)
+                            server.connection_reload_required = True
+                            server.restart_notices.mark("connection")
                 elif not server.settings["auto_detect_providers"] and not server.sharing.remote:
                     migration = ProviderManager(server.link, server.endpoint, server.settings["upstream"]).reconcile_sessions(
                         server.settings["provider_routes"])

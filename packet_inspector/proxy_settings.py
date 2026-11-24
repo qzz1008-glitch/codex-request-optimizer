@@ -17,19 +17,36 @@ SETTINGS_KEY = "outbound-proxy-settings-v1"
 MAX_PROXY_SETTINGS_BYTES = 64 * 1024
 DEFAULT_BYPASS = "localhost,127.0.0.1,::1"
 EMPTY_MANUAL = {"address": "", "bypass": DEFAULT_BYPASS}
+PROXY_SCHEMES = ("http", "https")
 
 
-def system_proxies():
-    values = urllib_request.getproxies()
-    # NO_PROXY by itself must not hide Windows' registered system proxy.
-    if not (set(values) - {"no"}):
-        registry = getattr(urllib_request, "getproxies_registry", lambda: {})()
-        values = {**registry, **values}
-    if os.name == "nt" and not urllib_request.getproxies_environment() and (values.get("http") or values.get("https")):
-        # getproxies_registry omits ProxyOverride; snapshot it for requests
-        # instead of consulting unrelated process settings later in flight.
-        values = {**values, "no": _windows_bypass()}
+def system_proxies(environment=None):
+    if environment is None:
+        environment = urllib_request.getproxies_environment()
+    # urllib also collects switches like NODE_USE_ENV_PROXY by suffix.
+    values = {scheme: environment[scheme] for scheme in PROXY_SCHEMES if environment.get(scheme)}
+    windows = {}
+    read_registry = getattr(urllib_request, "getproxies_registry", None)
+    if read_registry and len(values) < len(PROXY_SCHEMES):
+        registry = read_registry()
+        windows = {scheme: registry[scheme] for scheme in PROXY_SCHEMES
+                   if scheme not in values and registry.get(scheme)}
+    if environment.get("no"):
+        values["no"] = environment["no"]
+    elif windows and os.name == "nt":
+        exclusions = _windows_bypass()
+        if values:
+            values.update({f"no_{scheme}": exclusions for scheme in windows})
+        else:
+            values["no"] = exclusions
+    values.update(windows)
     return values
+
+
+def proxy_configuration_source(proxies, environment):
+    sources = {"environment" if environment.get(scheme) else "windows_registry"
+               for scheme in PROXY_SCHEMES if proxies.get(scheme)}
+    return "mixed" if len(sources) > 1 else next(iter(sources), "direct")
 
 
 def _windows_bypass():
@@ -83,7 +100,7 @@ def proxy_details(value):
         return {"address": "", "invalid": True}
 
 
-def bypass_proxy(host, proxies):
+def bypass_proxy(host, proxies, scheme=None):
     """Use the selected snapshot's exclusions instead of unrelated NO_PROXY."""
     try:
         parsed = urlsplit("//" + host)
@@ -92,7 +109,8 @@ def bypass_proxy(host, proxies):
         hostname = host.lower()
     if hostname in {"localhost", "127.0.0.1", "::1"}:
         return True
-    entries = re.split(r"[,;]", proxies.get("no", ""))
+    exclusions = proxies.get(f"no_{scheme}", proxies.get("no", ""))
+    entries = re.split(r"[,;]", exclusions)
     for entry in entries:
         entry = entry.strip().lower()
         if not entry:
@@ -109,14 +127,15 @@ def bypass_proxy(host, proxies):
 class SelectedProxyHandler(urllib_request.ProxyHandler):
     """ProxyHandler with the chosen configuration's own bypass policy."""
     def __init__(self, proxies, context=None):
-        super().__init__(proxies)
+        super().__init__({scheme: proxies[scheme] for scheme in PROXY_SCHEMES if proxies.get(scheme)})
+        self.proxies = proxies
         self.context = context
 
     def proxy_open(self, req, proxy, type):
         destination = urlsplit(req.full_url)
         destination_host = req.host + (":" + str(443 if destination.scheme == "https" else 80)
                                        if req.host and destination.port is None else "")
-        if destination_host and bypass_proxy(destination_host, self.proxies):
+        if destination_host and bypass_proxy(destination_host, self.proxies, destination.scheme):
             return None
         try:
             parsed = urlsplit(proxy if "://" in proxy else "http://" + proxy)
@@ -247,13 +266,12 @@ class ProxySettings:
         saved = self.read()
         detected = dict(self.auto_proxies())
         environment = urllib_request.getproxies_environment()
-        source = ("environment" if environment.get("http") or environment.get("https") else "windows_registry"
-                  if os.name == "nt" and (detected.get("http") or detected.get("https")) else "direct")
+        source = proxy_configuration_source(detected, environment)
         system = self.system_details()
         selected, mode = self._selection(saved, detected)
         return {"mode": mode, "manual": saved["manual"],
                 "detected": {**self._view(detected), "source": source,
                     "pac_url": system.get("windows_pac_url") or system.get("AutoConfigURL") or "",
                     "auto_discovery": bool(system.get("windows_auto_detect") or system.get("AutoDetect")),
-                    "unsupported_all_proxy": bool(detected.get("all"))},
+                    "unsupported_all_proxy": bool(environment.get("all"))},
                 "effective": self._view(selected)}

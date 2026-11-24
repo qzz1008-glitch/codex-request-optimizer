@@ -12,11 +12,11 @@ import threading
 import time
 from urllib.error import HTTPError
 from urllib.parse import urlsplit
-from urllib.request import (HTTPRedirectHandler, ProxyHandler, Request, build_opener,
-                            getproxies)
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from . import VERSION
 from .locking import file_lock
+from .proxy_settings import SelectedProxyHandler, system_proxies
 from .router import atomic_json
 
 ASSET = "CodexPacketInspector.exe"
@@ -66,13 +66,7 @@ class GitHubRedirect(HTTPRedirectHandler):
 
 
 def github_opener():
-    from urllib import request
-    proxies = getproxies()
-    if not (set(proxies) - {"no"}):
-        registry = getattr(request, "getproxies_registry", None)
-        if registry:
-            proxies = {**registry(), **proxies}
-    return build_opener(ProxyHandler(proxies), GitHubRedirect())
+    return build_opener(SelectedProxyHandler(system_proxies()), GitHubRedirect())
 
 
 class Updates:

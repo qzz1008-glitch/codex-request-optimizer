@@ -149,6 +149,59 @@ class ProxyRepairTests(unittest.TestCase):
         self.assertIsInstance(snapshot["native"]["bypass"], str)
 
 
+class CodexDotenvRepairTests(unittest.TestCase):
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.path = Path(directory.name) / ".env"
+        self.backend = FakeWindows(native={"flags": 1, "proxy": "", "bypass": "", "pac": False},
+                                   registry_bypass=None, user_no_proxy=("127.0.0.1,windows.internal", 1))
+
+    def repair(self, **kwargs):
+        return repair_loopback_proxy(self.backend, codex_home=self.path.parent,
+                                     relay_host="127.0.0.1", **kwargs)
+
+    def test_effective_dotenv_rule_is_updated_with_existing_windows_bypass(self):
+        text = (
+            "# 企业代理\r\n"
+            "ALL_PROXY=http://local-proxy.invalid:8080\r\n"
+            "NO_PROXY=old.internal\r\n"
+            'export no_proxy = "localhost,::1,.internal" # keep\r\n'
+            'UNRELATED="another setting\r\nNO_PROXY=example.invalid\r\n"\r\n'
+        )
+        self.path.write_bytes(text.encode("utf-8-sig"))
+        before = self.backend.read()
+        result = self.repair()
+        expected = text.replace(".internal\" # keep", ".internal,127.0.0.1\" # keep").encode("utf-8-sig")
+        self.assertEqual(self.path.read_bytes(), expected)
+        self.assertEqual(result["changes"], [{"setting": "codex_dotenv_NO_PROXY",
+                                              "address": "127.0.0.1", "applied": True}])
+        self.assertEqual(self.backend.read(), before)
+        self.assertFalse(self.repair()["changed"])
+        self.assertEqual(list(self.path.parent.iterdir()), [self.path])
+
+    def test_proxy_only_dotenv_inherits_existing_rules_and_adds_only_the_missing_address(self):
+        initial = b"HTTP_PROXY=http://local-proxy.invalid:8080"
+        self.path.write_bytes(initial)
+        self.assertFalse(self.repair(codex_only=True)["changed"])
+        self.assertEqual(self.path.read_bytes(), initial)
+        self.backend.value["user_no_proxy"] = ("other.internal", 1)
+        self.assertTrue(self.repair(codex_only=True)["changed"])
+        self.assertEqual(self.path.read_bytes(), initial + b'\nNO_PROXY="${NO_PROXY},127.0.0.1"\n')
+        self.assertFalse(self.backend.writes)
+
+    def test_empty_value_keeps_the_comment_and_unrelated_dotenv_is_left_in_place(self):
+        initial = b"# no settings here\nOTHER=single-value\n"
+        self.path.write_bytes(initial)
+        self.assertFalse(self.repair(codex_only=True)["changed"])
+        self.assertEqual(self.path.read_bytes(), initial)
+        self.path.write_bytes(b"HTTP_PROXY=http://local-proxy.invalid:8080\nNO_PROXY=# old comment\n")
+        self.assertTrue(self.repair(codex_only=True)["changed"])
+        self.assertTrue(self.path.read_bytes().endswith(b"NO_PROXY=127.0.0.1 # old comment\n"))
+        self.path.write_bytes(b'ALL_PROXY=http://local-proxy.invalid:8080\nNO_PROXY="*"\n')
+        self.assertFalse(self.repair(codex_only=True)["changed"])
+
+
 class ConnectRepairIntegrationTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -170,7 +223,7 @@ class ConnectRepairIntegrationTests(unittest.TestCase):
         self.server.auto_sync_providers()
         self.repair.assert_not_called()
         self.server.set_connection(True)
-        self.repair.assert_called_once()
+        self.repair.assert_called_once_with(codex_home=self.config.parent, relay_host="127.0.0.1", codex_only=False)
         self.server.set_connection(False)
         self.server.auto_sync_providers()
         self.assertEqual(self.repair.call_count, 1)

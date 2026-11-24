@@ -98,13 +98,13 @@ class StandaloneNetworkProbeTests(unittest.TestCase):
     def test_proxy_selection_error_classification_and_redaction(self):
         result = self.run_ps(r'''
 function Assert($Value, $Message) { if (-not $Value) { throw $Message } }
-$ctx = @{ map = @{ https = 'http://user:password@regional-proxy.example:8080'; http = 'regional-proxy.example:8080' }; source = 'environment'; bypass_mode = 'environment'; no_proxy = '127.0.0.1,localhost,[::1],.example.org'; windows_bypass = '' }
+$ctx = @{ map = @{ https = 'http://user:password@regional-proxy.example:8080'; http = 'regional-proxy.example:8080' }; sources = @{ https = 'environment'; http = 'environment' }; no_proxy = '127.0.0.1,localhost,[::1],.example.org'; windows_bypass = '' }
 $route = Get-Route ([uri]'https://chatgpt.com/backend-api/codex/responses') $ctx
 Assert ($route.endpoint -eq 'http://regional-proxy.example:8080/') 'Proxy credentials must be removed'
 Assert ((Get-Route ([uri]'http://127.0.0.1:47844/health') $ctx).mode -eq 'direct') 'Loopback bypass'
 Assert ((Get-Route ([uri]'http://[::1]:47844/health') $ctx).mode -eq 'direct') 'IPv6 loopback bypass'
 Assert ((Get-Route ([uri]'https://sub.example.org/test') $ctx).mode -eq 'direct') 'NO_PROXY suffix'
-$ctx.bypass_mode = 'windows'; $ctx.windows_bypass = '127.0.0.1*;<local>'
+$ctx.sources.http = 'windows_manual'; $ctx.no_proxy = ''; $ctx.windows_bypass = '127.0.0.1*;<local>'
 Assert ((Get-Route ([uri]'http://127.0.0.1:47844/health') $ctx).mode -eq 'direct') 'Registry wildcard bypass'
 Assert ((Get-Route ([uri]'http://localhost:47844/health') $ctx).mode -eq 'direct') 'Registry local bypass'
 $r = @{ status = 403; body = '<title>HIS Proxy Notification</title>该网站上传文件受限'; headers = @{ server = 'netentsec_page_push' }; bytes = 64000; written_bytes = 64000 }
@@ -127,15 +127,36 @@ Assert ($safe -notmatch 'password|token=secret|abc123') 'Redact diagnostic text'
 ''')
         self.assertIn("PASS:", result)
 
+    def test_proxy_switch_keeps_windows_route_and_environment_only_overrides_its_scheme(self):
+        result = self.run_ps(r'''
+function Get-ItemProperty($LiteralPath, $ErrorAction) {
+    [pscustomobject]@{ ProxyEnable = 1; ProxyServer = 'windows.invalid:8080'; ProxyOverride = '*.internal'; AutoConfigURL = ''; AutoDetect = $false }
+}
+$env:NODE_USE_ENV_PROXY = '1'
+$env:NO_PROXY = '127.0.0.1'
+$https = [uri]'https://upstream.invalid/'
+$route = Get-Route $https (Get-ProxyContext)
+if ($route.source -ne 'windows_manual' -or $route.endpoint -ne 'http://windows.invalid:8080/') { throw 'Wrong Windows HTTPS route' }
+$env:HTTP_PROXY = 'http://process.invalid:8080'
+$context = Get-ProxyContext
+if ((Get-Route $https $context).source -ne 'windows_manual') { throw 'HTTP proxy hid Windows HTTPS proxy' }
+if ((Get-Route ([uri]'http://upstream.invalid/') $context).source -ne 'environment') { throw 'HTTP proxy was ignored' }
+'PASS: Windows proxy works with the Node switch and mixed settings'
+''')
+        self.assertIn("PASS:", result)
+
     def test_proxy_is_really_used_even_for_loopback(self):
         proxy, relay = self.gateway(), self.gateway()
         result = self.run_ps(f'''
-$ctx = @{{ map = @{{ http = 'http://127.0.0.1:{proxy.server_port}' }}; source = 'windows_manual'; bypass_mode = 'windows'; no_proxy = ''; windows_bypass = '' }}
+$ctx = @{{ map = @{{ http = 'http://127.0.0.1:{proxy.server_port}' }}; sources = @{{ http = 'windows_manual' }}; no_proxy = ''; windows_bypass = '' }}
 $uri = [uri]'http://127.0.0.1:{relay.server_port}/health'
 $route = Get-Route $uri $ctx
 $result = Invoke-Probe 'local_proxy' $uri $route 0 2
 if ($result.status -ne 504 -or $result.verdict -ne 'gateway_error') {{ throw ($result | ConvertTo-Json -Depth 8) }}
-'PASS: local traffic reached the explicitly selected proxy'
+$ctx.no_proxy = '127.0.0.1'
+$result = Invoke-Probe 'local_proxy' $uri (Get-Route $uri $ctx) 0 2
+if ($result.status -ne 200) {{ throw ($result | ConvertTo-Json -Depth 8) }}
+'PASS: the same proxy setup returns 504 before NO_PROXY and 200 after it'
 ''')
         self.assertIn("PASS:", result)
         self.assertEqual([r["method"] for r in proxy.calls], ["GET"])

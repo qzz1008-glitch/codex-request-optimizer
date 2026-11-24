@@ -132,7 +132,7 @@ class ProxySettingsTests(unittest.TestCase):
     def test_windows_auto_mode_snapshots_registry_exclusions_without_overriding_environment(self):
         proxy = {"https": "http://proxy.invalid:8080"}
         with patch("packet_inspector.proxy_settings.os.name", "nt"), \
-                patch("urllib.request.getproxies", return_value=proxy), \
+                patch("urllib.request.getproxies_registry", return_value=proxy, create=True), \
                 patch("urllib.request.getproxies_environment", return_value={}) as environment, \
                 patch("packet_inspector.proxy_settings._windows_bypass", return_value="<local>;*.internal") as exclusions:
             detected = system_proxies()
@@ -142,11 +142,24 @@ class ProxySettingsTests(unittest.TestCase):
             environment.return_value = {"https": proxy["https"]}
             self.assertNotIn("no", system_proxies())
             exclusions.assert_called_once()
-            environment.return_value = {"no": "*.separate"}
-            with patch("urllib.request.getproxies", return_value={"no": "*.separate"}), \
-                    patch("urllib.request.getproxies_registry", return_value=proxy, create=True):
-                self.assertEqual(system_proxies(), {**proxy, "no": "*.separate"})
+            environment.return_value = {"no": "*.separate", "node_use_env": "1"}
+            self.assertEqual(system_proxies(), {**proxy, "no": "*.separate"})
             exclusions.assert_called_once()
+
+    def test_missing_scheme_uses_windows_proxy_and_its_own_exclusions(self):
+        windows = {"http": "http://windows.invalid:8080", "https": "http://windows.invalid:8080"}
+        environment = {"http": "http://process.invalid:8080"}
+        with patch("packet_inspector.proxy_settings.os.name", "nt"), \
+                patch("urllib.request.getproxies_registry", return_value=windows, create=True), \
+                patch("packet_inspector.proxy_settings._windows_bypass", return_value="*.internal"):
+            detected = system_proxies(environment)
+            with_explicit_rules = system_proxies({**environment, "no": ".separate"})
+        self.assertEqual(detected["http"], environment["http"])
+        self.assertEqual(detected["https"], windows["https"])
+        for scheme in ("http", "https"):
+            self.assertEqual(bypass_proxy("site.internal", detected, scheme), scheme == "https")
+            self.assertFalse(bypass_proxy("site.internal", with_explicit_rules, scheme))
+            self.assertTrue(bypass_proxy("site.separate", with_explicit_rules, scheme))
 
     def test_bypass_uses_selected_rules_including_windows_forms(self):
         for host in ("127.0.0.1:47844", "[::1]:47844", "localhost:47844", "intranet", "a.internal",
@@ -161,6 +174,19 @@ class ProxyRoutingTests(unittest.TestCase):
     setUp = fixtures.OutboundRefreshTests.setUp
     select = fixtures.OutboundRefreshTests.select
     close_gateways = fixtures.OutboundRefreshTests.close_gateways
+
+    def test_auto_uses_system_gateway_for_requests_with_only_the_node_proxy_switch(self):
+        gateway = self.select(0)
+        self.relay.proxy_config.auto_proxies = system_proxies
+        with patch.dict(os.environ, {"NODE_USE_ENV_PROXY": "1", "NO_PROXY": "127.0.0.1"}, clear=True), \
+                patch("urllib.request.getproxies_registry", return_value=self.proxies, create=True):
+            opener = self.relay.outgoing_opener()
+            with opener.open(Request("http://upstream.invalid/responses", data=b"trial"), timeout=3) as response:
+                self.assertEqual(response.read(), b"aa")
+            physical_tunnel(self.relay, "upstream.invalid", 443).close()
+        self.assertEqual(opener.inspector_proxies["https"], gateway)
+        self.assertEqual(self.calls, [("a", "http://upstream.invalid/responses", b"trial"),
+                                      ("a", "CONNECT", "upstream.invalid:443")])
 
     def test_manual_configuration_overrides_process_no_proxy_and_keeps_inflight_response(self):
         auto = self.select(0)

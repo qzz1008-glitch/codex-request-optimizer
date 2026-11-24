@@ -22,7 +22,7 @@ class ProxyTester:
         hostname = "[" + target.hostname + "]" if ":" in target.hostname else target.hostname
         authority = hostname + ":" + str(target.port or (443 if target.scheme == "https" else 80))
         selected = proxies.get(target.scheme)
-        used = bool(selected) and not bypass_proxy(authority, proxies)
+        used = bool(selected) and not bypass_proxy(authority, proxies, target.scheme)
         base = {"mode": mode, "target": safe_url(upstream), "proxy_used": used,
                 "proxy": proxy_details(selected)["address"] if used else "", "bypassed": bool(selected) and not used}
         secrets = []

@@ -429,7 +429,6 @@ class DiagnosticDataTests(unittest.TestCase):
     def test_environment_reports_proxy_source_and_pac_without_credentials(self):
         env = {"https": "http://user:secret@region.example:8080"}
         with patch("urllib.request.getproxies_environment", return_value=env), \
-                patch("urllib.request.getproxies", return_value=env), \
                 patch("urllib.request.getproxies_registry", return_value={}, create=True), \
                 patch("packet_inspector.network_diagnostics.windows_proxy_settings", return_value={"AutoConfigURL": "http://pac.example/script"}):
             report = environment_snapshot(env)
@@ -437,6 +436,17 @@ class DiagnosticDataTests(unittest.TestCase):
         self.assertEqual(report["opener_proxies"]["https"], "http://region.example:8080")
         self.assertFalse(report["pac_supported_by_transport"])
         self.assertNotIn("secret", json.dumps(report))
+
+    def test_environment_reports_windows_gateway_separately_from_node_proxy_switch(self):
+        env = {"node_use_env": "1", "no": "127.0.0.1"}
+        windows = {"https": "http://windows.invalid:8080"}
+        with patch("urllib.request.getproxies_environment", return_value=env), \
+                patch("urllib.request.getproxies_registry", return_value=windows, create=True):
+            report = environment_snapshot({**windows, "no": env["no"]})
+        self.assertEqual(report["proxy_configuration_source_now"], "windows_registry")
+        self.assertTrue(report["node_use_env_proxy_set"])
+        self.assertEqual(report["environment_proxies"], {"no": "127.0.0.1"})
+        self.assertFalse(report["proxy_settings_changed_since_opener_created"])
 
     def test_retention_and_record_limits(self):
         with tempfile.TemporaryDirectory() as td:

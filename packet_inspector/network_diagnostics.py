@@ -28,7 +28,7 @@ from . import VERSION
 from .analyzer import clean_text, redact
 from .build_info import build_info
 from .process_identity import process_identity
-from .proxy_settings import bypass_proxy, system_proxies
+from .proxy_settings import bypass_proxy, proxy_configuration_source, system_proxies
 
 RETENTION_SECONDS = 14 * 86400
 MAX_RECORDS = 500
@@ -172,11 +172,10 @@ def windows_proxy_settings():
 
 def environment_snapshot(proxies):
     environment = urllib_request.getproxies_environment()
-    registry = getattr(urllib_request, "getproxies_registry", lambda: {})()
-    current = system_proxies()
-    source = "environment" if set(environment) - {"no"} else "windows_registry" if set(registry) - {"no"} else "direct"
+    current = system_proxies(environment)
+    source = proxy_configuration_source(current, environment)
     def describe(values):
-        return {key: safe_text(value, limit=2000) if key == "no" else safe_proxy(value)
+        return {key: safe_text(value, limit=2000) if key == "no" or key.startswith("no_") else safe_proxy(value)
                 for key, value in list(values.items())[:12]}
     certificates = {}
     for key in ("SSL_CERT_FILE", "SSL_CERT_DIR", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE", "CODEX_CA_CERTIFICATE", "NODE_EXTRA_CA_CERTS"):
@@ -186,7 +185,9 @@ def environment_snapshot(proxies):
             "build": build_info(),
             "architecture": platform.machine(), "python_version": platform.python_version(),
             "openssl": ssl.OPENSSL_VERSION, "proxy_configuration_source_now": source,
-            "environment_proxies": describe(environment), "windows_proxy": windows_proxy_settings(),
+            "environment_proxies": describe({key: environment[key] for key in ("http", "https", "all", "no")
+                                             if key in environment}),
+            "node_use_env_proxy_set": "node_use_env" in environment, "windows_proxy": windows_proxy_settings(),
             "opener_proxies": describe(proxies), "proxy_settings_changed_since_opener_created": current != proxies,
             "pac_supported_by_transport": False, "all_proxy_supported_by_transport": False,
             "certificate_environment": certificates,
@@ -371,7 +372,7 @@ class NetworkDiagnostics:
                 proxy = proxies.get(destination.scheme)
                 authority = destination.netloc + (":" + str(443 if destination.scheme == "https" else 80)
                                                    if destination.port is None else "")
-                bypass = bypass_proxy(authority, proxies)
+                bypass = bypass_proxy(authority, proxies, destination.scheme)
                 endpoint = urlsplit(safe_proxy(proxy)) if proxy and not bypass else destination
                 host, port = endpoint.hostname, endpoint.port or (443 if endpoint.scheme == "https" else 80)
                 if not host or (host, port) in seen or len(seen) >= 3 or time.monotonic() >= deadline:

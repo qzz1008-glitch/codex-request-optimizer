@@ -24,7 +24,7 @@ def physical_tunnel(server, host, port):
     """Use the selected physical proxy, never another shared exit selection."""
     opener = server.outgoing_opener()
     proxies = next((handler.proxies for handler in opener.handlers if isinstance(handler, ProxyHandler)), {})
-    value = None if bypass_proxy(host + ":" + str(port), proxies) else proxies.get("https")
+    value = None if bypass_proxy(host + ":" + str(port), proxies, "https") else proxies.get("https")
     if not value:
         return socket.create_connection((host, port), timeout=8)
     proxy = urlsplit(value if "://" in value else "http://" + value)

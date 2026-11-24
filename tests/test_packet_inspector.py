@@ -7,6 +7,7 @@ from contextlib import closing
 import http.client
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+import os
 from pathlib import Path
 import sqlite3
 import sys
@@ -31,21 +32,20 @@ from packet_inspector.transport import prepare_request
 
 
 class ProxyTests(unittest.TestCase):
-    def test_no_proxy_alone_keeps_windows_system_proxy(self):
-        with patch("packet_inspector.server.urllib_request.getproxies",
-                   return_value={"no": "localhost,127.0.0.1"}), \
-                patch("packet_inspector.server.urllib_request.getproxies_environment",
-                      return_value={"no": "localhost,127.0.0.1"}), \
-                patch("packet_inspector.server.urllib_request.getproxies_registry",
-                      return_value={"https": "http://system-proxy.invalid:8080"}, create=True):
-            self.assertEqual(outbound_proxies(), {
-                "https": "http://system-proxy.invalid:8080", "no": "localhost,127.0.0.1"})
+    def test_proxy_switch_and_unsupported_proxy_keep_windows_system_proxy(self):
+        no_proxy = "localhost,127.0.0.1"
+        gateway = "http://system-proxy.invalid:8080"
+        for extra in ({}, {"NODE_USE_ENV_PROXY": "1"}, {"ALL_PROXY": "socks5://proxy.invalid:1080"}):
+            with self.subTest(variables=tuple(extra)), \
+                    patch.dict(os.environ, {"NO_PROXY": no_proxy, **extra}, clear=True), \
+                    patch("urllib.request.getproxies_registry", return_value={"https": gateway}, create=True):
+                self.assertEqual(outbound_proxies(), {"https": gateway, "no": no_proxy})
 
     def test_explicit_proxy_retains_environment_precedence(self):
-        proxies = {"https": "http://environment-proxy.invalid:8080", "no": "localhost"}
-        with patch("packet_inspector.server.urllib_request.getproxies", return_value=proxies), \
-                patch("packet_inspector.server.urllib_request.getproxies_environment", return_value=proxies), \
-                patch("packet_inspector.server.urllib_request.getproxies_registry", create=True) as registry:
+        proxies = {"http": "http://environment-http.invalid:8080",
+                   "https": "http://environment-https.invalid:8080", "no": "localhost"}
+        with patch("urllib.request.getproxies_environment", return_value=proxies), \
+                patch("urllib.request.getproxies_registry", create=True) as registry:
             self.assertEqual(outbound_proxies(), proxies)
             registry.assert_not_called()
 
