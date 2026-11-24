@@ -1698,7 +1698,8 @@ class Handler(BaseHTTPRequestHandler):
 
             encoded = encode_transport(zstd_level)
             first_wire_bytes = len(encoded.body)
-            if auto_eligible and auto_zstd_level and zstd_level == MIN_ZSTD_LEVEL and first_wire_bytes > budget:
+            if (auto_eligible and auto_zstd_level and zstd_level == MIN_ZSTD_LEVEL
+                    and first_wire_bytes >= trigger_threshold(budget)):
                 high = encode_transport(AUTO_ZSTD_HIGH_LEVEL)
                 if len(high.body) < first_wire_bytes:
                     encoded = high

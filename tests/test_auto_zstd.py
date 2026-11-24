@@ -445,7 +445,9 @@ class AutomaticRelayTests(unittest.TestCase):
 
     def test_fast_packet_schedules_high_next_and_small_main_body_releases_the_lock(self):
         self.enable()
-        random_text = base64.b64encode(random.Random(7).randbytes(280000)).decode()
+        budget = 700000
+        self.assertEqual(self.api('/api/settings', {'budget_bytes': budget})[0], 200)
+        random_text = base64.b64encode(random.Random(7).randbytes(635000)).decode()
         big = encode({'input': random_text})
         small = encode({'input': 'small retained request ' * 20})
         headers = {'session_id': 'adaptive-session'}
@@ -457,7 +459,7 @@ class AutomaticRelayTests(unittest.TestCase):
                 self.assertEqual(meta['relay_zstd_level'], expected[-1] if expected else None)
                 uploaded = self.up.requests[-1]['body']
                 self.assertEqual(zstandard.ZstdDecompressor().decompress(uploaded) if expected else uploaded, raw)
-                self.assertLessEqual(len(self.up.requests[-1]['body']), 300000)
+                self.assertLessEqual(len(uploaded), budget)
         self.assertEqual(self.relay(big, headers={'session_id': 'separate-session'})[0], 200)
         self.assertEqual(self.latest()[0]['relay_auto_zstd_phase'], 1)
         self.assertEqual(self.latest()[0]['relay_auto_zstd_next_phase'], 17)
