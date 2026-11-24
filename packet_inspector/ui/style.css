@@ -767,9 +767,10 @@ input[type=checkbox][switch]:focus-visible{outline:2px solid var(--accent);outli
 }
 #request-protection-settings .settings-value-unit,
 #settings-dialog .record-limit-field{
-  inline-size:72px;gap:2px;padding-inline:2px 4px;font-size:var(--settings-compact-value-size)
+  gap:2px;padding-inline:2px 4px;font-size:var(--settings-compact-value-size)
 }
-#request-protection-settings .settings-value-unit:has(:is(#budget,#capacity-retry-count,#bad-request-retry-count)){inline-size:64px}
+#request-protection-settings .settings-value-unit{inline-size:64px}
+#settings-dialog .record-limit-field{inline-size:72px}
 #settings-dialog .settings-value-unit:focus-within{outline:2px solid var(--accent);outline-offset:2px}
 #settings-dialog .settings-value-unit:has(input:disabled){background:var(--bg)}
 #settings-dialog .settings-value-unit input{
