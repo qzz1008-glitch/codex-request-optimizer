@@ -863,6 +863,7 @@ const uiI18n = (() => {
     "上游原始输入 Token":"Actual upstream input tokens",
     "向 Codex 报告的输入 Token":"Input tokens reported to Codex",
     "大小保护":"Request size protection",
+    "将请求包大小控制在设定上限内。":"Keep requests within the configured size limit.",
     "自动压缩":"Auto level",
     "手动压缩等级":"Manual compression levels",
     "根据请求大小自动选择合适的压缩等级，开启后禁用手动选择。":"Selects a suitable level by request size and disables manual level selection.",
