@@ -526,7 +526,9 @@ document.querySelector(".app-header").addEventListener("dblclick",async event=>{
 });
 initializeWindowControls();
 history.replaceState(null, "", "/");
-const state = { status: null, packets: [], sessions: [], selected: null, detail: null, tab: "headers", diffAvailable: null, path: "", text: null, older: false, polling: false, detailVersion: "", detailRequest: 0, listVersion: "", sessionVersion: "", sort: "created", direction: "desc", filters: {kind:"",status:"",thread:""}, canLoadMore: false, listRequest: 0, listController: null, listRevision: null, filterRevision: null };
+const state = { status: null, packets: [], sessions: [], selected: null, detail: null, tab: "headers", path: "", text: null, older: false, polling: false, detailVersion: "", detailRequest: 0, listVersion: "", sessionVersion: "", sort: "created", direction: "desc", filters: {kind:"",status:"",thread:""}, canLoadMore: false, listRequest: 0, listController: null, listRevision: null, filterRevision: null };
+let breakdownComparison=null;
+const expandedBreakdownRows=new Set();
 const nf = new Intl.NumberFormat("zh-CN");
 const storageUsageFormat = new Intl.NumberFormat("zh-CN", {minimumFractionDigits:2, maximumFractionDigits:2});
 let workspaceView="records",tokenTrendView=null,restoreSharingView=false;
@@ -803,7 +805,6 @@ function bytes(n) { return n === undefined || n === null ? "—" : nf.format(n) 
 function uploadBytes(p) { return Number.isFinite(p.outbound_wire_bytes) && p.outbound_wire_bytes >= 0 ? p.outbound_wire_bytes : null; }
 function compressedBytes(p) { return [p.overflow_original_wire_bytes,p.usage_override_request_bytes,p.outbound_wire_bytes].find(value=>Number.isSafeInteger(value)&&value>=0)??null; }
 let compressedSortSupported=true,compressedSortCache=null;
-const previousPacketReads=new Map();
 async function sessionPacketPage(query,signal) {
   const selectedKind=query.get("kind");
   if(["generation","image_analysis","other"].includes(selectedKind)) {
@@ -863,20 +864,6 @@ async function compressedSortedPackets(query,revision,signal) {
   const sorted=cache.records.slice().sort((a,b)=>((compressedBytes(a)??-1)-(compressedBytes(b)??-1))*direction||b.created-a.created||b.id.localeCompare(a.id));
   const start=query.has("after")?sorted.findIndex(packet=>packet.id===query.get("after"))+1:0;
   return sorted.slice(start,start+Number(query.get("limit")));
-}
-async function compressedDelta(data,current) {
-  if(Object.prototype.hasOwnProperty.call(data,"compressed_delta"))return Number.isSafeInteger(data.compressed_delta)?data.compressed_delta:null;
-  if(!data.previous_id)return null;
-  let previous=state.packets.find(packet=>packet.id===data.previous_id);
-  if(!previous) {
-    if(!previousPacketReads.has(data.previous_id)) {
-      previousPacketReads.set(data.previous_id,api("/api/packets/"+data.previous_id).catch(()=>{previousPacketReads.delete(data.previous_id);return null;}));
-      while(previousPacketReads.size>32)previousPacketReads.delete(previousPacketReads.keys().next().value);
-    }
-    previous=await previousPacketReads.get(data.previous_id);
-  }
-  const before=previous?compressedBytes(previous):null,after=current?compressedBytes(current):null;
-  return before!==null&&after!==null?after-before:null;
 }
 function originalBytes(p) { return Number.isFinite(p.decoded_bytes) && p.decoded_bytes >= 0 ? p.decoded_bytes : null; }
 function compact(n) { if (n === undefined || n === null) return "—"; return n >= 1000000 ? (n/1000000).toFixed(2)+" MB" : n >= 1000 ? (n/1000).toFixed(1)+" KB" : n+" B"; }
@@ -1195,7 +1182,9 @@ const hideSessionTitleTooltip=bindSessionTitleTooltip($("session-list"),$("sessi
 function renderSessions() {
   const list=$("session-list");
   if(!state.status)return;
-  const groups=sessionGroups(),summaries=new Map(groups.map(group=>[group.thread_id,group])),connections=sessionConnections(groups,state.filters.thread);
+  const trends=$("records-view").dataset.view==="trends";
+  const groups=sessionGroups().filter(group=>!trends||group.thread_id!==OTHER_SESSION_GROUP);
+  const summaries=new Map(groups.map(group=>[group.thread_id,group])),connections=sessionConnections(groups,state.filters.thread);
   const ids=groups.map(group=>group.thread_id),selected=state.filters.thread;
   ids.sort((a,b)=>(summaries.get(b)?.updated_at||0)-(summaries.get(a)?.updated_at||0));
   const query=$("session-search").value.trim().toLowerCase();
@@ -1298,7 +1287,8 @@ async function selectSession(value) {
   state.filters.thread=value;
   state.listController?.abort();state.listRequest++;
   state.detailRequest++;
-  state.selected=null;state.detail=null;state.detailVersion="";state.text=null;state.diffAvailable=null;
+  state.selected=null;state.detail=null;state.detailVersion="";state.text=null;
+  breakdownComparison=null;expandedBreakdownRows.clear();
   requestBodyCache=null;requestBodyView=null;requestBodySequence++;clearJsonFocus();clearJsonActions();
   state.packets=[];state.older=false;state.canLoadMore=false;state.listRevision=null;
   $("packet-detail").hidden=true;$("empty-state").hidden=false;
@@ -1378,14 +1368,26 @@ async function loadTokenWindow() {
     }
   }
 }
-function panel(title,{showTitle=true,headingTag="h3"}={}) {
+function panel(title,{headingTag="h3"}={}) {
   const n=el("section","detail-section");
   n.dataset.renderKey="panel:"+title;
-  if(showTitle)n.append(el(headingTag,"",title));
-  else n.setAttribute("aria-label",title);
+  n.append(el(headingTag,"",title));
   return n;
 }
-function table(headings, rows) { const wrap = el("div","table-scroll"), t = el("table"), head=el("thead"), tr=el("tr"); for (const h of headings) tr.append(el("th","",h)); head.append(tr); t.append(head); const body=el("tbody"); for (const cells of rows) { const row=el("tr"); for (const cell of cells) {const td=el("td"); if (cell instanceof Node) td.append(cell); else td.textContent = cell; row.append(td);} body.append(row); } t.append(body); wrap.append(t); return wrap; }
+function table(headings, rows) {
+  const wrap=el("div","table-scroll"), grid=el("table"), head=grid.createTHead().insertRow(), body=grid.createTBody();
+  for(const heading of headings) {
+    const cell=el("th","",heading);
+    cell.scope="col";
+    head.append(cell);
+  }
+  for(const cells of rows) {
+    const row=body.insertRow();
+    for(const cell of cells)row.insertCell().append(cell);
+  }
+  wrap.append(grid);
+  return wrap;
+}
 function link(text, fn) { const n=el("button","link-button",text); n.onclick=()=>Promise.resolve().then(fn).catch(fail); return n; }
 function fact(n,label,value) {
   const row=el("div","fact-row"),description=n.localName==="dl";
@@ -1395,9 +1397,9 @@ function fact(n,label,value) {
   return row;
 }
 function showTab(tab) {
-  const basic=!!state.detail?.details_evicted, noDiff=isToolSearch(state.detail)||state.diffAvailable===false;
+  const basic=!!state.detail?.details_evicted;
   let refocus=false;
-  if((basic&&tab==="tree")||(noDiff&&tab==="diff")) {
+  if(basic&&tab==="tree") {
     const focused=document.activeElement;
     refocus=$("request-tab-"+tab)===focused||$("tab-"+tab).contains(focused);
     tab="headers";
@@ -1405,13 +1407,13 @@ function showTab(tab) {
   state.tab=tab;
   for(const button of $("request-info-tabs").querySelectorAll("[data-tab]")) {
     const key=button.dataset.tab,active=key===tab;
-    // Keep an active comparison visible while the newly selected request is checked.
-    button.hidden=(basic&&key==="tree")||(key==="diff"&&(noDiff||state.diffAvailable===null&&!active));
+    button.hidden=basic&&key==="tree";
     button.setAttribute("aria-selected",String(active));
     button.tabIndex=active?0:-1;
     $("tab-"+key).hidden=!active;
   }
   if(tab==="tree")scrollRequestTextOnFirstShow();
+  if(tab==="overview"&&state.detail)loadBreakdownComparison(state.detail).catch(fail);
   if(refocus)$("request-tab-headers").focus();
 }
 function packetStatus(p) {
@@ -2659,25 +2661,28 @@ async function selectPacket(id,refresh=false,expectedListRequest=null) {
     if(requestId!==state.detailRequest)return;
     if(error.status!==404||!refresh||state.selected!==id)throw error;
     cancelTokenRead();tokenWindow=null;
-    state.selected=null;state.detail=null;state.detailVersion="";state.text=null;state.diffAvailable=null;
+    state.selected=null;state.detail=null;state.detailVersion="";state.text=null;
+    breakdownComparison=null;expandedBreakdownRows.clear();
     requestBodyCache=null;requestBodyView=null;requestBodySequence++;clearJsonFocus();clearJsonActions();
     $("packet-detail").hidden=true;$("empty-state").hidden=false;renderList();return;
   }
   if(requestId!==state.detailRequest || (refresh && state.selected!==id) || (expectedListRequest!==null && expectedListRequest!==state.listRequest)) return;
   const changed=state.selected!==id, previousDetail=state.detail, detailsChanged=!!m.details_evicted!==!!previousDetail?.details_evicted;
   state.selected=id;state.detail=m;state.detailVersion=packetDetailVersion(m);
-  if(changed)state.diffAvailable=null;
+  if(changed||detailsChanged) {
+    breakdownComparison=null;
+    expandedBreakdownRows.clear();
+  }
   showTab(state.tab);
   $("empty-state").hidden=true; $("packet-detail").hidden=false; renderList();
   if(changed || tokenVersion(m)!==tokenVersion(previousDetail||{})) {cancelTokenRead();tokenWindow=cachedTokenWindow(m);}
   else if(tokenWindow?.state==="unavailable") tokenWindow=null;
   loadTokenWindow();
   renderOverview(m); renderHeaders(m);
-  if(changed)$("diff-content").replaceChildren(el("p","muted",t("加载中…")));
   if(changed||detailsChanged) {
     state.path="";state.text=null;$("body-results").hidden=true;
-    await Promise.all([loadTree(""),loadDiff()]);
-  } else if(state.tab==="diff"||state.diffAvailable===null) await loadDiff();
+    await loadTree("");
+  }
 }
 function renderProtectionPanelState() {
   const panel=$("packet-protection-panel");if(!panel)return;
@@ -2818,48 +2823,154 @@ function requestProtectionPanel(m) {
   }
   return steps;
 }
-function bars(title, rows, total, bodyAvailable) {
+function bars(section, title, rows, total, bodyAvailable, detailsFor) {
   const p=panel(title), max=total||1;
-  for(const r of rows) {
+  if(rows.length) {
+    const heading=el("span","bar-delta-heading",t("变化值"));
+    heading.title=t("相对上条请求");
+    p.append(heading);
+  }
+  for(const [index,r] of rows.entries()) {
     const row=el("div","bar-row");
-    row.dataset.renderKey="bar:"+r.name;
-    const label=bodyAvailable?link(r.name,()=>goPath(r.path)):el("span","",r.name);
+    row.dataset.renderKey="bar:"+r.key;
+    const label=bodyAvailable&&r.path!==null?link(r.name,()=>goPath(r.path)):el("span","",r.name);
     label.classList.add("bar-label");
     label.title=r.name;
     const size=el("span","bar-value",bytes(r.bytes));
     const progress=el("progress");
     progress.max=max;
-    progress.value=r.bytes;
+    progress.value=r.bytes??0;
     progress.setAttribute("aria-hidden","true");
-    const percentage=el("span","bar-value",(r.bytes/max*100).toFixed(1)+"%");
-    row.append(label,size,progress,percentage);
+    const percentage=el("span","bar-value",r.bytes==null?"—":(r.bytes/max*100).toFixed(1)+"%");
+    const renderDetails=detailsFor(r);
+    const value=signed(r.delta??null);
+    const tone=r.delta>0?" bar-delta-increase":r.delta<0?" bar-delta-decrease":"";
+    const delta=el(renderDetails?"button":"span","bar-value bar-delta"+tone,value);
+    row.append(label,size,progress,percentage,delta);
+    if(renderDetails) {
+      const key=section+":"+r.key, expanded=expandedBreakdownRows.has(key);
+      const details=el("div","bar-change-details");
+      details.id=section+"-size-change-"+index;
+      details.hidden=!expanded;
+      delta.type="button";
+      delta.setAttribute("aria-label",r.name+" "+t("变化值")+" "+value);
+      delta.setAttribute("aria-expanded",String(expanded));
+      delta.setAttribute("aria-controls",details.id);
+      delta.onclick=()=>{
+        if(expandedBreakdownRows.has(key))expandedBreakdownRows.delete(key);
+        else expandedBreakdownRows.add(key);
+        renderOverview(state.detail);
+      };
+      if(expanded)details.append(renderDetails());
+      row.append(details);
+    }
     p.append(row);
   }
   return p;
 }
-function inputBreakdown(m) {
+function inputGroupRows(m) {
+  if(!m?.input_groups||typeof m.input_groups!=="object"||Array.isArray(m.input_groups))return null;
   const legacy=requestBodyView&&requestBodyView.id===m.id&&!m.details_evicted
     ?requestBodyView.reasoningEncryptedBytes:null;
   const encrypted=m.reasoning_encrypted_bytes??(m.encrypted_content_bytes===0?0:legacy);
   const groups=[];
-  for(const [name,size] of Object.entries(m.input_groups||{})) {
-    if(name==="reasoning"&&Number.isSafeInteger(encrypted)&&encrypted>=0&&encrypted<=size) {
-      groups.push({name:t("推理密文"),bytes:encrypted,path:"/input"},
-                  {name:t("推理非密文"),bytes:size-encrypted,path:"/input"});
+  for(const [category,size] of Object.entries(m.input_groups)) {
+    if(!Number.isSafeInteger(size)||size<0)continue;
+    if(category==="reasoning"&&Number.isSafeInteger(encrypted)&&encrypted>=0&&encrypted<=size) {
+      groups.push({key:"reasoning/encrypted",category,component:"encrypted",name:t("推理密文"),bytes:encrypted,path:"/input"},
+                  {key:"reasoning/plain",category,component:"plain",name:t("推理非密文"),bytes:size-encrypted,path:"/input"});
     } else {
-      groups.push({name:kind(name),bytes:size,path:"/input"});
+      groups.push({key:"kind/"+category,category,name:kind(category),bytes:size,path:"/input"});
     }
   }
-  return groups.sort((a,b)=>b.bytes-a.bytes);
+  return groups;
+}
+function inputBreakdown(m, comparison) {
+  const rows=inputGroupRows(m), previous=comparison?.previous, before=inputGroupRows(previous);
+  if(!rows)return [];
+  if(before) {
+    const beforeByKey=new Map(before.map(r=>[r.key,r.bytes]));
+    const currentCategories=new Set(rows.map(r=>r.category));
+    const itemsByCategory=Map.groupBy(comparison.items,item=>item.kind);
+    for(const r of before) {
+      if(!currentCategories.has(r.category))rows.push({...r,bytes:0,path:null});
+    }
+    for(const r of rows) {
+      const existed=Object.hasOwn(previous.input_groups,r.category);
+      const previousSize=!existed?0:!r.component?previous.input_groups[r.category]:beforeByKey.get(r.key);
+      r.delta=Number.isSafeInteger(previousSize)?r.bytes-previousSize:null;
+      if(r.delta===null)continue;
+      const items=itemsByCategory.get(r.category)??[];
+      // Reasoning entries include their metadata as well as any ciphertext.
+      r.items=items.filter(item=>
+        (r.component!=="encrypted"||item.ciphertext)&&(!r.component||r.delta!==0||item.change==="added"||item.change==="removed"));
+    }
+  }
+  return rows.sort((a,b)=>b.bytes-a.bytes);
+}
+function fieldBreakdown(m, comparison) {
+  const current=Array.isArray(m.top_fields)?m.top_fields:[];
+  const previous=comparison?.previous;
+  const data=comparison?.data;
+  const before=Array.isArray(previous?.top_fields)?new Map(previous.top_fields.map(r=>[r.name,r.bytes])):null;
+  const compared=Array.isArray(data?.fields)&&data.fields_available!==false&&data.state!=="details_unavailable"&&(!previous||before);
+  const changes=new Map((compared?data.fields:[]).map(r=>[r.name,r]));
+  const rows=current.map(r=>({...r,key:"field/"+r.name,path:"/"+r.name.replaceAll("~","~0").replaceAll("/","~1"),
+    delta:before?r.bytes-(before.get(r.name)??0):compared?r.bytes-(changes.get(r.name)?.before??r.bytes):null}));
+  if(Array.isArray(m.top_fields)) {
+    const present=new Set(current.map(r=>r.name));
+    for(const [name,size] of before??[...changes.values()].map(r=>[r.name,r.before])) {
+      if(!present.has(name)&&size>0)rows.push({key:"field/"+name,name,bytes:0,path:null,delta:-size});
+    }
+  }
+  const currentEnvelope=m.json_envelope_bytes, previousEnvelope=previous?.json_envelope_bytes;
+  rows.push({key:"envelope",name:t("字段名、标点及空白"),bytes:currentEnvelope,path:"",
+    delta:Number.isSafeInteger(currentEnvelope)&&Number.isSafeInteger(previousEnvelope)?currentEnvelope-previousEnvelope:null});
+  return rows.sort((a,b)=>(b.bytes??0)-(a.bytes??0));
+}
+function inputCategoryChanges(rows) {
+  const changes=el("dl","input-category-changes");
+  for(const row of rows)fact(changes,row.name,signed(row.delta));
+  return changes;
+}
+function inputItemChanges(items, bodyAvailable) {
+  const labels={added:t("新增"),removed:t("移除"),changed:t("内容改变")};
+  const grid=table([t("条目"),t("变化"),t("条目大小")],items.map(item=>{
+    const entry=el("div","breakdown-item-entry"), index="#"+item.index;
+    entry.append(bodyAvailable&&item.path?link(index,()=>goPath(item.path)):el("span","",index));
+    entry.append(el("span","",kind(item.kind)+(item.name?" · "+item.name:"")));
+    return [entry,labels[item.change]??signed(item.delta),bytes(item.after??item.before)];
+  }));
+  grid.classList.add("breakdown-item-changes");
+  return grid;
+}
+function breakdownTotals(m, comparison) {
+  if(!comparison?.data)return null;
+  const previous=comparison.previous, data=comparison.data;
+  const original=originalBytes(m), originalBefore=previous?originalBytes(previous):null;
+  const forwarded=compressedBytes(m), forwardedBefore=previous?compressedBytes(previous):null;
+  const originalDelta=original!==null&&originalBefore!==null?original-originalBefore:data.decoded_delta;
+  const forwardedDelta=forwarded!==null&&forwardedBefore!==null?forwarded-forwardedBefore:data.compressed_delta;
+  const totals=el("dl","breakdown-totals");
+  if(Number.isSafeInteger(originalDelta))fact(totals,t("原始请求变化"),signed(originalDelta));
+  if(Number.isSafeInteger(forwardedDelta))fact(totals,t("转发请求变化"),signed(forwardedDelta));
+  return totals.childElementCount?totals:null;
 }
 function renderOverview(m) {
   const root=$("overview");
   if(m.inspection!=="json") {reconcileContent(root,el("p","muted",t("正文未展开：")+(t(m.inspection_error)||t("正文为空"))+t("。转发仍按原始正文进行。")));return;}
-  const breakdown=el("div","size-breakdown");
-  const fields=[...(m.top_fields||[]).map(r=>({...r,path:"/"+r.name.replaceAll("~","~0").replaceAll("/","~1")})),{name:t("字段名、标点及空白"),bytes:m.json_envelope_bytes,path:""}].sort((a,b)=>b.bytes-a.bytes);
+  const breakdown=el("div","size-breakdown"), bodyAvailable=!m.details_evicted;
+  const fields=fieldBreakdown(m,breakdownComparison), input=inputBreakdown(m,breakdownComparison);
+  const changedCategories=input.filter(r=>r.delta!==null&&r.delta!==undefined&&(r.delta!==0||r.items?.length));
   const inputSize=m.top_fields?.find(r=>r.name==="input")?.bytes;
-  breakdown.append(bars(t("字段构成"),fields,m.decoded_bytes,!m.details_evicted),
-                   bars(t("input 构成"),inputBreakdown(m),inputSize,!m.details_evicted));
+  breakdown.append(
+    bars("fields",t("字段构成"),fields,m.decoded_bytes,bodyAvailable,
+      r=>r.key==="field/input"&&changedCategories.length?()=>inputCategoryChanges(changedCategories):null),
+    bars("input",t("input 构成"),input,inputSize,bodyAvailable,
+      r=>r.items?.length?()=>inputItemChanges(r.items,bodyAvailable):null)
+  );
+  const totals=breakdownTotals(m,breakdownComparison);
+  if(totals)breakdown.append(totals);
   reconcileContent(root,breakdown);
 }
 function jsonValueNode(value,key=null,comma=false,root=false,path="",nodes=new Map()) {
@@ -3173,13 +3284,14 @@ async function searchBody(query) {
     }
   }
 }
-function packetDiffRows(data,current=null) {
+function packetDiffItems(data) {
   const change=(before,after)=>before===null?"added":after===null?"removed":after>before?"grow":after<before?"shrink":"changed";
   const slot=item=>JSON.stringify([item.index,item.kind,item.name||""]);
   const removed=data.removed||[],oldBySlot=new Map(removed.map(item=>[slot(item),item])),used=new Set(),items=[];
   const itemRow=(beforeItem,afterItem)=>{
     const item=afterItem||beforeItem,before=beforeItem?.bytes??null,after=afterItem?.bytes??null;
-    return {field:"input",scope:"item",index:item.index,kind:item.kind,name:item.name||"",before,after,
+    return {index:item.index,kind:item.kind,name:item.name||"",before,after,
+      ciphertext:beforeItem?.label==="推理密文"||afterItem?.label==="推理密文",
       delta:(after??0)-(before??0),change:change(before,after),path:afterItem?(afterItem.path||"/input/"+afterItem.index):null};
   };
   for(const item of data.added||[]) {
@@ -3188,97 +3300,59 @@ function packetDiffRows(data,current=null) {
     else items.push(itemRow(null,item));
   }
   for(const item of removed)if(!used.has(item))items.push(itemRow(item,null));
-  items.sort((a,b)=>a.index-b.index||(a.change==="removed"?-1:1));
-  const fields=new Map();
-  for(const field of data.fields||[]) {
-    const before=field.before===0?null:field.before,after=field.after===0?null:field.after;
-    fields.set(field.name,{field:field.name,scope:"field",before,after,delta:(after??0)-(before??0),
-      change:change(before,after),path:after===null?null:"/"+field.name.replaceAll("~","~0").replaceAll("/","~1")});
-  }
-  if(items.length&&!fields.has("input")) {
-    const size=current?.top_fields?.find(field=>field.name==="input")?.bytes;
-    const total=Number.isFinite(size)&&size>=0?size:null;
-    fields.set("input",{field:"input",scope:"field",before:total,after:total,delta:0,change:"changed",path:"/input"});
-  }
-  const names=new Set(fields.keys());
-  const rows=[];
-  for(const name of [...names].sort()) {
-    if(fields.has(name))rows.push(fields.get(name));
-    if(name==="input")rows.push(...items);
-  }
-  return rows;
+  return items.sort((a,b)=>a.index-b.index||Number(a.change!=="removed")-Number(b.change!=="removed"));
 }
-function summaryPacketDiff(previous,current) {
-  const difference=key=>Number.isSafeInteger(previous[key])&&Number.isSafeInteger(current[key])?current[key]-previous[key]:null;
-  const before=compressedBytes(previous),after=compressedBytes(current),fieldsAvailable=Array.isArray(previous.top_fields)&&Array.isArray(current.top_fields);
-  const left=new Map((fieldsAvailable?previous.top_fields:[]).map(row=>[row.name,row.bytes])),right=new Map((fieldsAvailable?current.top_fields:[]).map(row=>[row.name,row.bytes]));
-  return {previous_id:previous.id,state:"summary_only",fields_available:fieldsAvailable,
-    decoded_delta:difference("decoded_bytes"),wire_delta:difference("wire_bytes"),upload_delta:difference("outbound_wire_bytes"),
-    compressed_delta:before!==null&&after!==null?after-before:null,
-    fields:fieldsAvailable?[...new Set([...left.keys(),...right.keys()])].sort().filter(name=>left.get(name)!==right.get(name)).map(name=>({name,before:left.get(name)??0,after:right.get(name)??0})):[]};
+function isPreviousComparisonPacket(previous,current) {
+  return !!previous&&previous.thread_id===current.thread_id&&previous.source===current.source&&previous.created<current.created;
 }
-async function readSummaryPacketDiff(data,current,active) {
-  if(!current?.thread_id||!current.source||!Number.isFinite(current.created))return data;
-  let previousId=data.previous_id;
-  if(!previousId) {
-    const query=new URLSearchParams({limit:"50",thread:current.thread_id,before:String(current.created),sort:"created",direction:"desc",include_get:"1"});
-    for(let page=0;page<8;page++) {
-      const rows=await api("/api/packets?"+query);if(!active())return null;
-      if(!Array.isArray(rows))return data;
-      const previous=rows.find(row=>row.thread_id===current.thread_id&&row.source===current.source&&row.created<current.created);
-      if(previous){previousId=previous.id;break;}
-      if(rows.length<50)return null;
-      const next=rows.at(-1)?.id;if(!next||query.get("after")===next)return data;query.set("after",next);
+async function previousComparisonId(data,current,active) {
+  if(data.previous_id)return data.previous_id;
+  if(data.state!=="details_unavailable"||!current.thread_id||!current.source||!Number.isFinite(current.created))return null;
+  // Older relays leave out the previous ID when one of the two records has only statistics.
+  const query=new URLSearchParams({limit:"50",thread:current.thread_id,before:String(current.created),sort:"created",direction:"desc",include_get:"1"});
+  for(let page=0;page<8;page++) {
+    const rows=await api("/api/packets?"+query);
+    if(!active()||!Array.isArray(rows))return null;
+    const previous=rows.find(row=>isPreviousComparisonPacket(row,current));
+    if(previous)return previous.id;
+    const next=rows.at(-1)?.id;
+    if(rows.length<50||!next||query.get("after")===next)return null;
+    query.set("after",next);
+  }
+  return null;
+}
+async function loadBreakdownComparison(current) {
+  if(breakdownComparison||current.inspection!=="json"||!current.thread_id||isToolSearch(current))return;
+  const comparison={data:null,previous:null,items:[]};
+  breakdownComparison=comparison;
+  const active=()=>breakdownComparison===comparison&&state.selected===current.id;
+  try {
+    const data=await api("/api/packets/"+current.id+"/diff");
+    if(!active()||!data)return;
+    const previousId=await previousComparisonId(data,current,active);
+    if(!active())return;
+    let previous=null;
+    if(previousId) {
+      try {previous=await api("/api/packets/"+previousId);}
+      catch(error) {if(error.status!==404)throw error;}
+      if(previous&&!isPreviousComparisonPacket(previous,current))previous=null;
     }
+    if(!active())return;
+    const {state:comparisonState,fields,fields_available,decoded_delta,compressed_delta}=data;
+    comparison.data={state:comparisonState,fields,fields_available,decoded_delta,compressed_delta};
+    if(!current.details_evicted&&previous&&!previous.details_evicted)comparison.items=packetDiffItems(data);
+    if(previous) {
+      const {top_fields,input_groups,json_envelope_bytes,reasoning_encrypted_bytes,encrypted_content_bytes,decoded_bytes,
+        outbound_wire_bytes,usage_override_request_bytes,overflow_original_wire_bytes}=previous;
+      comparison.previous={top_fields,input_groups,json_envelope_bytes,reasoning_encrypted_bytes,encrypted_content_bytes,decoded_bytes,
+        outbound_wire_bytes,usage_override_request_bytes,overflow_original_wire_bytes};
+    }
+    renderOverview(state.detail);
+  } catch(error) {
+    if(!active())return;
+    breakdownComparison=null;
+    if(error.status!==404)throw error;
   }
-  if(!previousId)return data;
-  let previous;
-  try {previous=await api("/api/packets/"+previousId);}catch(error){if(error.status===404)return data;throw error;}
-  if(!active())return null;
-  if(previous?.thread_id!==current.thread_id||previous.source!==current.source||!(previous.created<current.created))return data;
-  return summaryPacketDiff(previous,current);
-}
-async function loadDiff() {
-  const id=state.selected,current=state.detail,active=()=>state.selected===id&&state.detail===current;
-  let data=await api("/api/packets/"+id+"/diff");if(!active())return;
-  if(data?.state==="details_unavailable")data=await readSummaryPacketDiff(data,current,active);if(!active())return;
-  const available=!!data;
-  if(state.diffAvailable!==available) {
-    state.diffAvailable=available;
-    showTab(state.tab);
-  }
-  if(!data){$("diff-content").replaceChildren();return;}
-  if(data.state==="details_unavailable") {
-    reconcileContent($("diff-content"),el("p","muted",t("暂时无法取得可比较的统计信息。")));return;
-  }
-  const delta=await compressedDelta(data,current);if(!active())return;
-  const root=document.createDocumentFragment();
-  const p=panel(t("相对上条请求"));fact(p,t("转发请求变化"),signed(delta));fact(p,t("原始请求变化"),signed(data.decoded_delta));root.append(p);
-  const changes=panel(t("变化明细"),{showTitle:false}),rows=packetDiffRows(data,state.detail);
-  if(data.state==="summary_only")changes.append(el("small","muted detail-note",t("输入条目详情已回收，以下显示统计变化。")));
-  const labels={added:t("新增"),removed:t("移除"),changed:t("内容改变")};
-  if(rows.length) {
-    const grid=table([t("字段与条目"),t("变化"),t("当前")],rows.map(r=>{
-      const entry=el("div",r.scope==="field"?"diff-field-entry":"diff-item-entry");
-      if(r.scope==="field")entry.append(el("span","",r.field),el("span","muted",t("字段合计")));
-      else {
-        entry.append(r.path?link("#"+r.index,()=>goPath(r.path)):el("span","","#"+r.index));
-        entry.append(el("span","cell-note",kind(r.kind)+(r.name?" · "+r.name:"")));
-      }
-      const change=r.change==="grow"||r.change==="shrink"?signed(r.delta):labels[r.change];
-      return [entry,change,bytes(r.after)];
-    }));
-    grid.classList.add("diff-table");
-    grid.querySelectorAll("tbody tr").forEach((row,index)=>{
-      const current=rows[index],next=rows[index+1];
-      row.dataset.renderKey=JSON.stringify([current.scope,current.field,current.index,current.kind,current.name]);
-      row.classList.add(current.scope==="field"?"diff-field-row":"diff-item-row");
-      if(current.scope==="item"&&(next?.scope!=="item"||next.field!==current.field))row.classList.add("diff-item-last");
-    });
-    changes.append(grid);
-  }
-  else changes.append(el("p","muted",t(data.state==="summary_only"?(data.fields_available===false?"缺少可比较的字段统计。":"保留的字段大小未变化。"):"没有发生变化。")));
-  root.append(changes);reconcileContent($("diff-content"),root);
 }
 function localImagePath(value) {
   if(typeof value!=="string"||value.length>4096)return null;
@@ -3425,7 +3499,6 @@ async function setInterfaceLanguage(language,{persist=true}={}) {
         $("tree-query").value=query;
         if(searchVisible&&query.trim()&&!query.trim().startsWith("/"))await searchBody(query.trim());
       }
-      await loadDiff();
       if(revision!==interfaceLanguageRevision)return;
     }
     if(state.status)await refreshFilters();
@@ -4330,7 +4403,9 @@ function setWorkspaceView(view) {
   if(!sharing){
     // Settle the next view behind the sharing panel before it slides out.
     workspace.classList.toggle("skip-view-slide",wasSharing);
+    const layoutChanged=workspace.dataset.view!==workspaceView;
     workspace.dataset.view=workspaceView;
+    if(layoutChanged&&state.status)renderSessions();
   }
   if(workspaceView==="records"&&state.tab==="tree")scrollRequestTextOnFirstShow();
   $("token-trend-view").inert=!trends;
