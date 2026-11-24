@@ -60,7 +60,7 @@ class StartupDiagnosticsTests(unittest.TestCase):
         return result, start, server
 
     def test_entry_accepts_a_cold_worker_after_the_previous_timeout(self):
-        def healthy(*_args):
+        def healthy(*_args, **_kwargs):
             if self.clock.elapsed < 55:
                 raise ConnectionRefusedError(10061, "worker not listening yet")
             return {"version": "test"}
@@ -74,7 +74,7 @@ class StartupDiagnosticsTests(unittest.TestCase):
 
     def test_entry_timeout_records_child_phase_and_original_probe_error(self):
         child = None
-        def healthy(*_args):
+        def healthy(*_args, **_kwargs):
             nonlocal child
             if child is None and self.clock.elapsed > 0:
                 child = diagnostics.StartupTrace(self.data, "worker", worker_id=self.identity)

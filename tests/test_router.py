@@ -8,13 +8,28 @@ import threading
 import time
 from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, call, patch
 
 from packet_inspector import VERSION
-from packet_inspector.router import RouterServer, atomic_json, ensure_entry
+from packet_inspector.router import RouterServer, atomic_json, ensure_entry, local_json, run_entry
 from packet_inspector.remote_relay import RemoteRelays, TunnelGateway
 from packet_inspector.server import InspectorServer
 from tests.relay_fixture import HTTP_TIMEOUT, wait_for_idle
+
+
+class StartupConnectionTests(unittest.TestCase):
+    def test_short_connect_timeout_preserves_the_response_timeout(self):
+        with patch("packet_inspector.router.http.client.HTTPConnection") as create:
+            connection = create.return_value
+            response = connection.getresponse.return_value
+            response.status = 200
+            response.read.return_value = b'{"app":"codex-packet-inspector"}'
+            self.assertEqual(local_json(47844, "/health", timeout=2, connect_timeout=.15),
+                             {"app": "codex-packet-inspector"})
+
+        create.assert_called_once_with("127.0.0.1", 47844, timeout=.15)
+        self.assertEqual(connection.mock_calls[:2], [call.connect(), call.sock.settimeout(2)])
+        connection.close.assert_called_once()
 
 
 class RouterTests(unittest.TestCase):
@@ -277,6 +292,21 @@ class RouterTests(unittest.TestCase):
         with patch("packet_inspector.router.subprocess.Popen") as launch:
             self.assertEqual(ensure_entry(options, {"port": self.router.port}), self.router.port)
         launch.assert_not_called()
+
+    def test_foreground_launch_starts_a_desktop_only_if_not_already_running(self):
+        options = SimpleNamespace(data_dir=self.data, config=self.config, port=None, background=False, tray=False)
+        for window_exists in (True, False):
+            with self.subTest(window_exists=window_exists), \
+                    patch("packet_inspector.router.ensure_entry", return_value=self.router.port), \
+                    patch("packet_inspector.window_lifecycle.request_main_window", return_value=window_exists) as activate, \
+                    patch("packet_inspector.router.subprocess.Popen") as launch:
+                self.assertEqual(run_entry(options, Mock(record={})), 0)
+                activate.assert_called_once_with(self.data)
+                if window_exists:
+                    launch.assert_not_called()
+                else:
+                    self.assertEqual(launch.call_count, 1)
+                    self.assertEqual(launch.call_args.args[0][-2:], ["--port", str(self.router.port)])
 
     def test_second_entry_cannot_bind_a_running_entry_port(self):
         with self.assertRaises(OSError):

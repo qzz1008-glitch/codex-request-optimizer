@@ -23,6 +23,8 @@ from .startup_diagnostics import STARTUP_SECONDS, StartupTrace, startup_environm
 ROUTER_VERSION = "1.0.0"
 PROTOCOL = 1
 MAX_BODY = 128 * 1024 * 1024
+# An inactive loopback port can take the full timeout to refuse a Windows connection.
+STARTUP_CONNECT_SECONDS = .15
 HOP = {"connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailer", "transfer-encoding", "upgrade"}
 
 
@@ -40,9 +42,13 @@ def atomic_json(path, value):
         temporary.unlink(missing_ok=True)
 
 
-def local_json(port, path, data=None, token="", *, timeout=10):
-    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=timeout)
+def local_json(port, path, data=None, token="", *, timeout=10, connect_timeout=None):
+    opening_timeout = timeout if connect_timeout is None else connect_timeout
+    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=opening_timeout)
     try:
+        if connect_timeout is not None:
+            connection.connect()
+            connection.sock.settimeout(timeout)
         body = None if data is None else json.dumps(data).encode()
         headers = {"Content-Type": "application/json", "X-Inspector-Control": token}
         connection.request("GET" if data is None else "POST", path, body, headers)
@@ -72,9 +78,9 @@ def control_worker(data_dir, identity, action, **values):
     return local_json(worker["port"], "/__worker__/control", {"action": action, **values}, worker["token"], timeout=30)
 
 
-def healthy_worker(data_dir, identity):
+def healthy_worker(data_dir, identity, *, connect_timeout=None):
     worker = worker_info(data_dir, identity)
-    health = local_json(worker["port"], "/health", timeout=2)
+    health = local_json(worker["port"], "/health", timeout=2, connect_timeout=connect_timeout)
     if health.get("worker_id") != identity or health.get("version") != worker["version"]:
         raise ValueError("worker identity mismatch")
     return worker
@@ -508,7 +514,7 @@ def startup_port(args, state):
 def ensure_entry(args, state, trace=None):
     """A foreground launch must restore the router, never start a direct backend."""
     def ready(port):
-        health = local_json(port, "/health", timeout=2)
+        health = local_json(port, "/health", timeout=2, connect_timeout=STARTUP_CONNECT_SECONDS)
         status = local_json(port, "/api/status", timeout=3)
         if (health.get("app") != "codex-packet-inspector" or health.get("router_protocol") != PROTOCOL
                 or Path(status["data_dir"]).resolve() != args.data_dir.resolve()
@@ -565,12 +571,16 @@ def run_entry(args, trace):
     state = json.loads((args.data_dir / "router-state.json").read_text(encoding="utf8"))
     if not args.background:
         port = ensure_entry(args, state, trace)
-        trace.step("desktop.launch")
-        state = json.loads((args.data_dir / "router-state.json").read_text(encoding="utf8"))
-        worker = worker_info(args.data_dir, state["active"])
-        subprocess.Popen([worker["executable"], "--data-dir", str(args.data_dir), "--config", str(args.config),
-                          "--port", str(port)], env=startup_environment(),
-                         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        from .window_lifecycle import request_main_window
+        if request_main_window(args.data_dir):
+            trace.step("desktop.activate")
+        else:
+            trace.step("desktop.launch")
+            state = json.loads((args.data_dir / "router-state.json").read_text(encoding="utf8"))
+            worker = worker_info(args.data_dir, state["active"])
+            subprocess.Popen([worker["executable"], "--data-dir", str(args.data_dir), "--config", str(args.config),
+                              "--port", str(port)], env=startup_environment(),
+                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         trace.ready()
         return 0
     port = startup_port(args, state)
@@ -590,7 +600,7 @@ def run_entry(args, trace):
     tray = None
     try:
         try:
-            healthy_worker(args.data_dir, identity)
+            healthy_worker(args.data_dir, identity, connect_timeout=STARTUP_CONNECT_SECONDS)
         except (OSError, ValueError, http.client.HTTPException):
             trace.step("worker.launch", worker_id=identity)
             process = start_worker(args.data_dir, args.config, identity, server.port)
@@ -602,7 +612,7 @@ def run_entry(args, trace):
                     raise RuntimeError("worker startup failed; exit code " + str(process.poll()))
 
             def ready():
-                healthy_worker(args.data_dir, identity)
+                healthy_worker(args.data_dir, identity, connect_timeout=STARTUP_CONNECT_SECONDS)
                 return True
 
             def failed():
