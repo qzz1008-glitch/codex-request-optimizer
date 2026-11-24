@@ -254,6 +254,56 @@ function eventRows(){return [
    assert.ok(result.charts.every(chart=>chart.points.length===0));
    assert.equal(coloredRows(ids).length,0);
   });
+ const olderTrend=packet(220,{thread_id:'older',created:now-4*3600,upstream_usage:{input_tokens:75},outbound_wire_bytes:1000});
+ const recentTrend=packet(221,{thread_id:'recent',created:now-10,upstream_usage:{input_tokens:150},outbound_wire_bytes:2000});
+ const bridgeTrend=packet(222,{thread_id:'bridge',created:now-11,upstream_usage:{input_tokens:175},outbound_wire_bytes:2500});
+ const auxiliaryTrend=packet(223,{thread_id:'auxiliary',created:now-2*3600,request_kind:'image_analysis'});
+ function sidebarTrendFixture() {
+  const latest=[olderTrend,recentTrend,bridgeTrend,auxiliaryTrend];
+  const rows=[...latest,{...bridgeTrend,id:id(224),created:now-3*3600,duration_ms:3*3600*1000}];
+  const sessions=latest.map(request=>({thread_id:request.thread_id,title:request.thread_id,members:[request],latest_packet:request}));
+  return rendered(rows,{sessions:()=>sessions,status:()=>({storage:{oldest_created:olderTrend.created,count:rows.length}})});
+ }
+ await test('the trend sidebar mutes sessions outside the view and keeps rows with requests or a visible curve',()=>{
+  const {result,ids}=sidebarTrendFixture();
+  const outside=()=>ids.get('session-list').children.filter(row=>Object.hasOwn(row.attrs,'data-trend-outside')).map(row=>row.dataset.session);
+  assert.deepEqual(outside(),['thread:older','thread:auxiliary']);
+  result.seek(.5);result.render();
+  assert.deepEqual(outside(),['thread:older','thread:recent']);
+  assert.deepEqual(coloredRows(ids).map(row=>row.dataset.session),['thread:bridge']);
+  assert.ok(result.charts.every(chart=>chart.points.length===0&&chart.linePoints.length===2));
+  result.loadedBounds={since:now-3600,before:null};result.render();
+  assert.deepEqual(outside(),['thread:older']);
+  result.cancelPending();
+ });
+ await test('opening a muted session centers either edge in both charts and cancels an obsolete slide',async()=>{
+  const {result}=sidebarTrendFixture(),slides=[];
+  context.CSS={supports:()=>true};context.matchMedia=()=>({matches:true});
+  context.document.startViewTransition=({types,update})=>{
+   let finish;
+   const slide={direction:types[0],update,finished:new Promise(resolve=>finish=resolve),skipTransition(){this.skipped=true;finish();}};
+   slide.finish=finish;slides.push(slide);return slide;
+  };
+  const checkCenter=request=>{
+   assert.equal(result.hours,1);
+   for(const chart of result.charts) {
+    const point=chart.points.find(point=>point.packet.id===request.id);
+    assert.ok(point);
+    assert.ok(Math.abs(point.x-(chart.bounds.left+chart.bounds.width-chart.bounds.right)/2)<1e-6);
+   }
+  };
+  result.revealSession('thread:older');
+  const stale=slides[0];assert.equal(stale.direction,'trend-earlier');
+  result.seek(1);assert.equal(stale.skipped,true);stale.update();assert.equal(result.windowCenter,null);
+  result.revealSession('thread:older');slides[1].update();slides[1].finish();await stale.finished;
+  assert.ok(result.viewport().start<olderTrend.created);assert.ok(result.covers(result.loadedBounds));checkCenter(olderTrend);
+  result.revealSession('thread:recent');assert.equal(slides[2].direction,'trend-later');
+  slides[2].update();slides[2].finish();await slides[2].finished;
+  assert.ok(result.viewport().end>now);assert.ok(result.covers(result.loadedBounds));checkCenter(recentTrend);
+  const end=result.viewport().endOffset;result.pan(-60);
+  assert.ok(Math.abs(result.viewport().endOffset-end+60)<1e-6);
+  result.cancelPending();
+ });
  await test('scale includes all values',()=>{
   for(const n of [0,1,999,500000,10000000]){const scale=View.scale(n);assert.ok(scale.max>=n&&scale.step>0&&Number.isFinite(scale.max));}
  });

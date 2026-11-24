@@ -117,7 +117,9 @@ button.session-item{display:flex;flex-direction:column;align-items:stretch;justi
 .workspace[data-view="trends"] .session-item.selected{background:#f9fafc;border-color:var(--line);color:var(--ink);box-shadow:none}
 .workspace[data-view="trends"] [data-trend-series] .session-item.selected{border-color:color-mix(in srgb,var(--trend-series-color) 45%,white)}
 .workspace[data-view="trends"] [data-trend-highlight] .session-item{border-color:color-mix(in srgb,var(--trend-series-color) 58%,white);background:color-mix(in srgb,var(--trend-series-color) 12%,white)}
-.workspace[data-view="trends"] [data-trend-emphasis] .session-row:not([data-trend-highlight]) .session-item{opacity:.55}
+.workspace[data-view="trends"] [data-trend-outside] .session-item{--muted:#626c78;color:var(--muted);background-color:var(--bg)}
+.workspace[data-view="trends"] [data-trend-outside] .session-item:hover{background-color:#eef0f2}
+.workspace[data-view="trends"] [data-trend-emphasis] .session-row:not([data-trend-highlight],[data-trend-outside]) .session-item{opacity:.55}
 .session-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;min-width:0}
 .session-heading+.session-id{margin-block-start:2px}
 /* Let selection start in the left inset of each text row. */
@@ -202,6 +204,21 @@ button.other-session-group{background:#f5f2fc;border-color:#e7e0f5}
 #trend-chart,#trend-size-chart{display:block;width:100%;height:100%;outline:0;touch-action:pan-y}
 .trend-time-axis{display:block;width:100%;height:32px;overflow:visible}
 .trend-focus{position:absolute;inset:0;z-index:1;display:block;width:100%;height:100%;pointer-events:none}
+
+@media(prefers-reduced-motion:no-preference){
+  :root:active-view-transition-type(trend-earlier){--trend-slide-from:-100%}
+  :root:active-view-transition-type(trend-later){--trend-slide-from:100%}
+  :root:is(:active-view-transition-type(trend-earlier),:active-view-transition-type(trend-later)){view-transition-name:none}
+  :root:is(:active-view-transition-type(trend-earlier),:active-view-transition-type(trend-later)) .trend-charts{view-transition-name:trend-slide}
+  :root:is(:active-view-transition-type(trend-earlier),:active-view-transition-type(trend-later))::view-transition{pointer-events:none}
+  ::view-transition-group(trend-slide){animation:none}
+  ::view-transition-image-pair(trend-slide){overflow:hidden;border-radius:12px}
+  ::view-transition-old(trend-slide),::view-transition-new(trend-slide){mix-blend-mode:normal;animation-duration:320ms;animation-timing-function:cubic-bezier(.22,.72,.26,1);animation-fill-mode:both}
+  ::view-transition-old(trend-slide){animation-name:trend-slide-out}
+  ::view-transition-new(trend-slide){animation-name:trend-slide-in}
+  @keyframes trend-slide-out{to{transform:translateX(calc(-1 * var(--trend-slide-from)))}}
+  @keyframes trend-slide-in{from{transform:translateX(var(--trend-slide-from))}}
+}
 
 .trend-grid{stroke:#edf1f6;stroke-width:1;vector-effect:non-scaling-stroke}.trend-time-tick{stroke:#ccd5e1;stroke-width:1;vector-effect:non-scaling-stroke}.trend-axis-label{fill:var(--muted);font:11px "Segoe UI",sans-serif}.trend-axis-title{fill:#53647c;font:600 11px "Segoe UI",sans-serif;letter-spacing:.08em}
 .trend-curve{fill:none;stroke-width:2;stroke-linejoin:round;stroke-linecap:round;vector-effect:non-scaling-stroke;transition:stroke-width .14s}

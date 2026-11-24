@@ -1255,6 +1255,7 @@ function renderSessions() {
     item.append(meta);
     bindSelectableRow(item,()=>{
       if(hasTextSelectionWithin($("session-list")))window.getSelection().removeAllRanges();
+      tokenTrendView?.revealSession(value);
       return selectSession(value);
     });
     row.append(item);
@@ -3585,9 +3586,11 @@ class TokenTrendView {
   constructor(services) {
     this.services=services;this.active=false;this.loading=false;this.hydrating=false;
     this.packets=new Map();this.native=new Map();this.hours=1;this.windowEnd=null;this.loadedBounds=null;this.requestBounds=null;this.windowTimer=null;this.previewPackets=null;this.oldestCreated=null;this.boundsReady=false;this.paintRefresh=null;
+    this.windowCenter=null;this.sessionSlide=null;this.slideNeedsRender=false;
     this.revision=null;this.lastFull=0;this.query="";this.error=false;this.limited=false;
     this.series=[];this.hover=null;this.hoverChart=null;this.hoverSeries=null;this.hoverEvent=null;this.focusEvent=null;this.frame=null;
     this.emphasis=null;this.focusSeries=null;this.highlightedSeries=null;this.sidebarColors=new Map();
+    this.sidebarOutside=new Map();
     this.sessionList=$("session-list");
     this.charts=[{key:"size",field:"size",prefix:"trend-size"},{key:"token",field:"input",prefix:"trend"}].map(chart=>({
       ...chart,svg:$(chart.prefix+"-chart"),plot:$(chart.prefix+"-plot"),tooltip:$(chart.prefix+"-tooltip"),empty:$(chart.prefix+"-empty"),points:[],eventNodes:[],eventKey:null,bounds:null,focusLayer:null
@@ -3739,13 +3742,13 @@ class TokenTrendView {
       while(lo<hi){const mid=(lo+hi)>>1;if(segments[mid][key]<value)lo=mid+1;else hi=mid;}
       return segments[lo];
     };
-    const offset=value=>{
-      value=Math.max(start,Math.min(end,value));const part=locate(value,"end");
-      return part.a+(value-part.start)/(part.end-part.start)*(part.b-part.a);
+    const offset=(value,extend=false)=>{
+      const stamp=Math.max(start,Math.min(end,value)),part=locate(stamp,"end");
+      return part.a+(stamp-part.start)/(part.end-part.start)*(part.b-part.a)+(extend?value-stamp:0);
     };
-    const at=value=>{
-      value=Math.max(0,Math.min(virtual,value));const part=locate(value,"b");
-      return part.start+(value-part.a)/(part.b-part.a)*(part.end-part.start);
+    const at=(value,extend=false)=>{
+      const position=Math.max(0,Math.min(virtual,value)),part=locate(position,"b");
+      return part.start+(position-part.a)/(part.b-part.a)*(part.end-part.start)+(extend?value-position:0);
     };
     return {start,end,length:virtual,offset,at,gaps,segments};
   }
@@ -3765,7 +3768,9 @@ class TokenTrendView {
   }
   chartAxis(view,width) {
     const {start,end,scale,startOffset,duration}=view;
-    const fraction=stamp=>(scale.offset(stamp)-startOffset)/duration,timeAt=value=>scale.at(startOffset+Math.max(0,Math.min(1,value))*duration);
+    const extended=startOffset<0||view.endOffset>scale.length;
+    const fraction=stamp=>(scale.offset(stamp,extended)-startOffset)/duration;
+    const timeAt=value=>scale.at(startOffset+Math.max(0,Math.min(1,value))*duration,extended);
     const gaps=scale.gaps.filter(gap=>gap.end>start&&gap.start<end);
     let ticks=TokenTrendView.timeTicks(start,end,width);
     if(gaps.length) {
@@ -3782,10 +3787,17 @@ class TokenTrendView {
   timeline(now=Date.now()/1000) {return {start:Math.min(now-3600,this.boundsReady&&Number.isFinite(this.oldestCreated)?this.oldestCreated-1:now-3600),end:now};}
   viewport(now=Date.now()/1000) {
     const scale=this.timeScale(now),duration=Math.min(scale.length,Math.max(1,Math.min(12,this.hours||1))*3600);
-    const endOffset=Math.max(duration,Math.min(scale.length,Number.isFinite(this.windowEnd)?scale.offset(this.windowEnd):scale.length)),startOffset=endOffset-duration;
-    return {start:scale.at(startOffset),end:scale.at(endOffset),startOffset,endOffset,duration,scale};
+    // Leave room beyond the stored range when the target is its first or last request.
+    const endOffset=Number.isFinite(this.windowCenter)?scale.offset(this.windowCenter,true)+duration/2:
+      Math.max(duration,Math.min(scale.length,Number.isFinite(this.windowEnd)?scale.offset(this.windowEnd):scale.length));
+    const startOffset=endOffset-duration;
+    return {start:scale.at(startOffset,true),end:scale.at(endOffset,true),startOffset,endOffset,duration,scale};
   }
-  covers(bounds,view=this.viewport()) {return !!bounds&&view.start>=bounds.since-.01&&(bounds.before===null||view.end<bounds.before+.01);}
+  covers(bounds,view=this.viewport()) {
+    const {start,end}=view.scale??view;
+    return !!bounds&&Math.max(view.start,start)>=bounds.since-.01&&
+      (bounds.before===null||Math.min(view.end,end)<bounds.before+.01);
+  }
   queryWindow(now=Date.now()/1000) {
     const count=this.services.status()?.storage?.count;
     if((Number.isSafeInteger(count)&&count<=20000)||(!Number.isSafeInteger(count)&&!this.segmented))return {since:this.timeline(now).start,before:null};
@@ -3850,15 +3862,47 @@ class TokenTrendView {
     this.range.setAttribute("aria-valuetext",this.time(view.start)+" – "+this.time(view.end)+" · "+label+(view.scale.gaps.length?" · "+t("已跳过空档"):""));
   }
   navigate(end,scale=this.timeScale()) {
+    this.stopSessionSlide();
     const duration=Math.min(scale.length,this.hours*3600);
-    end=Math.max(duration,Math.min(scale.length,end));this.windowEnd=end>=scale.length-.001?null:scale.at(end);
+    // Allow manual panning back through any space added to center an edge request.
+    const centeredEnd=Number.isFinite(this.windowCenter)?scale.offset(this.windowCenter,true)+duration/2:null;
+    const minEnd=Math.min(duration,centeredEnd??duration),maxEnd=Math.max(scale.length,centeredEnd??scale.length);
+    end=Math.max(minEnd,Math.min(maxEnd,end));
+    this.windowCenter=end<duration||end>scale.length?scale.at(end-duration/2,true):null;
+    this.windowEnd=this.windowCenter!==null||end>=scale.length-.001?null:scale.at(end);
     this.hover=null;this.hoverChart=null;this.hoverSeries=null;this.updateRange();this.scheduleRender();this.ensureWindow();
+  }
+  revealSession(session) {
+    const stamp=this.sidebarOutside.get(session);
+    if(!this.active||!Number.isFinite(stamp))return;
+    this.stopSessionSlide();
+    const apply=()=>{
+      this.windowCenter=stamp;this.windowEnd=null;
+      this.hover=null;this.hoverChart=null;this.hoverSeries=null;
+      this.render(true);this.ensureWindow();
+    };
+    if(!document.startViewTransition||!globalThis.CSS?.supports("selector(:active-view-transition-type(trend-earlier))")||
+      !matchMedia("(prefers-reduced-motion: no-preference)").matches){apply();return;}
+
+    const direction=stamp<this.viewport().start?"trend-earlier":"trend-later";
+    this.slideNeedsRender=false;
+    const slide=document.startViewTransition({types:[direction],update:()=>{if(this.sessionSlide===slide)apply();}});
+    this.sessionSlide=slide;
+    const finish=()=>{
+      if(this.sessionSlide!==slide)return;
+      this.sessionSlide=null;
+      if(this.slideNeedsRender)this.scheduleRender();
+    };
+    slide.finished.then(finish,finish);
+  }
+  stopSessionSlide() {
+    this.sessionSlide?.skipTransition();this.sessionSlide=null;
   }
   setRange(hours,fraction=.5,anchorTime=null) {
     if(!this.boundsReady||!Number.isFinite(hours))return;
     const view=this.viewport(),next=Math.max(1,Math.min(this.rangeLimit(),hours));if(Math.abs(next-this.hours)<1e-9)return;
     fraction=Number.isFinite(fraction)?Math.max(0,Math.min(1,fraction)):.5;
-    const anchor=Number.isFinite(anchorTime)?view.scale.offset(anchorTime):view.startOffset+view.duration*fraction,duration=Math.min(view.scale.length,next*3600);
+    const anchor=Number.isFinite(anchorTime)?view.scale.offset(anchorTime,Number.isFinite(this.windowCenter)):view.startOffset+view.duration*fraction,duration=Math.min(view.scale.length,next*3600);
     this.hours=next;this.navigate(anchor+(1-fraction)*duration,view.scale);
   }
   pan(seconds) {if(this.boundsReady&&Number.isFinite(seconds)&&seconds){const view=this.viewport();this.navigate(view.endOffset+seconds,view.scale);}}
@@ -3877,7 +3921,7 @@ class TokenTrendView {
   cancelPending() {this.controller?.abort();this.nativeController?.abort();clearTimeout(this.windowTimer);this.windowTimer=null;this.controller=null;this.nativeController=null;this.requestBounds=null;this.paintRefresh=null;this.previewPackets=null;this.loading=false;this.hydrating=false;}
   setActive(active) {
     this.active=active;this.hover=null;this.hoverChart=null;this.hoverSeries=null;this.hoverEvent=null;this.focusEvent=null;this.emphasis=null;this.focusSeries=null;
-    if(!active){this.cancelPending();this.highlightSidebar(null);this.guide.replaceChildren();this.timeTooltip.hidden=true;for(const chart of this.charts)chart.tooltip.hidden=true;}
+    if(!active){this.stopSessionSlide();this.cancelPending();this.highlightSidebar(null);this.guide.replaceChildren();this.timeTooltip.hidden=true;for(const chart of this.charts)chart.tooltip.hidden=true;}
     else {
       this.render();const ticket={};this.paintRefresh=ticket;
       requestAnimationFrame(()=>setTimeout(()=>{if(this.active&&this.paintRefresh===ticket){this.paintRefresh=null;this.refresh();}},0));
@@ -3964,17 +4008,18 @@ class TokenTrendView {
     return this.hydration;
   }
   model() {
-    const ownerByThread=new Map();
-    for(const session of this.services.sessions()) {
-      if(session.thread_id===OTHER_SESSION_GROUP)continue;
+    const sessions=this.services.sessions().filter(session=>session.thread_id!==OTHER_SESSION_GROUP),ownerByThread=new Map();
+    for(const session of sessions) {
       for(const member of session.members)ownerByThread.set(member.thread_id,session);
     }
-    const groups=new Map();let unknown=0;
+    const groups=new Map(),inRange=new Set();let unknown=0;
     const view=this.viewport(),now=view.end,since=view.start;
     for(const packet of (this.previewPackets||this.packets).values()) {
-      if(!Number.isFinite(packet.created)||(!packet.is_compaction&&!this.services.isGeneration(packet)))continue;
+      if(!Number.isFinite(packet.created))continue;
       const inView=packet.created>=since&&packet.created<=now;
       const session=ownerByThread.get(packet.thread_id);
+      if(inView&&session)inRange.add(session.thread_id);
+      if(!packet.is_compaction&&!this.services.isGeneration(packet))continue;
       if(!session){if(inView)unknown++;continue;}
       const id=session.thread_id;
       if(!groups.has(id))groups.set(id,{id,title:session.title,session,points:[],latest:0});
@@ -3986,11 +4031,17 @@ class TokenTrendView {
       group.points.sort((a,b)=>a.packet.created-b.packet.created||a.packet.id.localeCompare(b.packet.id));
       group.lines=Object.fromEntries(["input","size"].map(field=>[field,TokenTrendView.windowPoints(group.points,field,since,now)]));
       group.points=group.points.filter(point=>point.packet.created>=since&&point.packet.created<=now);
-      if(group.points.length||group.lines.input.length||group.lines.size.length)series.push(group);
+      if(group.points.length||group.lines.input.length||group.lines.size.length){series.push(group);inRange.add(group.id);}
+    }
+    const outside=new Map(),covered=this.covers(this.loadedBounds,view);
+    for(const session of sessions) {
+      const stamp=session.latest_packet?.created;
+      if(Number.isFinite(stamp)&&!inRange.has(session.thread_id)&&(stamp<since||stamp>now&&covered))
+        outside.set("thread:"+session.thread_id,stamp);
     }
     series.sort((a,b)=>b.latest-a.latest||a.id.localeCompare(b.id));
     const matched=series.filter(group=>!this.query||sessionGroupMatchesQuery(group.session,this.query));
-    return {series,matched,visible:matched,unknown,now,view};
+    return {series,matched,visible:matched,outside,unknown,now,view};
   }
   assignSeriesColors(series) {
     const previous=new Map(this.series.map(group=>[group.id,group.colorSlot]));
@@ -4035,6 +4086,7 @@ class TokenTrendView {
     if(color)row.style.setProperty("--trend-series-color",color);
     else row.style.removeProperty("--trend-series-color");
     row.toggleAttribute("data-trend-series",!!color);
+    row.toggleAttribute("data-trend-outside",this.active&&this.sidebarOutside.has(row.dataset.session));
     row.toggleAttribute("data-trend-highlight",!!color&&row.dataset.session==="thread:"+this.highlightedSeries);
   }
   highlightSidebar(series) {
@@ -4056,10 +4108,12 @@ class TokenTrendView {
     if(key!=="overflow"&&events.length>1)node.append(this.svgNode("text",{x:6,y:-6,class:"trend-event-count",fill:point.series.color},"+"+(events.length-1)));
     layer.append(node);return node;
   }
-  render() {
+  render(duringSlide=false) {
     if(!this.active)return;
+    if(this.sessionSlide&&!duringSlide){this.slideNeedsRender=true;return;}
     this.updateRange();const model=this.model();this.assignSeriesColors(model.series);this.series=model.series;
     this.sidebarColors=new Map(model.visible.map(group=>["thread:"+group.id,group.color]));
+    this.sidebarOutside=model.outside;
     for(const row of this.sessionList.querySelectorAll(".session-row"))this.styleSessionRow(row);
     if(!model.visible.some(group=>group.id===this.hoverSeries&&(group.lines.input.length||group.lines.size.length)))this.hoverSeries=null;
     if(!this.sidebarColors.has("thread:"+this.emphasis))this.emphasis=null;
