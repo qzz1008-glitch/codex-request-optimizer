@@ -736,7 +736,7 @@ input[type=checkbox][switch]:focus-visible{outline:2px solid var(--accent);outli
 .zstd-level-option:hover{background:transparent}
 .zstd-level-check{display:inline-block;width:14px;flex:none;text-align:center}
 #settings-dialog .settings-compound-controls{display:grid;grid-template-columns:max-content minmax(0,1fr)}
-#settings-dialog .settings-inline-fields{display:flex;flex-wrap:wrap;gap:var(--settings-row-gap) 20px;min-inline-size:0}
+#settings-dialog .settings-inline-fields{display:flex;flex-wrap:wrap;align-items:center;gap:var(--settings-row-gap) 20px;min-inline-size:0}
 #settings-dialog .settings-inline-field{
   display:grid;grid-template-columns:var(--settings-inline-label-width) max-content;
   align-items:center;column-gap:6px;max-inline-size:100%

@@ -294,7 +294,7 @@
       <div class="settings-row">
         <span id="packet-size-protection-label" class="settings-key">大小保护</span>
         <div class="settings-controls settings-compound-controls">
-          <div class="settings-switch" data-settings-field="packet_size_protection_enabled"><input id="packet-size-protection" type="checkbox" switch role="switch" aria-labelledby="packet-size-protection-label" aria-controls="budget"></div>
+          <div class="settings-switch" data-settings-field="packet_size_protection_enabled"><input id="packet-size-protection" type="checkbox" switch role="switch" aria-labelledby="packet-size-protection-label" aria-controls="budget" aria-describedby="packet-size-protection-hint"></div>
           <div class="settings-inline-fields">
             <div class="settings-inline-field" data-settings-field="budget">
               <label id="budget-label" for="budget">大小上限</label>
@@ -303,6 +303,7 @@
                 <span id="budget-unit">KB</span>
               </label>
             </div>
+            <p id="packet-size-protection-hint" class="muted help runtime-inline-hint">请求超限时尝试压缩旧上下文。</p>
           </div>
         </div>
       </div>
@@ -310,7 +311,7 @@
       <div class="settings-row">
         <span id="capacity-retry-label" class="settings-key">容量重试</span>
         <div class="settings-controls settings-compound-controls">
-          <div class="settings-switch" data-settings-field="capacity_retry_enabled" title="模型容量不足时自动重试"><input id="capacity-retry" type="checkbox" switch role="switch" aria-labelledby="capacity-retry-label" aria-controls="capacity-retry-count capacity-retry-delay"></div>
+          <div class="settings-switch" data-settings-field="capacity_retry_enabled" title="模型容量不足时自动重试"><input id="capacity-retry" type="checkbox" switch role="switch" aria-labelledby="capacity-retry-label" aria-controls="capacity-retry-count capacity-retry-delay" aria-describedby="capacity-retry-hint"></div>
           <div class="settings-inline-fields">
             <div class="settings-inline-field" data-settings-field="capacity_retry_max_retries">
               <label id="capacity-retry-count-label" for="capacity-retry-count">重试次数</label>
@@ -326,13 +327,14 @@
                 <span id="capacity-retry-delay-unit">秒</span>
               </label>
             </div>
+            <p id="capacity-retry-hint" class="muted help runtime-inline-hint">模型容量不足时等待后重试。</p>
           </div>
         </div>
       </div>
       <div class="settings-row">
         <span id="bad-request-retry-label" class="settings-key">异常重试</span>
         <div class="settings-controls settings-compound-controls">
-          <div class="settings-switch" title="仅重试通用 Bad Request；字段或参数错误保持原样。"><input id="bad-request-retry" type="checkbox" switch role="switch" aria-labelledby="bad-request-retry-label" aria-controls="bad-request-retry-count"></div>
+          <div class="settings-switch" title="仅重试通用 Bad Request；字段或参数错误保持原样。"><input id="bad-request-retry" type="checkbox" switch role="switch" aria-labelledby="bad-request-retry-label" aria-controls="bad-request-retry-count" aria-describedby="bad-request-retry-hint"></div>
           <div class="settings-inline-fields">
             <div class="settings-inline-field">
               <label id="bad-request-retry-count-label" for="bad-request-retry-count">重试次数</label>
@@ -341,6 +343,7 @@
                 <span id="bad-request-retry-count-unit">次</span>
               </label>
             </div>
+            <p id="bad-request-retry-hint" class="muted help runtime-inline-hint">遇到通用 Bad Request 时自动重试。</p>
           </div>
         </div>
       </div>
