@@ -299,6 +299,15 @@ class RuntimeSettingsTests(unittest.TestCase):
             saved = json.loads(self.server.settings_path.read_text(encoding="utf8"))
             self.assertEqual(saved["capacity_retry_enabled"], enabled)
 
+    def test_sharing_tab_is_opt_in_and_the_preference_is_persisted(self):
+        self.assertIs(self.api("/api/status")[1]["sharing_tab_enabled"], False)
+        for enabled in (True, False):
+            status, result = self.api("/api/settings", {"sharing_tab_enabled": enabled})
+            self.assertEqual(status, 200)
+            self.assertIs(result["sharing_tab_enabled"], enabled)
+            saved = json.loads(self.server.settings_path.read_text(encoding="utf8"))
+            self.assertIs(saved["sharing_tab_enabled"], enabled)
+
     def test_language_is_persisted_and_invalid_changes_are_atomic(self):
         try:
             for language in ("en", "zh"):
@@ -313,7 +322,7 @@ class RuntimeSettingsTests(unittest.TestCase):
             self.server.save_settings({**self.server.settings, "ui_language": "zh"})
 
     def test_boolean_validation_does_not_accept_numbers_or_strings(self):
-        for key in ["start_on_login", "capacity_retry_enabled"]:
+        for key in ["start_on_login", "capacity_retry_enabled", "sharing_tab_enabled"]:
             for value in [1, "true", None]:
                 with self.subTest(key=key, value=value):
                     self.assertEqual(self.api("/api/settings", {key: value})[0], 400)

@@ -42,6 +42,7 @@ async function run(){
     renderStorageInfo();renderRecordLimit($('packet-limit'));renderRecordLimit($('storage-limit'));
     settingsEditing=true;settingsBaseline=readSettingsDraft();
     $('sharing-settings').hidden=false;$('proxy-settings').hidden=false;
+    $('sharing-tab-setting').hidden=false;$('sharing-tab-enabled').disabled=false;
     $('settings-dialog').showModal();
   });
   const enabled=page.locator('#bad-request-retry'),count=page.locator('#bad-request-retry-count');
@@ -85,7 +86,7 @@ async function run(){
   }
   await page.evaluate(()=>{settingsEditing=false;fillPacketProtection();fillCapacityRetry();settingsEditing=true;});
   const settings=page.locator('#settings-dialog .settings-content');
-  assert.equal(await settings.getByRole('switch').count(),8);
+  assert.equal(await settings.getByRole('switch').count(),9);
   assert.equal(await settings.getByRole('checkbox').count(),0);
   const interactive='input:not([type=hidden]),select,button,a[href],[tabindex]';
   assert.deepEqual(await settings.locator(interactive).evaluateAll(nodes=>

@@ -151,6 +151,7 @@ def protection_settings(saved, *, default_enabled=False):
     for key, default in (("sharing_port", 47846), ("egress_port", 47847)):
         value = values.get(key)
         values[key] = value if type(value) is int and 1 <= value <= 65535 else default
+    values["sharing_tab_enabled"] = values.get("sharing_tab_enabled") is True
     return retention_settings(values)
 
 
@@ -747,6 +748,7 @@ class InspectorServer(ThreadingHTTPServer):
                 "bad_request_retry_max_retries": self.settings["bad_request_retry_max_retries"],
                 "bad_request_retry_supported": True,
                 "sharing_settings_supported": True,
+                "sharing_tab_enabled": self.settings["sharing_tab_enabled"],
                 "upgrade_prepare_supported": True,
                 "sharing_handover_protocol": SHARING_HANDOVER_PROTOCOL if os.name == "nt" else 0,
                 "sharing_runtime": sharing_runtime(self),
@@ -1248,8 +1250,8 @@ class Handler(BaseHTTPRequestHandler):
                     candidate["auto_zstd_level_enabled"] = data["auto_zstd_level_enabled"]
                 if not candidate["packet_size_protection_enabled"]:
                     candidate["auto_zstd_level_enabled"] = False
-                for key in ("capture_enabled",
-                            "start_on_login", "capacity_retry_enabled", "bad_request_retry_enabled"):
+                for key in ("capture_enabled", "start_on_login", "sharing_tab_enabled",
+                            "capacity_retry_enabled", "bad_request_retry_enabled"):
                     if key in data:
                         if not isinstance(data[key], bool):
                             raise ValueError("invalid boolean setting: " + key)

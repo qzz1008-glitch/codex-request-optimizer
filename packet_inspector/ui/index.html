@@ -17,7 +17,7 @@
     <div id="view-toggle" class="view-toggle" role="group" aria-label="视图">
       <button id="view-records" type="button" title="记录" aria-label="记录" aria-pressed="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M9 6h11M9 12h11M9 18h11M4 6h.01M4 12h.01M4 18h.01"/></svg></button>
       <button id="view-trends" type="button" title="趋势" aria-label="趋势" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3v18h18M6 16l5-6 4 3 6-8"/></svg></button>
-      <button id="view-sharing" type="button" title="共享" aria-label="共享" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6" cy="12" r="3"/><circle cx="18" cy="5" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8.6 10.5 6.8-4M8.6 13.5l6.8 4"/></svg></button>
+      <button id="view-sharing" type="button" title="共享" aria-label="共享" aria-pressed="false" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6" cy="12" r="3"/><circle cx="18" cy="5" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8.6 10.5 6.8-4M8.6 13.5l6.8 4"/></svg></button>
     </div>
     <div class="header-actions">
       <button id="restart-notice-open" class="restart-notice-badge" type="button" data-visible="false" tabindex="-1" aria-label="查看待生效配置或接入错误">ChatGPT 待重启</button>
@@ -266,6 +266,13 @@
         <div class="settings-controls">
           <div class="settings-switch"><input id="start-on-login" type="checkbox" switch role="switch" aria-labelledby="start-on-login-label" aria-describedby="startup-hint"></div>
           <p id="startup-hint" class="muted help runtime-inline-hint">登录 Windows 后自动启动。</p>
+        </div>
+      </div>
+      <div id="sharing-tab-setting" class="settings-row" data-settings-field="sharing_tab_enabled" hidden>
+        <span id="sharing-tab-label" class="settings-key">共享页签</span>
+        <div class="settings-controls">
+          <div class="settings-switch"><input id="sharing-tab-enabled" type="checkbox" switch role="switch" aria-labelledby="sharing-tab-label" aria-describedby="sharing-tab-hint" disabled></div>
+          <p id="sharing-tab-hint" class="muted help runtime-inline-hint">在主窗口显示额度与网络共享。</p>
         </div>
       </div>
       <div id="updates-settings" class="settings-row">

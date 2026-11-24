@@ -529,7 +529,7 @@ history.replaceState(null, "", "/");
 const state = { status: null, packets: [], sessions: [], selected: null, detail: null, tab: "headers", diffAvailable: null, path: "", text: null, older: false, polling: false, detailVersion: "", detailRequest: 0, listVersion: "", sessionVersion: "", sort: "created", direction: "desc", filters: {kind:"",status:"",thread:""}, canLoadMore: false, listRequest: 0, listController: null, listRevision: null, filterRevision: null };
 const nf = new Intl.NumberFormat("zh-CN");
 const storageUsageFormat = new Intl.NumberFormat("zh-CN", {minimumFractionDigits:2, maximumFractionDigits:2});
-let workspaceView="records",tokenTrendView=null;
+let workspaceView="records",tokenTrendView=null,restoreSharingView=false;
 let trendActivation=null;
 let requestBodyCache=null, requestBodyExportUrl="", requestBodySequence=0;
 let treeQueryTimer=null,requestBodyView=null,requestBodyHighlight=null;
@@ -1762,6 +1762,7 @@ function renderConnectionActions() {
 }
 function renderStatus(fill=false) {
   const s=state.status;if(!s)return;
+  renderSharingNavigation(s);
   $("desktop-build").hidden=!s.ui_live_reload;
   $("ui-refresh").hidden=!s.ui_live_reload;
   renderConnectionActions();
@@ -1788,12 +1789,14 @@ function storageLimitSettings(status) {
 function fillSettings() {
   const s=state.status,p=s.profile;
   const storage=storageLimitSettings(s),storageInput=$("storage-limit");
+  const sharingTabSupported=typeof s.sharing_tab_enabled==="boolean",sharingTab=$("sharing-tab-enabled");
   storageInput.min=storage.min;storageInput.max=storage.max;
   $("packet-limit").max=s.packet_limit_max??20000;
   fillEntryPort();
   if(!settingsEditing) {
     storageInput.value=storage.value;$("packet-limit").value=s.max_packets;
     $("start-on-login").checked=!!s.start_on_login;
+    sharingTab.checked=s.sharing_tab_enabled===true;
     $("sharing-port").value=s.sharing_port??47846;
     $("exit-port").value=s.egress_port??47847;
   }
@@ -1804,6 +1807,8 @@ function fillSettings() {
   }
   $("sharing-settings").hidden=!s.sharing_settings_supported;
   for(const id of ["sharing-port","exit-port"])$(id).disabled=settingsSaving||!s.sharing_settings_supported;
+  $("sharing-tab-setting").hidden=!sharingTabSupported;
+  sharingTab.disabled=settingsSaving||!sharingTabSupported;
   $("start-on-login").disabled=settingsSaving||!s.start_on_login_supported;
   fillCapacityRetry();
   fillBadRequestRetry();
@@ -2414,6 +2419,7 @@ function readSettingsDraft() {
     auto_zstd_level_enabled:$("packet-size-protection").checked&&$("auto-zstd-level").checked,
     budget:$("budget").value,
     start_on_login:$("start-on-login").checked,
+    sharing_tab_enabled:$("sharing-tab-enabled").checked,
     capacity_retry_enabled:$("capacity-retry").checked,
     capacity_retry_max_retries:$("capacity-retry-count").value,
     capacity_retry_delay_seconds:$("capacity-retry-delay").value,
@@ -2507,6 +2513,7 @@ async function saveSettings() {
     ["auto_zstd_level_enabled","auto_zstd_level_enabled",draft.auto_zstd_level_enabled,typeof s.auto_zstd_level_enabled==="boolean"],
     ["budget","budget_bytes",Math.round(Number(draft.budget)*1000),protectionSupported],
     ["start_on_login","start_on_login",draft.start_on_login,s.start_on_login_supported],
+    ["sharing_tab_enabled","sharing_tab_enabled",draft.sharing_tab_enabled,typeof s.sharing_tab_enabled==="boolean"],
     ["capacity_retry_enabled","capacity_retry_enabled",draft.capacity_retry_enabled,s.capacity_retry_supported],
     ["capacity_retry_max_retries","capacity_retry_max_retries",Number(draft.capacity_retry_max_retries),Number.isInteger(s.capacity_retry_max_retries)],
     ["capacity_retry_delay_seconds","capacity_retry_delay_seconds",Number(draft.capacity_retry_delay_seconds),Number.isInteger(s.capacity_retry_delay_seconds)],
@@ -4278,7 +4285,18 @@ function activateTrendsAfterSlide(pane) {
   if(slide)slide.finished.then(afterPaint,afterPaint);
   else afterPaint();
 }
+function renderSharingNavigation(status) {
+  const tab=$("view-sharing");
+  // Keep sharing accessible with older backends that lack this preference.
+  const visible=status.sharing_tab_enabled!==false;
+  const moveFocus=!visible&&(document.activeElement===tab||$("sharing-view").contains(document.activeElement));
+  tab.hidden=!visible;
+  if(restoreSharingView||(!visible&&workspaceView==="sharing"))setWorkspaceView(visible?"sharing":"records");
+  if(moveFocus)$("view-records").focus();
+}
 function setWorkspaceView(view) {
+  if(view==="sharing"&&$("view-sharing").hidden)return;
+  restoreSharingView=false;
   hideSessionTitleTooltip();
   const wasSharing=workspaceView==="sharing";
   workspaceView=["trends","sharing"].includes(view)?view:"records";
@@ -4307,7 +4325,11 @@ function setWorkspaceView(view) {
 }
 $("view-records").onclick=()=>setWorkspaceView("records");$("view-trends").onclick=()=>setWorkspaceView("trends");
 $("view-sharing")?.addEventListener("click",()=>setWorkspaceView("sharing"));
-try {const saved=localStorage.getItem("packet-inspector-view");if(["trends","sharing"].includes(saved))setWorkspaceView(saved);} catch(_) {}
+try {
+  const saved=localStorage.getItem("packet-inspector-view");
+  restoreSharingView=saved==="sharing";
+  if(saved==="trends")setWorkspaceView(saved);
+} catch(_) {}
 async function poll() {
   if(state.polling || document.hidden)return;
   state.polling=true;

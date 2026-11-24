@@ -455,7 +455,8 @@ class LANSharingTests(unittest.TestCase):
         quota, exit_port = free_port(), free_port()
         while exit_port == quota:
             exit_port = free_port()
-        status, result = self.local_api('/api/settings', {'sharing_port': quota, 'egress_port': exit_port})
+        status, result = self.local_api('/api/settings', {'sharing_port': quota, 'egress_port': exit_port,
+                                                          'sharing_tab_enabled': True})
         self.assertEqual(status, 200)
         self.assertTrue(result['sharing_settings_supported'])
         with patch('packet_inspector.sharing.automatic_address', return_value='127.0.0.1'), \
@@ -470,6 +471,12 @@ class LANSharingTests(unittest.TestCase):
             self.assertEqual(shared_exit['egress']['host']['port'], exit_port)
             for _ in range(2):
                 self.assertEqual(self.remote_request(host['link'], '/v1/responses', b'{}')[0], 200)
+            status, result = self.local_api('/api/settings', {'sharing_tab_enabled': False})
+            self.assertEqual(status, 200)
+            self.assertIs(result['sharing_tab_enabled'], False)
+            self.assertEqual(self.owner.sharing.listener.server_port, quota)
+            self.assertEqual(self.owner.egress.listener.server_port, exit_port)
+            self.assertEqual(self.remote_request(host['link'])[0], 200)
             new_quota, new_exit = free_port(), free_port()
             while new_exit == new_quota:
                 new_exit = free_port()

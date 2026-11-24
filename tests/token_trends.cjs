@@ -917,6 +917,7 @@ function eventRows(){return [
  });
  await test('chart activation waits for the visible workspace slide and skips obsolete switches',async()=>{
   const elements=new Map(['records-view','token-trend-view','sharing-view','view-records','view-trends','view-sharing'].map(id=>[id,new Node('div')]));
+  elements.get('view-sharing').hidden=false;
   const frames=[],timers=[],activations=[];
   let finishTrends,finishSharing;
   const trends=new Promise(resolve=>finishTrends=resolve),sharing=new Promise(resolve=>finishSharing=resolve);
@@ -924,7 +925,7 @@ function eventRows(){return [
   elements.get('sharing-view').getAnimations=()=>[{transitionProperty:'transform',finished:sharing}];
   const start=source.indexOf('function activateTrendsAfterSlide(');
   const {setWorkspaceView}=vm.runInNewContext(source.slice(start,source.indexOf('$("view-records").onclick=',start))+'\nthis;',{
-   workspaceView:'records',trendActivation:null,tokenTrendView:{setActive:active=>activations.push(active)},state:{tab:'headers'},
+   workspaceView:'records',restoreSharingView:false,trendActivation:null,tokenTrendView:{setActive:active=>activations.push(active)},state:{tab:'headers'},
    $:id=>elements.get(id),hideSessionTitleTooltip(){},cancelTokenRead(){},localStorage:{setItem(){}},
    requestAnimationFrame:callback=>frames.push(callback),setTimeout:callback=>timers.push(callback),InspectorSharing:{setActive(){}}
   });
