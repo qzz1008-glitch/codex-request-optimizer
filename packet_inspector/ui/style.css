@@ -780,6 +780,7 @@ input[type=checkbox][switch]:focus-visible{outline:2px solid var(--accent);outli
 #settings-dialog .storage-directory-row{align-items:center;row-gap:4px}
 #settings-dialog .storage-directory-row>label{min-inline-size:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #settings-dialog .storage-directory-row>input{inline-size:100%;min-inline-size:0;text-align:start}
+#settings-dialog #linux-storage-targets input::placeholder{color:inherit;opacity:1}
 #settings-dialog .storage-directory-row>.help{grid-column:2/-1;margin:0}
 #settings-dialog .context-grid .settings-controls{flex-wrap:nowrap}
 #settings-dialog .context-value:has(input:disabled){background:#eef0f3}
