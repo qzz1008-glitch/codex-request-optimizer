@@ -585,7 +585,10 @@ input[type=checkbox][switch]:focus-visible{outline:2px solid var(--accent);outli
 }
 /* Settings share one type scale, label column, and row spacing. */
 #settings-dialog{
-  --muted:#526174;
+  --muted:#606e81;
+  --settings-label-size:1rem;
+  --settings-label-line-height:calc(22 / 14);
+  --settings-detail-size:calc(12rem / 14);
   --settings-label-width:172px;
   --settings-inline-label-width:76px;
   --settings-column-gap:12px;
@@ -594,7 +597,6 @@ input[type=checkbox][switch]:focus-visible{outline:2px solid var(--accent);outli
   --settings-section-indent:16px;
   --settings-row-gap:10px;
   --settings-field-height:32px;
-  --settings-compact-value-size:12px;
   --settings-control-height:var(--settings-field-height);
   --settings-control-radius:8px;
   --settings-segment-height:26px;
@@ -605,7 +607,7 @@ input[type=checkbox][switch]:focus-visible{outline:2px solid var(--accent);outli
   overflow:hidden;
   container:settings-dialog / inline-size;
   font-family:"Segoe UI","Microsoft YaHei UI","Microsoft YaHei",sans-serif;
-  font-size:14px;
+  font-size:var(--settings-label-size);
   line-height:1.5;
   background:var(--panel);
 }
@@ -622,20 +624,19 @@ input[type=checkbox][switch]:focus-visible{outline:2px solid var(--accent);outli
 #settings-dialog h2{
   margin:0;
   color:#203b6c;
-  font-size:20px;
+  font-size:calc(20rem / 14);
   font-weight:650;
-  line-height:28px;
+  line-height:1.4;
   letter-spacing:.02em;
 }
 #settings-dialog h3{
   margin:0 0 16px;
   color:#2d57a2;
-  font-size:16px;
+  font-size:calc(16rem / 14);
   font-weight:650;
-  line-height:24px;
-  letter-spacing:.055em;
+  line-height:1.5;
+  letter-spacing:.02em;
 }
-#settings-dialog #settings-close{width:32px;min-height:32px;padding:0;color:var(--muted);font-size:18px}
 #settings-dialog>.settings-content{
   flex:1;
   min-height:0;
@@ -654,27 +655,32 @@ input[type=checkbox][switch]:focus-visible{outline:2px solid var(--accent);outli
 #settings-dialog .settings-content>section>h3{margin-block-end:6px;margin-inline-start:calc(-1 * var(--settings-section-indent))}
 #settings-dialog .settings-content>section:first-child{border-top:0}
 #settings-dialog .settings-content>section:last-child{padding-bottom:0}
-#settings-dialog label,
-#settings-dialog .settings-key{margin:0;color:var(--ink)}
-#settings-dialog .settings-key{min-inline-size:0;margin-block-start:calc((var(--settings-control-height) - 22px) / 2);overflow-wrap:anywhere}
-#settings-dialog .settings-key:lang(zh){font-weight:500}
+#settings-dialog :is(label,.settings-key){margin:0;color:var(--ink);font-size:var(--settings-label-size);line-height:var(--settings-label-line-height)}
+#settings-dialog .settings-key{min-inline-size:0;margin-block-start:calc((var(--settings-control-height) - 22px) / 2);font-weight:500;overflow-wrap:anywhere}
 #settings-dialog .settings-key:not(fieldset:disabled *){color:#486085}
-#settings-dialog :is(button,input,select){font:inherit;font-size:14px}
-#settings-dialog button{min-height:var(--settings-control-height);padding:5px 10px;border-radius:var(--settings-control-radius);line-height:20px}
-#settings-dialog :is(input:not([type=checkbox],[type=radio]),select){block-size:var(--settings-field-height);margin:0;padding:5px 10px;border:1px solid var(--line);border-radius:var(--settings-control-radius);background:var(--panel);color:var(--ink);line-height:20px;text-align:right}
-#settings-dialog input[type=number]{appearance:textfield;font-variant-numeric:tabular-nums;text-align:right}
+#settings-dialog :is(button,input,select){font:inherit}
+#settings-dialog button{
+  display:inline-flex;align-items:center;justify-content:center;min-block-size:var(--settings-control-height);
+  padding:4px 10px;border-radius:var(--settings-control-radius);font-size:var(--settings-label-size);line-height:1.5
+}
+#settings-dialog :is(input:where(:not([type=checkbox],[type=radio],[type=hidden])),select,.settings-value-unit){
+  block-size:var(--settings-field-height);margin:0;padding:5px 10px;border:1px solid var(--line);
+  border-radius:var(--settings-control-radius);background:var(--panel);color:var(--ink);
+  font-size:var(--settings-detail-size);line-height:1.5;text-align:start
+}
+#settings-dialog input[type=number]{appearance:textfield;font-variant-numeric:tabular-nums;text-align:end}
 #settings-dialog input[type=number]::-webkit-inner-spin-button,
 #settings-dialog input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}
+#settings-dialog input::placeholder{color:var(--muted);opacity:1}
 #settings-dialog :is(input:not([switch]),select):disabled{background:var(--bg);opacity:.55;cursor:default}
 #settings-dialog :is(button,input,select):focus-visible{outline:2px solid var(--accent);outline-offset:2px}
-#settings-dialog .help{margin:10px 0 0;color:var(--muted);font-size:13px;line-height:20px;overflow-wrap:anywhere}
+#settings-dialog :is(.help,.entry-port-hint,.entry-port-status,.proxy-test-result,.settings-save-log,.settings-inline-feedback,.record-limit-value){
+  color:var(--muted);font-size:var(--settings-detail-size);line-height:1.5
+}
+#settings-dialog .help{margin:10px 0 0;overflow-wrap:anywhere}
 #settings-dialog .help.error{color:var(--danger)}
-#settings-dialog label,
-#settings-dialog .settings-key,
-#settings-dialog #updates-versions,
-#settings-dialog .updates-status{font-size:1rem;line-height:calc(22 / 14);font-weight:400}
 #settings-dialog :is(.runtime-inline-hint,.entry-port-hint,#storage-paths-hint,#proxy-detection-warning){
-  padding-inline-end:12px;color:#606e81;text-align:end
+  padding-inline-end:12px;text-align:end
 }
 #settings-dialog .settings-dirty{border-radius:8px;outline:2px solid var(--accent);outline-offset:3px;background-color:var(--soft)}
 #settings-dialog .settings-row{
@@ -684,11 +690,15 @@ input[type=checkbox][switch]:focus-visible{outline:2px solid var(--accent);outli
 #settings-dialog .settings-controls{display:flex;flex-wrap:wrap;align-items:center;gap:6px var(--settings-column-gap);min-inline-size:0}
 #settings-dialog .settings-switch{display:flex;align-items:center;min-block-size:var(--settings-field-height)}
 #settings-dialog :is(.language-toggle,.image-mode-pills){display:inline-flex;flex-wrap:wrap;justify-self:start;gap:2px;width:max-content;min-width:0;max-width:100%;margin:0;padding:2px;border:1px solid var(--line);border-radius:var(--settings-control-radius);background:var(--bg)}
-#settings-dialog :is(.language-toggle button,.image-mode-pills span){display:block;height:var(--settings-segment-height);min-height:var(--settings-segment-height);padding:3px 7px;border:0;border-radius:var(--settings-segment-radius);font-size:13px;font-weight:400;line-height:20px;text-align:center;white-space:nowrap}
+#settings-dialog :is(.language-toggle button,.image-mode-pills span){
+  display:flex;align-items:center;justify-content:center;min-block-size:var(--settings-segment-height);
+  padding:0 7px;border:0;border-radius:var(--settings-segment-radius);font-size:var(--settings-label-size);
+  line-height:1.5;white-space:nowrap
+}
 #settings-dialog .language-toggle button{min-width:66px}
 #settings-dialog :is(.language-toggle button[aria-pressed=true],.image-mode-pills input:checked+span){background:var(--panel);color:var(--accent);box-shadow:0 1px 3px #14243b20}
 #settings-dialog :is(.language-toggle button:focus-visible,.image-mode-pills input:focus-visible+span){outline:2px solid var(--accent);outline-offset:1px}
-#settings-dialog .image-mode-pills label{position:relative;display:block;margin:0;font-size:13px;line-height:20px;white-space:nowrap;cursor:pointer}
+#settings-dialog .image-mode-pills label{position:relative;display:block;cursor:pointer}
 #settings-dialog .image-mode-pills input{position:absolute;inset:0;width:100%;height:100%;margin:0;padding:0;border:0;opacity:0;cursor:pointer}
 #settings-dialog .image-mode-pills span{color:var(--muted)}
 #settings-dialog .image-mode-pills label:has(input:disabled){opacity:.5;cursor:default}
@@ -697,7 +707,7 @@ input[type=checkbox][switch]:focus-visible{outline:2px solid var(--accent);outli
 #settings-dialog .entry-port-row .settings-controls>:is(.entry-port-details,.entry-port-hint){flex:1 1 12em}
 #settings-dialog .entry-port-details{display:flex;flex-wrap:wrap;column-gap:12px;min-inline-size:0}
 #settings-dialog .entry-port-details>.entry-port-hint{margin-inline-start:auto}
-#settings-dialog :is(.entry-port-hint,.entry-port-status){min-inline-size:0;font-size:13px;line-height:20px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#settings-dialog :is(.entry-port-hint,.entry-port-status){min-inline-size:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #settings-dialog .entry-port-status[data-state=active]{color:var(--green)}
 #settings-dialog .entry-port-status:is([data-state=pending],[data-state=unsaved]){color:var(--warn)}
 #settings-dialog .entry-port-status[data-state=error]{color:var(--danger)}
@@ -709,7 +719,7 @@ input[type=checkbox][switch]:focus-visible{outline:2px solid var(--accent);outli
 #settings-dialog .auto-zstd-row{margin-inline-start:-8px;padding-inline-start:8px}
 #settings-dialog .auto-zstd-row:is(:hover,:focus-within),
 #settings-dialog #compression-settings:has(#manual-compression-levels:disabled:hover) .auto-zstd-row{border-radius:8px;background:var(--soft);box-shadow:inset 0 0 0 1px #b9c9ed}
-#settings-dialog .zstd-level-trigger{inline-size:96px;max-inline-size:100%;justify-self:start;font-variant-numeric:tabular-nums;display:flex;align-items:center;justify-content:flex-end;gap:8px;padding-inline:10px;text-align:right}
+#settings-dialog .zstd-level-trigger{inline-size:96px;max-inline-size:100%;justify-self:start;justify-content:flex-end;gap:8px;font-variant-numeric:tabular-nums}
 #zstd-level-dialog{width:min(640px,calc(100vw - 32px));max-height:min(640px,calc(100vh - 40px));padding:20px;overflow:hidden}
 #zstd-level-dialog[open]{display:flex;flex-direction:column}
 #zstd-level-dialog .dialog-heading{flex:none;align-items:center;gap:16px;margin-bottom:6px}
@@ -761,22 +771,19 @@ input[type=checkbox][switch]:focus-visible{outline:2px solid var(--accent);outli
 }
 #settings-dialog .settings-value-unit{
   display:flex;align-items:center;gap:4px;inline-size:96px;min-inline-size:0;max-inline-size:100%;
-  block-size:var(--settings-field-height);padding:5px 10px;border:1px solid var(--line);
-  border-radius:var(--settings-control-radius);background:var(--panel);
-  font-size:14px;line-height:20px;font-variant-numeric:tabular-nums
+  font-variant-numeric:tabular-nums
 }
 #request-protection-settings .settings-value-unit,
-#settings-dialog .record-limit-field{
-  gap:2px;padding-inline:2px 4px;font-size:var(--settings-compact-value-size)
-}
+#settings-dialog .record-limit-field{gap:2px;padding-inline:2px 4px}
 #request-protection-settings .settings-value-unit{inline-size:64px}
 #settings-dialog .record-limit-field{inline-size:72px}
 #settings-dialog .settings-value-unit:focus-within{outline:2px solid var(--accent);outline-offset:2px}
 #settings-dialog .settings-value-unit:has(input:disabled){background:var(--bg)}
 #settings-dialog .settings-value-unit input{
-  flex:1;min-inline-size:0;block-size:20px;padding:0;border:0;border-radius:0;background:transparent;
+  flex:1;min-inline-size:0;block-size:1.5em;padding:0;border:0;border-radius:0;background:transparent;
   outline:0;box-shadow:none;font:inherit;text-align:end
 }
+#settings-dialog .settings-value-unit input:disabled{background:transparent}
 #settings-dialog .settings-value-unit>span:last-child{flex:none;color:var(--muted);white-space:nowrap}
 #settings-dialog .runtime-inline-hint{flex:1 1 12em;min-width:0;margin:0}
 #settings-dialog .proxy-controls{
@@ -788,12 +795,12 @@ input[type=checkbox][switch]:focus-visible{outline:2px solid var(--accent);outli
 #settings-dialog .proxy-controls>.help{grid-column:1/-1;margin:0}
 #settings-dialog .proxy-test-result{
   display:flex;flex-wrap:wrap;align-items:baseline;min-inline-size:0;gap:0 6px;
-  color:var(--muted);font-size:13px;line-height:16px;white-space:nowrap
+  line-height:calc(4 / 3);white-space:nowrap
 }
 #settings-dialog .proxy-test-result.success{color:var(--green)}
 #settings-dialog .proxy-test-result.error{color:var(--danger)}
-#settings-dialog #proxy-test-elapsed{color:var(--muted);font-size:12px;font-variant-numeric:tabular-nums}
-#settings-dialog .proxy-address-field input{width:100%;min-width:0;text-align:left}
+#settings-dialog #proxy-test-elapsed{color:var(--muted);font-variant-numeric:tabular-nums}
+#settings-dialog .proxy-address-field input{inline-size:100%;min-inline-size:0}
 #settings-dialog .storage-directory-controls{
   --storage-directory-columns:fit-content(42%) minmax(0,1fr) max-content;
   display:grid;grid-template-columns:var(--storage-directory-columns);row-gap:var(--settings-row-gap)
@@ -805,16 +812,13 @@ input[type=checkbox][switch]:focus-visible{outline:2px solid var(--accent);outli
 #settings-dialog #linux-storage-targets{row-gap:var(--settings-row-gap)}
 #settings-dialog .storage-directory-row{align-items:center;row-gap:4px}
 #settings-dialog .storage-directory-row>label{min-inline-size:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-#settings-dialog .storage-directory-row>input{inline-size:100%;min-inline-size:0;text-align:start}
-#settings-dialog #linux-storage-targets input::placeholder{color:inherit;opacity:1}
+#settings-dialog .storage-directory-row>input{inline-size:100%;min-inline-size:0}
+#settings-dialog #linux-storage-targets input::placeholder{color:inherit}
 #settings-dialog .storage-directory-row>.help{grid-column:2/-1;margin:0}
 #settings-dialog .context-grid .settings-controls{flex-wrap:nowrap}
-#settings-dialog .context-value:has(input:disabled){background:#eef0f3}
-#settings-dialog .context-value input:disabled{background:transparent;color:var(--muted);opacity:1}
-#settings-dialog .context-value input::placeholder{color:var(--muted)}
 #settings-dialog .record-limit-value{
   display:flex;align-items:center;gap:4px;inline-size:176px;max-inline-size:100%;
-  font-size:var(--settings-compact-value-size);line-height:20px;font-variant-numeric:tabular-nums
+  font-variant-numeric:tabular-nums
 }
 #settings-dialog .record-limit-prefix{
   display:flex;flex:0 1 8.5ch;justify-content:flex-end;gap:3px;min-inline-size:max-content;
@@ -840,9 +844,15 @@ input[type=checkbox][switch]:focus-visible{outline:2px solid var(--accent);outli
 #settings-dialog :is(#updates-versions,.updates-status){
   flex:none;min-inline-size:0;margin:0;overflow:hidden;text-align:start;text-overflow:ellipsis;white-space:nowrap
 }
-#settings-dialog #updates-versions{max-inline-size:min(12em,100% - var(--settings-control-height) - 6px)}
+#settings-dialog #updates-versions{
+  max-inline-size:min(12em,100% - var(--settings-control-height) - 6px);
+  font-size:var(--settings-label-size);line-height:var(--settings-label-line-height);font-variant-numeric:tabular-nums
+}
 #settings-dialog .updates-status{max-inline-size:clamp(9.75em,100% - 8.5em,28em)}
-#settings-dialog .updates-icon-button{display:inline-flex;align-items:center;justify-content:center;flex:none;inline-size:var(--settings-control-height);padding:0}
+#settings-dialog :is(#settings-close,.updates-icon-button){
+  flex:none;inline-size:var(--settings-control-height);block-size:var(--settings-control-height);padding:0
+}
+#settings-dialog #settings-close{color:var(--muted);font-size:18px;line-height:1}
 #settings-dialog .updates-icon-button svg{inline-size:16px;block-size:16px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
 #settings-dialog .updates-icon-button[aria-busy=true] svg{display:none}
 #settings-dialog .updates-icon-button:focus-visible{outline-offset:-3px}
@@ -858,13 +868,13 @@ input[type=checkbox][switch]:focus-visible{outline:2px solid var(--accent);outli
 #settings-dialog .settings-footer button{white-space:nowrap}
 #settings-dialog .settings-feedback{min-width:0}
 #settings-dialog .settings-feedback .help{max-height:60px;overflow-y:auto}
-#settings-dialog .settings-save-log{display:grid;gap:4px;max-height:84px;margin:6px 0 0;padding:0;overflow:auto;list-style:none;color:var(--muted);font-size:12px;line-height:18px}
+#settings-dialog .settings-save-log{display:grid;gap:4px;max-height:84px;margin:6px 0 0;padding:0;overflow:auto;list-style:none}
 #settings-dialog .settings-save-log li{display:grid;grid-template-columns:12px minmax(0,1fr);align-items:baseline;gap:6px}
 #settings-dialog .settings-save-log .settings-step-label{min-width:0;overflow-wrap:anywhere}
 #settings-dialog .settings-save-log li[data-state=running]{color:var(--accent)}
 #settings-dialog .settings-save-log li[data-state=done] .settings-step-icon{color:var(--green)}
 #settings-dialog .settings-save-log li[data-state=error]{color:var(--danger)}
-#settings-dialog #settings-save{display:inline-flex;align-items:center;justify-content:center;gap:4px;min-width:84px}
+#settings-dialog #settings-save{gap:4px;min-inline-size:84px;padding-inline:8px}
 #settings-dialog :is(#settings-save,.updates-icon-button)[aria-busy=true]{cursor:wait;opacity:1}
 .settings-save-spinner,.update-spinner{display:none;flex:none;width:12px;height:12px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%}
 #settings-save[aria-busy=true] .settings-save-spinner,.updates-icon-button[aria-busy=true] .update-spinner{display:block;animation:update-spin .8s linear infinite}
@@ -1139,10 +1149,10 @@ dialog{width:min(760px,calc(var(--desktop-width) - 80px));max-height:calc(var(--
 /* Keep list feedback at the bottom without reserving an empty footer row. */
 .requests-inline-feedback{position:absolute;z-index:2;inset:auto calc(var(--view-inset) + 11px) calc(var(--view-inset) + 1px) calc(var(--view-inset) + 1px);height:22px;padding:2px 8px;background:var(--panel);border-radius:0 0 6px 6px;box-shadow:0 -1px var(--line);overflow:hidden;white-space:nowrap;text-overflow:ellipsis;pointer-events:none}
 .requests-inline-feedback .list-loading{margin:0;line-height:18px;text-align:left}
-#settings-dialog .settings-inline-feedback{display:grid;align-items:center;height:var(--settings-control-height);overflow:auto;overscroll-behavior:contain;scrollbar-width:none;font-size:14px;line-height:18px}
-#settings-dialog .settings-inline-feedback .help{max-height:var(--settings-control-height);margin:0;font-size:inherit;line-height:18px;overflow:auto}
+#settings-dialog .settings-inline-feedback{display:grid;align-items:center;height:var(--settings-control-height);overflow:auto;overscroll-behavior:contain;scrollbar-width:none}
+#settings-dialog .settings-inline-feedback .help{max-height:var(--settings-control-height);margin:0;overflow:auto}
 #settings-dialog .settings-inline-feedback .settings-feedback:has(.settings-save-log:not([hidden]))>.help{max-height:18px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
-#settings-dialog .settings-inline-feedback .settings-save-log{max-height:18px;margin:0;gap:0;font-size:12px;line-height:18px;scrollbar-width:none;overscroll-behavior:contain}
+#settings-dialog .settings-inline-feedback .settings-save-log{max-height:18px;margin:0;gap:0;scrollbar-width:none;overscroll-behavior:contain}
 #settings-dialog .settings-inline-feedback .settings-step-label{overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 .restart-notice-badge{display:inline-flex;align-items:center;justify-content:center;width:100px;flex:none;min-height:34px;padding:2px 6px;border:1px solid #e6c178;border-radius:7px;background:#fff7e7;color:#875309;font-size:12px;font-weight:600;line-height:14px;white-space:normal;word-break:keep-all}
 .restart-notice-badge[data-visible="false"]{visibility:hidden;pointer-events:none}
@@ -1150,23 +1160,24 @@ dialog{width:min(760px,calc(var(--desktop-width) - 80px));max-height:calc(var(--
 .restart-notice-badge:hover{background:#ffedc9;border-color:#d6a84d}
 .restart-notice-badge[data-state="error"]{border-color:#e4abab;background:#fff1f1;color:var(--danger)}
 .restart-notice-badge[data-state="error"]:hover{background:#ffe4e4;border-color:#ce8989}
-#settings-dialog>.restart-notice{flex:none;height:112px;box-sizing:border-box;display:grid;grid-template-rows:30px 30px 18px;gap:5px;margin:16px var(--settings-padding) 8px;padding:10px 14px;border:1px solid var(--line);border-radius:10px;background:var(--soft);color:var(--muted)}
+#settings-dialog>.restart-notice{flex:none;min-block-size:112px;display:grid;grid-template-rows:auto 30px 18px;gap:5px;margin:16px var(--settings-padding) 8px;padding:10px 14px;border:1px solid var(--line);border-radius:10px;background:var(--soft);color:var(--muted)}
 #settings-dialog>.restart-notice[data-state="pending"]{background:#fff8eb;border-color:#eac883;color:#875309}
-.restart-notice-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;min-width:0}
-.restart-notice-heading strong{min-width:0;font-size:14px;font-weight:600;line-height:18px}
-.restart-notice-actions{display:flex;gap:6px;flex:none}
-#settings-dialog .restart-notice-actions button{min-height:28px;padding:3px 9px;border:1px solid #dfba75;background:#fff;color:#875309;font-size:12px;line-height:20px}
+.restart-notice-heading{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:4px 12px;min-width:0}
+.restart-notice-heading strong{min-width:0;font-size:var(--settings-label-size);font-weight:600}
+.restart-notice-actions{display:flex;flex-wrap:wrap;gap:6px}
+#settings-dialog .restart-notice-actions button{border-color:#dfba75;background:#fff;color:#875309}
 .restart-notice-items{display:flex;align-items:center;gap:6px;margin:0;padding:0;min-width:0;overflow-x:auto;overflow-y:hidden;list-style:none;scrollbar-width:thin}
-.restart-notice-tag{flex:none;padding:1px 7px;border:1px solid #edd7ac;border-radius:5px;background:#fffdf8;font-size:11px;line-height:19px;white-space:nowrap}
-.restart-notice-message{margin:0;font-size:11px;line-height:18px;overflow:auto;white-space:nowrap;scrollbar-width:thin}
+#settings-dialog :is(.restart-notice-tag,.restart-notice-message,.connection-pending-label){font-size:var(--settings-detail-size);line-height:1.5}
+.restart-notice-tag{flex:none;padding:1px 7px;border:1px solid #edd7ac;border-radius:5px;background:#fffdf8;white-space:nowrap}
+.restart-notice-message{margin:0;overflow:auto;white-space:nowrap;scrollbar-width:thin}
 #settings-dialog .restart-pending-field{position:relative;outline:1px solid #eac883;outline-offset:5px;border-radius:5px}
-.restart-pending-field::after{content:attr(data-restart-label);position:absolute;right:2px;top:-13px;padding:0 4px;background:var(--panel);color:#96600b;font-size:10px;font-weight:500;line-height:15px;pointer-events:none}
+.restart-pending-field::after{content:attr(data-restart-label);position:absolute;right:2px;top:-13px;padding:0 4px;background:var(--panel);color:#96600b;font-size:var(--settings-detail-size);font-weight:500;line-height:1.25;pointer-events:none}
 #connection-settings.restart-pending-connection>h3{color:#96600b}
-.connection-pending-label{display:inline-block;vertical-align:middle;margin-left:5px;padding:0 6px;border:1px solid #eac883;border-radius:5px;background:#fff8eb;color:#875309;font-size:10px;font-weight:500;line-height:18px;letter-spacing:normal}
+.connection-pending-label{display:inline-block;vertical-align:middle;margin-left:5px;padding:0 6px;border:1px solid #eac883;border-radius:5px;background:#fff8eb;color:#875309;font-weight:500;letter-spacing:normal}
 .inline-feedback .notice{position:static;inset:auto;z-index:auto;display:flex;align-items:center;gap:8px;width:100%;max-width:none;min-width:0;margin:0;padding:0;border:0;border-radius:0;background:none;box-shadow:none;color:inherit;font:inherit}
 .inline-feedback .notice>span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .inline-feedback .notice>a{flex:none;color:var(--accent);font-size:inherit;white-space:nowrap}
-@container settings-dialog (max-width:650px){#settings-dialog>.restart-notice{margin-inline:20px}.restart-notice-heading strong{font-size:12px}.restart-notice-actions{gap:4px}}
+@container settings-dialog (max-width:650px){#settings-dialog>.restart-notice{margin-inline:20px}}
 #zstd-level-message{height:34px;max-height:34px;margin:0;overflow:auto;line-height:17px}
 .confirmation-feedback,.sharing-edit-message{height:34px;max-height:34px;margin:0;overflow:auto;line-height:17px}
 .confirmation-feedback[hidden],.sharing-edit-message[hidden]{display:block!important;visibility:hidden}

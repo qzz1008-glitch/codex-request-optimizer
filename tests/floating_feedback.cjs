@@ -34,7 +34,7 @@ async function run(){
   "window.$=id=>document.getElementById(id);window.state={status:{version:'1.0.0',entry_port:{pending:false}}};",
   "window.updateStatus=null;window.updateBusy=false;window.settingsSaving=false;window.updateAction='';window.updateFeedbackVisible=true;",
   "window.updateRevision=0;window.updateStatusLoading=false;window.settingsOpening=false;window.compressionSaving=false;window.exitSaving=false;window.connectSaving=false;window.connectChecking=false;",
-  "window.refreshStatus=async()=>{};window.loadContextSettings=async()=>{};window.readSettingsDraft=()=>({});",
+  "window.firstRunChecking=false;window.refreshStatus=async()=>{};window.loadContextSettings=async()=>{};window.readSettingsDraft=()=>({});",
   "window.settingsSaveProgress={total:0,steps:[]};window.renderLanguageSelection=()=>{};window.renderConnectionActions=()=>{};window.updateSettingsSaveState=()=>{};",
   "window.closeZstdLevelPicker=()=>{};window.discardSettingsDraft=()=>{};",
   "window.fail=error=>{throw error;};",
@@ -68,12 +68,12 @@ async function run(){
    assert.equal(await button.locator('svg').getAttribute('aria-hidden'),'true');
   }
   assert(await checkButton.locator('svg').evaluate(icon=>icon.getBBox().width>0),'The refresh icon renders');
-  const [budgetFont,versionFont,statusFont]=await page.evaluate(()=>['budget-label','updates-versions','updates-message'].map(id=>{
+  const [budgetFont,versionFont,hintFont,statusFont]=await page.evaluate(()=>['budget-label','updates-versions','startup-hint','updates-message'].map(id=>{
    const {fontFamily,fontSize,fontWeight,lineHeight}=getComputedStyle(document.getElementById(id));
    return {fontFamily,fontSize,fontWeight,lineHeight};
   }));
   assert.deepEqual(versionFont,budgetFont,'The version uses the size limit label typography');
-  assert.deepEqual(statusFont,budgetFont,'The update status uses the size limit label typography');
+  assert.deepEqual(statusFont,hintFont,'The update status uses the settings hint typography');
   const before=await geometry(page,updateLayout);
   const [button,repository]=before;
   const [current]=await geometry(page,['updates-versions']);
