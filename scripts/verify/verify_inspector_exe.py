@@ -19,7 +19,6 @@ from tests.test_packet_inspector import Upstream, zstandard
 from tests.test_image_isolation import request_body
 from packet_inspector.analyzer import decode_body
 from packet_inspector.image_config import find_codex_cli
-from packet_inspector.request_context import IMAGE_ANALYST_PREFIXES
 from scripts.build_inspector import PUBLIC_FILES
 
 ROOT=Path(__file__).resolve().parents[2]
@@ -142,7 +141,10 @@ def main():
             replies=[json.loads(line) for line in tool_check.stdout.splitlines() if line.strip()]
             assert [tool["name"] for tool in replies[-1]["result"]["tools"]]==["analyze_image"]
             independent=request_body()
-            independent["input"][-1]["content"][0]["text"]=IMAGE_ANALYST_PREFIXES[-1]+" Describe this synthetic image."
+            independent["input"][-1]["content"][0]["text"]="Describe this synthetic image."
+            independent["client_metadata"]={"x-codex-turn-metadata":json.dumps({
+                "codex_inspector_request_kind":"image_analysis",
+            })}
             independent_raw=json.dumps(independent).encode()
             connection=http.client.HTTPConnection("127.0.0.1",runtime["port"],timeout=5)
             connection.request("POST","/relay/"+settings["relay_token"]+"/responses",independent_raw,{"Content-Type":"application/json"})

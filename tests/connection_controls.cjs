@@ -23,6 +23,7 @@ function fixture(connected) {
     compressionSaving:false,settingsSaving:false,settingsOpening:false,settingsEditing:false,
     exitSaving:false,connectSaving:false,connectChecking:false,linkSaving:'',compressionTarget:null,
     compressionRevision:0,connectSource:'header',connectionResumeSeen:'',
+    firstRunWindow:null,firstRunChecking:false,
     restartNotices:{connection:(which,result)=>calls.push(['result',which,result]),render(){}},
     $:element,t:value=>value,setText:(el,value)=>{el.textContent=value;},
     uiI18n:{text:(node,value)=>{node.textContent=typeof value==='function'?value():value;}},
@@ -46,7 +47,7 @@ function fixture(connected) {
 (async()=>{
   {
     const {context:c,element:node,calls:history}=fixture(false);
-    Object.assign(c,{desktopOpenRevision:0,startupConnectChecked:true,exitFinished:true});
+    Object.assign(c,{desktopOpenRevision:0,exitFinished:true});
     Object.assign(c.state.status,{ui_desktop:true,ui_window_opened:0});
     vm.runInContext(source.slice(source.indexOf('function renderConnectPrompt()'),source.indexOf('function renderExitRequest()')),c);
     c.refreshStatus=async()=>c.renderConnectPrompt();

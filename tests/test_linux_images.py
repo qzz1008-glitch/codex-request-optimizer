@@ -1,5 +1,6 @@
 """Portable tests for remote image upload ordering and tool configuration."""
 import base64
+from contextlib import chdir
 import hashlib
 import json
 import os
@@ -150,7 +151,7 @@ class LinuxToolTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             image = Path(directory).resolve() / "fixture.png"
             image.write_bytes(TEST_ATTACHMENT)
-            # The Windows runner can resolve the POSIX-shaped fixture path on its current drive.
+            # Resolve the POSIX-shaped test path from the fixture's drive on Windows.
             path = image.as_posix().split(":", 1)[-1]
 
             def run(argv, **options):
@@ -166,6 +167,6 @@ class LinuxToolTests(unittest.TestCase):
                 Path(argv[argv.index("--output-last-message") + 1]).write_text("Only text", encoding="utf-8")
                 return subprocess.CompletedProcess(argv, 0)
 
-            with patch.dict(os.environ, {"CODEX_CLI_PATH": "fixture-codex"}), \
+            with chdir(directory), patch.dict(os.environ, {"CODEX_CLI_PATH": "fixture-codex"}), \
                     patch("packet_inspector.isolated_image_tool.subprocess.run", side_effect=run):
                 self.assertEqual(analyze({"path": path}, metadata), "Only text")

@@ -16,6 +16,7 @@ from scripts.build_inspector import output_directory
 from packet_inspector import VERSION
 from packet_inspector.desktop_ui import DesktopUI
 from packet_inspector.frontend_dev import FIRST_RUN_PENDING
+from packet_inspector.linux_images import SETTINGS_BYTES
 
 
 class LegacyHandler(BaseHTTPRequestHandler):
@@ -148,7 +149,7 @@ class DesktopUITests(unittest.TestCase):
             self.assertEqual(self.request(path, "POST", body)[0], 200)
             self.assertEqual(self.backend.requests[-1][3], body)
         forwarded = len(self.backend.requests)
-        self.assertEqual(self.request("/api/settings", "POST", body)[0], 400)
+        self.assertEqual(self.request("/api/context-settings", "POST", body)[0], 400)
         for path in ("/api/proxy-settings", "/api/proxy-test"):
             self.assertEqual(self.request(path, "POST", b"", {"Content-Length": "65537"})[0], 400)
             self.assertEqual(self.request(path, "POST", b"{}", {"Origin": "https://example.com"})[0], 403)
@@ -261,7 +262,8 @@ class DesktopUITests(unittest.TestCase):
         self.assertEqual(self.backend.requests, [])
 
     def test_oversize_ui_write_is_rejected_before_forwarding(self):
-        self.assertEqual(self.request("/api/settings", "POST", b"x" * 8193)[0], 400)
+        headers = {"Content-Length": str(SETTINGS_BYTES + 1)}
+        self.assertEqual(self.request("/api/settings", "POST", b"", headers)[0], 400)
         self.assertEqual(self.backend.requests, [])
 
     def test_directory_open_uses_the_desktop_without_forwarding_or_saving(self):
