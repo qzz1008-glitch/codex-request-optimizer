@@ -959,7 +959,7 @@ const uiI18n = (() => {
     " · 保存后自动刷新":" · Auto refresh on save",
     "通用设置":"General settings",
     "共享功能":"Sharing features",
-    "打开额度与网络共享功能。":"Enable quota and network sharing.",
+    "额度共享与网络共享功能。":"Quota sharing and network sharing.",
     "运行设置":"Runtime settings",
     "开机启动":"Start with Windows",
     "登录 Windows 后自动启动。":"Start automatically when you sign in to Windows.",
