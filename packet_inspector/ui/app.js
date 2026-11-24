@@ -3742,13 +3742,15 @@ class TokenTrendView {
       while(lo<hi){const mid=(lo+hi)>>1;if(segments[mid][key]<value)lo=mid+1;else hi=mid;}
       return segments[lo];
     };
-    const offset=(value,extend=false)=>{
+    const offset=(value,extendStart=false)=>{
+      if(extendStart&&value<start)return value-start;
       const stamp=Math.max(start,Math.min(end,value)),part=locate(stamp,"end");
-      return part.a+(stamp-part.start)/(part.end-part.start)*(part.b-part.a)+(extend?value-stamp:0);
+      return part.a+(stamp-part.start)/(part.end-part.start)*(part.b-part.a);
     };
-    const at=(value,extend=false)=>{
+    const at=(value,extendStart=false)=>{
+      if(extendStart&&value<0)return start+value;
       const position=Math.max(0,Math.min(virtual,value)),part=locate(position,"b");
-      return part.start+(position-part.a)/(part.b-part.a)*(part.end-part.start)+(extend?value-position:0);
+      return part.start+(position-part.a)/(part.b-part.a)*(part.end-part.start);
     };
     return {start,end,length:virtual,offset,at,gaps,segments};
   }
@@ -3768,9 +3770,9 @@ class TokenTrendView {
   }
   chartAxis(view,width) {
     const {start,end,scale,startOffset,duration}=view;
-    const extended=startOffset<0||view.endOffset>scale.length;
-    const fraction=stamp=>(scale.offset(stamp,extended)-startOffset)/duration;
-    const timeAt=value=>scale.at(startOffset+Math.max(0,Math.min(1,value))*duration,extended);
+    const extendStart=startOffset<0;
+    const fraction=stamp=>(scale.offset(stamp,extendStart)-startOffset)/duration;
+    const timeAt=value=>scale.at(startOffset+Math.max(0,Math.min(1,value))*duration,extendStart);
     const gaps=scale.gaps.filter(gap=>gap.end>start&&gap.start<end);
     let ticks=TokenTrendView.timeTicks(start,end,width);
     if(gaps.length) {
@@ -3787,16 +3789,16 @@ class TokenTrendView {
   timeline(now=Date.now()/1000) {return {start:Math.min(now-3600,this.boundsReady&&Number.isFinite(this.oldestCreated)?this.oldestCreated-1:now-3600),end:now};}
   viewport(now=Date.now()/1000) {
     const scale=this.timeScale(now),duration=Math.min(scale.length,Math.max(1,Math.min(12,this.hours||1))*3600);
-    // Leave room beyond the stored range when the target is its first or last request.
-    const endOffset=Number.isFinite(this.windowCenter)?scale.offset(this.windowCenter,true)+duration/2:
+    // Centering can add room before the earliest request. The right edge ends at now.
+    const endOffset=Number.isFinite(this.windowCenter)?Math.min(scale.length,scale.offset(this.windowCenter,true)+duration/2):
       Math.max(duration,Math.min(scale.length,Number.isFinite(this.windowEnd)?scale.offset(this.windowEnd):scale.length));
     const startOffset=endOffset-duration;
-    return {start:scale.at(startOffset,true),end:scale.at(endOffset,true),startOffset,endOffset,duration,scale};
+    return {start:scale.at(startOffset,true),end:scale.at(endOffset),startOffset,endOffset,duration,scale};
   }
   covers(bounds,view=this.viewport()) {
-    const {start,end}=view.scale??view;
-    return !!bounds&&Math.max(view.start,start)>=bounds.since-.01&&
-      (bounds.before===null||Math.min(view.end,end)<bounds.before+.01);
+    const earliest=view.scale?.start??view.start;
+    return !!bounds&&Math.max(view.start,earliest)>=bounds.since-.01&&
+      (bounds.before===null||view.end<bounds.before+.01);
   }
   queryWindow(now=Date.now()/1000) {
     const count=this.services.status()?.storage?.count;
@@ -3853,6 +3855,8 @@ class TokenTrendView {
   updateRange() {
     const maximum=this.rangeLimit();this.hours=Math.max(1,Math.min(maximum,Number.isFinite(this.hours)?this.hours:1));
     const view=this.viewport(),duration=view.duration,travel=view.scale.length-duration;
+    // A revealed session at the right edge rejoins the live view.
+    if(view.endOffset===view.scale.length)this.windowCenter=null;
     if(Number.isFinite(this.windowEnd))this.windowEnd=view.end;
     this.range.disabled=!this.boundsReady;this.range.setAttribute("aria-busy",String(!this.boundsReady));
     this.range.max="1";this.range.value=String(travel>0?Math.max(0,Math.min(1,view.startOffset/travel)):1);
@@ -3864,11 +3868,11 @@ class TokenTrendView {
   navigate(end,scale=this.timeScale()) {
     this.stopSessionSlide();
     const duration=Math.min(scale.length,this.hours*3600);
-    // Allow manual panning back through any space added to center an edge request.
+    // Allow manual panning back through any space added before the earliest request.
     const centeredEnd=Number.isFinite(this.windowCenter)?scale.offset(this.windowCenter,true)+duration/2:null;
-    const minEnd=Math.min(duration,centeredEnd??duration),maxEnd=Math.max(scale.length,centeredEnd??scale.length);
-    end=Math.max(minEnd,Math.min(maxEnd,end));
-    this.windowCenter=end<duration||end>scale.length?scale.at(end-duration/2,true):null;
+    const minEnd=Math.min(duration,centeredEnd??duration);
+    end=Math.max(minEnd,Math.min(scale.length,end));
+    this.windowCenter=end<duration?scale.at(end-duration/2,true):null;
     this.windowEnd=this.windowCenter!==null||end>=scale.length-.001?null:scale.at(end);
     this.hover=null;this.hoverChart=null;this.hoverSeries=null;this.updateRange();this.scheduleRender();this.ensureWindow();
   }

@@ -276,7 +276,7 @@ function eventRows(){return [
   assert.deepEqual(outside(),['thread:older']);
   result.cancelPending();
  });
- await test('opening a muted session centers either edge in both charts and cancels an obsolete slide',async()=>{
+ await test('opening a muted session centers older requests, respects the live edge and cancels an obsolete slide',()=>clocked(async advance=>{
   const {result}=sidebarTrendFixture(),slides=[];
   context.CSS={supports:()=>true};context.matchMedia=()=>({matches:true});
   context.document.startViewTransition=({types,update})=>{
@@ -299,11 +299,23 @@ function eventRows(){return [
   assert.ok(result.viewport().start<olderTrend.created);assert.ok(result.covers(result.loadedBounds));checkCenter(olderTrend);
   result.revealSession('thread:recent');assert.equal(slides[2].direction,'trend-later');
   slides[2].update();slides[2].finish();await slides[2].finished;
-  assert.ok(result.viewport().end>now);assert.ok(result.covers(result.loadedBounds));checkCenter(recentTrend);
+  assert.equal(result.viewport().end,now);assert.equal(result.viewport().duration,3600);
+  assert.ok(result.covers(result.loadedBounds));
+  for(const chart of result.charts) {
+   assert.equal(chart.bounds.end,now);
+   assert.equal(chart.bounds.axis.timeAt(1),now);
+   assert.ok(chart.bounds.ticks.every(stamp=>stamp<=now));
+   const fraction=chart.bounds.axis.fraction(recentTrend.created);
+   assert.ok(fraction>.5&&fraction<=1);
+   assert.ok(chart.points.some(point=>point.packet.id===recentTrend.id));
+  }
+  const elapsed=35*60;advance(elapsed*1000);
+  result.render();assert.equal(result.viewport().end,now+elapsed);
   const end=result.viewport().endOffset;result.pan(-60);
   assert.ok(Math.abs(result.viewport().endOffset-end+60)<1e-6);
+  result.pan(3600);assert.equal(result.viewport().end,now+elapsed);
   result.cancelPending();
- });
+ }));
  await test('scale includes all values',()=>{
   for(const n of [0,1,999,500000,10000000]){const scale=View.scale(n);assert.ok(scale.max>=n&&scale.step>0&&Number.isFinite(scale.max));}
  });
