@@ -19,7 +19,8 @@ import tempfile
 from packet_inspector.entry_port import configured_port
 from packet_inspector.locking import file_lock
 from packet_inspector.window_lifecycle import EXIT_PROPERTY, request_window_exit
-from packet_inspector.frontend_dev import BuildProfile, load_profile, installed_profile, remember_upgrade_profile
+from packet_inspector.frontend_dev import (FIRST_RUN_PENDING, BuildProfile, load_profile,
+                                          installed_profile, remember_upgrade_profile)
 from packet_inspector.router import (PROTOCOL, atomic_json, control_worker, healthy_worker,
                                      local_json, process_alive, start_worker, worker_info)
 from packet_inspector.sharing_handover import (PROTOCOL as SHARING_HANDOVER_PROTOCOL, UNSUPPORTED as SHARING_UPGRADE_UNSUPPORTED,
@@ -464,6 +465,10 @@ class Upgrade:
                 # it would create an outage for the next request.
                 raise ValueError(CONTINUITY_UNSUPPORTED)
             self.entry_running = True
+        # A stopped installation still has durable state even without a running entry.
+        first_install = health is None and not self.canonical.exists() and not any(
+            (self.data_dir / name).exists() for name in ("settings.json", "router-state.json", "codex-link.json")
+        )
         self._stage("backup", "正在备份本次更新涉及的配置…")
         backup, backup_manifest = self._backup(include_entry=health is None)
         windows = self._application_windows()
@@ -543,6 +548,14 @@ class Upgrade:
             compatibility.close()
             if sharing_restart is not None:
                 self._sharing_record("complete")
+            first_run = self.data_dir / FIRST_RUN_PENDING
+            try:
+                if first_install:
+                    first_run.touch()
+                else:
+                    first_run.unlink(missing_ok=True)
+            except OSError:
+                self.journal["first_run_state_warning"] = True
             success = True
             return {"state": "complete", "version": manifest["version"], "port": self.port,
                     "worker_id": self.candidate, "backup": str(backup), "migrations": migrations,

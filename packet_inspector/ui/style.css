@@ -1055,6 +1055,14 @@ dialog{width:min(760px,calc(var(--desktop-width) - 80px));max-height:calc(var(--
 #compression-confirm-dialog{width:min(440px,calc(100vw - 48px))}#compression-confirm-dialog h2{font-size:20px}#compression-confirm-dialog .button-row{justify-content:flex-end}#compression-confirm-message{color:var(--danger)}
 #exit-confirm-dialog{width:min(540px,calc(100vw - 48px))}#exit-confirm-dialog h2{font-size:20px}#exit-confirm-dialog .button-row{justify-content:flex-end;flex-wrap:wrap}#exit-confirm-message{color:var(--danger)}
 #connect-confirm-dialog{width:min(460px,calc(100vw - 48px))}#connect-confirm-dialog h2{font-size:20px}#connect-confirm-dialog .button-row{justify-content:flex-end}#connect-confirm-message{color:var(--danger)}
+#first-run-protection-dialog{width:min(480px,calc(100vw - 48px));overflow:auto}
+#first-run-protection-dialog:modal{overscroll-behavior:contain}
+#first-run-protection-dialog::backdrop{overflow:hidden;overscroll-behavior:contain}
+#first-run-protection-dialog h2{font-size:20px}
+#first-run-protection-dialog .button-row{justify-content:flex-end;flex-wrap:wrap}
+.first-run-protections{display:grid;gap:8px;margin:0;padding-inline-start:20px}
+.first-run-protections li{line-height:1.55}
+.first-run-protections span{display:block;font-size:13px}
 @keyframes update-spin{to{transform:rotate(360deg)}}
 @media(prefers-reduced-motion:reduce){.session-spinner,.updates-icon-button[aria-busy=true] .update-spinner,#settings-save[aria-busy=true] .settings-save-spinner{animation:none}}
 

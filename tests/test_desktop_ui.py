@@ -15,6 +15,7 @@ from unittest.mock import patch
 from scripts.build_inspector import output_directory
 from packet_inspector import VERSION
 from packet_inspector.desktop_ui import DesktopUI
+from packet_inspector.frontend_dev import FIRST_RUN_PENDING
 
 
 class LegacyHandler(BaseHTTPRequestHandler):
@@ -112,6 +113,31 @@ class DesktopUITests(unittest.TestCase):
         data = json.loads(body)
         self.assertEqual((status, data["version"], data["ui_version"]), (200, "0.2.0", VERSION))
         self.assertEqual(data["active_requests"], 1)
+
+    def test_first_launch_is_claimed_once_and_stays_consumed_after_reopening(self):
+        self.ui.close()
+        self.ui = DesktopUI(self.backend.server_port, ui_dir=self.folder, exit_data_dir=self.folder).start()
+        pending = self.folder / FIRST_RUN_PENDING
+        pending.touch()
+
+        status, body, _ = self.request("/api/status")
+        self.assertEqual(status, 200)
+        self.assertIs(json.loads(body)["ui_first_run_pending"], True)
+        self.assertEqual(self.request("/api/first-run", "POST", b"{}", {"Origin": "https://example.invalid"})[0], 403)
+        self.assertTrue(pending.is_file())
+
+        self.backend.requests.clear()
+        for expected in (True, False):
+            status, body, _ = self.request("/api/first-run", "POST", b"{}")
+            self.assertEqual((status, json.loads(body)), (200, {"show": expected}))
+        self.assertEqual(self.backend.requests, [])
+        self.assertFalse(pending.exists())
+
+        self.ui.close()
+        self.ui = DesktopUI(self.backend.server_port, ui_dir=self.folder, exit_data_dir=self.folder).start()
+        status, body, _ = self.request("/api/status")
+        self.assertEqual(status, 200)
+        self.assertIs(json.loads(body)["ui_first_run_pending"], False)
 
     def test_proxy_settings_forward_bypass_rules_and_preserve_the_other_body_limits(self):
         body = json.dumps({"mode": "manual", "address": "http://proxy.invalid:8080",

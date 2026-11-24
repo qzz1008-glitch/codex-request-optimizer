@@ -10,7 +10,7 @@ import threading
 import unittest
 from unittest.mock import Mock, patch
 
-from packet_inspector.frontend_dev import DESKTOP_PROFILE
+from packet_inspector.frontend_dev import DESKTOP_PROFILE, FIRST_RUN_PENDING
 from packet_inspector.locking import file_lock
 from packet_inspector.router import atomic_json
 from packet_inspector.upgrade import Upgrade
@@ -225,6 +225,22 @@ class UpgradeTests(unittest.TestCase):
         self.engine._stop_candidate.assert_not_called()
         self.assertEqual(json.loads((self.data / "upgrade-result.json").read_text(encoding="utf8"))["state"], "failed")
 
+    def test_fresh_install_queues_first_launch_and_cold_upgrade_clears_it(self):
+        pending = self.data / FIRST_RUN_PENDING
+        with patch("packet_inspector.upgrade.local_json", side_effect=ConnectionRefusedError), \
+                patch("packet_inspector.upgrade.socket.socket") as socket_factory, \
+                patch.object(self.engine, "_install_entry"):
+            socket_factory.return_value.__enter__.return_value.connect_ex.return_value = 10061
+            self.engine.run()
+            self.assertTrue(pending.is_file())
+
+            # A stopped installation still has saved settings, even without a live entry.
+            atomic_json(self.data / "settings.json", {"capacity_retry_enabled": False})
+            self.engine.run()
+            self.assertFalse(pending.exists())
+            self.assertEqual(json.loads((self.data / "settings.json").read_text(encoding="utf8")),
+                             {"capacity_retry_enabled": False})
+
     def test_routed_upgrade_refreshes_installation_then_commits_the_new_tray(self):
         atomic_json(self.data / "router-state.json", {"active": "1" * 32, "token": "fixture-control"})
         self.engine._wait_entry = Mock(return_value={"worker_id": "2" * 32, "desktop_refresh_supported": True})
@@ -232,6 +248,7 @@ class UpgradeTests(unittest.TestCase):
             self.engine.run()
         self.assertEqual([call.args[2] for call in self.control.call_args_list],
                          ["upgrade_prepare", "installation_refresh", "desktop_refresh"])
+        self.assertFalse((self.data / FIRST_RUN_PENDING).exists())
         self.engine._stop_candidate.assert_not_called()
 
     def test_progress_reaches_complete_only_after_cleanup_and_result_are_saved(self):

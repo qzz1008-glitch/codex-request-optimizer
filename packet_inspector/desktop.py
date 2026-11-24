@@ -239,10 +239,10 @@ def run(arguments):
         def show():
             nonlocal main_loaded
             try:
+                ui.window_opened += 1
                 if not main_loaded:
                     main_loaded = True
                     window.load_url(ui.ui_url)
-                ui.window_opened += 1
                 lifecycle.show()
             except Exception:
                 pass

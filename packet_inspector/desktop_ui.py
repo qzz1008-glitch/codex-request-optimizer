@@ -22,6 +22,7 @@ from .restart_notice import RestartNotices
 from .updates import Updates
 from .http_io import discard_small_body
 from .exit_flow import ExitError, ExitRequests, perform_exit
+from .frontend_dev import FIRST_RUN_PENDING
 from .service_restart import RestartRequests, perform_restart
 from .storage_paths import resolve_directory
 from .request_context import local_image_path
@@ -161,6 +162,7 @@ class DesktopUI(ThreadingHTTPServer):
         self.updates = None
         self.updates_guard = threading.Lock()
         self.exit_requests = ExitRequests(exit_data_dir) if exit_data_dir is not None else None
+        self.first_run_pending = Path(exit_data_dir) / FIRST_RUN_PENDING if exit_data_dir is not None else None
         self.exit_callback = None
         self.restart_requests = RestartRequests(exit_data_dir) if exit_data_dir is not None else None
         self.window_opened = 0
@@ -213,6 +215,21 @@ class UIHandler(BaseHTTPRequestHandler):
     def _reject_json(self, status, value):
         discard_small_body(self)
         self._json(status, value)
+
+    def _claim_first_run(self):
+        discard_small_body(self)
+        pending = self.server.first_run_pending
+        if pending is None:
+            self._json(404, {"error": "ui_route_not_found"})
+            return
+        try:
+            pending.unlink()
+        except FileNotFoundError:
+            self._json(200, {"show": False})
+        except OSError:
+            self._json(503, {"error": "无法保存首次启动状态。"})
+        else:
+            self._json(200, {"show": True})
 
     def _relay_json(self, path, data=None):
         connection = http.client.HTTPConnection("127.0.0.1", self.server.relay_port, timeout=5)
@@ -467,6 +484,9 @@ class UIHandler(BaseHTTPRequestHandler):
             self._reject_json(400, {"error": "invalid_ui_path"})
             return
         path = target.path
+        if path == "/api/first-run" and self.command == "POST":
+            self._claim_first_run()
+            return
         if path == "/api/exit" and self.command == "POST":
             self._exit()
             return
@@ -588,6 +608,8 @@ class UIHandler(BaseHTTPRequestHandler):
                 status["reveal_image_supported"] = os.name == "nt"
                 status["ui_desktop"] = self.server.exit_requests is not None
                 status["ui_window_opened"] = self.server.window_opened
+                pending = self.server.first_run_pending
+                status["ui_first_run_pending"] = pending is not None and pending.is_file()
                 if self.server.exit_requests is not None:
                     status["ui_exit_request"] = self.server.exit_requests.current()
                 if self.server.restart_requests is not None:
