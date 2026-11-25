@@ -15,6 +15,7 @@ import sys
 import time
 import tempfile
 
+from packet_inspector.downloaded_launcher import DownloadedLauncher, is_settings_download
 from packet_inspector.entry_port import configured_port
 from packet_inspector.locking import file_lock
 from packet_inspector.managed_runtime import application_payload, embedded_resources, install_runtime, sha256_file as digest
@@ -53,7 +54,7 @@ class Upgrade:
     total_steps = len(PHASES)
 
     def __init__(self, payload, data_dir, config, port=None, progress=None, default_profile=None,
-                 confirm_interruption=None, runtime_resources=None):
+                 confirm_interruption=None, runtime_resources=None, downloaded_launcher=None):
         self.payload, self.data_dir, self.config = Path(payload), Path(data_dir).resolve(), Path(config).resolve()
         self.port = port
         self.progress = progress or (lambda message: None)
@@ -66,6 +67,7 @@ class Upgrade:
         self.journal = None
         self.confirm_interruption = confirm_interruption
         self.runtime_resources = runtime_resources
+        self.downloaded_launcher = downloaded_launcher
 
     def _sharing_record(self, phase, error=None):
         if self.journal is not None:
@@ -694,6 +696,10 @@ class Upgrade:
                 # working upgrade as failed.
                 self.journal.update(result)
                 self._stage("record", "正在保存更新结果…")
+                if self.downloaded_launcher is not None:
+                    outcome = self.downloaded_launcher.after_install(self.payload / self.canonical.name)
+                    if outcome is not None:
+                        result["downloaded_launcher"] = outcome
                 runtime_path = self.data_dir / "runtime.json"
                 if runtime_path.exists():
                     try:
@@ -751,6 +757,11 @@ def run_integrated(arguments, quiet=False, force=False):
     requested_version = version_tuple(VERSION)
     source = application_payload(sys.executable, directory)
     source_hash = digest(source)
+    installed_payload, installed_version = engine._installed_application()
+    launcher = DownloadedLauncher(directory, engine.config, source, source_hash,
+                                  from_settings=force and is_settings_download(directory, source, source_hash, requested_version))
+    if launcher.from_settings:
+        launcher.recover(installed_payload)
     report = {"started": time.time(), "version": VERSION, "source_executable": str(Path(sys.executable).resolve())[:1000],
               "source_sha256": source_hash}
     def record(state, **values):
@@ -765,10 +776,11 @@ def run_integrated(arguments, quiet=False, force=False):
         record("opening_installed", reason=reason)
         if not quiet:
             engine._open_window()
+            if reason in {"same_installed_payload", "same_payload"}:
+                launcher.remember(source, source_hash)
         record("complete", action="open_installed")
         return 0
 
-    installed_payload, installed_version = engine._installed_application()
     if not force and engine._has_installed_payload(installed_payload, source_hash):
         return open_installed("same_installed_payload")
 
@@ -813,12 +825,13 @@ def run_integrated(arguments, quiet=False, force=False):
                 "--port", str(options.port)]
         if quiet:
             args.append("--quiet")
-        result = main(args, default_profile=load_profile(), open_after=not quiet, runtime_resources=embedded_resources())
+        result = main(args, default_profile=load_profile(), open_after=not quiet, runtime_resources=embedded_resources(),
+                      downloaded_launcher=launcher)
         record("cancelled" if result == CANCELLED_EXIT else "complete" if result == 0 else "failed", exit_code=result)
         return result
 
 
-def main(argv=None, *, default_profile=None, open_after=False, runtime_resources=None):
+def main(argv=None, *, default_profile=None, open_after=False, runtime_resources=None, downloaded_launcher=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--data-dir", type=Path, default=Path.home() / ".codex-packet-inspector")
     parser.add_argument("--config", type=Path, default=Path.home() / ".codex/config.toml")
@@ -828,7 +841,7 @@ def main(argv=None, *, default_profile=None, open_after=False, runtime_resources
     args = parser.parse_args(argv)
     payload = args.payload_dir or Path(getattr(sys, "_MEIPASS", Path(__file__).parent.parent)) / "upgrade-payload"
     engine = Upgrade(payload, args.data_dir, args.config, args.port, default_profile=default_profile,
-                     runtime_resources=runtime_resources)
+                     runtime_resources=runtime_resources, downloaded_launcher=downloaded_launcher)
     if args.quiet:
         try:
             result = engine.run()
