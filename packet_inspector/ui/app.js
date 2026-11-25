@@ -1277,8 +1277,12 @@ function renderSessions() {
   const nextFocus=copyFocused?focusedItem?.parentElement.querySelector(`[data-session-copy="${copyFocused}"]`):focusedItem;
   $("session-metadata-note").hidden=sessionMetadataSupported!==false;
   if(nextFocus&&nextFocus!==document.activeElement)nextFocus.focus({preventScroll:true});
-  list.scrollTop=scrollTop;
-  if(nextAnchor)list.scrollTop+=nextAnchor.getBoundingClientRect().top-list.getBoundingClientRect().top-anchorOffset;
+  const currentScroll=list.scrollTop;
+  const restoredScroll=nextAnchor
+    ?currentScroll+nextAnchor.getBoundingClientRect().top-list.getBoundingClientRect().top-anchorOffset
+    :scrollTop;
+  // Keep an in-progress smooth scroll when the refreshed rows have the same position.
+  if(Math.abs(restoredScroll-currentScroll)>=.5)list.scrollTop=restoredScroll;
   tokenTrendView?.scheduleRender();
 }
 async function selectSession(value) {
@@ -3700,6 +3704,7 @@ class TokenTrendView {
       this.resize.observe(chart.plot);
       chart.svg.onpointermove=event=>this.pointAt(event,chart);
       chart.svg.onpointerleave=()=>{this.hover=null;this.hoverChart=null;this.hoverSeries=null;this.renderFocus();};
+      chart.svg.onclick=event=>this.scrollSidebarToSession(this.pointAt(event,chart));
     }
     // SVG redraws can drop pointerleave when the hovered child is replaced.
     document.addEventListener("pointermove",event=>{
@@ -4176,6 +4181,18 @@ class TokenTrendView {
       row.toggleAttribute("data-trend-highlight",!!series&&row.dataset.session==="thread:"+series);
     }
   }
+  scrollSidebarToSession(series) {
+    if(!this.active||!series)return;
+    const list=this.sessionList,session="thread:"+series;
+    const row=Array.from(list.querySelectorAll(".session-row")).find(node=>node.dataset.session===session);
+    if(!row)return;
+    const listTop=list.getBoundingClientRect().top+list.clientTop,listHeight=list.clientHeight;
+    const bounds=row.getBoundingClientRect();
+    const visible=bounds.top>=listTop&&bounds.bottom<=listTop+listHeight;
+    const top=visible?0:bounds.top-listTop-(listHeight-bounds.height)/2;
+    const behavior=matchMedia("(prefers-reduced-motion: no-preference)").matches?"smooth":"instant";
+    list.scrollBy({top,behavior});
+  }
   eventKey() {return this.hoverEvent||this.focusEvent||null;}
   marker(point,layer) {
     const events=point.events.filter(value=>["overflow","compact","predictive","retry"].includes(value));
@@ -4314,6 +4331,7 @@ class TokenTrendView {
     this.hover=nearest?.series.id===series?nearest.packet.id:null;
     this.hoverSeries=this.hover?null:series;
     this.hoverChart=chart.key;this.renderFocus();
+    return series;
   }
   renderFocus() {
     if(!this.active)return;

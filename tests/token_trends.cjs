@@ -638,7 +638,14 @@ function eventRows(){return [
   assert.ok(nodeText(size.tooltip).includes('转发请求'));assert.ok(nodeText(size.tooltip).includes('250 KB'));
   assert.equal(token.tooltip.children[1].textContent,'—');assert.ok(nodeText(token.tooltip).includes('输入 Token'));
   for(const text of ['输入 Token','实际上传','原始请求',missing.packet.id,':'])assert.ok(!nodeText(size.tooltip).includes(text));
-  for(const chart of result.charts){assert.equal(chart.svg.onclick,undefined);assert.equal(chart.svg.onkeydown,undefined);}
+  const clickedSessions=[];
+  result.scrollSidebarToSession=series=>clickedSessions.push(series);
+  for(const chart of result.charts){
+   const point=chart.points[0];
+   chart.svg.onclick({clientX:point.x,clientY:point.y});
+   assert.equal(chart.svg.onkeydown,undefined);
+  }
+  assert.deepEqual(clickedSessions,['session-a','session-a']);
   assert.equal('pinned' in result,false);
   const next=token.points.at(-1);token.svg.onpointermove({clientX:next.x,clientY:next.y});
   assert.equal(result.hover,id(103));assert.equal(token.tooltip.hidden,false);assert.equal(size.tooltip.hidden,false);
