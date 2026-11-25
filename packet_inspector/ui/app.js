@@ -2845,7 +2845,8 @@ function bars(section, title, rows, total, bodyAvailable, detailsFor) {
     row.append(label,size,delta,progress,percentage);
     if(renderDetails) {
       const key=section+":"+r.key, expanded=expandedBreakdownRows.has(key);
-      const details=el("div","bar-change-details");
+      const details=el("ul","bar-change-details");
+      details.setAttribute("role","list");
       details.id=section+"-size-change-"+index;
       details.hidden=!expanded;
       delta.type="button";
@@ -2926,14 +2927,19 @@ function fieldBreakdown(m, comparison) {
 }
 function inputItemChanges(items, bodyAvailable) {
   const labels={added:t("新增"),removed:t("移除"),changed:t("内容改变")};
-  const grid=table([t("条目"),t("变化"),t("条目大小")],items.map(item=>{
+  const fragment=document.createDocumentFragment();
+  for(const item of items) {
+    const row=el("li","bar-row");
     const entry=el("div","breakdown-item-entry"), index="#"+item.index;
     entry.append(bodyAvailable&&item.path?link(index,()=>goPath(item.path)):el("span","",index));
     if(item.name)entry.append(el("span","",item.name));
-    return [entry,labels[item.change]??signed(item.delta),bytes(item.after??item.before)];
-  }));
-  grid.classList.add("breakdown-item-changes");
-  return grid;
+    const size=el("span","bar-value"), change=el("span","bar-value bar-delta");
+    size.append(el("span","sr-only",t("条目大小")+" "),bytes(item.after??item.before));
+    change.append(el("span","sr-only",t("变化")+" "),labels[item.change]??signed(item.delta));
+    row.append(entry,size,change);
+    fragment.append(row);
+  }
+  return fragment;
 }
 function renderOverview(m) {
   const root=$("overview");
