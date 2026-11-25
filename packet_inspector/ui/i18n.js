@@ -982,6 +982,8 @@ const uiI18n = (() => {
     "网关实际上传正文大小（使用最终出口编码）":"Uploaded body size after final encoding",
     "状态":"Status",
     "筛选状态":"Filter status",
+    "正在启动中转…":"Starting the forwarding service…",
+    "正在加载会话…":"Loading sessions…",
     "正在加载更多记录…":"Loading more requests…",
     "转发中 —":"In flight —",
     "选择请求查看详情":"Select a request",

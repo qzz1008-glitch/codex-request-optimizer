@@ -152,9 +152,10 @@ class DesktopUI(ThreadingHTTPServer):
     daemon_threads = True
 
     def __init__(self, relay_port, *, live_reload=False, ui_dir=None, exit_data_dir=None):
-        if not 1 <= relay_port <= 65535:
-            raise ValueError("invalid forwarding service port")
-        self.relay_port = relay_port
+        self.relay_ready = threading.Event()
+        self.relay_port = None
+        if relay_port is not None:
+            self.attach_relay(relay_port)
         self.ui_dir = Path(ui_dir or UI_DIR)
         self.live_reload = bool(live_reload)
         self.token_windows = TokenWindows()
@@ -173,6 +174,12 @@ class DesktopUI(ThreadingHTTPServer):
     @property
     def ui_url(self):
         return f"http://127.0.0.1:{self.port}/"
+
+    def attach_relay(self, port):
+        if not 1 <= port <= 65535:
+            raise ValueError("invalid forwarding service port")
+        self.relay_port = port
+        self.relay_ready.set()
 
     def start(self):
         self.thread = threading.Thread(target=self.serve_forever, kwargs={"poll_interval": .1}, daemon=True)
@@ -484,6 +491,12 @@ class UIHandler(BaseHTTPRequestHandler):
             self._reject_json(400, {"error": "invalid_ui_path"})
             return
         path = target.path
+        if path == "/api/desktop-startup" and self.command == "GET":
+            self._json(200, {"ready": self.server.relay_ready.wait(15)})
+            return
+        if path.startswith("/api/") and not self.server.relay_ready.is_set():
+            self._reject_json(503, {"error": "desktop_starting"})
+            return
         if path == "/api/first-run" and self.command == "POST":
             self._claim_first_run()
             return
@@ -563,6 +576,9 @@ class UIHandler(BaseHTTPRequestHandler):
             except OSError:
                 self._json(503, {"error": "ui_files_updating"})
                 return
+            if path == "/" and self.server.exit_requests is not None:
+                stage = b"sessions" if self.server.relay_ready.is_set() else b"service"
+                data = data.replace(b"<body>", b'<body data-desktop-startup="' + stage + b'">', 1)
             if path in {"/", "/tray.html"} and reload_page:
                 script = b"/__dev__/reload.js?view=tray" if path == "/tray.html" else b"/__dev__/reload.js"
                 data = data.replace(b"</head>", b'<script src="' + script + b'" defer></script></head>', 1)

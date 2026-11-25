@@ -219,27 +219,35 @@ def run(arguments, *, entry_window=None, prepare_entry=None):
             elif not options.tray_preload:
                 instance.signal()
             return 0
-        entry = None
-        if prepare_entry is not None:
-            # The installed shortcut already owns this window. Prepare the
-            # entry while WebView starts, then navigate only after validation.
-            launcher = ThreadPoolExecutor(max_workers=1, thread_name_prefix="entry-start")
-            entry = launcher.submit(prepare_entry)
-            launcher.shutdown(wait=False)
         profile = resolve_profile(profile, options.data_dir)
         if not options.desktop_check_ui:
             ui_dir = profile.ui_dir
-        status = {}
 
-        def start_ui(prepared_status=None):
-            nonlocal status, ui
-            status = ensure_service(options, start_background=entry is None, prepared_status=prepared_status)
+        def prepare_service():
+            prepared_status = None
+            if prepare_entry is not None:
+                prepared = prepare_entry()
+                if prepared is None:
+                    return None
+                options.port, prepared_status = prepared
+            status = ensure_service(options, start_background=prepare_entry is None, prepared_status=prepared_status)
             remember_profile(options.data_dir, profile)
-            ui = DesktopUI(options.port, ui_dir=ui_dir, live_reload=profile.development,
-                           exit_data_dir=options.data_dir).start()
+            return status
 
-        if entry is None:
-            start_ui()
+        main_loaded = not (options.tray_panel or options.tray_preload)
+        startup = None
+        if main_loaded:
+            # Serve the actual main page while the entry and WebView2 initialize.
+            # The UI only attaches to a service after its profile is verified.
+            launcher = ThreadPoolExecutor(max_workers=1, thread_name_prefix="entry-start")
+            startup = launcher.submit(prepare_service)
+            launcher.shutdown(wait=False)
+            status = {}
+        else:
+            status = prepare_service()
+        ui = DesktopUI(None if startup is not None else options.port, ui_dir=ui_dir,
+                       live_reload=profile.development, exit_data_dir=options.data_dir).start()
+
         import webview
 
         webview.settings["ALLOW_DOWNLOADS"] = True
@@ -248,7 +256,6 @@ def run(arguments, *, entry_window=None, prepare_entry=None):
         # Explicitly require Chromium. Do not fall back to an external browser or IE.
         title = "Codex 请求优化器 · 开发版" if profile.development else "Codex 请求优化器"
         chrome = WindowChrome()
-        main_loaded = entry is None and not (options.tray_panel or options.tray_preload)
         window = webview.create_window(title, ui.ui_url if main_loaded else "about:blank",
                                        **window_geometry(ui_dir), maximized=False,
                                        js_api=chrome, text_select=True, background_color="#f5f7fb", hidden=bool(options.desktop_check or not main_loaded))
@@ -270,24 +277,21 @@ def run(arguments, *, entry_window=None, prepare_entry=None):
         startup_error = None
 
         def workers():
-            nonlocal main_loaded, startup_error
-            if entry is not None:
+            nonlocal status, startup_error
+            ui.exit_callback = lifecycle.exit
+            window.events.closed += ui.exit_requests.window_closed
+            if startup is not None:
                 try:
-                    prepared = entry.result()
-                    if prepared is None:
+                    service_status = startup.result()
+                    if service_status is None:
                         lifecycle.exit()  # The active build changed during startup.
                         return
-                    options.port, prepared_status = prepared
-                    start_ui(prepared_status)
-                    window.load_url(ui.ui_url)
-                    main_loaded = True
-                    lifecycle.show()
+                    status = service_status
+                    ui.attach_relay(options.port)
                 except Exception as exc:
                     startup_error = exc
                     lifecycle.exit()
                     return
-            ui.exit_callback = lifecycle.exit
-            window.events.closed += ui.exit_requests.window_closed
             panel = TrayPanel(webview.create_window, ui.ui_url, options.data_dir, show, ready_changed=instance.set_panel_ready)
             window.events.closed += panel.destroy
             threading.Thread(target=instance.watch, args=(show, lifecycle.exit, panel.show), daemon=True).start()

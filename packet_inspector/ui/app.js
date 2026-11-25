@@ -4006,14 +4006,15 @@ class TokenTrendView {
   }
   scheduleRender() {if(!this.active||this.frame!==null)return;this.frame=requestAnimationFrame(()=>{this.frame=null;this.render();});}
   async refresh(force=false) {
-    if(!this.active||document.hidden||this.loading||this.paintRefresh)return;
-    const revision=this.services.status()?.storage?.revision,now=Date.now();
+    const status=this.services.status();
+    if(!status||!this.active||document.hidden||this.loading||this.paintRefresh)return;
+    const revision=status.storage?.revision,now=Date.now();
     let full=force||!this.lastFull||now-this.lastFull>=30000||!this.covers(this.loadedBounds);
     if(!full&&revision===this.revision){this.render();this.hydrate();return;}
     const controller=new AbortController();this.controller=controller;this.loading=true;this.error=false;
     clearTimeout(this.windowTimer);this.windowTimer=null;
     const timeout=setTimeout(()=>controller.abort(),60000),incoming=new Map();
-    const limit=this.services.status()?.trend_packets_supported?300:50,maximum=20000;let published=0;
+    const limit=status.trend_packets_supported?300:50,maximum=20000;let published=0;
     try {
       if(!await this.loadRange(controller,full))return;
       if(!this.covers(this.loadedBounds))full=true;
@@ -4450,4 +4451,33 @@ async function poll() {
 const pollTimer=setInterval(poll,2000);
 document.addEventListener("visibilitychange",()=>{if(document.hidden){tokenTrendView.cancelPending();return;}if(workspaceView==="trends")tokenTrendView.refresh();else if(workspaceView==="records"){loadTokenWindow();loadMorePackets();loadListTokens();}});
 globalThis.InspectorConnectionControls=InspectorConnections.create({request:api});
-(async()=>{state.polling=true;try{await Promise.all([refreshStatus(true),refreshFilters()]);await refreshSessionSummaries();}finally{state.polling=false;}})().catch(fail);
+async function initializePage() {
+  const startup=document.body.dataset.desktopStartup;
+  const progress=$("desktop-startup-status");
+  const workspace=document.querySelector(".workspace-stage");
+  const controls=startup?[$("view-toggle"),document.querySelector(".header-actions"),workspace]:[];
+  state.polling=true;
+  try {
+    if(startup) {
+      for(const control of controls)control.inert=true;
+      if(progress)progress.hidden=false;
+      if(startup==="service") {
+        if(progress)uiI18n.text(progress,"正在启动中转…");
+        let service;
+        do {service=await api("/api/desktop-startup");} while(!service.ready);
+      }
+      if(progress)uiI18n.text(progress,"正在加载会话…");
+    }
+    await Promise.all([refreshStatus(true),refreshFilters()]);
+    if(workspaceView==="trends")void tokenTrendView.refresh();
+    await refreshSessionSummaries();
+  } finally {
+    if(startup) {
+      if(progress)progress.hidden=true;
+      delete document.body.dataset.desktopStartup;
+      for(const control of controls)control.inert=false;
+    }
+    state.polling=false;
+  }
+}
+initializePage().catch(fail);

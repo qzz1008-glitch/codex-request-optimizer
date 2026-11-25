@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import http.client
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from concurrent.futures import ThreadPoolExecutor
 import json
 import os
 from pathlib import Path
@@ -114,6 +115,31 @@ class DesktopUITests(unittest.TestCase):
         data = json.loads(body)
         self.assertEqual((status, data["version"], data["ui_version"]), (200, "0.2.0", VERSION))
         self.assertEqual(data["active_requests"], 1)
+
+    def test_main_page_is_available_before_the_relay_can_receive_ui_requests(self):
+        self.ui.close()
+        self.ui = DesktopUI(None, ui_dir=self.folder, exit_data_dir=self.folder).start()
+        pending = self.folder / FIRST_RUN_PENDING
+        pending.touch()
+
+        status, page, _ = self.request("/")
+        self.assertEqual(status, 200)
+        self.assertIn(b'data-desktop-startup="service"', page)
+        self.assertEqual(self.request("/style.css")[0], 200)
+        self.assertEqual(self.request("/api/status")[0], 503)
+        self.assertEqual(self.request("/api/first-run", "POST", b"{}")[0], 503)
+        self.assertEqual(self.backend.requests, [])
+        self.assertTrue(pending.is_file())
+
+        with ThreadPoolExecutor(max_workers=1) as client:
+            startup = client.submit(self.request, "/api/desktop-startup")
+            self.ui.attach_relay(self.backend.server_port)
+            status, result, _ = startup.result(timeout=4)
+        self.assertEqual((status, json.loads(result)), (200, {"ready": True}))
+        self.assertIn(b'data-desktop-startup="sessions"', self.request("/")[1])
+        status, result, _ = self.request("/api/status")
+        self.assertEqual(status, 200)
+        self.assertTrue(json.loads(result)["ui_first_run_pending"])
 
     def test_first_launch_is_claimed_once_and_stays_consumed_after_reopening(self):
         self.ui.close()

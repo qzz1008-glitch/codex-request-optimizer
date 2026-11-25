@@ -30,7 +30,7 @@ def check_window(window, options, instance, ui):
 
     def state():
         return window.evaluate_js("""({
-          ready: typeof state !== 'undefined' && !!state.status?.version,
+          ready: typeof state !== 'undefined' && !!state.status?.version && !document.body.dataset.desktopStartup,
           refreshHidden: document.getElementById('ui-refresh')?.hidden,
           developerSettings: !!document.getElementById('ui-development-settings'),
           reloadScript: !!document.querySelector('script[src="/__dev__/reload.js"]'),
