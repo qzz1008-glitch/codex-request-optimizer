@@ -19,6 +19,8 @@ from urllib.parse import urlsplit
 
 from .http_io import discard_small_body
 from .startup_diagnostics import STARTUP_SECONDS, StartupTrace, startup_environment, startup_wait_seconds, wait_for_startup
+from .worker_bootstrap import (PREPARED_WORKER_ENV, WORKER_GATE_ENV, hold_worker_start,
+                               permit_worker_start, watch_worker_process)
 
 ROUTER_VERSION = "1.0.0"
 PROTOCOL = 1
@@ -86,16 +88,22 @@ def healthy_worker(data_dir, identity, *, connect_timeout=None):
     return worker
 
 
-def start_worker(data_dir, config, identity, public_port):
+def start_worker(data_dir, config, identity, public_port, *, startup_ticket=None):
     worker = worker_info(data_dir, identity)
     executable = Path(worker["executable"]).resolve()
     versions = (Path(data_dir) / "bin" / "versions").resolve()
     if not executable.is_relative_to(versions) or not executable.is_file():
         raise ValueError("worker executable is outside managed versions")
+    environment = startup_environment()
+    if startup_ticket:
+        # Only this launcher build is known to honor the startup gate.
+        if executable != Path(sys.executable).resolve():
+            return None
+        environment[WORKER_GATE_ENV] = startup_ticket
     return subprocess.Popen([str(executable), "--background", "--worker-id", identity,
                              "--public-port", str(public_port), "--port", str(worker["port"]),
                              "--data-dir", str(Path(data_dir).resolve()), "--config", str(Path(config).resolve())],
-                            env=startup_environment(),
+                            env=environment,
                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
 
 
@@ -511,7 +519,7 @@ def startup_port(args, state):
     return port
 
 
-def ensure_entry(args, state, trace=None):
+def ensure_entry(args, state, trace=None, *, prepare_worker=False):
     """A foreground launch must restore the router, never start a direct backend."""
     def ready(port):
         health = local_json(port, "/health", timeout=2, connect_timeout=STARTUP_CONNECT_SECONDS)
@@ -526,27 +534,35 @@ def ensure_entry(args, state, trace=None):
     except (OSError, http.client.HTTPException):
         pass
     port = startup_port(args, state)
-    command = [sys.executable, "--router"] if getattr(sys, "frozen", False) else [sys.executable, "-m", "packet_inspector.router"]
-    child = subprocess.Popen(command + ["--background", "--tray", "--port", str(port),
-                                       "--data-dir", str(args.data_dir), "--config", str(args.config)],
-                             env=startup_environment(),
-                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-    if trace:
-        trace.step("entry.wait", child_pid=child.pid, port=port)
+    with hold_worker_start() if prepare_worker else nullcontext() as ticket:
+        environment = startup_environment()
+        if ticket:
+            identity = state["active"]
+            worker = start_worker(args.data_dir, args.config, identity, port, startup_ticket=ticket)
+            if worker:
+                environment[PREPARED_WORKER_ENV] = json.dumps([ticket, worker.pid, identity, port])
+        command = [sys.executable, "--router"] if getattr(sys, "frozen", False) else [sys.executable, "-m", "packet_inspector.router"]
+        child = subprocess.Popen(command + ["--background", "--tray", "--port", str(port),
+                                           "--data-dir", str(args.data_dir), "--config", str(args.config)],
+                                 env=environment,
+                                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        if trace:
+            trace.step("entry.wait", child_pid=child.pid, port=port)
 
-    def retry(exc):
-        if child.poll() not in {None, 0}:
+        def retry(exc):
+            exit_code = child.poll()
+            if exit_code not in {None, 0}:
+                if trace:
+                    trace.record["details"]["child_exit_code"] = exit_code
+                raise RuntimeError("entry startup failed; exit code " + str(exit_code)) from exc
+
+        def failed():
             if trace:
                 trace.record["details"]["child_exit_code"] = child.poll()
-            raise RuntimeError("entry startup failed; exit code " + str(child.poll())) from exc
+            return RuntimeError("entry startup timed out")
 
-    def failed():
-        if trace:
-            trace.record["details"]["child_exit_code"] = child.poll()
-        return RuntimeError("entry startup timed out")
-
-    return wait_for_startup(lambda: ready(port), startup_wait_seconds(),
-        errors=(OSError, http.client.HTTPException), timeout=failed, on_retry=retry)
+        return wait_for_startup(lambda: ready(port), startup_wait_seconds(),
+            errors=(OSError, http.client.HTTPException), timeout=failed, on_retry=retry)
 
 
 def main(argv=None):
@@ -591,7 +607,7 @@ def open_desktop(args, state, trace):
 
             def prepare_entry():
                 nonlocal replacement_port
-                port = ensure_entry(args, state, trace)
+                port = ensure_entry(args, state, trace, prepare_worker=True)
                 current = json.loads((args.data_dir / "router-state.json").read_text(encoding="utf8"))
                 worker = worker_info(args.data_dir, current["active"])
                 if Path(worker["executable"]).resolve() != executable:
@@ -623,12 +639,48 @@ def open_desktop(args, state, trace):
     return 0
 
 
+def wait_for_worker(args, identity, trace, pid, poll):
+    trace.step("worker.wait", worker_id=identity, child_pid=pid)
+
+    def running():
+        exit_code = poll()
+        if exit_code is not None:
+            trace.record["details"]["child_exit_code"] = exit_code
+            raise RuntimeError("worker startup failed; exit code " + str(exit_code))
+
+    def ready():
+        healthy_worker(args.data_dir, identity, connect_timeout=STARTUP_CONNECT_SECONDS)
+        return True
+
+    def failed():
+        trace.record["details"]["child_exit_code"] = poll()
+        return RuntimeError("worker startup timed out")
+
+    wait_for_startup(ready, startup_wait_seconds(),
+        errors=(OSError, ValueError, http.client.HTTPException), timeout=failed, before=running)
+
+
+def restore_worker(args, identity, public_port, trace, prepared):
+    if prepared:
+        ticket, pid, prepared_id, prepared_port = json.loads(prepared)
+        if (prepared_id, prepared_port) == (identity, public_port):
+            with watch_worker_process(pid) as poll:
+                if not permit_worker_start(ticket):
+                    raise RuntimeError("worker startup was cancelled")
+                wait_for_worker(args, identity, trace, pid, poll)
+            return
+    trace.step("worker.launch", worker_id=identity)
+    process = start_worker(args.data_dir, args.config, identity, public_port)
+    wait_for_worker(args, identity, trace, process.pid, process.poll)
+
+
 def run_entry(args, trace):
     trace.record.update(background=args.background, tray=args.tray)
     trace.step("entry.configuration")
     state = json.loads((args.data_dir / "router-state.json").read_text(encoding="utf8"))
     if not args.background:
         return open_desktop(args, state, trace)
+    prepared = os.environ.pop(PREPARED_WORKER_ENV, None)
     port = startup_port(args, state)
     trace.step("entry.bind", port=port)
     try:
@@ -642,31 +694,14 @@ def run_entry(args, trace):
             trace.ready()
             return 0
         raise RuntimeError("entry port is occupied by another profile") from None
+    state = server.state
     identity = state["active"]
     tray = None
     try:
         try:
             healthy_worker(args.data_dir, identity, connect_timeout=STARTUP_CONNECT_SECONDS)
         except (OSError, ValueError, http.client.HTTPException):
-            trace.step("worker.launch", worker_id=identity)
-            process = start_worker(args.data_dir, args.config, identity, server.port)
-            trace.step("worker.wait", worker_id=identity, child_pid=process.pid)
-
-            def running():
-                if process.poll() is not None:
-                    trace.record["details"]["child_exit_code"] = process.poll()
-                    raise RuntimeError("worker startup failed; exit code " + str(process.poll()))
-
-            def ready():
-                healthy_worker(args.data_dir, identity, connect_timeout=STARTUP_CONNECT_SECONDS)
-                return True
-
-            def failed():
-                trace.record["details"]["child_exit_code"] = process.poll()
-                return RuntimeError("worker startup timed out")
-
-            wait_for_startup(ready, startup_wait_seconds(),
-                errors=(OSError, ValueError, http.client.HTTPException), timeout=failed, before=running)
+            restore_worker(args, identity, server.port, trace, prepared)
         trace.step("worker.activate", worker_id=identity)
         control_worker(args.data_dir, identity, "activate", public_port=server.port, maintenance=not state.get("draining"))
         server.state["port"] = server.port

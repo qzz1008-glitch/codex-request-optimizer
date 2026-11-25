@@ -69,7 +69,8 @@ from .linux_images import LinuxImageTransfer, SETTINGS_BYTES, linux_data_directo
 from .sharing import Sharing, SharingError, forwarding_headers, allowed_request as sharing_request_allowed
 from .sharing_errors import prepare_shared_error
 from .shared_egress import SharedEgress
-from .startup_diagnostics import StartupTrace
+from .startup_diagnostics import StartupTrace, startup_wait_seconds
+from .worker_bootstrap import WORKER_GATE_ENV, wait_for_worker_permission
 from .sharing_handover import SharingHandover, PROTOCOL as SHARING_HANDOVER_PROTOCOL, runtime as sharing_runtime
 from .egress_transport import EGRESS_HEADER
 from .sharing_credentials import CLIENT_HEADER
@@ -1976,6 +1977,9 @@ def argument_parser():
 
 def main(argv=None, on_started=None):
     args = argument_parser().parse_args(argv)
+    ticket = os.environ.pop(WORKER_GATE_ENV, None)
+    if ticket and args.worker_id and not wait_for_worker_permission(ticket, startup_wait_seconds()):
+        return 0
     trace = StartupTrace(args.data_dir, "worker" if args.worker_id else "relay", worker_id=args.worker_id)
     try:
         return run_server(args, on_started, trace)

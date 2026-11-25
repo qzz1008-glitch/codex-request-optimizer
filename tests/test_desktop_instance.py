@@ -67,7 +67,8 @@ raise SystemExit(desktop.run(sys.argv[2:]))
         state = {"protocol": PROTOCOL, "config": str(options.config), "active": "test"}
         atomic_json(self.folder / "router-state.json", state)
 
-        def start_relay(*_args):
+        def start_relay(*_args, prepare_worker):
+            self.assertTrue(prepare_worker)
             self.assertTrue(tray_panel_host_running(self.folder))
             # A second shortcut can signal the reserved host during cold start.
             self.assertEqual(open_desktop(options, state, Mock()), 0)

@@ -1,4 +1,5 @@
 """Cold startup budgets and bounded diagnostics, without real waits or processes."""
+from contextlib import nullcontext
 import json
 import os
 from pathlib import Path
@@ -8,7 +9,7 @@ import unittest
 from unittest.mock import Mock, patch
 from urllib.error import URLError
 
-from packet_inspector import desktop, router, startup_diagnostics as diagnostics
+from packet_inspector import desktop, router, server, startup_diagnostics as diagnostics, worker_bootstrap
 
 
 class Clock:
@@ -99,6 +100,53 @@ class StartupDiagnosticsTests(unittest.TestCase):
             self.entry(ConnectionRefusedError("not listening"), process=process)
         self.assertEqual(self.clock.elapsed, 0)
         self.assertEqual(self.records()[0]["state"], "failed")
+
+    @unittest.skipUnless(os.name == "nt", "Windows startup gate")
+    def test_router_releases_prepared_worker_after_checking_existing_worker(self):
+        ready = {"version": "test"}
+        for existing in (True, False):
+            with self.subTest(existing=existing), worker_bootstrap.hold_worker_start() as ticket:
+                checks = 0
+
+                def healthy(*_args, **_kwargs):
+                    nonlocal checks
+                    checks += 1
+                    self.assertEqual(worker_bootstrap.wait_for_worker_permission(ticket, 0), checks > 1)
+                    if not existing and checks == 1:
+                        raise ConnectionRefusedError("worker not listening yet")
+                    return ready
+
+                prepared = json.dumps([ticket, 303, self.identity, self.state["port"]])
+                with patch.dict(os.environ, {worker_bootstrap.PREPARED_WORKER_ENV: prepared}), \
+                        patch.object(router, "watch_worker_process", return_value=nullcontext(lambda: None)) as watch:
+                    result, launch, _server = self.entry(healthy)
+                    self.assertNotIn(worker_bootstrap.PREPARED_WORKER_ENV, os.environ)
+                self.assertEqual(result, 0)
+                self.assertEqual(checks, 1 if existing else 2)
+                self.assertEqual(watch.call_count, 0 if existing else 1)
+                launch.assert_not_called()
+
+    @unittest.skipUnless(os.name == "nt", "Windows startup gate")
+    def test_failed_router_bind_does_not_release_the_prepared_worker(self):
+        args = SimpleNamespace(data_dir=self.data, config=self.config, port=None, background=True, tray=False)
+        with worker_bootstrap.hold_worker_start() as ticket:
+            prepared = json.dumps([ticket, 303, self.identity, self.state["port"]])
+            with patch.dict(os.environ, {worker_bootstrap.PREPARED_WORKER_ENV: prepared}), \
+                    patch.object(router, "RouterServer", side_effect=OSError("already bound")), \
+                    patch.object(router, "local_json", side_effect=[{"router_protocol": 1}, {"data_dir": str(self.data / "other")}]), \
+                    self.assertRaisesRegex(RuntimeError, "another profile"):
+                router.run_entry(args, Mock(record={}))
+            self.assertFalse(worker_bootstrap.wait_for_worker_permission(ticket, 0))
+
+    @unittest.skipUnless(os.name == "nt", "Windows startup gate")
+    def test_cancelled_prepared_worker_never_opens_storage_or_listens(self):
+        with worker_bootstrap.hold_worker_start() as ticket:
+            self.assertFalse(worker_bootstrap.wait_for_worker_permission(ticket, 0))
+        arguments = ["--data-dir", str(self.data), "--config", str(self.config), "--worker-id", self.identity, "--port", "49120"]
+        with patch.dict(os.environ, {worker_bootstrap.WORKER_GATE_ENV: ticket}), patch.object(server, "run_server") as run:
+            self.assertEqual(server.main(arguments), 0)
+            self.assertNotIn(worker_bootstrap.WORKER_GATE_ENV, os.environ)
+        run.assert_not_called()
 
     def test_desktop_waits_for_the_same_cold_start_budget(self):
         options = SimpleNamespace(data_dir=self.data, config=self.config, port=47844, upstream=None)
