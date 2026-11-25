@@ -2929,7 +2929,7 @@ function inputItemChanges(items, bodyAvailable) {
   const grid=table([t("条目"),t("变化"),t("条目大小")],items.map(item=>{
     const entry=el("div","breakdown-item-entry"), index="#"+item.index;
     entry.append(bodyAvailable&&item.path?link(index,()=>goPath(item.path)):el("span","",index));
-    entry.append(el("span","",kind(item.kind)+(item.name?" · "+item.name:"")));
+    if(item.name)entry.append(el("span","",item.name));
     return [entry,labels[item.change]??signed(item.delta),bytes(item.after??item.before)];
   }));
   grid.classList.add("breakdown-item-changes");

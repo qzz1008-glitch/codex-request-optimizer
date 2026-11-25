@@ -427,7 +427,7 @@ button.bar-delta[aria-expanded="true"]::after{transform:translateY(-35%) rotate(
 .bar-change-details{
   grid-column:1 / -1;
   min-inline-size:0;
-  margin-inline-start:8px;
+  margin-inline-start:16px;
   padding:3px 15px 3px 10px;
   border-inline-start:2px solid var(--detail-frame-line);
   border-radius:0 4px 4px 0;
