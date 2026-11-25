@@ -750,6 +750,7 @@ const uiI18n = (() => {
     "保存记录设置":"Save record settings",
     "字段构成":"Field breakdown",
     "input 构成":"input breakdown",
+    "暂无可比较的条目。":"No entries available for comparison.",
     " 条":" requests",
     "变化值":"Size change",
     "条目":"Item",

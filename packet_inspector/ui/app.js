@@ -2673,10 +2673,8 @@ async function selectPacket(id,refresh=false,expectedListRequest=null) {
   if(requestId!==state.detailRequest || (refresh && state.selected!==id) || (expectedListRequest!==null && expectedListRequest!==state.listRequest)) return;
   const changed=state.selected!==id, previousDetail=state.detail, detailsChanged=!!m.details_evicted!==!!previousDetail?.details_evicted;
   state.selected=id;state.detail=m;state.detailVersion=packetDetailVersion(m);
-  if(changed||detailsChanged) {
-    breakdownComparison=null;
-    expandedBreakdownRows.clear();
-  }
+  if(changed||detailsChanged)breakdownComparison=null;
+  if(changed)expandedBreakdownRows.clear();
   showTab(state.tab);
   $("empty-state").hidden=true; $("packet-detail").hidden=false; renderList();
   if(changed || tokenVersion(m)!==tokenVersion(previousDetail||{})) {cancelTokenRead();tokenWindow=cachedTokenWindow(m);}
@@ -2892,7 +2890,6 @@ function inputBreakdown(m, comparison) {
   if(before) {
     const beforeByKey=new Map(before.map(r=>[r.key,r.bytes]));
     const currentCategories=new Set(rows.map(r=>r.category));
-    const itemsByCategory=Map.groupBy(comparison.items,item=>item.kind);
     for(const r of before) {
       if(!currentCategories.has(r.category))rows.push({...r,bytes:0,path:null});
     }
@@ -2900,15 +2897,14 @@ function inputBreakdown(m, comparison) {
       const existed=Object.hasOwn(previous.input_groups,r.category);
       const previousSize=!existed?0:!r.component?previous.input_groups[r.category]:beforeByKey.get(r.key);
       r.delta=Number.isSafeInteger(previousSize)?r.bytes-previousSize:null;
-      if(r.delta===null)continue;
-      const items=itemsByCategory.get(r.category)??[];
-      if(!r.component) {
-        r.items=items;
-      } else if(items.every(item=>item.components)) {
-        const changes=items.map(item=>({...item,...item.components[r.component]})).filter(item=>item.delta!==0);
-        if(changes.reduce((total,item)=>total+item.delta,0)===r.delta)r.items=changes;
-      }
     }
+  }
+  const itemsByCategory=Map.groupBy(comparison?.items??[],item=>item.kind);
+  for(const r of rows) {
+    const items=itemsByCategory.get(r.category)??[];
+    if(r.component) {
+      r.items=items.map(item=>({...item,...(item.components?.[r.component]??{delta:null,change:null})}));
+    } else if(Number.isSafeInteger(r.delta))r.items=items;
   }
   return rows.sort((a,b)=>b.bytes-a.bytes);
 }
@@ -2944,12 +2940,20 @@ function inputItemChanges(items, bodyAvailable) {
     if(item.name)entry.append(el("span","",item.name));
     const tone=item.delta>0?" bar-delta-increase":item.delta<0?" bar-delta-decrease":"";
     const status=el("span","bar-value"+tone), change=el("span","bar-value bar-delta"+tone);
-    status.append(el("span","sr-only",t("变化")+" "),labels[item.change]);
+    if(item.change)status.append(el("span","sr-only",t("变化")+" "),labels[item.change]);
     change.append(el("span","sr-only",t("变化值")+" "),signed(item.delta));
     row.append(entry,status,change);
     fragment.append(row);
   }
   return fragment;
+}
+function inputChangeDetails(row, current, comparison, bodyAvailable) {
+  if(row.component&&comparison?.reasoningLookup&&!comparison.reasoningLookup.loading)
+    loadReasoningChangeSizes(current,comparison).catch(fail);
+  if(row.items?.length)return inputItemChanges(row.items,bodyAvailable);
+  const summaryOnly=current.details_evicted||["summary_only","details_unavailable"].includes(comparison?.data?.state);
+  const message=summaryOnly?"请求详情已回收，仅保留基本信息。":"暂无可比较的条目。";
+  return el("li","muted",t(message));
 }
 function renderOverview(m) {
   const root=$("overview");
@@ -2960,7 +2964,7 @@ function renderOverview(m) {
   breakdown.append(
     bars("fields",t("字段构成"),fields,m.decoded_bytes,bodyAvailable),
     bars("input",t("input 构成"),input,inputSize,bodyAvailable,
-      r=>r.items?.length?()=>inputItemChanges(r.items,bodyAvailable):null)
+      r=>r.component||r.items?.length?()=>inputChangeDetails(r,m,breakdownComparison,bodyAvailable):null)
   );
   reconcileContent(root,breakdown);
 }
@@ -3126,38 +3130,44 @@ function copyRequestBody() {
 function clearJsonFocus() {
   requestBodyHighlight?.classList.remove("json-focused");requestBodyHighlight=null;
 }
+function retainedReasoningItemBytes(item,path,sizes,total) {
+  if(item?.type!=="reasoning"||!Number.isSafeInteger(total)||total<=0||sizes?.[path]!==total)return null;
+  if(typeof item.encrypted_content!=="string")return 0;
+  const ciphertext=sizes[`${path}/encrypted_content`];
+  return Number.isSafeInteger(ciphertext)&&ciphertext>=2&&ciphertext<=total?ciphertext-2:null;
+}
 function retainedReasoningEncryptedBytes({body,source_sizes:sizes},reasoningBytes) {
   if(!Array.isArray(body?.input)||!sizes)return null;
   let total=0,encrypted=0;
   for(const [index,item] of body.input.entries()) {
     if(item?.type!=="reasoning")continue;
     const path=`/input/${index}`,size=sizes[path];
-    if(!Number.isSafeInteger(size)||size<=0)return null;
+    const ciphertext=retainedReasoningItemBytes(item,path,sizes,size);
+    if(ciphertext===null)return null;
     total+=size;
-    if(typeof item.encrypted_content!=="string")continue;
-    const ciphertext=sizes[`${path}/encrypted_content`];
-    if(!Number.isSafeInteger(ciphertext)||ciphertext<2||ciphertext>size)return null;
-    encrypted+=ciphertext-2;
+    encrypted+=ciphertext;
   }
   return total===reasoningBytes?encrypted:null;
 }
 function requestJsonText(body) {return JSON.stringify(body,null,2)+"\n";}
+function requestBodyData(id) {
+  if(requestBodyCache?.id===id)return requestBodyCache.promise;
+  const pending={id,promise:null};
+  pending.promise=api("/api/packets/"+id+"/export").then(({view,metadata})=>{
+    if(!view||!Object.hasOwn(view,"body"))throw new Error("此请求没有可解析的 JSON 正文");
+    const reasoningBytes=metadata?.input_groups?.reasoning;
+    const reasoningEncryptedBytes=metadata?.reasoning_encrypted_bytes==null&&reasoningBytes>0
+      ?retainedReasoningEncryptedBytes(view,reasoningBytes):null;
+    return {body:view.body,sourceSizes:view.source_sizes,reasoningEncryptedBytes};
+  }).catch(error=>{if(requestBodyCache===pending)requestBodyCache=null;throw error;});
+  if(state.selected===id)requestBodyCache=pending;
+  return pending.promise;
+}
 async function ensureJsonView(id,sequence) {
   if(state.detail?.id===id&&state.detail.details_evicted)throw new Error("请求详情已回收，仅保留基本信息。");
   if(requestBodyView?.id===id&&requestBodyView.language===uiI18n.language)return requestBodyView;
   const root=$("json-tree");root.textContent=t("加载中…");requestBodyView=null;clearJsonFocus();clearJsonActions();
-  if(requestBodyCache?.id!==id) {
-    const pending={id,promise:null};
-    pending.promise=api("/api/packets/"+id+"/export").then(data=>{
-      if(!data.view||!Object.prototype.hasOwnProperty.call(data.view,"body"))throw new Error("此请求没有可解析的 JSON 正文");
-      const reasoningBytes=data.metadata?.input_groups?.reasoning;
-      const reasoningEncryptedBytes=data.metadata?.reasoning_encrypted_bytes==null&&reasoningBytes>0
-        ?retainedReasoningEncryptedBytes(data.view,reasoningBytes):null;
-      return {body:data.view.body,reasoningEncryptedBytes};
-    }).catch(error=>{if(requestBodyCache===pending)requestBodyCache=null;throw error;});
-    requestBodyCache=pending;
-  }
-  const {body,reasoningEncryptedBytes}=await requestBodyCache.promise;
+  const {body,reasoningEncryptedBytes}=await requestBodyData(id);
   if(state.selected!==id||sequence!==requestBodySequence)return null;
   const nodes=new Map(),node=jsonValueNode(body,null,false,true,"",nodes);
   root.replaceChildren(node);root.scrollTop=0;root.scrollLeft=0;
@@ -3275,14 +3285,14 @@ async function searchBody(query) {
     }
   }
 }
+function reasoningItemCiphertextBytes(item) {
+  const size=item.reasoning_encrypted_bytes,total=item.bytes;
+  return Number.isSafeInteger(total)&&Number.isSafeInteger(size)&&size>=0&&size<=total?size:null;
+}
 function packetDiffItems(data) {
   const measuredChange=(before,after)=>({before,after,delta:(after??0)-(before??0),
     change:before===null?"added":after===null?"removed":after>before?"grow":after<before?"shrink":"changed"});
-  const ciphertextSize=(item,total)=>{
-    if(!item)return 0;
-    const size=item.reasoning_encrypted_bytes;
-    return Number.isSafeInteger(total)&&Number.isSafeInteger(size)&&size>=0&&size<=total?size:null;
-  };
+  const componentChange=(before,after)=>before===after?{before,after,delta:0,change:null}:measuredChange(before||null,after||null);
   const slot=item=>JSON.stringify([item.index,item.kind,item.name||""]);
   const removed=data.removed||[],oldBySlot=new Map(removed.map(item=>[slot(item),item])),used=new Set(),items=[];
   const itemRow=(beforeItem,afterItem)=>{
@@ -3290,11 +3300,11 @@ function packetDiffItems(data) {
     const row={index:item.index,kind:item.kind,name:item.name||"",...measuredChange(before,after),
       path:afterItem?(afterItem.path||"/input/"+afterItem.index):null};
     if(item.kind==="reasoning") {
-      const prior=ciphertextSize(beforeItem,before),next=ciphertextSize(afterItem,after);
+      const prior=beforeItem?reasoningItemCiphertextBytes(beforeItem):0;
+      const next=afterItem?reasoningItemCiphertextBytes(afterItem):0;
       if(prior!==null&&next!==null) {
         const beforePlain=(before??0)-prior,afterPlain=(after??0)-next;
-        row.components={encrypted:measuredChange(prior||null,next||null),
-          plain:measuredChange(beforePlain||null,afterPlain||null)};
+        row.components={encrypted:componentChange(prior,next),plain:componentChange(beforePlain,afterPlain)};
       }
     }
     return row;
@@ -3306,6 +3316,32 @@ function packetDiffItems(data) {
   }
   for(const item of removed)if(!used.has(item))items.push(itemRow(item,null));
   return items.sort((a,b)=>a.index-b.index||Number(a.change!=="removed")-Number(b.change!=="removed"));
+}
+async function resolveReasoningItemSizes(items,id) {
+  const needsSize=item=>item.kind==="reasoning"&&reasoningItemCiphertextBytes(item)===null;
+  if(!items.some(needsSize))return items;
+  let retained;
+  try {retained=await requestBodyData(id);}
+  catch(_) {return items;}
+  return items.map(item=>{
+    if(!needsSize(item))return item;
+    const path=`/input/${item.index}`;
+    const size=retainedReasoningItemBytes(retained.body?.input?.[item.index],path,retained.sourceSizes,item.bytes);
+    return size===null?item:{...item,reasoning_encrypted_bytes:size};
+  });
+}
+async function loadReasoningChangeSizes(current,comparison) {
+  const lookup=comparison.reasoningLookup;
+  if(!lookup||lookup.loading)return;
+  lookup.loading=true;
+  const [added,removed]=await Promise.all([
+    resolveReasoningItemSizes(lookup.diff.added,current.id),
+    resolveReasoningItemSizes(lookup.diff.removed,lookup.previousId)
+  ]);
+  if(breakdownComparison!==comparison||state.selected!==current.id)return;
+  comparison.items=packetDiffItems({added,removed});
+  comparison.reasoningLookup=null;
+  renderOverview(state.detail);
 }
 function isPreviousComparisonPacket(previous,current) {
   return !!previous&&previous.thread_id===current.thread_id&&previous.source===current.source&&previous.created<current.created;
@@ -3345,7 +3381,12 @@ async function loadBreakdownComparison(current) {
     if(!active())return;
     const {state:comparisonState,fields,fields_available,decoded_delta,compressed_delta}=data;
     comparison.data={state:comparisonState,fields,fields_available,decoded_delta,compressed_delta};
-    if(!current.details_evicted&&previous&&!previous.details_evicted)comparison.items=packetDiffItems(data);
+    if(!current.details_evicted&&previous&&!previous.details_evicted) {
+      const diff={added:data.added??[],removed:data.removed??[]};
+      comparison.items=packetDiffItems(diff);
+      if(comparison.items.some(item=>item.kind==="reasoning"&&!item.components))
+        comparison.reasoningLookup={diff,previousId:previous.id,loading:false};
+    }
     if(previous) {
       const {top_fields,input_groups,json_envelope_bytes,reasoning_encrypted_bytes,encrypted_content_bytes,decoded_bytes,
         outbound_wire_bytes,usage_override_request_bytes,overflow_original_wire_bytes}=previous;
