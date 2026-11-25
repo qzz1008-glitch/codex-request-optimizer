@@ -404,13 +404,13 @@ button.other-session-group{background:#f5f2fc;border-color:#e7e0f5}
 .size-breakdown>.detail-section{row-gap:1px}
 .size-breakdown>.detail-section+.detail-section{margin-block-start:12px;padding-block-start:9px;border-block-start:1px solid var(--detail-divider)}
 .size-breakdown>.detail-section>h3{grid-column:1 / -1;margin-bottom:2px}
-.bar-row{align-items:center;min-block-size:24px;row-gap:4px;font-size:12px}
+.bar-row{align-items:center;min-block-size:21px;row-gap:4px;font-size:12px;line-height:1.35}
 .bar-label{padding-inline-start:8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .bar-value{color:var(--muted);font-variant-numeric:tabular-nums;text-align:end;white-space:nowrap}
-.bar-delta{justify-self:end;padding:3px 15px 3px 5px}
+.bar-delta{justify-self:end;padding:2px 15px 2px 5px}
 .bar-delta-increase{color:var(--danger)}
 .bar-delta-decrease{color:var(--green)}
-button.bar-delta{position:relative;min-block-size:24px;border:0;border-radius:4px;background:transparent;font-weight:600}
+button.bar-delta{position:relative;min-block-size:inherit;border:0;border-radius:4px;background:transparent;font-weight:600}
 button.bar-delta:hover,button.bar-delta[aria-expanded="true"]{background:var(--soft)}
 button.bar-delta::after{
   content:"";
