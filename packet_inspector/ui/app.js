@@ -2926,17 +2926,20 @@ function fieldBreakdown(m, comparison) {
   return rows.sort((a,b)=>(b.bytes??0)-(a.bytes??0));
 }
 function inputItemChanges(items, bodyAvailable) {
-  const labels={added:t("新增"),removed:t("移除"),changed:t("内容改变")};
+  const labels={
+    added:t("新增"),removed:t("移除"),grow:t("增大"),shrink:t("缩小"),changed:t("内容改变")
+  };
   const fragment=document.createDocumentFragment();
   for(const item of items) {
     const row=el("li","bar-row");
     const entry=el("div","breakdown-item-entry"), index="#"+item.index;
     entry.append(bodyAvailable&&item.path?link(index,()=>goPath(item.path)):el("span","",index));
     if(item.name)entry.append(el("span","",item.name));
-    const size=el("span","bar-value"), change=el("span","bar-value bar-delta");
-    size.append(el("span","sr-only",t("条目大小")+" "),bytes(item.after??item.before));
-    change.append(el("span","sr-only",t("变化")+" "),labels[item.change]??signed(item.delta));
-    row.append(entry,size,change);
+    const tone=item.delta>0?" bar-delta-increase":item.delta<0?" bar-delta-decrease":"";
+    const status=el("span","bar-value"+tone), change=el("span","bar-value bar-delta");
+    status.append(el("span","sr-only",t("变化")+" "),labels[item.change]);
+    change.append(el("span","sr-only",t("变化值")+" "),signed(item.delta));
+    row.append(entry,status,change);
     fragment.append(row);
   }
   return fragment;
