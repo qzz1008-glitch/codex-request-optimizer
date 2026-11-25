@@ -2837,7 +2837,7 @@ function bars(section, title, rows, total, bodyAvailable, detailsFor) {
     progress.value=r.bytes??0;
     progress.setAttribute("aria-hidden","true");
     const percentage=el("span","bar-value",r.bytes==null?"—":(r.bytes/max*100).toFixed(1)+"%");
-    const renderDetails=detailsFor(r);
+    const renderDetails=detailsFor?.(r);
     const value=signed(r.delta??null);
     const tone=r.delta>0?" bar-delta-increase":r.delta<0?" bar-delta-decrease":"";
     const delta=el(renderDetails?"button":"span","bar-value bar-delta"+tone,value);
@@ -2924,11 +2924,6 @@ function fieldBreakdown(m, comparison) {
     delta:Number.isSafeInteger(currentEnvelope)&&Number.isSafeInteger(previousEnvelope)?currentEnvelope-previousEnvelope:null});
   return rows.sort((a,b)=>(b.bytes??0)-(a.bytes??0));
 }
-function inputCategoryChanges(rows) {
-  const changes=el("dl","input-category-changes");
-  for(const row of rows)fact(changes,row.name,signed(row.delta));
-  return changes;
-}
 function inputItemChanges(items, bodyAvailable) {
   const labels={added:t("新增"),removed:t("移除"),changed:t("内容改变")};
   const grid=table([t("条目"),t("变化"),t("条目大小")],items.map(item=>{
@@ -2945,11 +2940,9 @@ function renderOverview(m) {
   if(m.inspection!=="json") {reconcileContent(root,el("p","muted",t("正文未展开：")+(t(m.inspection_error)||t("正文为空"))+t("。转发仍按原始正文进行。")));return;}
   const breakdown=el("div","size-breakdown"), bodyAvailable=!m.details_evicted;
   const fields=fieldBreakdown(m,breakdownComparison), input=inputBreakdown(m,breakdownComparison);
-  const changedCategories=input.filter(r=>r.delta!==null&&r.delta!==undefined&&(r.delta!==0||r.items?.length));
   const inputSize=m.top_fields?.find(r=>r.name==="input")?.bytes;
   breakdown.append(
-    bars("fields",t("字段构成"),fields,m.decoded_bytes,bodyAvailable,
-      r=>r.key==="field/input"&&changedCategories.length?()=>inputCategoryChanges(changedCategories):null),
+    bars("fields",t("字段构成"),fields,m.decoded_bytes,bodyAvailable),
     bars("input",t("input 构成"),input,inputSize,bodyAvailable,
       r=>r.items?.length?()=>inputItemChanges(r.items,bodyAvailable):null)
   );

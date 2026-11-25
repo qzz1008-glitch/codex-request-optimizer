@@ -433,9 +433,6 @@ button.bar-delta[aria-expanded="true"]::after{transform:translateY(-35%) rotate(
   border-radius:0 4px 4px 0;
   background:#f7f9fc;
 }
-.input-category-changes,.input-category-changes dd{margin:0}
-.input-category-changes dt{min-inline-size:0;overflow-wrap:anywhere}
-.input-category-changes dd{white-space:nowrap}
 .breakdown-item-changes :is(th,td){padding-block:4px;vertical-align:baseline}
 .breakdown-item-changes :is(th,td):not(:first-child){white-space:nowrap}
 .breakdown-item-changes :is(th,td):last-child{text-align:end;font-variant-numeric:tabular-nums}
