@@ -1,6 +1,5 @@
 """Run the published v0.6.14 updater against the formal release files."""
 import argparse
-import hashlib
 import io
 import json
 from pathlib import Path
@@ -13,6 +12,7 @@ from unittest.mock import patch
 
 from packet_inspector import VERSION
 from packet_inspector.frontend_dev import DESKTOP_PROFILE, RESOURCES
+from packet_inspector.managed_runtime import sha256_file
 from packet_inspector.router import control_worker, local_json, process_alive, worker_info
 from packet_inspector.updates import ASSET
 from packet_inspector.upgrade import Upgrade, free_port
@@ -80,7 +80,11 @@ def verify_mode(release, directory, mode):
     data, config = directory / (mode + "-data"), directory / (mode + "-config.toml")
     config.write_text('model="test-only"\n', encoding="utf8")
     port = free_port()
-    initial = release / "CodexPacketInspector-Dev.exe" if mode == "dev" else release / "publish" / ASSET
+    artifact = release / "CodexPacketInspector-Dev.exe" if mode == "dev" else release / "publish" / ASSET
+    original_checksum = sha256_file(artifact)
+    initial = directory / (mode + "-download") / artifact.name
+    initial.parent.mkdir()
+    shutil.copy2(artifact, initial)
     try:
         process = subprocess.Popen([str(initial), "--upgrade", "--quiet", "--port", str(port),
                                     "--data-dir", str(data), "--config", str(config)],
@@ -112,14 +116,12 @@ def verify_mode(release, directory, mode):
         old_pid = ready["pid"]
 
         package = release / "publish" / ASSET
-        with package.open("rb") as stream:
-            checksum = hashlib.file_digest(stream, "sha256").hexdigest()
+        checksum = sha256_file(package)
         previous = previous_updater()
         assets = []
         for index, name in enumerate(PUBLIC_FILES, 123):
             path = release / "publish" / name
-            with path.open("rb") as stream:
-                digest = hashlib.file_digest(stream, "sha256").hexdigest()
+            digest = sha256_file(path)
             assets.append({"id":index, "name":name, "size":path.stat().st_size, "digest":"sha256:" + digest})
         metadata = {"tag_name":"v" + VERSION, "prerelease":False, "draft":False,
                     "assets":list(reversed(assets))}
@@ -136,6 +138,10 @@ def verify_mode(release, directory, mode):
             assert available["asset"]["sha256"] == checksum
             assert updates.install()["state"] == "upgrading"
         wait_for(lambda: updates.status()["state"] == "complete", seconds=120)
+        result = json.loads((data / "upgrade-result.json").read_text(encoding="utf8"))
+        assert result.get("downloaded_launcher") == "updated", result.get("downloaded_launcher")
+        assert sha256_file(initial) == checksum
+        assert sha256_file(artifact) == original_checksum
         assert old_window.wait(timeout=30) == 0 and not process_alive(old_pid)
         after = local_json(port, "/api/status")
         assert after["worker_id"] != old
@@ -153,7 +159,7 @@ def verify_mode(release, directory, mode):
         assert list((data / "updates/staging").iterdir()) == []
         print(json.dumps({"mode":mode,"original_v0_6_14_updater":True,"formal_release_selected":True,
                           "old_window_closed_new_window_opened":True,"mode_preserved":True,
-                          "native_window_verified":True,"staging_cleaned":True}), flush=True)
+                          "native_window_verified":True,"original_download_updated":True,"staging_cleaned":True}), flush=True)
     finally:
         try:
             observer = Upgrade(data, data, config, port)
