@@ -304,8 +304,13 @@ class InspectorServer(ThreadingHTTPServer):
         self._startup_step("background.initialize")
         self.analysis_stop = threading.Event()
         self.connection_resume = ConnectionResume(self)
-        self.remote_relays = (RemoteRelays(self.data_dir / "ssh-connections", lambda: self.endpoint,
-                                          image_settings=self.linux_image_settings) if os.name == "nt" else None)
+        self.remote_relays = (
+            RemoteRelays(self.data_dir / "ssh-connections", lambda: self.endpoint,
+                         image_settings=self.linux_image_settings,
+                         retry_limit=lambda: (self.settings["capacity_retry_max_retries"]
+                                              if self.settings["capacity_retry_enabled"] else None))
+            if os.name == "nt" else None
+        )
         self.connections = Connections(self.link.config.parent, self.connection_profile, self.set_connection,
                                        transport=self.remote_relays,
                                        cache_path=self.cache_dir / "remote-connections.json")
@@ -1326,6 +1331,8 @@ class Handler(BaseHTTPRequestHandler):
                     self.server.restart_notices.change("capacity_retry",
                         previous["capacity_retry_max_retries"] if previous["capacity_retry_enabled"] else None,
                         candidate["capacity_retry_max_retries"] if candidate["capacity_retry_enabled"] else None)
+                    if not self.server.sharing.remote:
+                        self.server.connection_resume.schedule()
                 self.server.store.configure_limits(self.server.settings["max_storage_bytes"],
                                                    self.server.settings["max_packets"])
                 if candidate["auto_zstd_level_enabled"] != previous["auto_zstd_level_enabled"]:

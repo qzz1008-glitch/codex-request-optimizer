@@ -13,12 +13,14 @@ import sys
 import tempfile
 import threading
 import time
+import tomllib
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, call, patch
 from urllib.error import HTTPError
 from urllib.request import Request, build_opener, ProxyHandler
 
+from packet_inspector.config_link import PROVIDER
 from packet_inspector.remote_connections import Connections, Host, SshControl, saved_hosts
 from packet_inspector.remote_control import SCRIPT, RESULT_PREFIX
 from packet_inspector.remote_relay import RemoteRelays, config_changes
@@ -743,6 +745,15 @@ class WindowsRemoteRelayTests(unittest.TestCase):
         self.addCleanup(server.close)
         return server
 
+    def assert_restored_provider(self, path, original):
+        expected = tomllib.loads(original.decode("utf8"))
+        expected["model_provider"] = PROVIDER
+        expected["features"] = {"enable_request_compression": True}
+        expected.setdefault("model_providers", {})[PROVIDER] = {
+            "name": "OpenAI", "wire_api": "responses", "requires_openai_auth": True,
+            "base_url": "https://chatgpt.com/backend-api/codex", "supports_websockets": False}
+        self.assertEqual(tomllib.loads(path.read_text(encoding="utf8")), expected)
+
     def start(self, args, **kwargs):
         self.forwards.append(args[args.index("-R") + 1])
         self.assertIn("ExitOnForwardFailure=yes", args)
@@ -871,8 +882,6 @@ class WindowsRemoteRelayTests(unittest.TestCase):
         self.assertFalse(self.relays.needs_resume())
 
     def test_linux_image_directory_is_probed_and_tool_is_managed_per_ssh_account(self):
-        import tomllib
-
         settings = ["native", "/home/test/custom-data"]
         self.relays.image_settings = lambda identity: tuple(settings)
         real_ssh = self.relays.ssh
@@ -906,8 +915,7 @@ class WindowsRemoteRelayTests(unittest.TestCase):
         self.assertIn("isolated_vision", current["mcp_servers"])
         self.assertEqual(self.relays(self.host, "restore")["state"], "disconnected")
         self.assertIsNone(self.relays.image_target(key))
-        self.assertEqual(tomllib.loads(self.config.read_text(encoding="utf8")),
-                         tomllib.loads(self.original.decode("utf8")))
+        self.assert_restored_provider(self.config, self.original)
 
     def test_optimizer_resume_updates_ssh_image_tool_and_keeps_reconnect_manual(self):
         images = []
@@ -956,13 +964,13 @@ class WindowsRemoteRelayTests(unittest.TestCase):
         self.assertLess(self.calls.index("tunnel_probe"), self.calls.index("tunnel_write"))
         connected = self.config.read_bytes()
         self.assertIn(b'openai_base_url = "http://127.0.0.1:', connected)
-        self.assertIn(b'model_provider = "openai"', connected)
+        self.assertEqual(tomllib.loads(connected.decode("utf8"))["model_provider"], PROVIDER)
         self.assertIn(b"enable_request_compression = false", connected)
         self.assertEqual(list(self.root.glob("config.toml.inspector-backup-ssh-*"))[0].read_bytes(), self.original)
         self.calls.clear()
         self.assertEqual(self.relays(self.host, "activate")["state"], "connected")
         self.assertEqual(self.config.read_bytes(), connected)
-        self.assertNotIn("tunnel_write", self.calls)
+        self.assertEqual(len(list(self.root.glob("config.toml.inspector-backup-ssh-*"))), 1)
         self.relays.close()
         restarted = self.manager()
         self.assertTrue(restarted.needs_resume(self.host))
@@ -971,19 +979,66 @@ class WindowsRemoteRelayTests(unittest.TestCase):
         self.assertEqual(self.config.read_bytes(), connected)
         self.config.write_bytes(connected.replace(b'model = "fixture"', b'model = "edited"'))
         self.assertEqual(restarted(self.host, "restore")["state"], "disconnected")
-        restored = self.config.read_bytes()
-        self.assertNotIn(b"/relay/", restored)
-        self.assertNotIn(b"enable_request_compression", restored)
-        self.assertIn(b'model = "edited"', restored)
+        self.assert_restored_provider(self.config, self.original.replace(b'"fixture"', b'"edited"'))
         self.assertFalse(restarted.needs_resume(self.host))
+
+    def test_active_legacy_connection_migrates_equivalent_chats_and_tracks_retry_settings(self):
+        token, route = "a" * 48, "b" * 24
+        address = f"http://127.0.0.1:51123/relay/{token}/p/{route}"
+        self.config.write_bytes(self.original + f'openai_base_url = "{address}"\n'
+                                '[features]\nenable_request_compression = false\n'
+                                '[model_providers.private]\nenv_key = "PRIVATE_API_KEY"\n'.encode("utf8"))
+        key = self.relays.key(self.host)
+        self.relays._save(key, {"home": str(self.root.resolve()), "uid": self.uid, "enabled": True,
+            "token": token, "port": 51123, "proof": "c" * 48,
+            "routes": {route: "https://chatgpt.com/backend-api/codex"},
+            "fields": {"config.toml": [
+                {"keys": ["openai_base_url"], "applied": address, "before": None, "present": False},
+                {"keys": ["features", "enable_request_compression"], "applied": False, "before": None, "present": False}
+            ]}})
+        database = self.root / "state_5.sqlite"
+        with closing(sqlite3.connect(database)) as db, db:
+            db.execute("CREATE TABLE threads(id TEXT PRIMARY KEY, model_provider TEXT, title TEXT)")
+            db.executemany("INSERT INTO threads VALUES (?, ?, ?)",
+                           [("first", "openai", "Existing chat"), ("second", "private", "API-key chat")])
+
+        limit = 30
+        self.relays.retry_limit = lambda: limit
+        self.assertTrue(self.relays.needs_resume(self.host))
+        result = self.relays(self.host, None)
+        self.assertTrue(result["reload_required"])
+        data = tomllib.loads(self.config.read_text(encoding="utf8"))
+        self.assertEqual(data["model_provider"], PROVIDER)
+        self.assertEqual(data["openai_base_url"], address)
+        provider = data["model_providers"][PROVIDER]
+        self.assertEqual(provider["base_url"], address)
+        self.assertEqual(provider["stream_max_retries"], 30)
+        self.assertEqual(provider["request_max_retries"], 0)
+        with closing(sqlite3.connect(database)) as db:
+            self.assertEqual(db.execute("SELECT * FROM threads ORDER BY id").fetchall(),
+                             [("first", PROVIDER, "Existing chat"), ("second", "private", "API-key chat")])
+        backups = list((self.root / "provider-migration-backups").glob("provider-migration-*.json"))
+        self.assertEqual(len(backups), 1)
+        self.assertEqual(json.loads(backups[0].read_text(encoding="utf8"))["previous"], [["first", "openai"]])
+        self.assertNotIn("tunnel_reconnect", self.calls)
+
+        for limit in (12, None):
+            self.relays.retry_at.clear()
+            self.assertTrue(self.relays.needs_resume(self.host))
+            self.assertTrue(self.relays(self.host, None)["reload_required"])
+            self.assertFalse(self.relays.needs_resume(self.host))
+            provider = tomllib.loads(self.config.read_text(encoding="utf8"))["model_providers"][PROVIDER]
+            self.assertEqual(provider.get("stream_max_retries"), limit)
+            self.assertEqual(provider["base_url"], address)
+        self.assertEqual(len(self.forwards), 1)
 
     def test_legacy_route_recovers_upstream_after_remote_uninstall(self):
         endpoint = "http://127.0.0.1:50500/relay/new"
         existing = b'openai_base_url = "http://127.0.0.1:47844/relay/old/p/one"\n'
         legacy = {"legacy_token": "old", "legacy_routes": {"one": "https://example.invalid/v1"}}
-        updated, routes, fields = config_changes({"config.toml": existing}, legacy, {}, endpoint)
+        updated, routes, fields, _, _ = config_changes({"config.toml": existing}, legacy, {}, endpoint)
         self.assertEqual(set(routes.values()), {"https://example.invalid/v1"})
-        restored, _, _ = config_changes(updated, legacy, {"fields": fields, "routes": routes}, "")
+        restored, _, _, _, _ = config_changes(updated, legacy, {"fields": fields, "routes": routes}, "")
         self.assertIn(b'https://example.invalid/v1', restored["config.toml"])
         self.assertNotIn(b"127.0.0.1:47844", restored["config.toml"])
         with self.assertRaises(ValueError):
@@ -996,12 +1051,12 @@ class WindowsRemoteRelayTests(unittest.TestCase):
         self.assertEqual(self.relays(self.host, "activate")["state"], "connected")
         self.assertIn(b'base_url = "http://127.0.0.1:8000/v1"', self.config.read_bytes())
         self.assertEqual(self.relays(self.host, "restore")["state"], "disconnected")
-        self.assertEqual(self.config.read_bytes().rstrip(), original.rstrip())
+        self.assert_restored_provider(self.config, original)
 
     def test_switch_accounts_with_an_existing_legacy_relay(self):
         original_key = self.relays.key(self.host)
         legacy = {"home": str(self.root.resolve()), "token": "a" * 48, "proof": "b" * 48, "port": 51001, "enabled": True}
-        updates, routes, fields = config_changes({"config.toml": self.original}, {}, {},
+        updates, routes, fields, _, _ = config_changes({"config.toml": self.original}, {}, {},
             f"http://127.0.0.1:{legacy['port']}/relay/{legacy['token']}")
         self.config.write_bytes(updates["config.toml"])
         legacy.update(routes=routes, fields=fields)
@@ -1046,12 +1101,12 @@ class WindowsRemoteRelayTests(unittest.TestCase):
         original_process = self.relays.processes[original_key]
         self.remote_home, self.uid = personal_home, 1001
         self.assertEqual(self.relays(self.host, "restore")["state"], "disconnected")
-        self.assertEqual(personal_config.read_bytes().rstrip(), personal_original.rstrip())
+        self.assert_restored_provider(personal_config, personal_original)
         self.assertIsNone(original_process.poll())
         self.assertEqual(self.config.read_bytes(), updates["config.toml"])
         self.remote_home, self.uid = self.root, 0
         self.assertEqual(self.relays(self.host, "restore")["state"], "disconnected")
-        self.assertEqual(self.config.read_bytes().rstrip(), self.original.rstrip())
+        self.assert_restored_provider(self.config, self.original)
 
     def test_account_change_after_snapshot_blocks_write_and_restart_even_with_same_config_directory(self):
         for operation, command in [("activate", "tunnel_write"), ("reconnect", "tunnel_reconnect")]:

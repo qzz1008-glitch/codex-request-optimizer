@@ -1,6 +1,7 @@
 """Fixed, standard-library-only script sent over the user's existing SSH session."""
 from pathlib import Path
 
+from .config_link import PROVIDER
 from .entry_port import DEFAULT_PORT
 from .native_state import LABEL_READER
 
@@ -8,8 +9,10 @@ RESULT_PREFIX = "INSPECTOR_CONNECTION_RESULT:"
 SSH_LABEL_BATCH = 32
 
 LINUX_IMAGE_SCRIPT = Path(__file__).with_name("linux_image_control.py").read_text(encoding="utf-8")
+PROVIDER_MIGRATION_WORKER = Path(__file__).with_name("provider_migration_worker.py").read_text(encoding="utf-8")
 
-SCRIPT = LABEL_READER + "\n" + LINUX_IMAGE_SCRIPT + r'''
+SCRIPT = (f"PROVIDER_MIGRATION_WORKER = {PROVIDER_MIGRATION_WORKER!r}\n"
+          f"PROVIDER_TARGET = {PROVIDER!r}\n") + LABEL_READER + "\n" + LINUX_IMAGE_SCRIPT + r'''
 from contextlib import contextmanager, suppress
 import base64, hashlib, json, os, pathlib, re, select, shutil, signal, socket, stat, struct, subprocess, tempfile, time
 from http.client import HTTPException, HTTPResponse
@@ -281,6 +284,9 @@ def write_remote_files(home, options):
     home.mkdir(mode=0o700, parents=True, exist_ok=True)
     with os.fdopen(os.open(str(home / ".inspector-ssh.lock"), os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600), "rb") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        api_key = options.get("api_key")
+        if api_key is not None and remote_settings(home)["api_key"] != api_key:
+            raise ValueError("远程 Codex 登录方式已变化，请重新尝试。")
         current = remote_files(home)
         expected = {name: hashlib.sha256(raw).hexdigest() if raw is not None else None
                     for name, raw in current.items()}
@@ -302,6 +308,10 @@ def write_remote_files(home, options):
                     write_config(path.with_name(path.name + ".inspector-backup-ssh-" + str(revision)), before, 0o600)
                 write_config(path, raw, mode)
                 applied.append((path, before, raw, mode))
+            if remote_files(home) != {**current, **updates}:
+                raise ValueError("远程 Codex 配置已变化，请重新尝试。")
+            if api_key is not None and remote_settings(home)["api_key"] != api_key:
+                raise ValueError("远程 Codex 登录方式已变化，请重新尝试。")
         except (OSError, ValueError):
             for path, before, raw, mode in reversed(applied):
                 if config_bytes(path) == raw:
@@ -310,7 +320,18 @@ def write_remote_files(home, options):
                     else:
                         write_config(path, before, mode)
             raise
-    return {"changed": bool(updates)}
+        result = {"changed": bool(updates)}
+        aliases = options.get("provider_aliases", [])
+        if aliases:
+            worker = {"__name__": "provider_migration_worker"}
+            exec(PROVIDER_MIGRATION_WORKER, worker)
+            try:
+                result["session_migration"] = worker["migrate"](
+                    home, home / "provider-migration-backups", aliases, PROVIDER_TARGET)
+            except (OSError, ValueError) as exc:
+                result["session_migration"] = {"changed": 0, "warnings": [
+                    {"reason": "session_provider_migration_failed", "detail": str(exc)[:240]}]}
+    return result
 
 def tunnel_control(home, options):
     home = home.resolve()

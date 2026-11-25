@@ -5,7 +5,7 @@ import base64
 import hashlib
 from http.server import ThreadingHTTPServer
 import json
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import re
 import secrets
 import subprocess
@@ -16,37 +16,58 @@ from urllib.parse import unquote, urlsplit
 import tomlkit
 
 from .config_link import validate_upstream
-from .configuration_layers import merge_layers
+from .connection_plan import ConfigSnapshot
+from .connection_policy import native_compression
 from .linux_images import LinuxImageTarget, linux_image_edits, probe_image_directory
 from .network_diagnostics import safe_text
-from .provider_defaults import API_UPSTREAM, provider_upstream
-from .providers import _get, _put
+from .provider_defaults import API_UPSTREAM
+from .providers import _get, _put, prepare_provider_files
 from .remote_connections import SshControl
 from .router import RouterHandler, atomic_json
 
 CHATGPT_UPSTREAM = "https://chatgpt.com/backend-api/codex"
 TUNNEL_TOKEN = re.compile(r"[0-9a-f]{48}")
 RETRY_SECONDS = 12
+LOOPBACK = {"localhost", "127.0.0.1", "::1"}
 
 
-def config_changes(files, linked, previous, endpoint):
-    """Change standard HTTP fields while keeping remote provider IDs intact."""
+def original_remote_upstream(value, linked, previous):
+    upstream = validate_upstream(value)
+    url = urlsplit(upstream)
+    if url.hostname not in LOOPBACK:
+        return upstream
+    parts = url.path.strip("/").split("/")
+    if len(parts) == 4 and parts[:2] == ["relay", previous.get("token")] and parts[2] == "p":
+        original = previous.get("routes", {}).get(parts[3])
+        if not original:
+            raise ValueError("SSH 中转路由缺少原上游记录，请从备份恢复。")
+        return validate_upstream(original)
+    if parts[:2] != ["relay", linked.get("legacy_token")]:
+        return upstream
+    if len(parts) == 4 and parts[2] == "p":
+        original = linked.get("legacy_routes", {}).get(parts[3])
+    else:
+        original = linked.get("legacy_upstream") if len(parts) == 2 else None
+    if not original:
+        raise ValueError("旧中转的路由缺少原上游记录，远程配置未修改。")
+    return validate_upstream(original)
+
+
+def check_remote_upstream(value):
+    upstream = validate_upstream(value)
+    if urlsplit(upstream).hostname in LOOPBACK:
+        raise ValueError("远程 provider 指向服务器本地服务，Windows 中转无法直接访问。")
+    return upstream
+
+
+def config_changes(files, linked, previous, endpoint, *, retry_limit=None):
+    """Run the shared provider policy on remote snapshots."""
     routes = dict(previous.get("routes", {}))
-    fields = {}
-    edits = {}
     documents = {name: tomlkit.parse((raw or b"").decode("utf-8-sig")) for name, raw in files.items()}
-    base = documents["config.toml"]
-    root_providers = tomlkit.parse((files["config.toml"] or b"").decode("utf-8-sig")).get("model_providers", {})
-    native = API_UPSTREAM if linked.get("api_key") else CHATGPT_UPSTREAM
-    default_provider = base.get("model_provider", "openai")
-    selected = {document.get("model_provider", default_provider) for document in documents.values()}
-    selected.update(profile["model_provider"] for document in documents.values()
-                    for profile in document.get("profiles", {}).values() if "model_provider" in profile)
 
     for name, document in documents.items():
-        old_fields = managed_fields(previous, name)
         # Recover the pre-link values only where our previous writes still match.
-        for field in old_fields:
+        for field in managed_fields(previous, name):
             present, value = _get(document, field["keys"])
             if present and value == field["applied"]:
                 _put(document, field["keys"], field["before"], field["present"])
@@ -54,84 +75,44 @@ def config_changes(files, linked, previous, endpoint):
                     _, table = _get(document, parent)
                     if isinstance(table, dict) and not table and not table.as_string().strip():
                         _put(document, parent, None, False)
-        if endpoint:
-            records = fields.setdefault(name, [])
+        if not endpoint and files[name] is not None:
+            native_compression(document, True)
 
-            def change(keys, value):
-                present, before = _get(document, keys)
-                if present and before == value:
-                    return
-                added_tables = [keys[:index] for index in range(1, len(keys)) if not _get(document, keys[:index])[0]]
-                records.append({"keys": keys, "present": present, "before": before,
-                                "applied": value, "added_tables": added_tables})
-                _put(document, keys, value)
+    updated = {name: tomlkit.dumps(document) for name, document in documents.items()}
+    fields, aliases, warnings = {}, set(), []
+    if endpoint:
+        def route(_path, _provider, upstream):
+            identifier = next((key for key, existing in routes.items() if existing == upstream), None)
+            if identifier is None:
+                identifier = secrets.token_hex(12)
+            routes[identifier] = upstream
+            return f"{endpoint}/p/{identifier}"
 
-            def route(keys, value):
-                upstream = validate_upstream(value)
-                url = urlsplit(upstream)
-                if url.hostname in {"localhost", "127.0.0.1", "::1"}:
-                    parts = url.path.strip("/").split("/")
-                    if len(parts) < 2 or parts[:2] != ["relay", linked.get("legacy_token")]:
-                        raise ValueError("远程 provider 指向服务器本地服务，Windows 中转无法直接访问。")
-                    if len(parts) == 4 and parts[2] == "p":
-                        original = linked.get("legacy_routes", {}).get(parts[3])
-                    elif len(parts) == 2:
-                        original = linked.get("legacy_upstream")
-                    else:
-                        original = None
-                    if not original:
-                        raise ValueError("旧中转的路由缺少原上游记录，远程配置未修改。")
-                    upstream = validate_upstream(original)
-                    if urlsplit(upstream).scheme != "https":
-                        raise ValueError("旧中转的原上游仅在服务器本地可访问。")
-                    # The old service may already have been uninstalled. A
-                    # later disconnect must restore its upstream, not its URL.
-                    _put(document, keys, upstream)
-                identifier = next((key for key, existing in routes.items() if existing == upstream), None)
-                if identifier is None:
-                    identifier = secrets.token_hex(12)
-                routes[identifier] = upstream
-                change(keys, f"{endpoint}/p/{identifier}")
-
-            if name == "config.toml" or "openai_base_url" in document:
-                try:
-                    route(["openai_base_url"], document.get("openai_base_url") or native)
-                except ValueError:
-                    if "openai" in selected:
-                        raise
-            # Use the pre-link root provider for inheritance even if a profile
-            # declares some of the same fields.
-            for provider_id, provider in document.get("model_providers", {}).items():
-                inherited = root_providers.get(provider_id, {}) if document is not base else {}
-                merged = merge_layers(inherited, provider)
-                try:
-                    if merged.get("wire_api", "responses") != "responses":
-                        raise ValueError("远程所选 provider 不使用 Responses API。")
-                    if "base_url" in provider or "base_url" not in inherited:
-                        upstream = provider_upstream(merged, native)
-                        if not upstream:
-                            raise ValueError("远程所选 provider 缺少可转发的上游地址。")
-                        route(["model_providers", provider_id, "base_url"], upstream)
-                except ValueError:
-                    if provider_id in selected:
-                        raise
-                    continue
-                change(["model_providers", provider_id, "supports_websockets"], False)
-            if name == "config.toml" or "enable_request_compression" in document.get("features", {}):
-                change(["features", "enable_request_compression"], False)
-            for profile, value in document.get("profiles", {}).items():
-                if "enable_request_compression" in value.get("features", {}):
-                    change(["profiles", profile, "features", "enable_request_compression"], False)
-        updated = tomlkit.dumps(document)
-        original = (files[name] or b"").decode("utf-8-sig")
-        if updated != original:
-            bom = b"\xef\xbb\xbf" if (files[name] or b"").startswith(b"\xef\xbb\xbf") else b""
-            edits[name] = bom + updated.encode("utf-8")
-    return edits, routes, fields
+        native = API_UPSTREAM if linked.get("api_key") else CHATGPT_UPSTREAM
+        names = ["config.toml", *(name for name in documents if name != "config.toml")]
+        sources = tuple(ConfigSnapshot(PurePosixPath(name), updated[name].encode("utf8")) for name in names)
+        records = {source.path: [] for source in sources}
+        plans, aliases, warnings, _ = prepare_provider_files(
+            sources, native, records, lambda value, _: original_remote_upstream(value, linked, previous), route,
+            retry_limit=retry_limit, check_upstream=check_remote_upstream)
+        updated.update((edit.source.path.name, edit.updated) for edit in plans)
+        fields = {path.name: records[path] for path in records}
+    edits = {}
+    for name, rendered in updated.items():
+        raw = files[name] or b""
+        original = raw.decode("utf-8-sig")
+        if rendered != original:
+            bom = b"\xef\xbb\xbf" if raw.startswith(b"\xef\xbb\xbf") else b""
+            edits[name] = bom + rendered.encode("utf-8")
+    return edits, routes, fields, aliases, warnings
 
 
 def managed_fields(record, name):
     return record.get("fields", {}).get(name, []) + record.get("previous_fields", {}).get(name, [])
+
+
+def provider_policy_pending(record, policy):
+    return record.get("provider_policy") != policy and "previous_fields" not in record
 
 
 class TunnelHandler(RouterHandler):
@@ -211,7 +192,7 @@ class TunnelGateway(ThreadingHTTPServer):
 
 
 class RemoteRelays:
-    def __init__(self, directory, endpoint, *, ssh=None, start=None, image_settings=None):
+    def __init__(self, directory, endpoint, *, ssh=None, start=None, image_settings=None, retry_limit=None):
         self.directory = Path(directory)
         self.endpoint = endpoint
         self.ssh = ssh or SshControl()
@@ -220,6 +201,7 @@ class RemoteRelays:
         self.processes = {}
         self.current_accounts = {}
         self.image_settings = image_settings
+        self.retry_limit = retry_limit or (lambda: None)
         self.image_targets = {}
         self.retry_at = {}
         self.guard = threading.RLock()
@@ -251,6 +233,7 @@ class RemoteRelays:
     def needs_resume(self, host=None):
         device = self.key(host) if host else None
         now = time.monotonic()
+        policy = self._provider_policy()
         with self.guard:
             if self.closed:
                 return False
@@ -259,13 +242,17 @@ class RemoteRelays:
                 if (device is not None and device != host_key) or self.current_accounts.get(host_key, key) != key:
                     continue
                 if (record.get("enabled") and self.retry_at.get(host_key, 0) <= now
-                        and (key not in self.processes or self.processes[key].poll() is not None)):
+                        and (key not in self.processes or self.processes[key].poll() is not None
+                             or provider_policy_pending(record, policy))):
                     return True
             return False
 
     def _save(self, key, record):
         self.directory.mkdir(parents=True, exist_ok=True)
         atomic_json(self.directory / (key + ".json"), record)
+
+    def _provider_policy(self):
+        return {"version": 1, "retry_limit": self.retry_limit()}
 
     def _account_record(self, device, account_key, account):
         records = dict(self.records())
@@ -433,9 +420,16 @@ class RemoteRelays:
                 active |= any(_get(document, field["keys"]) == (True, field["applied"])
                               for field in managed if isinstance(field["applied"], str))
         changed = False
+        warnings, migration = [], {}
+        policy = self._provider_policy()
+        reconcile = (action is None and active and record.get("enabled")
+                     and provider_policy_pending(record, policy))
+        if reconcile:
+            # Restore service for the old config even if it cannot be migrated.
+            self._ensure(host, key, record)
         images = self._images(host, key, record, files, account, False, action) if action == "restore" else None
-        if action in {"activate", "restore"}:
-            if action == "activate":
+        if reconcile or action in {"activate", "restore"}:
+            if action != "restore":
                 if not record:
                     record = {"token": secrets.token_hex(24), "port": 49152 + secrets.randbelow(16384),
                               "proof": secrets.token_hex(24), **account}
@@ -443,7 +437,8 @@ class RemoteRelays:
             else:
                 endpoint = ""
             if record:
-                edits, routes, fields = config_changes(files, snapshot, record, endpoint)
+                edits, routes, fields, aliases, warnings = config_changes(
+                    files, snapshot, record, endpoint, retry_limit=policy["retry_limit"])
                 if endpoint:
                     # Route and recovery details must exist before any request
                     # can use the new configuration.
@@ -454,21 +449,28 @@ class RemoteRelays:
                         # uncertain. Neither is replayed automatically.
                         record["previous_fields"] = {name: managed_fields(prior, name) for name in files}
                     self._save(key, record)
-                    try:
-                        self._ensure(host, key, record)
-                    except (OSError, ValueError):
-                        self._save(key, prior)
-                        raise
-                if edits:
+                    if not reconcile:
+                        try:
+                            self._ensure(host, key, record)
+                        except (OSError, ValueError):
+                            self._save(key, prior)
+                            raise
+                if edits or aliases:
                     expected = {name: hashlib.sha256(raw).hexdigest() if raw is not None else None
                                 for name, raw in files.items()}
                     updates = {name: base64.b64encode(raw).decode("ascii") for name, raw in edits.items()}
-                    outcome = self._call(host, "write", expected=expected, updates=updates, **account)
-                    changed = bool(outcome["changed"])
+                    outcome = self._call(host, "write", expected=expected, updates=updates,
+                                         api_key=snapshot.get("api_key"), provider_aliases=sorted(aliases), **account)
+                    migration = outcome.get("session_migration", {})
+                    changed = bool(outcome["changed"] or migration.get("changed"))
                     files.update(edits)
                 active = bool(endpoint)
                 if endpoint:
                     record["reload_required"] = bool(changed or record.get("reload_required"))
+                    if migration.get("warnings"):
+                        record.pop("provider_policy", None)
+                    else:
+                        record["provider_policy"] = policy
                 else:
                     record.update(enabled=False, fields={}, reload_required=bool(changed or record.get("reload_required")))
                 record.pop("previous_fields", None)
@@ -480,6 +482,10 @@ class RemoteRelays:
         result = {"state": "connected" if active else "disconnected", "can_connect": True, "account_key": account_key,
                   "can_disconnect": bool(active), "reload_required": bool(
                       record.get("reload_required") or active and "previous_fields" in record)}
+        if warnings or migration.get("warnings"):
+            result["provider_warnings"] = warnings + migration.get("warnings", [])
+        if migration.get("warnings"):
+            result["error"] = "远程会话的 provider 索引更新未完成，将在后台重试。"
         if images is not None:
             result["image_storage"] = images
         if action == "reconnect":
