@@ -389,7 +389,7 @@ button.other-session-group{background:#f5f2fc;border-color:#e7e0f5}
 .detail-content .request-error-detail>dd{text-align:start;white-space:pre-wrap;color:var(--danger)}
 .detail-content>.tab-panel:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
 .size-breakdown{
-  --breakdown-columns:minmax(0,3fr) max-content max-content minmax(0,1fr) max-content;
+  --breakdown-columns:minmax(0,3fr) minmax(0,1fr) max-content max-content max-content;
   display:grid;
   grid-template-columns:var(--breakdown-columns);
   column-gap:8px;

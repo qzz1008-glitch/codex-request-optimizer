@@ -2842,7 +2842,7 @@ function bars(section, title, rows, total, bodyAvailable, detailsFor) {
     const tone=r.delta>0?" bar-delta-increase":r.delta<0?" bar-delta-decrease":"";
     const delta=el(renderDetails?"button":"span","bar-value bar-delta"+tone,value);
     delta.title=t("相对上条请求");
-    row.append(label,size,delta,progress,percentage);
+    row.append(label,progress,percentage,size,delta);
     if(renderDetails) {
       const key=section+":"+r.key, expanded=expandedBreakdownRows.has(key);
       const details=el("div","bar-change-details");
