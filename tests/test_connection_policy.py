@@ -254,6 +254,7 @@ class ConnectionPolicyTests(unittest.TestCase):
         self.assertFalse(server.settings["auto_detect_providers"])
 
     def test_backend_state_migration_and_repeated_connection_actions(self):
+        self.enterContext(patch("packet_inspector.provider_migration.local_writer_before", return_value=False))
         self.custom_config()
         data_dir = self.root / "data"
         data_dir.mkdir()

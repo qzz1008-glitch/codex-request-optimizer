@@ -200,6 +200,7 @@ class RouterTests(unittest.TestCase):
         self.assertEqual(self.seen, [])
 
     def test_background_wsl_reconciliation_after_cutover_keeps_relay_requests_running(self):
+        self.enterContext(patch("packet_inspector.provider_migration.local_writer_before", return_value=False))
         self.first.save_settings({**self.first.settings, "auto_detect_providers": True})
         self.first.sync_providers()
         client = http.client.HTTPConnection("127.0.0.1", self.router.port, timeout=HTTP_TIMEOUT)
