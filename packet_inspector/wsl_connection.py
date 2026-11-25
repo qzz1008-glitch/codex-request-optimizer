@@ -464,9 +464,9 @@ class WslConnection:
             return result
 
     def reconcile_sessions(self, endpoint, upstream, routes):
-        """Check known running installations without reconnecting or probing."""
+        """Check known installations as they become available without starting them."""
         with self._lock:
-            result = {"targets": [], "warnings": [], "changed": False, "reload_required": False}
+            result = {"targets": [], "warnings": [], "deferred": [], "changed": False, "reload_required": False}
             self.result = result
             targets = list(self._targets())
             if not targets:
@@ -478,6 +478,7 @@ class WslConnection:
                 return result
             for directory, target in targets:
                 if target["distribution"] not in running:
+                    result["deferred"].append({**target, "id": "wsl:" + directory.name})
                     continue
                 try:
                     link = ConfigLink(Path(target["config"]), directory / "link.json")

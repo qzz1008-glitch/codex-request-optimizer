@@ -595,7 +595,7 @@ class InspectorServer(ThreadingHTTPServer):
                     lambda routes: self.save_settings({**self.settings, "provider_routes": routes}))
                 result["reload_required"] = bool(result.get("reload_required") or result["wsl"]["reload_required"])
                 self.save_settings({**self.settings, "auto_detect_providers": False})
-                if migrations_pending:
+                if migrations_pending or result["reload_required"]:
                     self.connection_resume.schedule()
                 self.connection_reload_required |= result.get("reload_required", False)
                 self._record_connection_notice(result)

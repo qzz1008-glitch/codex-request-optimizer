@@ -1015,6 +1015,34 @@ class WindowsRemoteRelayTests(unittest.TestCase):
         self.assert_restored_provider(self.config, self.original.replace(b'"fixture"', b'"edited"'))
         self.assertFalse(restarted.needs_resume(self.host))
 
+    def test_reconnect_finishes_pending_provider_migration_after_disconnect(self):
+        self.old_writer = True
+        key = self.relays(self.host, "activate")["account_key"]
+        self.assertTrue(dict(self.relays.records())[key]["provider_migration_waiting"])
+        self.assertTrue(self.relays(self.host, "restore")["reload_required"])
+        self.assert_restored_provider(self.config, self.original)
+        database = self.root / "state_5.sqlite"
+        with closing(sqlite3.connect(database)) as db, db:
+            db.execute("CREATE TABLE threads(id TEXT PRIMARY KEY, model_provider TEXT)")
+            db.execute("INSERT INTO threads VALUES ('finishing', 'openai')")
+
+        def reconnect(host, action, **options):
+            if action != "tunnel_reconnect":
+                return self.ssh(host, action, **options)
+            self.assertEqual(options["provider_aliases"], ["openai"])
+            self.old_writer = False
+            migration = self.ssh(host, "tunnel_write", updates={}, **options)["session_migration"]
+            return {"state": "reloaded", "codex_restart": {"supported": True}, "session_migration": migration}
+
+        self.relays.ssh = reconnect
+        result = self.relays(self.host, "reconnect")
+        self.assertEqual(result["state"], "disconnected")
+        self.assertFalse(result["reload_required"])
+        self.assertNotIn(key, dict(self.relays.records()))
+        self.assert_restored_provider(self.config, self.original)
+        with closing(sqlite3.connect(database)) as db:
+            self.assertEqual(db.execute("SELECT model_provider FROM threads").fetchone(), (PROVIDER,))
+
     def test_active_legacy_connection_migrates_equivalent_chats_and_tracks_retry_settings(self):
         token, route = "a" * 48, "b" * 24
         address = f"http://127.0.0.1:51123/relay/{token}/p/{route}"

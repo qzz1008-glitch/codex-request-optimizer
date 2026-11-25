@@ -103,6 +103,7 @@ class ConnectionResume:
                 **{key: result.get(key, [])[:16] for key in ("targets", "detected", "warnings", "deferred")}}
 
     def track_migrations(self, local, wsl):
+        self.deferred_wsl = {item["distribution"] for item in wsl.get("deferred", [])}
         self.waiting_local = bool(local.get("waiting_for_reload"))
         self.waiting_wsl = {target["distribution"] for target in wsl.get("targets", [])
                             if target.get("migration_waiting")}
@@ -119,8 +120,6 @@ class ConnectionResume:
                 if self.waiting_local:
                     self.schedule()
                     return
-                if not server.settings["auto_detect_providers"] or not server.connection_profile()["active"]:
-                    self.deferred_wsl.clear()
                 running = set(server.wsl.backend.running())
             except (OSError, ValueError):
                 return
@@ -170,7 +169,6 @@ class ConnectionResume:
                               "session_migration": provider.get("session_migration", {}),
                               "wsl": self._wsl_result(wsl)}
                     server.connection_reload_required |= reload_required
-                    self.deferred_wsl = {item["distribution"] for item in wsl.get("deferred", [])}
                     if not server.sharing.remote:
                         try:
                             loopback = server.repair_local_loopback(codex_only=True)

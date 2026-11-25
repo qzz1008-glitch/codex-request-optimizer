@@ -179,6 +179,32 @@ class ConnectionResumeTests(unittest.TestCase):
         self.assertEqual(self.config.read_bytes(), before)
         self.assertTrue(any(item["key"] == "connection" for item in result["restart_notice"]["items"]))
 
+    def test_disconnected_wsl_completes_pending_migration_when_distribution_returns(self):
+        self.backend.old_writer = True
+        self.server.set_connection(True)
+        self.assertEqual(self.resume.waiting_wsl, {"Ubuntu-Test"})
+        self.server.set_connection(False)
+        before = self.backend.config_path.read_bytes()
+        database = self.backend.config_path.parent / "state_99.sqlite"
+        with closing(sqlite3.connect(database)) as db, db:
+            db.execute("CREATE TABLE threads(id TEXT PRIMARY KEY,model_provider TEXT)")
+            db.execute("INSERT INTO threads VALUES ('finishing','openai')")
+
+        self.backend.distributions = []
+        with patch("packet_inspector.connection_resume.time.monotonic", return_value=100) as clock:
+            self.resume.step()
+            self.assertEqual(self.resume.deferred_wsl, {"Ubuntu-Test"})
+            self.backend.old_writer = False
+            self.backend.distributions = ["Ubuntu-Test"]
+            clock.return_value = 131
+            self.resume.step()
+
+        self.assertFalse(self.resume.status()["result"]["active"])
+        self.assertEqual(self.resume.status()["result"]["wsl"]["targets"][0]["migrated_sessions"], 1)
+        self.assertEqual(before, self.backend.config_path.read_bytes())
+        with closing(sqlite3.connect(database)) as db:
+            self.assertEqual(db.execute("SELECT model_provider FROM threads").fetchone(), (PROVIDER,))
+
     def test_local_migration_restart_notice_survives_a_later_wsl_failure(self):
         self.connected()
         self.server.set_connection(False)

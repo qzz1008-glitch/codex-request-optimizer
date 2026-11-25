@@ -499,7 +499,7 @@ class RemoteRelays:
             result["image_storage"] = images
         if action == "reconnect":
             options = {}
-            if active and record.get("provider_migration_waiting"):
+            if record.get("provider_migration_waiting"):
                 endpoint = f"http://127.0.0.1:{record['port']}/relay/{record['token']}"
                 edits, _, _, aliases, _ = config_changes(files, snapshot, record, endpoint,
                                                         retry_limit=policy["retry_limit"])
