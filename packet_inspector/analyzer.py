@@ -232,6 +232,14 @@ def item_label(item):
     return clean_text(str(label))[:140]
 
 
+def reasoning_ciphertext_bytes(item, path, source_sizes):
+    if not isinstance(item.get("encrypted_content"), str):
+        return 0
+    size = source_sizes.get(pointer(path, "encrypted_content"))
+    # Use the source JSON's byte count inside the string quotes.
+    return size - 2 if type(size) is int and size >= 2 else None
+
+
 def summarize(decoded: bytes, value, index: JsonBytes):
     top = []
     if isinstance(value, dict):
@@ -256,9 +264,6 @@ def summarize(decoded: bytes, value, index: JsonBytes):
         ciphertext = item.get("encrypted_content")
         if isinstance(ciphertext, str):
             encrypted += len(ciphertext.encode())
-            if kind == "reasoning":
-                # Count the bytes inside the string's quotes in the original JSON.
-                reasoning_encrypted += index.sizes[pointer(path, "encrypted_content")] - 2
         if kind in {"additional_tools", "tool_definition"}:
             catalog_count += 1
             catalog_hashes[hashlib.sha256(encode(item.get("tools"))).hexdigest()] += 1
@@ -266,9 +271,14 @@ def summarize(decoded: bytes, value, index: JsonBytes):
             calls[item.get("call_id")] += 1
         if kind in {"function_call_output", "custom_tool_call_output"} and not is_native_context_item(item):
             outputs[item.get("call_id")] += 1
-        items.append({"index": i, "path": path, "kind": kind, "bytes": size,
-                      "name": clean_text(str(item.get("name", ""))), "label": item_label(item),
-                      "fingerprint": hashlib.sha256(encode(item)).hexdigest()})
+        detail = {"index": i, "path": path, "kind": kind, "bytes": size,
+                  "name": clean_text(str(item.get("name", ""))), "label": item_label(item),
+                  "fingerprint": hashlib.sha256(encode(item)).hexdigest()}
+        if kind == "reasoning":
+            cipher_size = reasoning_ciphertext_bytes(item, path, index.sizes)
+            detail["reasoning_encrypted_bytes"] = cipher_size
+            reasoning_encrypted += cipher_size
+        items.append(detail)
     pairing = {"calls": sum(calls.values()), "outputs": sum(outputs.values()),
                "missing_outputs": sum((calls - outputs).values()),
                "orphan_outputs": sum((outputs - calls).values())}
@@ -389,11 +399,17 @@ def compare_packets(previous, current):
     summary_only = bool(previous.get("details_evicted") or current.get("details_evicted"))
     old = [] if summary_only else previous.get("input_items", [])
     new = [] if summary_only else current.get("input_items", [])
+    def match_key(item):
+        fingerprint = item["fingerprint"]
+        if item.get("kind") != "reasoning":
+            return fingerprint
+        # Canonical JSON can match even when whitespace or escaping changes the source size.
+        return fingerprint, item.get("bytes"), item.get("reasoning_encrypted_bytes")
     def unmatched(left, right):
-        counts = Counter(i["fingerprint"] for i in right)
+        counts = Counter(map(match_key, right))
         result = []
         for item in left:
-            key = item["fingerprint"]
+            key = match_key(item)
             if counts[key]:
                 counts[key] -= 1
             else:

@@ -240,6 +240,8 @@ class AnalyzerTests(unittest.TestCase):
         meta, _ = inspect_request(raw, {})
         self.assertEqual(meta["input_groups"]["reasoning"], len(first) + len(second) + len(summary_only))
         self.assertEqual(meta["reasoning_encrypted_bytes"], 7 + len("加密".encode("utf-8")))
+        self.assertEqual([entry.get("reasoning_encrypted_bytes") for entry in meta["input_items"]],
+                         [7, len("加密".encode("utf-8")), 0, None])
         self.assertEqual(meta["input_groups"]["compaction"], len(compact))
         meta, _ = inspect_request(b'{"input":[' + summary_only + b']}', {})
         self.assertEqual(meta["reasoning_encrypted_bytes"], 0)

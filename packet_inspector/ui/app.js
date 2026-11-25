@@ -2898,9 +2898,12 @@ function inputBreakdown(m, comparison) {
       r.delta=Number.isSafeInteger(previousSize)?r.bytes-previousSize:null;
       if(r.delta===null)continue;
       const items=itemsByCategory.get(r.category)??[];
-      // Reasoning entries include their metadata as well as any ciphertext.
-      r.items=items.filter(item=>
-        (r.component!=="encrypted"||item.ciphertext)&&(!r.component||r.delta!==0||item.change==="added"||item.change==="removed"));
+      if(!r.component) {
+        r.items=items;
+      } else if(items.every(item=>item.components)) {
+        const changes=items.map(item=>({...item,...item.components[r.component]})).filter(item=>item.delta!==0);
+        if(changes.reduce((total,item)=>total+item.delta,0)===r.delta)r.items=changes;
+      }
     }
   }
   return rows.sort((a,b)=>b.bytes-a.bytes);
@@ -3269,14 +3272,28 @@ async function searchBody(query) {
   }
 }
 function packetDiffItems(data) {
-  const change=(before,after)=>before===null?"added":after===null?"removed":after>before?"grow":after<before?"shrink":"changed";
+  const measuredChange=(before,after)=>({before,after,delta:(after??0)-(before??0),
+    change:before===null?"added":after===null?"removed":after>before?"grow":after<before?"shrink":"changed"});
+  const ciphertextSize=(item,total)=>{
+    if(!item)return 0;
+    const size=item.reasoning_encrypted_bytes;
+    return Number.isSafeInteger(total)&&Number.isSafeInteger(size)&&size>=0&&size<=total?size:null;
+  };
   const slot=item=>JSON.stringify([item.index,item.kind,item.name||""]);
   const removed=data.removed||[],oldBySlot=new Map(removed.map(item=>[slot(item),item])),used=new Set(),items=[];
   const itemRow=(beforeItem,afterItem)=>{
     const item=afterItem||beforeItem,before=beforeItem?.bytes??null,after=afterItem?.bytes??null;
-    return {index:item.index,kind:item.kind,name:item.name||"",before,after,
-      ciphertext:beforeItem?.label==="推理密文"||afterItem?.label==="推理密文",
-      delta:(after??0)-(before??0),change:change(before,after),path:afterItem?(afterItem.path||"/input/"+afterItem.index):null};
+    const row={index:item.index,kind:item.kind,name:item.name||"",...measuredChange(before,after),
+      path:afterItem?(afterItem.path||"/input/"+afterItem.index):null};
+    if(item.kind==="reasoning") {
+      const prior=ciphertextSize(beforeItem,before),next=ciphertextSize(afterItem,after);
+      if(prior!==null&&next!==null) {
+        const beforePlain=(before??0)-prior,afterPlain=(after??0)-next;
+        row.components={encrypted:measuredChange(prior||null,next||null),
+          plain:measuredChange(beforePlain||null,afterPlain||null)};
+      }
+    }
+    return row;
   };
   for(const item of data.added||[]) {
     const previous=oldBySlot.get(slot(item));

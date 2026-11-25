@@ -219,6 +219,26 @@ class TieredRetentionTests(unittest.TestCase):
         reopened = Store(self.root, max_count=5, max_detail_count=0)
         self.assertEqual(reopened.compare(second), diff)
 
+    def test_diff_uses_original_reasoning_bytes_for_an_existing_record(self):
+        store = Store(self.root)
+        before = br'{"input":[{"type":"reasoning","encrypted_content":"a\u0062", "summary":[]}]}'
+        after = b'{"input":[{"type":"reasoning","encrypted_content":"ab","summary":[]}]}'
+        ids = []
+        for created, raw in enumerate((before, after), 1):
+            meta, view = inspect_request(raw, {"session_id": "retained-reasoning"}, "/responses")
+            if created == 1:
+                meta["input_items"][0].pop("reasoning_encrypted_bytes")
+            with patch("packet_inspector.storage.time.time", return_value=created):
+                ids.append(store.add(meta, view))
+
+        diff = store.compare(ids[1])
+        self.assertEqual(diff["previous_id"], ids[0])
+        removed, added = diff["removed"][0], diff["added"][0]
+        self.assertEqual((removed["reasoning_encrypted_bytes"], added["reasoning_encrypted_bytes"]), (7, 2))
+        self.assertEqual((added["bytes"] - 2) - (removed["bytes"] - 7), -1)
+        previous, _ = store.get(ids[0])
+        self.assertNotIn("reasoning_encrypted_bytes", previous["input_items"][0])
+
 
 if __name__ == "__main__":
     unittest.main()

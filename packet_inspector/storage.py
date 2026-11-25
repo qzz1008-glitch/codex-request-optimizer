@@ -12,7 +12,7 @@ import time
 import uuid
 import zlib
 
-from .analyzer import CLASSIFICATION_VERSION, classify_request, encode, compare_packets
+from .analyzer import CLASSIFICATION_VERSION, classify_request, compare_packets, encode, reasoning_ciphertext_bytes
 from .maintenance import SQLiteReclaimer
 from .request_context import (AUTOMATED_REQUEST_KINDS, input_title_from_labels, is_conversation_generation,
                               packet_metadata, request_input_title, request_session_context, temporary_request_kind,
@@ -498,6 +498,36 @@ class Store:
             self._tray_cache = revision, result
             return dict(result)
 
+    @staticmethod
+    def _restore_reasoning_sizes(c, meta):
+        """Recover per-item byte counts from an older retained viewing copy."""
+        missing = [item for item in meta.get("input_items", []) if item.get("kind") == "reasoning"
+                   and "reasoning_encrypted_bytes" not in item]
+        if not missing:
+            return
+        row = c.execute("SELECT content FROM packets WHERE id=?", (meta["id"],)).fetchone()
+        if row is None or not row["content"]:
+            return
+        try:
+            view = json.loads(zlib.decompress(row["content"]))
+        except (ValueError, zlib.error):
+            return
+        if not isinstance(view, dict) or not isinstance(view.get("body"), dict):
+            return
+        items, sizes = view["body"].get("input"), view.get("source_sizes")
+        if not isinstance(items, list) or not isinstance(sizes, dict):
+            return
+        for item in missing:
+            index, total = item.get("index"), item.get("bytes")
+            if type(index) is not int or not 0 <= index < len(items) or type(total) is not int:
+                continue
+            value, path = items[index], f"/input/{index}"
+            if not isinstance(value, dict) or value.get("type") != "reasoning" or sizes.get(path) != total:
+                continue
+            size = reasoning_ciphertext_bytes(value, path, sizes)
+            if size is not None and size <= total:
+                item["reasoning_encrypted_bytes"] = size
+
     def compare(self, packet_id):
         current, _ = self.get(packet_id)
         if not current.get("thread_id"):
@@ -505,7 +535,10 @@ class Store:
         with self.connect() as c:
             row = c.execute("SELECT meta FROM packets WHERE thread=? AND created<? AND json_extract(meta,'$.source')=? ORDER BY created DESC LIMIT 1",
                             (current.get("thread_id", ""), current["created"], current["source"])).fetchone()
-        if row is None:
-            return None
-        previous = json.loads(row["meta"])
+            if row is None:
+                return None
+            previous = json.loads(row["meta"])
+            if not (previous.get("details_evicted") or current.get("details_evicted")):
+                self._restore_reasoning_sizes(c, previous)
+                self._restore_reasoning_sizes(c, current)
         return {"previous_id": previous["id"], **compare_packets(previous, current)}
