@@ -99,16 +99,24 @@ async function checkExpansion() {
     assert.equal(delta(component).attributes['aria-expanded'],'false');
   }
 
-  const plainChange={...current,...groups(515264,498156)};
+  previous.top_fields=[{name:'model',bytes:12}];
+  const plainChange={...current,...groups(515264,498156),top_fields:previous.top_fields};
   context.breakdownComparison={previous,items:context.packetDiffItems({
     removed:[item(0,100,80)],added:[item(0,110,80)]
   })};
   context.state.detail=plainChange;
   context.renderOverview(plainChange);
+  const field=root.children[0].children[0].children.find(node=>node.dataset.renderKey==='bar:field/model');
+  assert.equal(field.children[2].text,'');
   assert.equal(delta('encrypted').tag,'span');
-  assert.equal(delta('encrypted').text,'0 B');
+  assert.equal(delta('encrypted').text,'');
   assert.equal(delta('encrypted').onclick,undefined);
   assert.equal(delta('plain').tag,'button');
+  assert.equal(delta('plain').text,'+10 B');
+
+  const unchangedItem=context.inputItemChanges([{index:0,delta:0,change:'changed'}],false).children[0];
+  assert.equal(unchangedItem.children[1].children.at(-1),'内容改变');
+  assert.equal(unchangedItem.children[2].children.length,0);
 }
 
 checkExpansion().then(()=>console.log('Size breakdown and expansion cases passed')).catch(error=>{

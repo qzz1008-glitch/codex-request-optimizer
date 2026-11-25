@@ -2839,11 +2839,11 @@ function bars(section, title, rows, total, bodyAvailable, detailsFor) {
     progress.value=r.bytes??0;
     progress.setAttribute("aria-hidden","true");
     const percentage=el("span","bar-value",r.bytes==null?"—":(r.bytes/max*100).toFixed(1)+"%");
-    const renderDetails=detailsFor?.(r);
-    const value=signed(r.delta??null);
+    const value=r.delta===0?"":signed(r.delta??null);
+    const renderDetails=value?detailsFor?.(r):null;
     const tone=r.delta>0?" bar-delta-increase":r.delta<0?" bar-delta-decrease":"";
     const delta=el(renderDetails?"button":"span","bar-value bar-delta"+tone,value);
-    delta.title=t("相对上条请求");
+    if(value)delta.title=t("相对上条请求");
     row.append(label,size,delta,progress,percentage);
     if(renderDetails) {
       const key=section+":"+r.key, expanded=expandedBreakdownRows.has(key);
@@ -2942,7 +2942,7 @@ function inputItemChanges(items, bodyAvailable) {
     const tone=item.delta>0?" bar-delta-increase":item.delta<0?" bar-delta-decrease":"";
     const status=el("span","bar-value"+tone), change=el("span","bar-value bar-delta"+tone);
     if(item.change)status.append(el("span","sr-only",t("变化")+" "),labels[item.change]);
-    change.append(el("span","sr-only",t("变化值")+" "),signed(item.delta));
+    if(item.delta!==0)change.append(el("span","sr-only",t("变化值")+" "),signed(item.delta));
     row.append(entry,status,change);
     fragment.append(row);
   }
@@ -2964,10 +2964,8 @@ function renderOverview(m) {
   const inputSize=m.top_fields?.find(r=>r.name==="input")?.bytes;
   breakdown.append(
     bars("fields",t("字段构成"),fields,m.decoded_bytes,bodyAvailable),
-    bars("input",t("input 构成"),input,inputSize,bodyAvailable,row=>{
-      const expandable=row.component?row.delta!==0:row.items?.length>0;
-      return expandable?()=>inputChangeDetails(row,m,breakdownComparison,bodyAvailable):null;
-    })
+    bars("input",t("input 构成"),input,inputSize,bodyAvailable,
+      row=>row.component||row.items?.length?()=>inputChangeDetails(row,m,breakdownComparison,bodyAvailable):null)
   );
   reconcileContent(root,breakdown);
 }
