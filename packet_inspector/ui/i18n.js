@@ -739,8 +739,6 @@ const uiI18n = (() => {
     "转发请求大小未记录":"Forwarded request size not recorded",
     "原始请求：":"Original request: ",
     "转发请求：":"Forwarded request: ",
-    "原始请求变化":"Original request change",
-    "转发请求变化":"Forwarded request change",
     "不压缩":"No compression",
     "图片大小":"Image size",
     "压缩比例":"Compression ratio",

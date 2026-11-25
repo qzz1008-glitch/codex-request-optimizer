@@ -2825,11 +2825,6 @@ function requestProtectionPanel(m) {
 }
 function bars(section, title, rows, total, bodyAvailable, detailsFor) {
   const p=panel(title), max=total||1;
-  if(rows.length) {
-    const heading=el("span","bar-delta-heading",t("变化值"));
-    heading.title=t("相对上条请求");
-    p.append(heading);
-  }
   for(const [index,r] of rows.entries()) {
     const row=el("div","bar-row");
     row.dataset.renderKey="bar:"+r.key;
@@ -2846,7 +2841,8 @@ function bars(section, title, rows, total, bodyAvailable, detailsFor) {
     const value=signed(r.delta??null);
     const tone=r.delta>0?" bar-delta-increase":r.delta<0?" bar-delta-decrease":"";
     const delta=el(renderDetails?"button":"span","bar-value bar-delta"+tone,value);
-    row.append(label,size,progress,percentage,delta);
+    delta.title=t("相对上条请求");
+    row.append(label,size,delta,progress,percentage);
     if(renderDetails) {
       const key=section+":"+r.key, expanded=expandedBreakdownRows.has(key);
       const details=el("div","bar-change-details");
@@ -2944,18 +2940,6 @@ function inputItemChanges(items, bodyAvailable) {
   grid.classList.add("breakdown-item-changes");
   return grid;
 }
-function breakdownTotals(m, comparison) {
-  if(!comparison?.data)return null;
-  const previous=comparison.previous, data=comparison.data;
-  const original=originalBytes(m), originalBefore=previous?originalBytes(previous):null;
-  const forwarded=compressedBytes(m), forwardedBefore=previous?compressedBytes(previous):null;
-  const originalDelta=original!==null&&originalBefore!==null?original-originalBefore:data.decoded_delta;
-  const forwardedDelta=forwarded!==null&&forwardedBefore!==null?forwarded-forwardedBefore:data.compressed_delta;
-  const totals=el("dl","breakdown-totals");
-  if(Number.isSafeInteger(originalDelta))fact(totals,t("原始请求变化"),signed(originalDelta));
-  if(Number.isSafeInteger(forwardedDelta))fact(totals,t("转发请求变化"),signed(forwardedDelta));
-  return totals.childElementCount?totals:null;
-}
 function renderOverview(m) {
   const root=$("overview");
   if(m.inspection!=="json") {reconcileContent(root,el("p","muted",t("正文未展开：")+(t(m.inspection_error)||t("正文为空"))+t("。转发仍按原始正文进行。")));return;}
@@ -2969,8 +2953,6 @@ function renderOverview(m) {
     bars("input",t("input 构成"),input,inputSize,bodyAvailable,
       r=>r.items?.length?()=>inputItemChanges(r.items,bodyAvailable):null)
   );
-  const totals=breakdownTotals(m,breakdownComparison);
-  if(totals)breakdown.append(totals);
   reconcileContent(root,breakdown);
 }
 function jsonValueNode(value,key=null,comma=false,root=false,path="",nodes=new Map()) {

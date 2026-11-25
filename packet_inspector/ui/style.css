@@ -389,7 +389,7 @@ button.other-session-group{background:#f5f2fc;border-color:#e7e0f5}
 .detail-content .request-error-detail>dd{text-align:start;white-space:pre-wrap;color:var(--danger)}
 .detail-content>.tab-panel:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
 .size-breakdown{
-  --breakdown-columns:minmax(0,3fr) max-content minmax(0,1fr) max-content minmax(94px,max-content);
+  --breakdown-columns:minmax(0,3fr) max-content max-content minmax(0,1fr) max-content;
   display:grid;
   grid-template-columns:var(--breakdown-columns);
   column-gap:8px;
@@ -403,8 +403,7 @@ button.other-session-group{background:#f5f2fc;border-color:#e7e0f5}
 }
 .size-breakdown>.detail-section{row-gap:3px}
 .size-breakdown>.detail-section+.detail-section{margin-block-start:12px;padding-block-start:9px;border-block-start:1px solid var(--detail-divider)}
-.size-breakdown>.detail-section>h3{grid-column:1 / -2;margin-bottom:2px}
-.bar-delta-heading{grid-column:-2;align-self:center;color:var(--muted);font-size:11px;text-align:end;padding-inline-end:15px;white-space:nowrap}
+.size-breakdown>.detail-section>h3{grid-column:1 / -1;margin-bottom:2px}
 .bar-row{align-items:center;min-block-size:24px;row-gap:4px;font-size:12px}
 .bar-label{padding-inline-start:8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .bar-value{color:var(--muted);font-variant-numeric:tabular-nums;text-align:end;white-space:nowrap}
@@ -442,19 +441,6 @@ button.bar-delta[aria-expanded="true"]::after{transform:translateY(-35%) rotate(
 .breakdown-item-changes :is(th,td):last-child{text-align:end;font-variant-numeric:tabular-nums}
 .breakdown-item-entry{display:flex;align-items:baseline;gap:6px}
 .breakdown-item-entry>:first-child{flex:none;white-space:nowrap;font-variant-numeric:tabular-nums}
-.breakdown-totals{
-  grid-column:1 / -1;
-  display:flex;
-  flex-wrap:wrap;
-  justify-content:flex-end;
-  gap:2px 14px;
-  margin:10px 0 0;
-  padding-block-start:5px;
-  border-block-start:1px solid var(--detail-divider);
-  color:var(--muted);
-}
-.detail-content .breakdown-totals>.fact-row{column-gap:5px;font-size:11px}
-.breakdown-totals dd{margin:0}
 #tab-tree:not([hidden]){display:flex;flex-direction:column;height:100%;min-height:0}
 .detail-content:has(>#tab-tree:not([hidden])){overflow:hidden;scrollbar-gutter:auto;padding-inline-end:0}
 #tab-tree>.tree-tools,#tab-tree>.search-results{
