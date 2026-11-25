@@ -428,7 +428,7 @@ button.bar-delta[aria-expanded="true"]::after{transform:translateY(-35%) rotate(
 .bar-change-details{
   min-inline-size:0;
   margin-block:0;
-  margin-inline:16px 0;
+  margin-inline:28px 0;
   padding:3px 15px 3px 10px;
   border-inline-start:2px solid var(--detail-frame-line);
   border-radius:0 4px 4px 0;
@@ -442,7 +442,6 @@ button.bar-delta[aria-expanded="true"]::after{transform:translateY(-35%) rotate(
   align-items:baseline;
   gap:6px;
   min-inline-size:0;
-  padding-inline-start:8px;
   overflow-wrap:anywhere;
 }
 .breakdown-item-entry>:first-child{flex:none;white-space:nowrap;font-variant-numeric:tabular-nums}
