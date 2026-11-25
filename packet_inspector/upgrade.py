@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import argparse
 from contextlib import ExitStack
-import hashlib
 import http.client
 import json
 import os
@@ -18,10 +17,11 @@ import tempfile
 
 from packet_inspector.entry_port import configured_port
 from packet_inspector.locking import file_lock
+from packet_inspector.managed_runtime import application_payload, embedded_resources, install_runtime, sha256_file as digest
 from packet_inspector.window_lifecycle import EXIT_PROPERTY, request_window_exit
 from packet_inspector.frontend_dev import (FIRST_RUN_PENDING, BuildProfile, load_profile,
                                           installed_profile, remember_upgrade_profile)
-from packet_inspector.router import (PROTOCOL, atomic_json, control_worker, healthy_worker,
+from packet_inspector.router import (PROTOCOL, STARTUP_CONNECT_SECONDS, atomic_json, control_worker, healthy_worker,
                                      local_json, process_alive, start_worker, worker_info)
 from packet_inspector.sharing_handover import (PROTOCOL as SHARING_HANDOVER_PROTOCOL, UNSUPPORTED as SHARING_UPGRADE_UNSUPPORTED,
                                               active_status as sharing_active, prepare_upgrade, finish_upgrade)
@@ -34,11 +34,6 @@ PHASES = ("validate", "backup", "candidate", "compatibility", "handover", "switc
 CONTINUITY_UNSUPPORTED = "当前版本暂不支持不中断服务的升级，已保留现有服务。"
 
 
-def digest(path):
-    with Path(path).open("rb") as stream:
-        return hashlib.file_digest(stream, "sha256").hexdigest()
-
-
 def free_port():
     with socket.socket() as connection:
         connection.bind(("127.0.0.1", 0))
@@ -49,7 +44,7 @@ class Upgrade:
     total_steps = len(PHASES)
 
     def __init__(self, payload, data_dir, config, port=None, progress=None, default_profile=None,
-                 confirm_interruption=None):
+                 confirm_interruption=None, runtime_resources=None):
         self.payload, self.data_dir, self.config = Path(payload), Path(data_dir).resolve(), Path(config).resolve()
         self.port = port
         self.progress = progress or (lambda message: None)
@@ -61,6 +56,7 @@ class Upgrade:
         self.default_profile = default_profile or BuildProfile()
         self.journal = None
         self.confirm_interruption = confirm_interruption
+        self.runtime_resources = runtime_resources
 
     def _sharing_record(self, phase, error=None):
         if self.journal is not None:
@@ -214,8 +210,31 @@ class Upgrade:
         if any(process_alive(pid) for pid in pids):
             raise RuntimeError("旧版优化器窗口未退出，请关闭窗口后再升级。中转仍在运行。")
 
+    def _entry_command(self):
+        state_path = self.data_dir / "router-state.json"
+        if state_path.is_file():
+            state = json.loads(state_path.read_text(encoding="utf8"))
+            executable = Path(worker_info(self.data_dir, state["active"])["executable"]).resolve()
+            if application_payload(executable, self.data_dir) != executable and executable.is_file():
+                return [str(executable), "--router"]
+        return [str(self.canonical)]
+
+    def _has_installed_payload(self, source_hash):
+        if not self.canonical.is_file():
+            return False
+        try:
+            state = json.loads((self.data_dir / "router-state.json").read_text(encoding="utf8"))
+            if state["protocol"] != PROTOCOL or Path(state["config"]).resolve() != self.config:
+                return False
+            worker = Path(worker_info(self.data_dir, state["active"])["executable"]).resolve()
+            payload = application_payload(worker, self.data_dir)
+            expected = self.canonical.parent / "versions" / source_hash / self.canonical.name
+            return worker.is_file() and payload == expected and digest(payload) == source_hash
+        except (OSError, ValueError, KeyError, TypeError):
+            return False
+
     def _open_window(self):
-        subprocess.Popen([str(self.canonical), "--port", str(self.port), "--data-dir", str(self.data_dir),
+        subprocess.Popen([*self._entry_command(), "--port", str(self.port), "--data-dir", str(self.data_dir),
                           "--config", str(self.config)], env=startup_environment(),
                          creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
 
@@ -227,7 +246,7 @@ class Upgrade:
         executable = Path(worker["executable"]).resolve()
         if not executable.is_relative_to((self.data_dir / "bin" / "versions").resolve()):
             raise ValueError("运行中的程序不在版本目录内，未执行升级。")
-        return digest(executable)
+        return digest(application_payload(executable, self.data_dir))
 
     def _application_windows(self):
         if os.name != "nt":
@@ -300,14 +319,14 @@ class Upgrade:
                 time.sleep(.1)
 
     def _start_entry(self):
-        return subprocess.Popen([str(self.canonical), "--background", "--tray", "--port", str(self.port),
+        return subprocess.Popen([*self._entry_command(), "--background", "--tray", "--port", str(self.port),
                                  "--data-dir", str(self.data_dir), "--config", str(self.config)],
                                 env=startup_environment(),
                                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
 
     def _wait_entry(self, protocol=None, seconds=STARTUP_SECONDS):
         def ready():
-            health = local_json(self.port, "/health", timeout=2)
+            health = local_json(self.port, "/health", timeout=2, connect_timeout=STARTUP_CONNECT_SECONDS)
             status = local_json(self.port, "/api/status", timeout=2)
             if health.get("app") == "codex-packet-inspector" and (protocol is None or health.get("router_protocol") == protocol):
                 return status
@@ -454,7 +473,7 @@ class Upgrade:
         health = None
         status = {}
         try:
-            health = local_json(self.port, "/health", timeout=2)
+            health = local_json(self.port, "/health", timeout=2, connect_timeout=STARTUP_CONNECT_SECONDS)
             status = local_json(self.port, "/api/status", timeout=3)
         except (ConnectionError, OSError, http.client.HTTPException):
             with socket.socket() as probe:
@@ -499,6 +518,7 @@ class Upgrade:
             staging.replace(version_exe)
         if digest(version_exe) != manifest["sha256"][app.name]:
             raise ValueError("已暂存的新版程序校验失败。")
+        version_exe = install_runtime(version_exe, self.runtime_resources)
         self._stage("candidate", "正在启动新版服务并检查运行状态…")
         success, reopen = False, False
         sharing_ticket, old, candidate_released = None, None, False
@@ -698,12 +718,13 @@ class Upgrade:
 def run_integrated(arguments, quiet=False, force=False):
     """A downloaded application is also its own verified upgrade payload."""
     from packet_inspector import VERSION
-    from packet_inspector.server import argument_parser
+    from packet_inspector.service_options import argument_parser
     from packet_inspector.updates import version_tuple
     options = argument_parser().parse_args(arguments)
     directory = options.data_dir.resolve()
     engine = Upgrade(directory, directory, options.config, options.port)
-    source_hash = digest(sys.executable)
+    source = application_payload(sys.executable, directory)
+    source_hash = digest(source)
     report = {"started": time.time(), "version": VERSION, "source_executable": str(Path(sys.executable).resolve())[:1000],
               "source_sha256": source_hash}
     def record(state, **values):
@@ -713,9 +734,20 @@ def run_integrated(arguments, quiet=False, force=False):
         except OSError:
             pass  # A diagnostic write must not prevent opening the application.
     record("checking")
+
+    def open_installed(reason):
+        record("opening_installed", reason=reason)
+        if not quiet:
+            engine._open_window()
+        record("complete", action="open_installed")
+        return 0
+
+    if not force and engine._has_installed_payload(source_hash):
+        return open_installed("same_installed_payload")
+
     reason = "service_not_running"
     try:
-        health = local_json(options.port, "/health", timeout=2)
+        health = local_json(options.port, "/health", timeout=2, connect_timeout=STARTUP_CONNECT_SECONDS)
         status = local_json(options.port, "/api/status", timeout=3)
     except (ConnectionError, OSError, http.client.HTTPException):
         pass
@@ -729,11 +761,7 @@ def run_integrated(arguments, quiet=False, force=False):
             installed_hash = engine._running_application_hash(status) if current_version == version_tuple(VERSION) else None
             report["installed_sha256"] = installed_hash
             if current_version > version_tuple(VERSION) or source_hash == installed_hash:
-                record("opening_installed", reason="newer_installed" if current_version > version_tuple(VERSION) else "same_payload")
-                if not quiet:
-                    engine._open_window()
-                record("complete", action="open_installed")
-                return 0
+                return open_installed("newer_installed" if current_version > version_tuple(VERSION) else "same_payload")
         if current_version > version_tuple(VERSION):
             raise ValueError("已安装更新的版本，未执行降级。")
         reason = "same_version_payload_changed" if current_version == version_tuple(VERSION) else "newer_payload"
@@ -747,19 +775,19 @@ def run_integrated(arguments, quiet=False, force=False):
         if not payload.is_relative_to(staging.resolve()):
             raise ValueError("升级暂存目录无效。")
         app = payload / "CodexPacketInspector.exe"
-        shutil.copy2(sys.executable, app)
+        shutil.copy2(source, app)
         atomic_json(payload / "manifest.json", {"version": VERSION, "router_protocol": PROTOCOL,
                     "entry_mode": "shared", "sha256": {app.name: digest(app)}})
         args = ["--payload-dir", str(payload), "--data-dir", str(directory), "--config", str(options.config.resolve()),
                 "--port", str(options.port)]
         if quiet:
             args.append("--quiet")
-        result = main(args, default_profile=load_profile(), open_after=not quiet)
+        result = main(args, default_profile=load_profile(), open_after=not quiet, runtime_resources=embedded_resources())
         record("cancelled" if result == CANCELLED_EXIT else "complete" if result == 0 else "failed", exit_code=result)
         return result
 
 
-def main(argv=None, *, default_profile=None, open_after=False):
+def main(argv=None, *, default_profile=None, open_after=False, runtime_resources=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--data-dir", type=Path, default=Path.home() / ".codex-packet-inspector")
     parser.add_argument("--config", type=Path, default=Path.home() / ".codex/config.toml")
@@ -768,16 +796,17 @@ def main(argv=None, *, default_profile=None, open_after=False):
     parser.add_argument("--quiet", action="store_true")
     args = parser.parse_args(argv)
     payload = args.payload_dir or Path(getattr(sys, "_MEIPASS", Path(__file__).parent.parent)) / "upgrade-payload"
+    engine = Upgrade(payload, args.data_dir, args.config, args.port, default_profile=default_profile,
+                     runtime_resources=runtime_resources)
     if args.quiet:
         try:
-            result = Upgrade(payload, args.data_dir, args.config, args.port, default_profile=default_profile).run()
+            result = engine.run()
             if sys.stdout is not None:
                 print(json.dumps(result, ensure_ascii=False))
             return 0
         except Exception:
             return 1
     from packet_inspector.upgrade_window import run_upgrade_window
-    engine = Upgrade(payload, args.data_dir, args.config, args.port, default_profile=default_profile)
     return run_upgrade_window(engine, open_after=open_after)
 
 

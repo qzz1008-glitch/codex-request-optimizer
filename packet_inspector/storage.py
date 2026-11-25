@@ -26,6 +26,9 @@ SUMMARY_COLUMNS = "id,created,thread,status,method,kind,status_key,state,capture
 COMPRESSED_SIZE_SQL = "coalesce(json_extract(meta,'$.overflow_original_wire_bytes'),json_extract(meta,'$.usage_override_request_bytes'),json_extract(meta,'$.outbound_wire_bytes'),-1)"
 PENDING_CLASSIFICATION = f"coalesce(json_extract(meta,'$.classification_version'),0)<{CLASSIFICATION_VERSION}"
 RETAINED_DETAILS = "coalesce(json_extract(meta,'$.details_evicted'),0)=0"
+LEGACY_USAGE = """instr(meta,'"attribution"')>0 AND (
+    json_type(meta,'$.upstream_usage.attribution') IS NOT NULL OR
+    json_type(meta,'$.reported_usage.attribution') IS NOT NULL)"""
 DETAIL_META_FIELDS = {"headers", "input_items"}
 DEFAULT_STORAGE_BYTES = 500_000_000
 
@@ -130,6 +133,10 @@ class Store:
             WHERE NOT EXISTS (SELECT 1 FROM packet_summaries s WHERE s.id=p.id)""").rowcount
         if added:
             c.execute("UPDATE packet_index_state SET revision=revision+1 WHERE singleton=1")
+        # The summary already retains usage metadata. Index only rows that
+        # actually need cleanup, without loading the retained request details.
+        c.execute(f"CREATE INDEX IF NOT EXISTS packet_summary_legacy_usage "
+                  f"ON packet_summaries(created,id) WHERE {LEGACY_USAGE}")
 
     @contextmanager
     def connect(self):
@@ -183,12 +190,9 @@ class Store:
     @staticmethod
     def _compact_usage(c, limit):
         # Compatible with draining older writers; do not touch request bodies.
-        return c.execute("""UPDATE packets SET meta=json_remove(meta,
+        return c.execute(f"""UPDATE packets SET meta=json_remove(meta,
             '$.upstream_usage.attribution','$.reported_usage.attribution') WHERE id IN (
-            SELECT id FROM packets WHERE instr(meta,'\"attribution\"')>0 AND (
-            json_type(meta,'$.upstream_usage.attribution') IS NOT NULL OR
-            json_type(meta,'$.reported_usage.attribution') IS NOT NULL)
-            ORDER BY created,id LIMIT ?)""", (limit,)).rowcount
+            SELECT id FROM packet_summaries WHERE {LEGACY_USAGE} ORDER BY created,id LIMIT ?)""", (limit,)).rowcount
 
     def compact_usage_records(self, limit=16):
         with self.lock, self.connect() as c:

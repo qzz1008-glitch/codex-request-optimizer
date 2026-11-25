@@ -174,6 +174,15 @@ class StartupDiagnosticsTests(unittest.TestCase):
                 desktop.ensure_service(options, start_background=False)
         start.assert_not_called()
 
+    def test_managed_desktop_reuses_validated_entry_status_and_synchronizes_providers(self):
+        options = SimpleNamespace(data_dir=self.data, config=self.config, port=47844, upstream=None)
+        status = {"data_dir": str(self.data), "profile": {"config_path": str(self.config), "active": True},
+                  "provider_routing_supported": True, "auto_detect_providers": True}
+        refreshed = {**status, "connection_reload_required": True}
+        with patch.object(desktop, "local_api", side_effect=[{}, refreshed]) as api:
+            self.assertEqual(desktop.ensure_service(options, start_background=False, prepared_status=status), refreshed)
+        self.assertEqual([call.args[1] for call in api.call_args_list], ["/api/providers/sync", "/api/status"])
+
     def test_nested_children_share_the_remaining_deadline(self):
         environment = diagnostics.startup_environment()
         with patch.dict(os.environ, environment):

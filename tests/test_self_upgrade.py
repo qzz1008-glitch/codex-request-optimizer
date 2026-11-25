@@ -9,6 +9,7 @@ from unittest.mock import patch
 from packet_inspector import VERSION, launch
 from packet_inspector.frontend_dev import (BuildProfile, DESKTOP_PROFILE, PORTABLE_UI, RESOURCES,
     installed_profile, load_profile, remember_upgrade_profile, resolve_profile)
+from packet_inspector.router import PROTOCOL, atomic_json
 from packet_inspector.upgrade import run_integrated
 
 
@@ -101,6 +102,27 @@ class SelfUpgradeTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 run_integrated(self.arguments, quiet=True)
         self.assertEqual(list((self.data / "updates/staging").iterdir()), [])
+
+    def test_opening_the_same_download_cold_reuses_the_installed_runtime(self):
+        contents = self.executable.read_bytes()
+        version = self.data / "bin" / "versions" / hashlib.sha256(contents).hexdigest()
+        runtime = version / "runtime" / self.executable.name
+        runtime.parent.mkdir(parents=True)
+        runtime.write_bytes(b"installed runtime")
+        (version / self.executable.name).write_bytes(contents)
+        (self.data / "bin" / self.executable.name).write_bytes(contents)
+        identity = "a" * 32
+        atomic_json(self.data / "router-state.json", {"active": identity, "protocol": PROTOCOL, "config": str(self.config)})
+        atomic_json(self.data / "router-workers" / (identity + ".json"),
+                    {"id": identity, "port": 49123, "token": "test", "executable": str(runtime)})
+        with patch("packet_inspector.upgrade.sys.executable", str(self.executable)), \
+                patch("packet_inspector.upgrade.local_json", side_effect=ConnectionRefusedError) as probe, \
+                patch("packet_inspector.upgrade.subprocess.Popen") as launch_installed, \
+                patch("packet_inspector.upgrade.main") as install:
+            self.assertEqual(run_integrated(self.arguments), 0)
+        self.assertEqual(launch_installed.call_args.args[0][:2], [str(runtime), "--router"])
+        probe.assert_not_called()
+        install.assert_not_called()
 
     def test_downloaded_foreground_exe_uses_integrated_upgrade(self):
         with patch.object(launch.sys, "frozen", True, create=True), \

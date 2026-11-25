@@ -528,7 +528,7 @@ def ensure_entry(args, state, trace=None, *, prepare_worker=False):
                 or Path(status["data_dir"]).resolve() != args.data_dir.resolve()
                 or Path(status["profile"]["config_path"]).resolve() != args.config.resolve()):
             raise ValueError("entry port belongs to another service; run the upgrade EXE")
-        return port
+        return port, status
     try:
         return ready(state["port"])
     except (OSError, http.client.HTTPException):
@@ -607,7 +607,7 @@ def open_desktop(args, state, trace):
 
             def prepare_entry():
                 nonlocal replacement_port
-                port = ensure_entry(args, state, trace, prepare_worker=True)
+                port, status = ensure_entry(args, state, trace, prepare_worker=True)
                 current = json.loads((args.data_dir / "router-state.json").read_text(encoding="utf8"))
                 worker = worker_info(args.data_dir, current["active"])
                 if Path(worker["executable"]).resolve() != executable:
@@ -615,14 +615,14 @@ def open_desktop(args, state, trace):
                     return None
                 trace.step("desktop.reuse_launcher")
                 trace.ready()
-                return port
+                return port, status
 
             result = run(desktop_args, entry_window=instance, prepare_entry=prepare_entry)
             if replacement_port is None:
                 return result
             port = replacement_port
         else:
-            port = ensure_entry(args, state, trace)
+            port, _ = ensure_entry(args, state, trace)
     finally:
         if instance:
             instance.close()
@@ -707,7 +707,8 @@ def run_entry(args, trace):
         server.state["port"] = server.port
         atomic_json(server.state_path, server.state)
         atomic_json(args.data_dir / "runtime.json", {"pid": os.getpid(), "port": server.port,
-                    "version": worker_info(args.data_dir, identity)["version"], "router_version": ROUTER_VERSION})
+                    "version": worker_info(args.data_dir, identity)["version"], "router_version": ROUTER_VERSION,
+                    "executable": str(Path(sys.executable).resolve())})
         server.start_monitor()
         trace.step("desktop.tray", worker_id=identity)
         if args.tray and os.name == "nt" and worker_info(args.data_dir, identity).get("desktop_tray"):

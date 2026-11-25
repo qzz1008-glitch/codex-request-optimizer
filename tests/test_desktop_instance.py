@@ -72,12 +72,12 @@ raise SystemExit(desktop.run(sys.argv[2:]))
             self.assertTrue(tray_panel_host_running(self.folder))
             # A second shortcut can signal the reserved host during cold start.
             self.assertEqual(open_desktop(options, state, Mock()), 0)
-            return 49123
+            return 49123, {"worker_id": "test"}
 
         def reuse_launcher(arguments, *, entry_window, prepare_entry):
             self.assertFalse(entry_window.existing)
             self.assertNotIn("--port", arguments)
-            self.assertEqual(prepare_entry(), 49123)
+            self.assertEqual(prepare_entry(), (49123, {"worker_id": "test"}))
             return 0
 
         with patch.object(sys, "frozen", True, create=True), patch.object(sys, "executable", str(binary)), \
@@ -108,7 +108,7 @@ raise SystemExit(desktop.run(sys.argv[2:]))
         with patch.object(sys, "frozen", True, create=True), patch.object(sys, "executable", str(current)), \
                 patch("packet_inspector.router.worker_info",
                       side_effect=lambda _data, identity: {"executable": str({"current": current, "updated": updated}[identity])}), \
-                patch("packet_inspector.router.ensure_entry", return_value=49123), \
+                patch("packet_inspector.router.ensure_entry", return_value=(49123, {})), \
                 patch("packet_inspector.desktop.run", side_effect=reuse_launcher), \
                 patch("packet_inspector.router.subprocess.Popen") as launch:
             self.assertEqual(open_desktop(options, state, Mock()), 0)

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import argparse
 import hashlib
 from collections import Counter
 from contextlib import nullcontext
@@ -30,7 +29,8 @@ from .wsl_connection import WslConnection
 from .connection_resume import ConnectionResume
 from .remote_connections import Connections
 from .remote_relay import RemoteRelays
-from .entry_port import ConfiguredPortParser, port_status, save_port, validate_port
+from .entry_port import port_status, save_port, validate_port
+from .service_options import argument_parser, default_data_dir
 from .restart_notice import RestartNotices
 from .updates import Updates
 from .token_window import TokenWindows
@@ -1953,26 +1953,6 @@ class Handler(BaseHTTPRequestHandler):
     do_DELETE = _handle
     do_HEAD = _handle
     do_OPTIONS = _handle
-
-
-def default_data_dir():
-    # A per-user directory outside AppData also works when Windows starts the
-    # observer outside an MSIX app's virtualized filesystem.
-    return Path.home() / ".codex-packet-inspector"
-
-
-def argument_parser():
-    parser = ConfiguredPortParser(description="Local Codex packet inspector")
-    parser.add_argument("--version", action="version", version="Codex Request Optimizer " + VERSION)
-    parser.add_argument("--port", type=int, default=None, help="override the configured entry port")
-    parser.add_argument("--data-dir", type=Path, default=default_data_dir())
-    parser.add_argument("--config", type=Path, default=Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))) / "config.toml")
-    parser.add_argument("--ui-forward-port", type=int, help="allow this local SSH forwarding port for the browser interface")
-    parser.add_argument("--upstream")
-    parser.add_argument("--worker-id", default="", help=argparse.SUPPRESS)
-    parser.add_argument("--public-port", type=int, help=argparse.SUPPRESS)
-    parser.add_argument("--open", action="store_true")
-    return parser
 
 
 def main(argv=None, on_started=None):

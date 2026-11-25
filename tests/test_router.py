@@ -290,14 +290,16 @@ class RouterTests(unittest.TestCase):
     def test_foreground_launch_reuses_healthy_entry(self):
         options = SimpleNamespace(data_dir=self.data, config=self.config, port=None)
         with patch("packet_inspector.router.subprocess.Popen") as launch:
-            self.assertEqual(ensure_entry(options, {"port": self.router.port}), self.router.port)
+            port, status = ensure_entry(options, {"port": self.router.port})
+        self.assertEqual(port, self.router.port)
+        self.assertEqual(status["worker_id"], self.first.worker_id)
         launch.assert_not_called()
 
     def test_foreground_launch_starts_a_desktop_only_if_not_already_running(self):
         options = SimpleNamespace(data_dir=self.data, config=self.config, port=None, background=False, tray=False)
         for window_exists in (True, False):
             with self.subTest(window_exists=window_exists), \
-                    patch("packet_inspector.router.ensure_entry", return_value=self.router.port), \
+                    patch("packet_inspector.router.ensure_entry", return_value=(self.router.port, {})), \
                     patch("packet_inspector.window_lifecycle.request_main_window", return_value=window_exists) as activate, \
                     patch("packet_inspector.router.subprocess.Popen") as launch:
                 self.assertEqual(run_entry(options, Mock(record={})), 0)
@@ -319,7 +321,7 @@ class RouterTests(unittest.TestCase):
                    {"data_dir": str(self.data), "profile": {"config_path": str(self.config)}}]
         with patch("packet_inspector.router.local_json", side_effect=replies), \
                 patch("packet_inspector.router.subprocess.Popen") as launch:
-            self.assertEqual(ensure_entry(options, {"port": self.router.port}), 47923)
+            self.assertEqual(ensure_entry(options, {"port": self.router.port}), (47923, replies[-1]))
         self.assertIn("--background", launch.call_args.args[0])
 
     def test_cold_foreground_launch_restores_router_at_configured_port(self):
@@ -339,7 +341,8 @@ class RouterTests(unittest.TestCase):
                 patch("packet_inspector.router.sys.frozen", True, create=True), \
                 patch("packet_inspector.router.sys.executable", "installed-router.exe"), \
                 patch("packet_inspector.router.subprocess.Popen", side_effect=launched) as launch:
-            self.assertEqual(ensure_entry(options, {"port": self.router.port}), 47920)
+            port, _ = ensure_entry(options, {"port": self.router.port})
+        self.assertEqual(port, 47920)
         command = launch.call_args.args[0]
         self.assertEqual(command[0], "installed-router.exe")
         self.assertIn("--background", command)

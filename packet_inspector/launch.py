@@ -1,12 +1,17 @@
 """Entry point for the desktop window and its independent background service."""
 import ctypes
-import json
 from pathlib import Path
 import signal
 import sys
 import threading
 
-from packet_inspector.server import main as service_main, default_data_dir, argument_parser
+from packet_inspector.service_options import argument_parser, default_data_dir
+
+
+def service_main(arguments, *, on_started):
+    from packet_inspector.server import main
+
+    return main(arguments, on_started=on_started)
 
 
 def console_service(arguments):
@@ -95,7 +100,6 @@ def main(argv=None):
             nonlocal tray, preload
             from packet_inspector.desktop import service_arguments, start_process
             from packet_inspector.exit_flow import request_exit
-            from packet_inspector.server import argument_parser
             from packet_inspector.tray import NativeTray
             options = argument_parser().parse_args(arguments)
 

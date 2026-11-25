@@ -17,6 +17,7 @@ from scripts.build_source import Workspace, Snapshot, SourceError, local_develop
 from packet_inspector import VERSION
 from packet_inspector.app_icon import APP_ICON
 from packet_inspector.frontend_dev import PROFILE_NAME, PORTABLE_UI
+from packet_inspector.managed_runtime import APP_EXE, EMBEDDED_RUNTIME, LAYOUT_FILE, read_layout
 
 ROOT=Path(__file__).resolve().parents[1]
 PUBLIC_FILES = ("CodexPacketInspector.exe", "README.md", "LICENSE", "THIRD_PARTY_NOTICES.txt")
@@ -30,7 +31,7 @@ def source_files(root=None):
     files = [root / name for name in ("README.md", "LICENSE", ".gitignore", ".gitattributes", "requirements-dev.txt",
              ".github/RELEASE_NOTES.md", ".github/workflows/windows-build.yml", ".githooks/pre-push")
              if (root / name).is_file()]
-    suffixes = {".py", ".txt", ".md", ".html", ".js", ".cjs", ".css", ".ps1", ".json", ".ico", ".png", ".svg",
+    suffixes = {".py", ".txt", ".md", ".html", ".js", ".cjs", ".css", ".ps1", ".json", ".ico", ".png", ".svg", ".spec",
                 ".toml", ".yaml", ".yml", ".sh", ".bat", ".cmd", ".woff", ".woff2", ".ttf", ".otf",
                 ".webp", ".gif", ".jpeg", ".jpg", ".service"}
     excluded = {"__pycache__", "data", ".local", ".venv", "build", "release", "node_modules"}
@@ -108,24 +109,37 @@ def compile_executable(snapshot, mode, portable_dev, work, stage, licenses):
     icon=source/APP_ICON.relative_to(ROOT)
     log=build/"build.log"
     windows=sys.platform=="win32"
-    command=[sys.executable,"-m","PyInstaller","--noconfirm","--clean","--onefile",
-             *(["--windowed","--icon",str(icon)] if windows else ["--console", "--exclude-module", "webview"]),
-             "--name",name,"--distpath",str(stage),
-             "--workpath",str(build/"app"),"--specpath",str(build/"spec"),
-             "--paths",str(source),"--collect-submodules","zstandard","--hidden-import","zstandard.backend_c",
-             "--add-data",str(source/"packet_inspector"/"ui")+os.pathsep+"packet_inspector/ui",
-             "--add-data",str(profile)+os.pathsep+"packet_inspector",
-             "--add-data",str(manifest)+os.pathsep+"packet_inspector",
-             "--add-data",str(icon)+os.pathsep+"packet_inspector/assets",
-             "--add-data",str(source/"packet_inspector"/"update_channel.json")+os.pathsep+"packet_inspector",
-             "--add-data",str(source/"packet_inspector"/"compress_image.ps1")+os.pathsep+"packet_inspector",
-             "--add-data",str(source/"packet_inspector"/"isolated_image_tool.ps1")+os.pathsep+"packet_inspector",
-             "--add-data",str(source/"packet_inspector"/"isolated_image_tool.py")+os.pathsep+"packet_inspector",
-             "--add-data",str(source/"packet_inspector"/"linux_image_control.py")+os.pathsep+"packet_inspector",
-             "--add-data",str(source/"packet_inspector"/"windows_install.ps1")+os.pathsep+"packet_inspector",
-              "--add-data",str(source/"packet_inspector"/"provider_migration_worker.py")+os.pathsep+"packet_inspector",
-              "--add-data",str(licenses)+os.pathsep+"THIRD_PARTY_LICENSES",
-             str(source/"packet_inspector"/"launch.py")]
+    package = source / "packet_inspector"
+    script = package / "launch.py"
+    data = [(str(path), dest) for path, dest in (
+        (package / "ui", "packet_inspector/ui"), (profile, "packet_inspector"),
+        (manifest, "packet_inspector"), (icon, "packet_inspector/assets"), (licenses, "THIRD_PARTY_LICENSES"),
+        *((package / file, "packet_inspector") for file in (
+            "update_channel.json", "compress_image.ps1", "isolated_image_tool.ps1", "isolated_image_tool.py",
+            "linux_image_control.py", "windows_install.ps1", "provider_migration_worker.py",
+        )),
+    )]
+    # Pillow is used for PNG, JPEG, WebP and GIF plus drawing the upgrade progress bar.
+    excludes = ["numpy", "PIL.AvifImagePlugin"]
+    command = [sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean",
+               "--distpath", str(stage), "--workpath", str(build / "app")]
+    if windows:
+        spec = build / "windows_application.spec"
+        shutil.copyfile(source / "scripts" / spec.name, spec)
+        spec.with_name("windows-build.json").write_text(json.dumps({
+            "name": name, "source": str(source), "script": str(script), "icon": str(icon),
+            "datas": data, "excludes": excludes,
+        }), encoding="utf8")
+        command.append(str(spec))
+    else:
+        command.extend(["--onefile", "--console", "--name", name, "--specpath", str(build / "spec"),
+                        "--paths", str(source), "--collect-submodules", "zstandard", "--hidden-import",
+                        "zstandard.backend_c"])
+        for module in [*excludes, "webview"]:
+            command.extend(["--exclude-module", module])
+        for path, dest in data:
+            command.extend(["--add-data", path + os.pathsep + dest])
+        command.append(str(script))
     with log.open("w",encoding="utf8") as output:
         result=subprocess.run(command,cwd=source,env=env,stdout=output,stderr=subprocess.STDOUT)
     if result.returncode:
@@ -148,7 +162,17 @@ def compile_executable(snapshot, mode, portable_dev, work, stage, licenses):
     required=('packet_inspector.window_chrome',) if windows else ('packet_inspector.server','packet_inspector.transport')
     if any(module not in pyz.toc for module in required):
         raise SourceError("Executable is missing required platform modules")
-    if not windows:
+    if windows:
+        layout_path = build / LAYOUT_FILE
+        layout_path.write_bytes(archive.extract(entries[f"{EMBEDDED_RUNTIME}/{LAYOUT_FILE}"]))
+        layout = read_layout(layout_path)
+        runtime = archive.extract(entries[f"{EMBEDDED_RUNTIME}/{APP_EXE}"])
+        if hashlib.sha256(runtime).hexdigest() != layout["exe"]:
+            raise SourceError("EXE contains a mismatched installed application")
+        for file, expected in layout["files"].items():
+            if hashlib.sha256(archive.extract(entries[file])).hexdigest() != expected:
+                raise SourceError("EXE contains a mismatched installed file: " + file)
+    else:
         result=subprocess.run([str(executable),"--version"],capture_output=True,text=True,timeout=30)
         if result.returncode or result.stdout.strip()!="Codex Request Optimizer "+VERSION:
             raise SourceError("Linux executable startup check failed: "+(result.stderr or result.stdout)[-800:])

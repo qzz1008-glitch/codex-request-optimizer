@@ -15,7 +15,7 @@ import time
 from urllib.error import URLError
 from urllib.request import Request, ProxyHandler, build_opener
 
-from .server import argument_parser, default_data_dir
+from .service_options import argument_parser, default_data_dir
 from .desktop_ui import DesktopUI, window_geometry
 from .app_icon import APP_ICON
 from .frontend_dev import load_profile, validate_ui_dir, resolve_profile, remember_profile, installed_profile
@@ -53,32 +53,35 @@ def start_process(arguments):
                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
 
 
-def ensure_service(options, *, start_background=True):
+def ensure_service(options, *, start_background=True, prepared_status=None):
     trace = StartupTrace(options.data_dir, "desktop")
     try:
-        return _ensure_service(options, trace, start_background=start_background)
+        return _ensure_service(options, trace, start_background=start_background, prepared_status=prepared_status)
     except Exception as exc:
         trace.fail(exc)
         raise
 
 
-def _ensure_service(options, trace, *, start_background=True):
+def _ensure_service(options, trace, *, start_background=True, prepared_status=None):
     child = None
     trace.step("service.wait", port=options.port)
 
     def ready():
-        health = local_api(options.port, "/health")
-        if health.get("app") != "codex-packet-inspector":
-            raise RuntimeError("此端口被其他程序占用，请先释放端口。")
-        if not start_background:
-            from .router import PROTOCOL
-            if health.get("router_protocol") != PROTOCOL:
-                raise RuntimeError("此端口未由中转入口管理。")
-        status = local_api(options.port, "/api/status")
-        if Path(status["data_dir"]).resolve() != options.data_dir.resolve():
-            raise RuntimeError("此端口正在使用另一个数据目录。")
-        if Path(status["profile"]["config_path"]).resolve() != options.config.resolve():
-            raise RuntimeError("此端口正在使用另一份 Codex 配置。")
+        nonlocal prepared_status
+        status, prepared_status = prepared_status, None
+        if status is None:
+            health = local_api(options.port, "/health")
+            if health.get("app") != "codex-packet-inspector":
+                raise RuntimeError("此端口被其他程序占用，请先释放端口。")
+            if not start_background:
+                from .router import PROTOCOL
+                if health.get("router_protocol") != PROTOCOL:
+                    raise RuntimeError("此端口未由中转入口管理。")
+            status = local_api(options.port, "/api/status")
+            if Path(status["data_dir"]).resolve() != options.data_dir.resolve():
+                raise RuntimeError("此端口正在使用另一个数据目录。")
+            if Path(status["profile"]["config_path"]).resolve() != options.config.resolve():
+                raise RuntimeError("此端口正在使用另一份 Codex 配置。")
         if (status.get("provider_routing_supported") and status.get("auto_detect_providers")
                 and status.get("profile", {}).get("active")):
             local_api(options.port, "/api/providers/sync", {}, timeout=10)
@@ -228,9 +231,9 @@ def run(arguments, *, entry_window=None, prepare_entry=None):
             ui_dir = profile.ui_dir
         status = {}
 
-        def start_ui():
+        def start_ui(prepared_status=None):
             nonlocal status, ui
-            status = ensure_service(options, start_background=entry is None)
+            status = ensure_service(options, start_background=entry is None, prepared_status=prepared_status)
             remember_profile(options.data_dir, profile)
             ui = DesktopUI(options.port, ui_dir=ui_dir, live_reload=profile.development,
                            exit_data_dir=options.data_dir).start()
@@ -270,12 +273,12 @@ def run(arguments, *, entry_window=None, prepare_entry=None):
             nonlocal main_loaded, startup_error
             if entry is not None:
                 try:
-                    port = entry.result()
-                    if port is None:
+                    prepared = entry.result()
+                    if prepared is None:
                         lifecycle.exit()  # The active build changed during startup.
                         return
-                    options.port = port
-                    start_ui()
+                    options.port, prepared_status = prepared
+                    start_ui(prepared_status)
                     window.load_url(ui.ui_url)
                     main_loaded = True
                     lifecycle.show()

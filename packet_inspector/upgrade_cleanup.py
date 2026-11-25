@@ -8,6 +8,7 @@ import sys
 import time
 
 from .frontend_dev import installed_profile
+from .managed_runtime import APP_EXE, RUNTIME_DIRECTORY, remove_runtime
 from .router import process_alive, worker_info
 
 GRACE_SECONDS = 7 * 86400
@@ -35,16 +36,26 @@ def cleanup_versions(data_dir, *, now=None):
             raise ValueError("version directory is redirected")
         records, protected = [], set()
 
-        def protect(executable):
+        def owner(executable):
             path = Path(executable).resolve()
-            if path.is_relative_to(versions):
-                protected.add(versions / path.relative_to(versions).parts[0])
+            if path.is_relative_to(versions) and path != versions:
+                return versions / path.relative_to(versions).parts[0]
+
+        def protect(executable):
+            folder = owner(executable)
+            if folder is not None:
+                protected.add(folder)
 
         def protect_routes():
             state = _json(directory / "router-state.json")
             identities = [state["active"], *[entry["id"] for entry in state.get("draining", [])]]
             for identity in identities:
                 protect(worker_info(directory, identity)["executable"])
+            entry = directory / "runtime.json"
+            if entry.is_file():
+                runtime = _json(entry)
+                if runtime.get("executable") and process_alive(runtime.get("pid")):
+                    protect(runtime["executable"])
 
         protect_routes()
         profile = installed_profile(directory)
@@ -66,7 +77,7 @@ def cleanup_versions(data_dir, *, now=None):
                 alive = process_alive(pid)
             if alive:
                 protect(worker["executable"])
-            records.append((path, runtime, Path(worker["executable"]).resolve().parent, alive))
+            records.append((path, runtime, owner(worker["executable"]), alive))
         candidates = []
         for path in versions.iterdir():
             if not re.fullmatch(r"[0-9a-f]{64}", path.name):
@@ -86,18 +97,22 @@ def cleanup_versions(data_dir, *, now=None):
             if path in protected:
                 continue
             contents = list(path.iterdir())
-            if not contents or any(item.name not in {"CodexPacketInspector.exe", "CodexPacketInspector.exe.new"}
-                                   or item.is_symlink() or not item.is_file() for item in contents):
+            installed = path / RUNTIME_DIRECTORY
+            executables = [item for item in contents if item != installed]
+            if not contents or any(item.name not in {APP_EXE, APP_EXE + ".new"}
+                                   or item.is_symlink() or not item.is_file() for item in executables):
+                continue
+            if installed in contents and not remove_runtime(installed):
                 continue
             try:
-                for item in contents:
+                for item in executables:
                     item.unlink()
                 path.rmdir()
             except OSError:
                 continue  # Windows may still have an EXE or a loader open.
             result["versions_removed"] += 1
-            for descriptor, runtime, owner, alive in records:
-                if owner == path and not alive:
+            for descriptor, runtime, folder, alive in records:
+                if folder == path and not alive:
                     try:
                         runtime.unlink(missing_ok=True)
                         descriptor.unlink(missing_ok=True)

@@ -66,12 +66,20 @@ class UpgradeCleanupTests(unittest.TestCase):
         self.assertEqual(result["backups_removed"], 2)
         self.assertEqual([folder.exists() for folder in folders], [True, False, False, True, True])
 
-    def test_live_worker_and_desktop_versions_are_protected(self):
+    def test_live_entry_worker_and_desktop_versions_are_protected(self):
         self.worker("3" * 32, self.paths[4])
         atomic_json(self.data / "router-workers" / ("3" * 32 + ".runtime.json"), {"pid": 1234})
         atomic_json(self.data / "desktop-profile.json", {"mode": "release", "executable": str(self.paths[5] / "CodexPacketInspector.exe")})
+        entry = self.paths[3] / "runtime" / "CodexPacketInspector.exe"
+        entry.parent.mkdir()
+        entry.write_bytes(b"installed entry executable")
+        os.utime(self.paths[3], (1, 1))
+        atomic_json(self.data / "runtime.json", {"executable": str(entry), "pid": 1235})
         with patch("packet_inspector.upgrade_cleanup.process_alive", return_value=True):
-            cleanup_versions(self.data, now=self.now)
+            with patch("packet_inspector.upgrade_cleanup.remove_runtime") as remove_runtime:
+                cleanup_versions(self.data, now=self.now)
+            remove_runtime.assert_not_called()
+        self.assertTrue(self.paths[3].exists())
         self.assertTrue(self.paths[4].exists())
         self.assertTrue(self.paths[5].exists())
 
