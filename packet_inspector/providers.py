@@ -115,119 +115,14 @@ class ProviderManager:
         paths = tuple(config_paths(self.link.config))
         sources = tuple(ConfigSnapshot.read(path) for path in paths)
         native = self._native_upstream()
-        plans, warnings, prepared = [], [], []
-        detected = set()
-        base = tomllib.loads(sources[0].text)
-        for source in sources:
-            path, text = source.path, source.text
-            data = tomllib.loads(text)
-            document = tomlkit.parse(text)
-            parent = base if path == self.link.config else prepared[0][2]
-            excluded, skipped = self._unsupported_providers(data, parent, path, routes)
-            warnings.extend(skipped)
-            standardize(document, data, parent,
-                        lambda value, provider: self._original(value, provider, routes),
-                        native, primary=path == self.link.config, excluded=excluded)
-            native_compression(document, False)
-            data = tomllib.loads(tomlkit.dumps(document))
-            records = state["files"].setdefault(str(path.resolve()), [])
-            fields = []
-            providers = data.get("model_providers", {})
-            for provider_id, provider in providers.items():
-                if provider_id == SHARED_PROVIDER or provider_id in excluded:
-                    continue
-                if not isinstance(provider, dict):
-                    continue
-                inherited = parent.get("model_providers", {}).get(provider_id, {}) if path != self.link.config else {}
-                if provider.get("wire_api", inherited.get("wire_api", "responses")) != "responses":
-                    warnings.append({"file": path.name, "provider": provider_id, "reason": "unsupported_wire_api"})
-                    continue
-                if "base_url" in provider:
-                    fields.append((["model_providers", provider_id, "base_url"], provider_id, provider["base_url"]))
-                elif "base_url" in inherited:
-                    if provider.get("supports_websockets"):
-                        self._record(records, data, ["model_providers", provider_id, "supports_websockets"], False)
-                        _put(document, ["model_providers", provider_id, "supports_websockets"], False)
-                elif (implicit := provider_upstream(merge_layers(inherited, provider), native)) is not None:
-                    # Custom providers use their authentication's native
-                    # default, independently of the built-in root override.
-                    fields.append((["model_providers", provider_id, "base_url"], provider_id, implicit))
-                elif not inherited:
-                    warnings.append({"file": path.name, "provider": provider_id, "reason": "missing_http_base_url"})
-            # Built-in OpenAI uses a root override; its reserved ID cannot be redefined.
-            if "openai" not in excluded and (path == self.link.config or "openai_base_url" in data):
-                original = data.get("openai_base_url")
-                native_record = next((r for r in records if r["keys"] == ["openai_base_url"]), None)
-                if native_record and not native_record["present"] and original == native_record["applied"]:
-                    original = native
-                if not original:
-                    original = native
-                fields.append((["openai_base_url"], "openai", original))
-            for keys, provider_id, current in fields:
-                detected.add(provider_id)
-                try:
-                    upstream = validate_upstream(self._original(current, provider_id, routes))
-                except ValueError as exc:
-                    raise ValueError(f"{path.name} · {'.'.join(keys)}: {exc}") from None
-                target = urlsplit(upstream)
-                own = urlsplit(self.endpoint)
-                if target.hostname in {"localhost", "127.0.0.1", "::1"} and target.port == own.port:
-                    raise ValueError("provider 上游不能指向采集器自身")
-                identity = str(path.resolve()) + "\n" + provider_id
-                route_id = next((key for key, value in routes.items()
-                                 if value.get("identity") == identity and value.get("upstream") == upstream), None)
-                if route_id is None:
-                    route_id = secrets.token_hex(12)
-                routes[route_id] = {"identity": identity, "provider": provider_id, "upstream": upstream}
-                if self.wsl_connection_key:
-                    routes[route_id]["wsl_connection_key"] = self.wsl_connection_key
-                else:
-                    routes[route_id]["local_connection"] = True
-                applied = self.endpoint + "/p/" + route_id
-                self._record(records, data, keys, applied, original=upstream if upstream != current else None)
-                _put(document, keys, applied)
-                if len(keys) > 1:
-                    ws_keys = keys[:-1] + ["supports_websockets"]
-                    self._record(records, data, ws_keys, False)
-                    _put(document, ws_keys, False)
-            for provider_id, provider in data.get("model_providers", {}).items():
-                if provider_id == SHARED_PROVIDER or provider_id in excluded:
-                    continue
-                if not isinstance(provider, dict) or provider.get("wire_api", "responses") != "responses":
-                    continue
-                for key, value in (("stream_max_retries", retry_limit), ("request_max_retries", 0)):
-                    retry_keys = ["model_providers", provider_id, key]
-                    if retry_limit is not None:
-                        self._record(records, data, retry_keys, value)
-                        _put(document, retry_keys, value)
-                    else:
-                        record = next((r for r in records if r["keys"] == retry_keys), None)
-                        if record is not None:
-                            present, current = _get(data, retry_keys)
-                            if present and current == record["applied"]:
-                                _put(document, retry_keys, record["before"], record["present"])
-                            records.remove(record)
-            prepared.append((source, document, data, excluded))
-        # Only equivalent OpenAI-account routes may share the stable ID. A
-        # conflicting profile definition cannot authorize a global migration.
-        original = lambda value, provider: self._original(value, provider, routes)
-        aliases, conflicts = migration_aliases([(source.path, data, excluded) for source, _, data, excluded in prepared],
-                                              original, native)
-        warnings.extend(conflicts)
-        selected = base.get("model_provider", "openai")
-        if prepared[0][2].get("model_provider") == PROVIDER and selected != PROVIDER and selected not in aliases:
-            raise ValueError("所选 provider 在不同配置中存在连接冲突，未切换默认提供商或迁移已有会话。")
-        for source, document, _, _ in prepared:
-            for profile in document.get("profiles", {}).values():
-                if isinstance(profile, dict) and profile.get("model_provider") in aliases:
-                    profile["model_provider"] = PROVIDER
-            updated = tomlkit.dumps(document)
-            tomllib.loads(updated)
-            if updated != source.text:
-                plans.append(ConfigEdit(source, updated))
+        fields = {source.path: state["files"].setdefault(str(source.path.resolve()), []) for source in sources}
+        plans, aliases, warnings, provider_count = prepare_provider_files(
+            sources, native, fields, lambda value, provider: self._original(value, provider, routes),
+            lambda path, provider, upstream: self._publish_route(routes, path, provider, upstream),
+            retry_limit=retry_limit)
         guard = lambda: self._check_inputs(paths, native)
-        return ProviderPlan(ConfigurationBatch(sources, tuple(plans), (guard,)), recovery, prior, state, routes,
-                            frozenset(aliases), tuple(warnings), len(detected), paths)
+        return ProviderPlan(ConfigurationBatch(sources, plans, (guard,)), recovery, prior, state, routes,
+                            frozenset(aliases), tuple(warnings), provider_count, paths)
 
     def reconcile_sessions(self, saved_routes, *, session_migrator=None):
         """Upgrade disconnected installations without changing their TOML or routes."""
@@ -239,57 +134,22 @@ class ProviderManager:
         result["warnings"] = warnings + result["warnings"]
         return result
 
-    def _unsupported_providers(self, data, base, path, routes):
-        """Optional endpoints must not veto a valid default connection.
-
-        Missing local route recovery remains an integration error. Only address
-        validation failures of an unselected endpoint may be excluded.
-        """
-        selected = data.get("model_provider", base.get("model_provider", "openai"))
-        if selected not in {"openai", SHARED_PROVIDER}:
-            selected_provider = merge_layers(base.get("model_providers", {}).get(selected, {}),
-                                             data.get("model_providers", {}).get(selected, {}))
-            if not selected_provider:
-                raise ValueError(f"{path.name} · model_provider: 未找到所选 provider 的配置")
-            if selected_provider.get("wire_api", "responses") != "responses":
-                raise ValueError(f"{path.name} · model_provider: 所选 provider 不使用 Responses HTTP 接口")
-            if provider_upstream(selected_provider, self._native_upstream()) is None:
-                raise ValueError(f"{path.name} · model_provider: 无法确定所选 provider 的 HTTP 上游地址")
-        excluded, warnings = set(), []
-        providers = dict(data.get("model_providers", {}))
-        if path != self.link.config and selected in base.get("model_providers", {}):
-            providers.setdefault(selected, {})
-
-        def invalid_reason(value):
-            try:
-                validate_upstream(value)
-            except ValueError as exc:
-                return str(exc)
-            return None
-
-        candidates = []
-        for provider_id, provider in providers.items():
-            if provider_id == SHARED_PROVIDER or not isinstance(provider, dict):
-                continue
-            inherited = base.get("model_providers", {}).get(provider_id, {}) if path != self.link.config else {}
-            effective = merge_layers(inherited, provider)
-            if effective.get("wire_api", "responses") != "responses" or "base_url" not in effective:
-                continue
-            candidates.append((f"model_providers.{provider_id}.base_url", provider_id, effective["base_url"]))
-        if "openai_base_url" in data:
-            candidates.append(("openai_base_url", "openai", data["openai_base_url"]))
-        for field, provider_id, current in candidates:
-            reason = invalid_reason(current)
-            if reason is None:
-                upstream = self._original(current, provider_id, routes)
-                reason = invalid_reason(upstream)
-            if reason is not None:
-                if provider_id == selected:
-                    raise ValueError(f"{path.name} · {field}: {reason}")
-                excluded.add(provider_id)
-                warnings.append({"file": path.name, "provider": provider_id,
-                                 "reason": "unsupported_upstream", "detail": reason})
-        return excluded, warnings
+    def _publish_route(self, routes, path, provider_id, upstream):
+        target = urlsplit(upstream)
+        own = urlsplit(self.endpoint)
+        if target.hostname in {"localhost", "127.0.0.1", "::1"} and target.port == own.port:
+            raise ValueError("provider 上游不能指向采集器自身")
+        identity = str(path.resolve()) + "\n" + provider_id
+        route_id = next((key for key, value in routes.items()
+                         if value.get("identity") == identity and value.get("upstream") == upstream), None)
+        if route_id is None:
+            route_id = secrets.token_hex(12)
+        routes[route_id] = {"identity": identity, "provider": provider_id, "upstream": upstream}
+        if self.wsl_connection_key:
+            routes[route_id]["wsl_connection_key"] = self.wsl_connection_key
+        else:
+            routes[route_id]["local_connection"] = True
+        return self.endpoint + "/p/" + route_id
 
     def _original(self, current, provider_id, routes):
         if not isinstance(current, str):
@@ -322,18 +182,172 @@ class ProviderManager:
         if tuple(config_paths(self.link.config)) != paths or self._native_upstream() != native:
             raise ValueError(CONCURRENT_CHANGE)
 
-    @staticmethod
-    def _record(records, data, keys, applied, original=None):
-        present, before = _get(data, keys)
-        record = next((value for value in records if value["keys"] == keys), None)
-        if record is None:
-            if original is not None:
-                before = original
-            records.append({"keys": keys, "present": present, "before": before, "applied": applied})
-        else:
-            if before != record["applied"] or not present:
-                record.update(present=present, before=before)
-            record["applied"] = applied
+
+def prepare_provider_files(sources, native, recovery_fields, original_upstream, route, *,
+                           retry_limit=None, check_upstream=validate_upstream):
+    """Build the same provider configuration for local, WSL, and SSH Codex."""
+    primary = sources[0].path
+    plans, warnings, prepared = [], [], []
+    detected = set()
+    base = tomllib.loads(sources[0].text)
+    for source in sources:
+        path, text = source.path, source.text
+        data = tomllib.loads(text)
+        document = tomlkit.parse(text)
+        parent = base if path == primary else prepared[0][2]
+        excluded, skipped = _unsupported_providers(
+            data, parent, path, path == primary, native, original_upstream, check_upstream)
+        warnings.extend(skipped)
+        standardize(document, data, parent, original_upstream, native, primary=path == primary, excluded=excluded)
+        native_compression(document, False)
+        data = tomllib.loads(tomlkit.dumps(document))
+        records = recovery_fields[path]
+        fields = []
+        providers = data.get("model_providers", {})
+        for provider_id, provider in providers.items():
+            if provider_id == SHARED_PROVIDER or provider_id in excluded:
+                continue
+            if not isinstance(provider, dict):
+                continue
+            inherited = parent.get("model_providers", {}).get(provider_id, {}) if path != primary else {}
+            if provider.get("wire_api", inherited.get("wire_api", "responses")) != "responses":
+                warnings.append({"file": path.name, "provider": provider_id, "reason": "unsupported_wire_api"})
+                continue
+            if "base_url" in provider:
+                fields.append((["model_providers", provider_id, "base_url"], provider_id, provider["base_url"]))
+            elif "base_url" in inherited:
+                if provider.get("supports_websockets"):
+                    _record(records, data, ["model_providers", provider_id, "supports_websockets"], False)
+                    _put(document, ["model_providers", provider_id, "supports_websockets"], False)
+            elif (implicit := provider_upstream(merge_layers(inherited, provider), native)) is not None:
+                # Custom providers use their authentication's native
+                # default, independently of the built-in root override.
+                fields.append((["model_providers", provider_id, "base_url"], provider_id, implicit))
+            elif not inherited:
+                warnings.append({"file": path.name, "provider": provider_id, "reason": "missing_http_base_url"})
+        # Built-in OpenAI uses a root override; its reserved ID cannot be redefined.
+        if "openai" not in excluded and (path == primary or "openai_base_url" in data):
+            original = data.get("openai_base_url")
+            native_record = next((r for r in records if r["keys"] == ["openai_base_url"]), None)
+            if native_record and not native_record["present"] and original == native_record["applied"]:
+                original = native
+            if not original:
+                original = native
+            fields.append((["openai_base_url"], "openai", original))
+        for keys, provider_id, current in fields:
+            detected.add(provider_id)
+            try:
+                upstream = check_upstream(original_upstream(current, provider_id))
+            except ValueError as exc:
+                raise ValueError(f"{path.name} · {'.'.join(keys)}: {exc}") from None
+            applied = route(path, provider_id, upstream)
+            _record(records, data, keys, applied, original=upstream if upstream != current else None)
+            _put(document, keys, applied)
+            if len(keys) > 1:
+                ws_keys = keys[:-1] + ["supports_websockets"]
+                _record(records, data, ws_keys, False)
+                _put(document, ws_keys, False)
+        for provider_id, provider in data.get("model_providers", {}).items():
+            if provider_id == SHARED_PROVIDER or provider_id in excluded:
+                continue
+            if not isinstance(provider, dict) or provider.get("wire_api", "responses") != "responses":
+                continue
+            for key, value in (("stream_max_retries", retry_limit), ("request_max_retries", 0)):
+                retry_keys = ["model_providers", provider_id, key]
+                if retry_limit is not None:
+                    _record(records, data, retry_keys, value)
+                    _put(document, retry_keys, value)
+                else:
+                    record = next((r for r in records if r["keys"] == retry_keys), None)
+                    if record is not None:
+                        present, current = _get(data, retry_keys)
+                        if present and current == record["applied"]:
+                            _put(document, retry_keys, record["before"], record["present"])
+                        records.remove(record)
+        prepared.append((source, document, data, excluded))
+    # Only equivalent OpenAI-account routes may share the stable ID. A
+    # conflicting profile definition cannot authorize a global migration.
+    aliases, conflicts = migration_aliases([(source.path, data, excluded) for source, _, data, excluded in prepared],
+                                          original_upstream, native)
+    warnings.extend(conflicts)
+    selected = base.get("model_provider", "openai")
+    if prepared[0][2].get("model_provider") == PROVIDER and selected != PROVIDER and selected not in aliases:
+        raise ValueError("所选 provider 在不同配置中存在连接冲突，未切换默认提供商或迁移已有会话。")
+    for source, document, _, _ in prepared:
+        for profile in document.get("profiles", {}).values():
+            if isinstance(profile, dict) and profile.get("model_provider") in aliases:
+                profile["model_provider"] = PROVIDER
+        updated = tomlkit.dumps(document)
+        tomllib.loads(updated)
+        if updated != source.text:
+            plans.append(ConfigEdit(source, updated))
+    return tuple(plans), aliases, warnings, len(detected)
+
+
+def _unsupported_providers(data, base, path, primary, native, original, check_upstream):
+    """Optional endpoints must not veto a valid default connection.
+
+    Missing local route recovery remains an integration error. Only address
+    validation failures of an unselected endpoint may be excluded.
+    """
+    selected = data.get("model_provider", base.get("model_provider", "openai"))
+    if selected not in {"openai", SHARED_PROVIDER}:
+        selected_provider = merge_layers(base.get("model_providers", {}).get(selected, {}),
+                                         data.get("model_providers", {}).get(selected, {}))
+        if not selected_provider:
+            raise ValueError(f"{path.name} · model_provider: 未找到所选 provider 的配置")
+        if selected_provider.get("wire_api", "responses") != "responses":
+            raise ValueError(f"{path.name} · model_provider: 所选 provider 不使用 Responses HTTP 接口")
+        if provider_upstream(selected_provider, native) is None:
+            raise ValueError(f"{path.name} · model_provider: 无法确定所选 provider 的 HTTP 上游地址")
+    excluded, warnings = set(), []
+    providers = dict(data.get("model_providers", {}))
+    if not primary and selected in base.get("model_providers", {}):
+        providers.setdefault(selected, {})
+
+    def invalid_reason(value, validate):
+        try:
+            validate(value)
+        except ValueError as exc:
+            return str(exc)
+        return None
+
+    candidates = []
+    for provider_id, provider in providers.items():
+        if provider_id == SHARED_PROVIDER or not isinstance(provider, dict):
+            continue
+        inherited = base.get("model_providers", {}).get(provider_id, {}) if not primary else {}
+        effective = merge_layers(inherited, provider)
+        if effective.get("wire_api", "responses") != "responses" or "base_url" not in effective:
+            continue
+        candidates.append((f"model_providers.{provider_id}.base_url", provider_id, effective["base_url"]))
+    if "openai_base_url" in data:
+        candidates.append(("openai_base_url", "openai", data["openai_base_url"]))
+    for field, provider_id, current in candidates:
+        reason = invalid_reason(current, validate_upstream)
+        if reason is None:
+            upstream = original(current, provider_id)
+            reason = invalid_reason(upstream, check_upstream)
+        if reason is not None:
+            if provider_id == selected:
+                raise ValueError(f"{path.name} · {field}: {reason}")
+            excluded.add(provider_id)
+            warnings.append({"file": path.name, "provider": provider_id,
+                             "reason": "unsupported_upstream", "detail": reason})
+    return excluded, warnings
+
+
+def _record(records, data, keys, applied, original=None):
+    present, before = _get(data, keys)
+    record = next((value for value in records if value["keys"] == keys), None)
+    if record is None:
+        if original is not None:
+            before = original
+        records.append({"keys": keys, "present": present, "before": before, "applied": applied})
+    else:
+        if before != record["applied"] or not present:
+            record.update(present=present, before=before)
+        record["applied"] = applied
 
 
 def restore_providers(link, state):

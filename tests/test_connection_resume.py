@@ -1,13 +1,16 @@
 """Automatic connection reconciliation preserves user intent and relay ownership."""
 import json
 from contextlib import closing
+from http.client import HTTPConnection
 from pathlib import Path
 import sqlite3
 import tempfile
+import threading
 import tomllib
 import unittest
 from unittest.mock import patch
 
+from packet_inspector.config_link import PROVIDER
 from packet_inspector.server import InspectorServer
 from packet_inspector.loopback_proxy import repair_loopback_proxy
 from tests.test_loopback_proxy import FakeWindows
@@ -87,6 +90,28 @@ class ConnectionResumeTests(unittest.TestCase):
         self.resume.step()
         self.assertFalse(self.resume.status()["result"]["reload_required"])
         self.assertEqual(before, (self.config.read_bytes(), self.backend.config_path.read_bytes()))
+
+    def test_retry_settings_resync_connected_wsl(self):
+        self.connected()
+        self.resume.step()
+        listener = threading.Thread(target=self.server.serve_forever, daemon=True)
+        listener.start()
+        self.addCleanup(listener.join, 3)
+        self.addCleanup(self.server.shutdown)
+        with closing(HTTPConnection("127.0.0.1", self.server.port, timeout=5)) as client:
+            client.request("POST", "/api/settings", json.dumps({
+                "capacity_retry_enabled": True, "capacity_retry_max_retries": 30}).encode("ascii"))
+            with client.getresponse() as response:
+                self.assertEqual(response.status, 200)
+                response.read()
+        self.assertEqual(self.resume.status()["state"], "pending")
+        self.resume.step()
+        data = tomllib.loads(self.backend.config_path.read_text(encoding="utf8"))
+        self.assertEqual(data["model_provider"], PROVIDER)
+        provider = data["model_providers"][PROVIDER]
+        self.assertEqual(provider["stream_max_retries"], 30)
+        self.assertEqual(provider["request_max_retries"], 0)
+        self.assertTrue(provider["base_url"].startswith(self.server.endpoint))
 
     def test_connected_startup_repairs_dotenv_without_rewriting_provider_or_windows_proxy(self):
         self.connected()
