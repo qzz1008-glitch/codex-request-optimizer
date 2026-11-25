@@ -401,7 +401,7 @@ button.other-session-group{background:#f5f2fc;border-color:#e7e0f5}
   grid-template-columns:subgrid;
   column-gap:inherit;
 }
-.size-breakdown>.detail-section{row-gap:3px}
+.size-breakdown>.detail-section{row-gap:1px}
 .size-breakdown>.detail-section+.detail-section{margin-block-start:12px;padding-block-start:9px;border-block-start:1px solid var(--detail-divider)}
 .size-breakdown>.detail-section>h3{grid-column:1 / -1;margin-bottom:2px}
 .bar-row{align-items:center;min-block-size:24px;row-gap:4px;font-size:12px}
