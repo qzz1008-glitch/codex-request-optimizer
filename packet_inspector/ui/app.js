@@ -2936,7 +2936,7 @@ function inputItemChanges(items, bodyAvailable) {
     entry.append(bodyAvailable&&item.path?link(index,()=>goPath(item.path)):el("span","",index));
     if(item.name)entry.append(el("span","",item.name));
     const tone=item.delta>0?" bar-delta-increase":item.delta<0?" bar-delta-decrease":"";
-    const status=el("span","bar-value"+tone), change=el("span","bar-value bar-delta");
+    const status=el("span","bar-value"+tone), change=el("span","bar-value bar-delta"+tone);
     status.append(el("span","sr-only",t("变化")+" "),labels[item.change]);
     change.append(el("span","sr-only",t("变化值")+" "),signed(item.delta));
     row.append(entry,status,change);
