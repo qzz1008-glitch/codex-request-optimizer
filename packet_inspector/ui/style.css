@@ -436,7 +436,14 @@ button.bar-delta[aria-expanded="true"]::after{transform:translateY(-35%) rotate(
 }
 .bar-change-details>.bar-row+.bar-row{border-block-start:1px solid #edf0f5}
 .bar-change-details .bar-value:not(.bar-delta-increase,.bar-delta-decrease){color:inherit}
-.breakdown-item-entry{display:flex;align-items:baseline;gap:6px;min-inline-size:0;overflow-wrap:anywhere}
+.breakdown-item-entry{
+  display:flex;
+  align-items:baseline;
+  gap:6px;
+  min-inline-size:0;
+  padding-inline-start:8px;
+  overflow-wrap:anywhere;
+}
 .breakdown-item-entry>:first-child{flex:none;white-space:nowrap;font-variant-numeric:tabular-nums}
 #tab-tree:not([hidden]){display:flex;flex-direction:column;height:100%;min-height:0}
 .detail-content:has(>#tab-tree:not([hidden])){overflow:hidden;scrollbar-gutter:auto;padding-inline-end:0}
