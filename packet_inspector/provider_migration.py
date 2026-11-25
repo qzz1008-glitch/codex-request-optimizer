@@ -1,8 +1,13 @@
 """Provider identity checks and migration of saved native configuration."""
+import os
+import sys
+import tomllib
+
 from .config_link import PROVIDER
 from .connection_policy import codex_auth, provider_identity
 from .configuration_layers import merge_layers
-from .provider_migration_worker import migrate
+from .desktop_restart import windows_writer_before
+from .provider_migration_worker import linux_writer_before, migrate
 
 
 def compatible_aliases(data, original_upstream, native_upstream):
@@ -21,12 +26,32 @@ def compatible_aliases(data, original_upstream, native_upstream):
             and original_upstream(value.get("base_url", native_upstream), key) == upstream}
 
 
-def migrate_sessions(link, aliases, migrator=None):
+def provider_selection_changed(before, after):
+    def selections(value):
+        data = tomllib.loads(value)
+        default = data.get("model_provider", "openai")
+        profiles = {key: profile["model_provider"] for key, profile in data.get("profiles", {}).items()
+                    if isinstance(profile, dict) and "model_provider" in profile}
+        return default, profiles
+
+    return selections(before) != selections(after)
+
+
+def local_writer_before(home, revision):
+    if os.name == "nt":
+        return windows_writer_before(home, revision)
+    if sys.platform.startswith("linux"):
+        return linux_writer_before(home, revision)
+    raise OSError("Codex process lifetime is unavailable")
+
+
+def migrate_sessions(link, aliases, migrator=None, *, require_reload=False):
     if not aliases:
         return {"changed": 0, "databases": 0, "backups": [], "warnings": []}
     try:
-        return (migrator(aliases) if migrator else
-                migrate(link.config.parent, link.state_path.parent / "provider-migration-backups", aliases, PROVIDER))
+        return (migrator(aliases, require_reload=require_reload) if migrator else
+                migrate(link.config.parent, link.state_path.parent / "provider-migration-backups", aliases, PROVIDER,
+                        writer_before=local_writer_before, require_reload=require_reload, config_path=link.config))
     except (OSError, ValueError) as exc:
         # A Linux worker failure must retain the TOML change and its restart
         # feedback. Report the pending metadata repair for the existing retry.

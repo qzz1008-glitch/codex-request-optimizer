@@ -1,6 +1,7 @@
 """Per-host connection ownership, bounded discovery and SSH control contracts."""
 from contextlib import closing, contextmanager, redirect_stdout
 import base64
+import hashlib
 import io
 import json
 from pathlib import Path
@@ -336,6 +337,7 @@ class RemoteScriptTests(unittest.TestCase):
         self.native_cli = self.root / "native-codex"
         self.native_cli.write_text("fixture", encoding="utf8")
         self.socket = self.root / "app-server-control" / "control.sock"
+        self.writer_before = lambda *_: False
 
     def execute(self, action=None, **options):
         test = self
@@ -393,7 +395,13 @@ class RemoteScriptTests(unittest.TestCase):
                 return SimpleNamespace(st_mode=mode, st_uid=uid)
             return original_stat(path, *args, **kwargs)
         output = io.StringIO()
-        with patch.dict("os.environ", {"CODEX_HOME": str(self.root)}), \
+        def execute_worker(source, scope):
+            exec(source, scope)
+            scope["linux_writer_before"] = self.writer_before
+
+        fixture_lock = SimpleNamespace(flock=lambda *_: None, LOCK_EX=1, LOCK_NB=2)
+        with patch.dict(sys.modules, {"fcntl": fixture_lock}), patch("os.O_NOFOLLOW", 0, create=True), \
+             patch.dict("os.environ", {"CODEX_HOME": str(self.root)}), \
              patch("os.getuid", return_value=1000, create=True), \
              patch("pathlib.Path.home", return_value=self.root), \
              patch("pathlib.Path.resolve", new=resolve_path), \
@@ -401,7 +409,7 @@ class RemoteScriptTests(unittest.TestCase):
              patch("shutil.which", return_value=str(self.native_cli) if self.native else None), \
              patch("subprocess.run", side_effect=native_run), \
              patch("urllib.request.build_opener", return_value=Opener()) as build, redirect_stdout(output):
-            exec("INPUT = " + repr(json.dumps({"action": action, **options})) + "\n" + SCRIPT, {})
+            exec("INPUT = " + repr(json.dumps({"action": action, **options})) + "\n" + SCRIPT, {"exec": execute_worker})
         if action == "tunnel_reconnect":
             build.assert_not_called()
         else:
@@ -570,6 +578,26 @@ class RemoteScriptTests(unittest.TestCase):
             self.assertEqual(send_signal.call_args_list, [call(12100, signal.SIGTERM)] * 2)
         self.assertEqual(result["state"], "reloaded")
 
+    def test_tunnel_reconnect_migrates_after_busy_backend_exits_before_confirming_replacement(self):
+        database = self.root / "state_5.sqlite"
+        with closing(sqlite3.connect(database)) as db, db:
+            db.execute("CREATE TABLE threads(id TEXT PRIMARY KEY,model_provider TEXT)")
+            db.execute("INSERT INTO threads VALUES ('finishing','openai')")
+        expected = {"config.toml": hashlib.sha256((self.root / "config.toml").read_bytes()).hexdigest()}
+        with self.ssh_app_server(signals_to_exit=2) as (send_signal, _):
+            def check_writer(*_):
+                self.assertEqual(send_signal.call_count, 2)
+                self.assertEqual(len(self.native_calls), 2)
+                return False
+
+            self.writer_before = check_writer
+            result = self.execute("tunnel_reconnect", home=str(self.root.resolve()), uid=1000,
+                                  expected=expected, provider_aliases=["openai"])
+        self.assertEqual(result["state"], "reloaded")
+        self.assertEqual(result["session_migration"]["changed"], 1)
+        with closing(sqlite3.connect(database)) as db:
+            self.assertEqual(db.execute("SELECT model_provider FROM threads").fetchone(), (PROVIDER,))
+
     def test_ssh_reconnect_rejects_an_unrelated_or_unverifiable_listener(self):
         reasons = {
             "uid": "属于当前 SSH 账号",
@@ -736,6 +764,7 @@ class WindowsRemoteRelayTests(unittest.TestCase):
         self.host = Host("remote-ssh-test", "server", "server", 2222)
         self.remote_home, self.uid = self.root, 0
         self.ready = True
+        self.old_writer = False
         self.calls, self.forwards = [], []
         self.relays = self.manager()
 
@@ -778,7 +807,11 @@ class WindowsRemoteRelayTests(unittest.TestCase):
              patch("os.getuid", return_value=self.uid, create=True), patch("pathlib.Path.home", return_value=self.remote_home), \
              patch("shutil.which", return_value=None), \
              redirect_stdout(output):
-            exec("INPUT = " + repr(json.dumps({"action": action, **options})) + "\n" + SCRIPT, {})
+            def execute_worker(source, scope):
+                exec(source, scope)
+                scope["linux_writer_before"] = lambda *_: self.old_writer
+
+            exec("INPUT = " + repr(json.dumps({"action": action, **options})) + "\n" + SCRIPT, {"exec": execute_worker})
         return json.loads(output.getvalue().split(RESULT_PREFIX)[-1])
 
     def test_session_sidebar_resolves_existing_history_and_scopes_new_captures_to_the_ssh_account(self):

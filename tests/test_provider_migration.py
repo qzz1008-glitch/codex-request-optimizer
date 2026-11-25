@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 from packet_inspector.config_link import ConfigLink, PROVIDER
 from packet_inspector.provider_migration import compatible_aliases
-from packet_inspector.provider_migration_worker import migrate
+from packet_inspector.provider_migration_worker import linux_writer_before, migrate
 from packet_inspector.providers import ProviderManager
 
 
@@ -29,6 +29,7 @@ class ProviderMigrationTests(unittest.TestCase):
         self.link = ConfigLink(self.config, self.root / "cache" / "link.json")
         self.manager = ProviderManager(self.link, "http://127.0.0.1:47844/relay/test", UPSTREAM)
         self.routes = {}
+        self.writer = self.enterContext(patch("packet_inspector.provider_migration.local_writer_before", return_value=False))
 
     def sync(self):
         return self.manager.sync(self.routes, lambda routes: setattr(self, "routes", routes))
@@ -85,6 +86,63 @@ class ProviderMigrationTests(unittest.TestCase):
         self.assertEqual(again["session_migration"]["changed"], 0)
         self.assertEqual(list((self.root / "cache" / "provider-migration-backups").glob("*.json")), backups)
 
+    def test_migration_waits_for_an_old_writer_even_before_its_first_session_is_saved(self):
+        self.writer.return_value = True
+        staged = self.sync()
+        self.assertTrue(staged["session_migration"]["waiting_for_reload"])
+        before = self.config.read_bytes()
+        revision = self.writer.call_args.args[1]
+        again = self.sync()
+        self.assertTrue(again["session_migration"]["waiting_for_reload"])
+        self.assertEqual(again["session_migration"]["backups"], [])
+        index = self.index(rows=[("finishing", "legacy", "Old task", 33, 0, 100, "")])
+        self.assertEqual(self.sync()["session_migration"]["changed"], 0)
+        self.assertEqual(self.rows(index)[0][1], "legacy")
+
+        self.writer.return_value = False
+        self.config.write_bytes(before + b"# updated by desktop startup\n")
+        verified = self.sync()
+        self.assertEqual(self.writer.call_args.args[1], revision)
+        self.assertTrue(verified["session_migration"]["verified_after_reload"])
+        self.assertEqual(verified["session_migration"]["changed"], 1)
+        self.assertEqual(self.rows(index)[0][1], PROVIDER)
+        self.assertFalse(verified["reload_required"])
+        self.assertEqual(self.config.read_bytes(), before + b"# updated by desktop startup\n")
+        self.assertFalse(self.sync()["session_migration"]["changed"])
+
+    def test_linux_only_blocks_writers_in_the_same_config_scope_from_before_the_switch(self):
+        proc = self.root / "proc"
+        process = proc / "99"
+        process.mkdir(parents=True)
+        (process / "comm").write_text("codex\n", encoding="ascii")
+        (process / "stat").write_text("99 (codex) S " + "0 " * 18 + "20\n", encoding="ascii")
+        args = process / "cmdline"
+        args.write_bytes(b"codex\0app-server\0--listen\0unix://\0")
+        env = process / "environ"
+        env.write_bytes(b"CODEX_HOME=" + str(self.root).encode("utf8") + b"\0")
+        with (patch("os.getuid", return_value=process.stat().st_uid, create=True),
+              patch("os.sysconf", return_value=100, create=True),
+              patch("time.CLOCK_BOOTTIME", 1, create=True),
+              patch("time.time_ns", return_value=2_000_000_000),
+              patch("time.clock_gettime_ns", return_value=1_000_000_000, create=True)):
+            self.assertTrue(linux_writer_before(self.root.resolve(), 1_300_000_000, proc=proc))
+            self.assertFalse(linux_writer_before(self.root.resolve(), 1_100_000_000, proc=proc))
+            args.write_bytes(b"codex\0app-server\0proxy\0")
+            self.assertFalse(linux_writer_before(self.root.resolve(), 1_300_000_000, proc=proc))
+            args.write_bytes(b"codex\0app-server\0--listen\0unix://\0")
+            env.write_bytes(b"CODEX_HOME=" + str(self.root / "other").encode("utf8") + b"\0")
+            self.assertFalse(linux_writer_before(self.root.resolve(), 1_300_000_000, proc=proc))
+
+    def test_reappearing_alias_inside_the_transaction_is_not_reported_as_migrated(self):
+        index = self.index(rows=[("old", "legacy", "Old task", 33, 0, 100, "")])
+        with closing(sqlite3.connect(index)) as db, db:
+            db.execute("CREATE TRIGGER restore_provider AFTER UPDATE OF model_provider ON threads "
+                       "BEGIN UPDATE threads SET model_provider='legacy' WHERE id=NEW.id; END")
+        result = self.sync()["session_migration"]
+        self.assertEqual(result["changed"], 0)
+        self.assertIn("legacy session provider remains", result["warnings"][0]["detail"])
+        self.assertEqual(self.rows(index)[0][1], "legacy")
+
     def test_provider_identity_checks_endpoint_auth_and_unknown_fields(self):
         canonical = {"requires_openai_auth": True, "wire_api": "responses", "base_url": UPSTREAM}
         data = {"model_providers": {PROVIDER: canonical,
@@ -128,7 +186,7 @@ class ProviderMigrationTests(unittest.TestCase):
         self.assertFalse(self.link.state_path.exists())
 
     def test_worker_failure_preserves_config_change_and_restart_feedback(self):
-        def fail(_):
+        def fail(_, *, require_reload):
             raise ValueError("native worker unavailable")
         result = self.manager.sync(self.routes, lambda _: None, session_migrator=fail)
         self.assertTrue(result["reload_required"])

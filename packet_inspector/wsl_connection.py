@@ -224,10 +224,10 @@ class LocalWsl:
             raise ValueError(result["error"])
         return result
 
-    def migrate_providers(self, distribution, home, aliases):
+    def migrate_providers(self, distribution, home, aliases, *, require_reload=False):
         # Native Linux SQLite owns its WAL locks; never write it through UNC.
         request = {"home": home, "backup_dir": str(PurePosixPath(home) / "provider-migration-backups"),
-                   "aliases": aliases, "target": PROVIDER}
+                   "aliases": aliases, "target": PROVIDER, "require_reload": require_reload}
         script = Path(__file__).with_name("provider_migration_worker.py").read_text(encoding="utf-8")
         script = script.replace("request = json.load(sys.stdin)", "request = " + repr(request))
         text = self.run(["-d", distribution, "--exec", "sh", "-lc", LABEL_LAUNCH,
@@ -427,8 +427,8 @@ class WslConnection:
                         # Verify this exact Windows instance before any Linux write.
                         self.backend.probe(target["distribution"], own.port, marker)
                         update = manager.sync(routes, publish_routes, retry_limit=retry_limit,
-                            session_migrator=lambda aliases: self.backend.migrate_providers(
-                                target["distribution"], target["home"], aliases))
+                            session_migrator=lambda aliases, **guard: self.backend.migrate_providers(
+                                target["distribution"], target["home"], aliases, **guard))
                         storage, image_changed = self._images(directory, target, link, True)
                     else:
                         if not config.is_file() or any(not Path(name).is_file() for name in link._state().get("files", {})):
@@ -439,16 +439,20 @@ class WslConnection:
                             # Manually connected URLs still identify their saved
                             # upstream. Record/backup them before native restore.
                             manager.sync(routes, publish_routes,
-                                session_migrator=lambda aliases: self.backend.migrate_providers(
-                                    target["distribution"], target["home"], aliases))
+                                session_migrator=lambda aliases, **guard: self.backend.migrate_providers(
+                                    target["distribution"], target["home"], aliases, **guard))
                         storage, image_changed = self._images(directory, target, link, False)
                         update = link.restore()
-                    changed = bool(update.get("reload_required") or image_changed)
+                    changed = bool(update.get("changed", update.get("reload_required")) or image_changed)
+                    reload_required = bool(update.get("reload_required") or image_changed)
+                    migration = update.get("session_migration", {})
                     result["targets"].append({**target, "id": "wsl:" + directory.name, "active": connected,
-                                               "changed": changed, "image_storage": storage,
-                                               "migrated_sessions": update.get("session_migration", {}).get("changed", 0)})
+                                               "changed": changed, "reload_required": reload_required,
+                                               "image_storage": storage,
+                                               "migrated_sessions": migration.get("changed", 0),
+                                               "migration_waiting": bool(migration.get("waiting_for_reload"))})
                     result["changed"] |= changed
-                    result["reload_required"] |= changed
+                    result["reload_required"] |= reload_required
                     result["warnings"].extend({"distribution": target["distribution"],
                                                **{key: item[key] for key in ("reason", "file", "detail") if key in item}}
                                               for item in update.get("warnings", []))
@@ -478,13 +482,17 @@ class WslConnection:
                 try:
                     link = ConfigLink(Path(target["config"]), directory / "link.json")
                     update = ProviderManager(link, endpoint, upstream).reconcile_sessions(routes,
-                        session_migrator=lambda aliases: self.backend.migrate_providers(
-                            target["distribution"], target["home"], aliases))
+                        session_migrator=lambda aliases, **guard: self.backend.migrate_providers(
+                            target["distribution"], target["home"], aliases, **guard))
                     changed = bool(update["changed"])
+                    reload_required = bool(update.get("waiting_for_reload")
+                                           or changed and not update.get("verified_after_reload"))
                     result["targets"].append({**target, "active": False, "changed": changed,
-                                              "migrated_sessions": update["changed"]})
+                                              "reload_required": reload_required,
+                                              "migrated_sessions": update["changed"],
+                                              "migration_waiting": bool(update.get("waiting_for_reload"))})
                     result["changed"] |= changed
-                    result["reload_required"] |= changed
+                    result["reload_required"] |= reload_required
                     result["warnings"].extend({"distribution": target["distribution"], **item}
                                               for item in update["warnings"])
                 except (OSError, ValueError) as exc:

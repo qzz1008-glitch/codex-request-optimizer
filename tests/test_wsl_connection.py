@@ -76,9 +76,10 @@ class FakeWsl:
             raise AssertionError(result.stderr.decode())
         return json.loads(result.stdout.decode().split("CPI_LABELS=", 1)[1])
 
-    def migrate_providers(self, distribution, home, aliases):
+    def migrate_providers(self, distribution, home, aliases, *, require_reload=False):
         from packet_inspector.provider_migration_worker import migrate
-        return migrate(self.config_path.parent, self.root / "migration-backups", aliases, "codex_packet_inspector")
+        return migrate(self.config_path.parent, self.root / "migration-backups", aliases, "codex_packet_inspector",
+                       writer_before=lambda *_: getattr(self, "old_writer", False), require_reload=require_reload)
 
 
 class WslConnectionTests(unittest.TestCase):

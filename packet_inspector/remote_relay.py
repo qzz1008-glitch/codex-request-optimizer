@@ -21,6 +21,7 @@ from .connection_policy import native_compression
 from .linux_images import LinuxImageTarget, linux_image_edits, probe_image_directory
 from .network_diagnostics import safe_text
 from .provider_defaults import API_UPSTREAM
+from .provider_migration import provider_selection_changed
 from .providers import _get, _put, prepare_provider_files
 from .remote_connections import SshControl
 from .router import RouterHandler, atomic_json
@@ -113,6 +114,11 @@ def managed_fields(record, name):
 
 def provider_policy_pending(record, policy):
     return record.get("provider_policy") != policy and "previous_fields" not in record
+
+
+def changes_provider(files, edits):
+    return any(provider_selection_changed((files[name] or b"").decode("utf-8-sig"), raw.decode("utf-8-sig"))
+               for name, raw in edits.items())
 
 
 class TunnelHandler(RouterHandler):
@@ -252,7 +258,7 @@ class RemoteRelays:
         atomic_json(self.directory / (key + ".json"), record)
 
     def _provider_policy(self):
-        return {"version": 1, "retry_limit": self.retry_limit()}
+        return {"version": 2, "retry_limit": self.retry_limit()}
 
     def _account_record(self, device, account_key, account):
         records = dict(self.records())
@@ -460,14 +466,17 @@ class RemoteRelays:
                                 for name, raw in files.items()}
                     updates = {name: base64.b64encode(raw).decode("ascii") for name, raw in edits.items()}
                     outcome = self._call(host, "write", expected=expected, updates=updates,
-                                         api_key=snapshot.get("api_key"), provider_aliases=sorted(aliases), **account)
+                                         api_key=snapshot.get("api_key"), provider_aliases=sorted(aliases),
+                                         require_reload=changes_provider(files, edits), **account)
                     migration = outcome.get("session_migration", {})
                     changed = bool(outcome["changed"] or migration.get("changed"))
                     files.update(edits)
                 active = bool(endpoint)
                 if endpoint:
-                    record["reload_required"] = bool(changed or record.get("reload_required"))
-                    if migration.get("warnings"):
+                    waiting = bool(migration.get("waiting_for_reload") or migration.get("warnings"))
+                    record["reload_required"] = bool(changed or waiting or record.get("reload_required"))
+                    record["provider_migration_waiting"] = waiting
+                    if waiting:
                         record.pop("provider_policy", None)
                     else:
                         record["provider_policy"] = policy
@@ -489,10 +498,24 @@ class RemoteRelays:
         if images is not None:
             result["image_storage"] = images
         if action == "reconnect":
-            reconnect = self._call(host, "reconnect", **account)
+            options = {}
+            if active and record.get("provider_migration_waiting"):
+                endpoint = f"http://127.0.0.1:{record['port']}/relay/{record['token']}"
+                edits, _, _, aliases, _ = config_changes(files, snapshot, record, endpoint,
+                                                        retry_limit=policy["retry_limit"])
+                if not changes_provider(files, edits):
+                    options = {"provider_aliases": sorted(aliases),
+                               "expected": {name: hashlib.sha256(raw).hexdigest() if raw is not None else None
+                                            for name, raw in files.items()}, "api_key": snapshot.get("api_key")}
+            reconnect = self._call(host, "reconnect", **options, **account)
             result["codex_reconnect"] = reconnect
             result["codex_restart"] = reconnect["codex_restart"]
-            if record and reconnect["state"] == "reloaded" and not reconnect.get("warning"):
+            finalized = not record.get("provider_migration_waiting") or "session_migration" in reconnect
+            if not finalized and reconnect["state"] == "reloaded" and not reconnect.get("warning"):
+                reconnect["warning"] = "远程会话的 provider 迁移尚未完成，已保留待生效提醒。"
+            if record and reconnect["state"] == "reloaded" and not reconnect.get("warning") and finalized:
+                if "session_migration" in reconnect:
+                    record.pop("provider_migration_waiting", None)
                 record["reload_required"] = result["reload_required"] = False
                 if active:
                     self._save(key, record)

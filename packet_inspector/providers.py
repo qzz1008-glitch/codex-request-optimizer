@@ -16,7 +16,7 @@ from .connection_policy import native_compression, standardize
 from .connection_plan import CONCURRENT_CHANGE, ConfigEdit, ConfigSnapshot, ConfigurationBatch
 from .configuration_layers import merge_layers
 from .provider_defaults import native_upstream, provider_upstream
-from .provider_migration import migration_aliases, migrate_sessions
+from .provider_migration import migration_aliases, migrate_sessions, provider_selection_changed
 from .sharing_config import SHARED_PROVIDER
 
 MODE = "all-providers-v1"
@@ -91,9 +91,12 @@ class ProviderManager:
             if all(ConfigSnapshot.read(source.path).content == source.content for source in plan.batch.sources):
                 self.link._write_state(plan.prior_state)
             raise
-        migration = migrate_sessions(self.link, sorted(plan.aliases), session_migrator)
+        migration = migrate_sessions(self.link, sorted(plan.aliases), session_migrator, require_reload=any(
+            provider_selection_changed(edit.source.text, edit.updated) for edit in plan.batch.edits))
         changed = bool(plan.batch.edits or migration["changed"])
-        return {"active": True, "changed": changed, "reload_required": changed,
+        reload_required = bool(plan.batch.edits or migration.get("waiting_for_reload")
+                               or migration["changed"] and not migration.get("verified_after_reload"))
+        return {"active": True, "changed": changed, "reload_required": reload_required,
                 "provider_count": plan.provider_count,
                 "config_files": len(plan.paths), "backups": backups + migration["backups"],
                 "warnings": [*plan.warnings, *migration["warnings"]],

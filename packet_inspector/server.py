@@ -533,9 +533,10 @@ class InspectorServer(ThreadingHTTPServer):
                 raise
             self.provider_fingerprint = self._provider_fingerprint()
             self.provider_sync_error = ""
+            previously_waiting = self.provider_sync_result.get("session_migration", {}).get("waiting_for_reload")
             self.provider_sync_result = result
             self.connection_reload_required |= result.get("reload_required", False)
-            if result.get("reload_required") and notify_restart:
+            if result.get("reload_required") and notify_restart and (result["changed"] or not previously_waiting):
                 self.restart_notices.mark("connection")
             self.provider_next_scan = time.monotonic() + 30
             return result
@@ -548,6 +549,8 @@ class InspectorServer(ThreadingHTTPServer):
         with self.provider_guard:
             if self.sharing_handover.pending:
                 raise ValueError("正在交接共享，请稍后修改接入设置。")
+            migrations_pending = (self.connection_resume.waiting_local or self.connection_resume.waiting_wsl
+                                  or self.provider_sync_result.get("session_migration", {}).get("waiting_for_reload"))
             self.connection_resume.cancel()
             if self.sharing.remote:
                 self.sharing.disconnect()
@@ -571,6 +574,7 @@ class InspectorServer(ThreadingHTTPServer):
                     result["reload_required"] = bool(result.get("reload_required") or proxy_repair["changed"]
                                                      or result["wsl"]["reload_required"])
                     self.connection_reload_required |= result["reload_required"]
+                    self.connection_resume.track_migrations(result.get("session_migration", {}), result["wsl"])
                     self.network_diagnostics.connection(before, self._diagnostic_profile(),
                         self.settings["provider_routes"], self.settings, result=result)
                     self._record_connection_notice(result)
@@ -591,6 +595,8 @@ class InspectorServer(ThreadingHTTPServer):
                     lambda routes: self.save_settings({**self.settings, "provider_routes": routes}))
                 result["reload_required"] = bool(result.get("reload_required") or result["wsl"]["reload_required"])
                 self.save_settings({**self.settings, "auto_detect_providers": False})
+                if migrations_pending:
+                    self.connection_resume.schedule()
                 self.connection_reload_required |= result.get("reload_required", False)
                 self._record_connection_notice(result)
                 return result
@@ -616,7 +622,7 @@ class InspectorServer(ThreadingHTTPServer):
         if result.get("local_reload_required"):
             self.restart_notices.mark("connection")
         for target in result.get("wsl", {}).get("targets", []):
-            if target.get("changed"):
+            if target.get("reload_required", target.get("changed")):
                 self.restart_notices.mark("wsl", target="wsl", scope=str(target.get("distribution", ""))[:160])
         result["restart_notice"] = self.restart_notices.snapshot()
 

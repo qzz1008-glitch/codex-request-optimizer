@@ -18,7 +18,12 @@ def desktop_started_at_ns():
         return None
 
 
-def _windows_started_at_ns():
+def windows_writer_before(_home, revision):
+    started = _windows_started_at_ns(include_cli=True)
+    return started is not None and started <= revision
+
+
+def _windows_started_at_ns(*, include_cli=False):
     import ctypes
     from ctypes import wintypes as w
 
@@ -59,7 +64,9 @@ def _windows_started_at_ns():
         row.size = ctypes.sizeof(row)
         found = kernel.Process32FirstW(snapshot, ctypes.byref(row))
         while found:
-            if row.name.casefold() in {"chatgpt.exe", "codex.exe"}:
+            name = row.name.casefold()
+            cli = name == "codex.exe" or name.startswith("codex-") and name.endswith("-windows-msvc.exe")
+            if name in {"chatgpt.exe", "codex.exe"} or include_cli and cli:
                 current = w.DWORD()
                 if not kernel.ProcessIdToSessionId(row.pid, ctypes.byref(current)):
                     if ctypes.get_last_error() != 87:  # A process exited during enumeration.
@@ -81,7 +88,7 @@ def _windows_started_at_ns():
                             path = Path(image.value)
                             embedded_cli = (path.parent / "resources" / "codex.exe").is_file()
                             packaged = family.value.casefold().startswith("openai.codex_")
-                            if packaged or embedded_cli:
+                            if packaged or embedded_cli or include_cli and cli:
                                 created, exited, system, user = (w.FILETIME() for _ in range(4))
                                 if not kernel.GetProcessTimes(process, ctypes.byref(created), ctypes.byref(exited),
                                                               ctypes.byref(system), ctypes.byref(user)):
@@ -96,4 +103,4 @@ def _windows_started_at_ns():
             raise ctypes.WinError(ctypes.get_last_error())
     finally:
         kernel.CloseHandle(snapshot)
-    return min(starts) if desktop and starts else None
+    return min(starts) if (desktop or include_cli) and starts else None

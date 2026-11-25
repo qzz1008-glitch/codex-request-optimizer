@@ -160,12 +160,12 @@ def native_command(cli, action, env, timeout):
         raise ValueError("Codex 原生后台未返回有效状态。")
     return value
 
-def restart_native(context, unavailable_reason):
+def restart_native(context, unavailable_reason, *, after_exit=None):
     if context is None:
         raise ReconnectProbeError(unavailable_reason)
     cli, env, socket_path, identity = context
     if identity is not None:
-        restart_ssh_app_server(cli, env, socket_path, identity)
+        restart_ssh_app_server(cli, env, socket_path, identity, after_exit=after_exit)
         return
     result = native_command(cli, "restart", env, 120)
     if result.get("status") != "restarted" or result.get("socketPath") != str(socket_path):
@@ -173,6 +173,8 @@ def restart_native(context, unavailable_reason):
     ready = native_command(cli, "version", env, 8)
     if not managed_daemon_running(ready) or ready.get("socketPath") != str(socket_path):
         raise ValueError("Codex 原生后台尚未就绪，请刷新状态后检查。")
+    if after_exit is not None:
+        after_exit()
 
 def confirm_ssh_app_server(cli, env, socket_path, identity, timeout):
     # The CLI's version command initializes a connection to the app server.
@@ -188,7 +190,7 @@ def confirm_ssh_app_server(cli, env, socket_path, identity, timeout):
     confirm_ssh_process(socket_path, identity)
     return ready
 
-def restart_ssh_app_server(cli, env, socket_path, expected_identity):
+def restart_ssh_app_server(cli, env, socket_path, expected_identity, *, after_exit=None):
     home = pathlib.Path(env["CODEX_HOME"])
     with verified_ssh_app_server(home, socket_path) as (identity, pidfd):
         if identity != expected_identity:
@@ -207,6 +209,8 @@ def restart_ssh_app_server(cli, env, socket_path, expected_identity):
                 signal.pidfd_send_signal(pidfd, signal.SIGTERM)
         if not exit_event.poll(SSH_EXIT_TIMEOUT * 1000):
             raise ReconnectProbeError(RECONNECT_EXIT_TIMEOUT)
+        if after_exit is not None:
+            after_exit()
         # Desktop owns the proxy and may need its WebSocket heartbeat to detect the disconnect.
         deadline = time.monotonic() + SSH_RECONNECT_TIMEOUT
         while True:
@@ -327,7 +331,8 @@ def write_remote_files(home, options):
             exec(PROVIDER_MIGRATION_WORKER, worker)
             try:
                 result["session_migration"] = worker["migrate"](
-                    home, home / "provider-migration-backups", aliases, PROVIDER_TARGET)
+                    home, home / "provider-migration-backups", aliases, PROVIDER_TARGET,
+                    writer_before=worker["linux_writer_before"], require_reload=options.get("require_reload", False))
             except (OSError, ValueError) as exc:
                 result["session_migration"] = {"changed": 0, "warnings": [
                     {"reason": "session_provider_migration_failed", "detail": str(exc)[:240]}]}
@@ -381,9 +386,21 @@ def tunnel_control(home, options):
         capability, context = native_codex(home)
         try:
             digest = config_digest(config)
-            restart_native(context, capability["reason"])
+            migration = None
+
+            def finish_migration():
+                nonlocal migration
+                migration = write_remote_files(home, {**options, "updates": {}})["session_migration"]
+
+            restart_native(context, capability["reason"],
+                           after_exit=finish_migration if options.get("provider_aliases") else None)
             warning = "" if config_digest(config) == digest else "Codex 已重载，但配置又有变化，请再次重新连接。"
-            return {"state": "reloaded", "warning": warning, "codex_restart": capability}
+            result = {"state": "reloaded", "warning": warning, "codex_restart": capability}
+            if migration is not None:
+                result["session_migration"] = migration
+                if not warning and (migration.get("warnings") or migration.get("waiting_for_reload")):
+                    result["warning"] = "远程会话的 provider 迁移尚未完成，已保留待生效提醒。"
+            return result
         except (OSError, ValueError, subprocess.SubprocessError) as exc:
             return {"state": "unconfirmed", "error": str(exc)[:1500], "codex_restart": capability}
     raise ValueError("无效的远程接入操作。")

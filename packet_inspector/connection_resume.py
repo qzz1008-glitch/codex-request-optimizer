@@ -21,6 +21,8 @@ class ConnectionResume:
         self.ready = False
         self.pending = not bool(server.worker_id)
         self.deferred_wsl = set()
+        self.waiting_wsl = set()
+        self.waiting_local = False
         self.next_wsl_scan = 0
         self.attempt = 0
         self.retry_at = 0
@@ -44,6 +46,8 @@ class ConnectionResume:
             self.retry_at = 0
             self.attempt = 0
             self.deferred_wsl.clear()
+            self.waiting_wsl.clear()
+            self.waiting_local = False
             self.current = {"id": "", "state": "idle", "result": {}, "error": ""}
 
     def is_active(self):
@@ -98,20 +102,29 @@ class ConnectionResume:
         return {"changed": bool(result.get("changed")), "reload_required": bool(result.get("reload_required")),
                 **{key: result.get(key, [])[:16] for key in ("targets", "detected", "warnings", "deferred")}}
 
+    def track_migrations(self, local, wsl):
+        self.waiting_local = bool(local.get("waiting_for_reload"))
+        self.waiting_wsl = {target["distribution"] for target in wsl.get("targets", [])
+                            if target.get("migration_waiting")}
+        self.next_wsl_scan = time.monotonic() + 30
+
     def _watch_deferred(self):
-        if not self.deferred_wsl or time.monotonic() < self.next_wsl_scan or not self.is_active():
+        if (not (self.deferred_wsl or self.waiting_wsl or self.waiting_local)
+                or time.monotonic() < self.next_wsl_scan or not self.is_active()):
             return
         self.next_wsl_scan = time.monotonic() + 30
         server = self.server
         with server.provider_guard:
             try:
+                if self.waiting_local:
+                    self.schedule()
+                    return
                 if not server.settings["auto_detect_providers"] or not server.connection_profile()["active"]:
                     self.deferred_wsl.clear()
-                    return
                 running = set(server.wsl.backend.running())
             except (OSError, ValueError):
                 return
-            if running & self.deferred_wsl:
+            if running & (self.deferred_wsl | self.waiting_wsl):
                 self.schedule()
 
     def step(self):
@@ -138,10 +151,11 @@ class ConnectionResume:
                                 "attempt": self.attempt, "max_attempts": len(RECOVERY_DELAYS) + 1}
             started = time.monotonic()
             result, error = {"active": False, "reload_required": False, "local_reload_required": False}, ""
+            wsl = {}
+            previously_waiting_wsl = self.waiting_wsl
             try:
                 if server.settings["auto_detect_providers"] and server.connection_profile()["active"]:
                     provider = server.sync_providers()
-                    wsl = {}
                     if not server.sharing.remote:
                         wsl = server.wsl.apply(True, server.endpoint, server.settings["upstream"],
                             server.settings["provider_routes"],
@@ -157,7 +171,6 @@ class ConnectionResume:
                               "wsl": self._wsl_result(wsl)}
                     server.connection_reload_required |= reload_required
                     self.deferred_wsl = {item["distribution"] for item in wsl.get("deferred", [])}
-                    self.next_wsl_scan = time.monotonic() + 30
                     if not server.sharing.remote:
                         try:
                             loopback = server.repair_local_loopback(codex_only=True)
@@ -174,12 +187,14 @@ class ConnectionResume:
                     migration = ProviderManager(server.link, server.endpoint, server.settings["upstream"]).reconcile_sessions(
                         server.settings["provider_routes"])
                     local_changed = bool(migration["changed"])
+                    local_reload = bool(migration.get("waiting_for_reload")
+                                        or local_changed and not migration.get("verified_after_reload"))
                     server.provider_sync_result["warnings"] = migration["warnings"]
-                    result.update(changed=local_changed, local_reload_required=local_changed,
-                                  reload_required=local_changed, warnings=migration["warnings"][:16],
+                    result.update(changed=local_changed, local_reload_required=local_reload,
+                                  reload_required=local_reload, warnings=migration["warnings"][:16],
                                   session_migration=migration)
-                    server.connection_reload_required |= local_changed
-                    if local_changed:
+                    server.connection_reload_required |= local_reload
+                    if local_reload and (local_changed or not self.waiting_local):
                         server.restart_notices.mark("connection")
                     wsl = server.wsl.reconcile_sessions(server.endpoint, server.settings["upstream"],
                                                        server.settings["provider_routes"])
@@ -187,22 +202,27 @@ class ConnectionResume:
                     result["reload_required"] |= bool(wsl.get("reload_required"))
                     result["wsl"] = self._wsl_result(wsl)
                     server.connection_reload_required |= result["reload_required"]
+                self.track_migrations(result.get("session_migration", {}), wsl)
             except Exception as exc:
                 # Keep serving already-published routes and report the repair.
                 error = safe_text(type(exc).__name__ + ": " + str(exc), (server.settings["relay_token"],), limit=1000)
                 self.deferred_wsl.clear()
             for target in result.get("wsl", {}).get("targets", []):
-                if target.get("changed"):
-                    server.restart_notices.mark("wsl", target="wsl", scope=str(target.get("distribution", ""))[:160])
+                distribution = str(target.get("distribution", ""))
+                if (target.get("reload_required", target.get("changed"))
+                        and (target.get("changed") or distribution not in previously_waiting_wsl)):
+                    server.restart_notices.mark("wsl", target="wsl", scope=distribution[:160])
             result["restart_notice"] = server.restart_notices.snapshot()
             attention = bool(error or result.get("warnings") or result.get("wsl", {}).get("warnings"))
+            waiting = self.waiting_local or bool(self.waiting_wsl)
             recoverable = bool(error or any(row.get("reason") not in {"config_not_found", "restore_pending"}
                                            for row in result.get("wsl", {}).get("warnings", [])))
             with self.guard:
                 delay = (RECOVERY_DELAYS[self.attempt - 1]
                          if attention and recoverable and self.attempt <= len(RECOVERY_DELAYS) else 0)
                 self.retry_at = time.monotonic() + delay if delay else 0
-                self.current = {**self.current, "state": "recovering" if delay else "attention" if attention else "complete",
+                state = "recovering" if delay else "attention" if attention else "awaiting_reload" if waiting else "complete"
+                self.current = {**self.current, "state": state,
                                 "result": result, "error": error,
                                 "retry_in_seconds": delay, "updated": time.time(),
                                 "duration_ms": round((time.monotonic() - started) * 1000)}

@@ -23,6 +23,7 @@ class ConnectionResumeTests(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
         self.config = self.root / "config.toml"
+        self.writer = self.enterContext(patch("packet_inspector.provider_migration.local_writer_before", return_value=False))
         self.config.write_text('model="test"\nmodel_auto_compact_token_limit=250000\n', encoding="utf8")
         self.backend = FakeWsl(self.root)
         self.server = self.make_server()
@@ -373,6 +374,25 @@ class ConnectionResumeTests(unittest.TestCase):
         self.resume.step()
         self.assertTrue(self.resume.pending)
         self.assertEqual(before, self.backend.config_path.read_bytes())
+
+    def test_pending_wsl_migration_resumes_after_the_linux_writer_exits(self):
+        self.connected()
+        self.backend.old_writer = True
+        self.resume.step()
+        self.assertEqual(self.resume.status()["state"], "awaiting_reload")
+        self.assertEqual(self.resume.waiting_wsl, {"Ubuntu-Test"})
+        database = self.backend.config_path.parent / "state_99.sqlite"
+        with closing(sqlite3.connect(database)) as db, db:
+            db.execute("CREATE TABLE threads(id TEXT PRIMARY KEY,model_provider TEXT)")
+            db.execute("INSERT INTO threads VALUES ('finishing','openai')")
+
+        self.backend.old_writer = False
+        self.resume.next_wsl_scan = 0
+        self.resume.step()
+        self.assertEqual(self.resume.status()["state"], "complete")
+        self.assertFalse(self.resume.waiting_wsl)
+        with closing(sqlite3.connect(database)) as db:
+            self.assertEqual(db.execute("SELECT model_provider FROM threads").fetchone(), (PROVIDER,))
 
     def test_replaced_worker_cannot_publish_routes_after_a_slow_probe(self):
         self.connected()
