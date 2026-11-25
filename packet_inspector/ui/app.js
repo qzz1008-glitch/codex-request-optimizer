@@ -2903,7 +2903,8 @@ function inputBreakdown(m, comparison) {
   for(const r of rows) {
     const items=itemsByCategory.get(r.category)??[];
     if(r.component) {
-      r.items=items.map(item=>({...item,...(item.components?.[r.component]??{delta:null,change:null})}));
+      r.items=items.map(item=>({...item,...(item.components?.[r.component]??{delta:null,change:null})}))
+        .filter(item=>item.delta!==0);
     } else if(Number.isSafeInteger(r.delta))r.items=items;
   }
   return rows.sort((a,b)=>b.bytes-a.bytes);
@@ -2963,8 +2964,10 @@ function renderOverview(m) {
   const inputSize=m.top_fields?.find(r=>r.name==="input")?.bytes;
   breakdown.append(
     bars("fields",t("字段构成"),fields,m.decoded_bytes,bodyAvailable),
-    bars("input",t("input 构成"),input,inputSize,bodyAvailable,
-      r=>r.component||r.items?.length?()=>inputChangeDetails(r,m,breakdownComparison,bodyAvailable):null)
+    bars("input",t("input 构成"),input,inputSize,bodyAvailable,row=>{
+      const expandable=row.component?row.delta!==0:row.items?.length>0;
+      return expandable?()=>inputChangeDetails(row,m,breakdownComparison,bodyAvailable):null;
+    })
   );
   reconcileContent(root,breakdown);
 }

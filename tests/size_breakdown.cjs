@@ -46,13 +46,13 @@ const changes=row=>Array.from(row.items,({index,change,delta})=>[index,change,de
   const rows=breakdown(groups(140,80),groups(124,70),{
     removed:[item(0,100,80),item(1,40,0)],added:[item(0,124,70)]
   });
-  assert.deepEqual(changes(rows.encrypted),[[0,'shrink',-10],[1,null,0]]);
+  assert.deepEqual(changes(rows.encrypted),[[0,'shrink',-10]]);
   assert.deepEqual(changes(rows.plain),[[0,'grow',34],[1,'removed',-40]]);
 }
 
 {
   const rows=breakdown(groups(100,80),groups(110,80),{removed:[item(0,100,80)],added:[item(0,110,80)]});
-  assert.deepEqual(changes(rows.encrypted),[[0,null,0]]);
+  assert.deepEqual(changes(rows.encrypted),[]);
   assert.deepEqual(changes(rows.plain),[[0,'grow',10]]);
 }
 
@@ -98,6 +98,17 @@ async function checkExpansion() {
     delta(component).onclick();
     assert.equal(delta(component).attributes['aria-expanded'],'false');
   }
+
+  const plainChange={...current,...groups(515264,498156)};
+  context.breakdownComparison={previous,items:context.packetDiffItems({
+    removed:[item(0,100,80)],added:[item(0,110,80)]
+  })};
+  context.state.detail=plainChange;
+  context.renderOverview(plainChange);
+  assert.equal(delta('encrypted').tag,'span');
+  assert.equal(delta('encrypted').text,'0 B');
+  assert.equal(delta('encrypted').onclick,undefined);
+  assert.equal(delta('plain').tag,'button');
 }
 
 checkExpansion().then(()=>console.log('Size breakdown and expansion cases passed')).catch(error=>{
