@@ -22,12 +22,20 @@ MAX_SESSIONS = 300
 
 
 def _has_conversation(db, thread):
-    candidates = db.execute("""SELECT CASE WHEN json_extract(s.meta,'$.details_evicted')=1
-                                           THEN s.meta ELSE coalesce(p.meta,s.meta) END
-        FROM packet_summaries s LEFT JOIN packets p ON p.id=s.id
-        WHERE s.thread=? AND s.method='POST'
-        ORDER BY s.created DESC,s.id DESC""", (thread,))
-    return any(is_conversation_generation(json.loads(raw)) for (raw,) in candidates)
+    candidates = db.execute("""SELECT id,meta FROM packet_summaries
+        WHERE thread=? AND method='POST' ORDER BY created DESC,id DESC""", (thread,))
+    for packet_id, raw in candidates:
+        summary = json.loads(raw)
+        if not is_conversation_generation(summary):
+            continue
+        if summary.get("details_evicted") == 1:
+            return True
+        # Retained legacy labels can identify an auxiliary request that looked
+        # like a conversation in its summary.
+        row = db.execute("SELECT meta FROM packets WHERE id=?", (packet_id,)).fetchone()
+        if row is None or row[0] is None or is_conversation_generation(json.loads(row[0])):
+            return True
+    return False
 
 
 def _add_capture_labels(database, records):
@@ -40,13 +48,18 @@ def _add_capture_labels(database, records):
     # Older captures can still provide a redacted user label if details remain.
     try:
         with closing(sqlite3.connect(database.as_uri() + "?mode=ro", uri=True, timeout=.2)) as db:
+            db.execute("BEGIN")
             for record in pending:
                 thread = record["thread_id"]
                 if not record.get("session_kind") and _has_conversation(db, thread):
                     record["has_conversation"] = True
                 candidates = db.execute(f"""SELECT json_extract(s.meta,'$.title'),json_extract(s.meta,'$.title_source'),
                     CASE WHEN json_extract(s.meta,'$.title') IS NULL AND json_type(p.meta,'$.input_items')='array'
-                         THEN json_extract(p.meta,'$.input_items') END
+                         THEN (SELECT json_group_array(json(value)) FROM (
+                               SELECT item.value FROM json_each(p.meta,'$.input_items') AS item
+                               WHERE CASE WHEN item.type='object'
+                                     THEN json_extract(item.value,'$.kind')='message:user' END
+                               ORDER BY item.key)) END
                     FROM packet_summaries s LEFT JOIN packets p ON p.id=s.id
                     WHERE s.thread=? AND s.method='POST' AND coalesce(json_extract(s.meta,'$.is_compaction'),0)=0
                       AND coalesce(json_extract(s.meta,'$.request_purpose'),json_extract(s.meta,'$.session_kind'),

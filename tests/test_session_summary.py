@@ -344,7 +344,11 @@ class SessionSummaryTests(unittest.TestCase):
         title = prefix + "文" * (48 - len(prefix)) + "…"
         self.assertEqual(store.get(first)[0]["title"], title)
         with store.connect() as db:
-            db.execute("UPDATE packets SET meta=json_remove(meta,'$.title') WHERE id=?", (first,))
+            meta = json.loads(db.execute("SELECT meta FROM packets WHERE id=?", (first,)).fetchone()[0])
+            meta.pop("title")
+            meta["input_items"] = [None, "legacy metadata", {"kind": "reasoning", "label": "Hidden detail"},
+                                   *meta["input_items"]]
+            db.execute("UPDATE packets SET meta=? WHERE id=?", (json.dumps(meta), first))
 
         before = (capture / "packets.sqlite").read_bytes()
         with patch("packet_inspector.session_summary.zlib.decompressobj", side_effect=AssertionError("body read")):
@@ -393,8 +397,8 @@ class SessionSummaryTests(unittest.TestCase):
     def test_conversations_keep_their_identity_without_originator_or_details(self):
         capture = self.root / "conversation-capture"
         store = Store(capture)
-        standalone, legacy, title, compact, prewarm, terminal, summary_only = [
-            f"00000000-0000-0000-0000-{number:012d}" for number in range(1, 8)]
+        standalone, legacy, title, compact, prewarm, terminal, summary_only, legacy_title = [
+            f"00000000-0000-0000-0000-{number:012d}" for number in range(1, 9)]
 
         def add(thread, *, origin="codex_exec", path="/responses", context=None):
             headers = {"x-codex-thread-id": thread}
@@ -414,8 +418,11 @@ class SessionSummaryTests(unittest.TestCase):
         add(prewarm, context={"request_kind": "prewarm"})
         add(terminal, origin="codex_cli_rs")
         pruned = add(summary_only, origin=None, context={"request_kind": "turn"})
+        old_title = store.add({"thread_id": legacy_title, "method": "POST", "path": "/responses",
+                               "input_items": [{"kind": "message:user", "label": TITLE_REQUEST_PREFIX}]})
         with store.connect() as db:
             db.execute("UPDATE packets SET meta=json_remove(meta,'$.title','$.headers') WHERE id=?", (previous,))
+            db.execute("UPDATE packets SET meta=json_remove(meta,'$.request_purpose') WHERE id=?", (old_title,))
             db.execute("""UPDATE packets SET content=NULL,
                 meta=json_set(json_remove(meta,'$.title','$.headers','$.input_items'),'$.details_evicted',1)
                 WHERE id=?""", (pruned,))
