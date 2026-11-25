@@ -12,7 +12,7 @@ from unittest.mock import Mock, patch
 
 from packet_inspector.frontend_dev import DESKTOP_PROFILE, FIRST_RUN_PENDING
 from packet_inspector.locking import file_lock
-from packet_inspector.router import atomic_json
+from packet_inspector.router import PROTOCOL, atomic_json
 from packet_inspector.upgrade import Upgrade
 from packet_inspector.sharing_upgrade import UpgradeCancelled
 
@@ -224,6 +224,26 @@ class UpgradeTests(unittest.TestCase):
         self.engine._start_candidate.assert_not_called()
         self.engine._stop_candidate.assert_not_called()
         self.assertEqual(json.loads((self.data / "upgrade-result.json").read_text(encoding="utf8"))["state"], "failed")
+
+    def test_installer_refuses_to_replace_a_stopped_newer_installation(self):
+        executable = self.engine.canonical.parent / "versions" / ("a" * 64) / self.engine.canonical.name
+        executable.parent.mkdir(parents=True)
+        executable.write_bytes(b"newer installed worker")
+        self.engine.canonical.write_bytes(b"stable entry")
+        identity = "1" * 32
+        state_path = self.data / "router-state.json"
+        state = {"active": identity, "protocol": PROTOCOL, "config": str(self.config)}
+        atomic_json(state_path, state)
+        atomic_json(self.data / "router-workers" / (identity + ".json"),
+                    {"id": identity, "port": 49123, "version": "9.0.1", "executable": str(executable)})
+
+        with patch("packet_inspector.upgrade.local_json", side_effect=ConnectionRefusedError):
+            with self.assertRaisesRegex(ValueError, "未执行降级"):
+                self.engine.run()
+
+        self.engine._start_candidate.assert_not_called()
+        self.assertFalse((self.data / "upgrade-backups").exists())
+        self.assertEqual(json.loads(state_path.read_text(encoding="utf8")), state)
 
     def test_fresh_install_applies_protection_defaults_and_cold_upgrade_preserves_choices(self):
         pending = self.data / FIRST_RUN_PENDING

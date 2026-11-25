@@ -28,10 +28,19 @@ from packet_inspector.sharing_handover import (PROTOCOL as SHARING_HANDOVER_PROT
 from packet_inspector.startup_diagnostics import STARTUP_SECONDS, startup_environment, wait_for_startup
 from packet_inspector.upgrade_compatibility import configuration_upgrade
 from packet_inspector.sharing_upgrade import CANCELLED_EXIT, SharingUpgrade, UpgradeCancelled
+from packet_inspector.updates import version_tuple
 
 
 PHASES = ("validate", "backup", "candidate", "compatibility", "handover", "switch", "verify", "record", "cleanup")
 CONTINUITY_UNSUPPORTED = "当前版本暂不支持不中断服务的升级，已保留现有服务。"
+DOWNGRADE_REFUSED = "已安装更新的版本，未执行降级。"
+
+
+def _is_newer_version(installed_version, requested_version):
+    try:
+        return version_tuple(installed_version) > requested_version
+    except ValueError:
+        return False  # Older or incomplete worker records may have no usable version.
 
 
 def free_port():
@@ -219,18 +228,29 @@ class Upgrade:
                 return [str(executable), "--router"]
         return [str(self.canonical)]
 
-    def _has_installed_payload(self, source_hash):
+    def _installed_application(self):
+        """Find this profile's active payload and version even when the entry is stopped."""
         if not self.canonical.is_file():
-            return False
+            return None, None
         try:
             state = json.loads((self.data_dir / "router-state.json").read_text(encoding="utf8"))
             if state["protocol"] != PROTOCOL or Path(state["config"]).resolve() != self.config:
-                return False
-            worker = Path(worker_info(self.data_dir, state["active"])["executable"]).resolve()
-            payload = application_payload(worker, self.data_dir)
-            expected = self.canonical.parent / "versions" / source_hash / self.canonical.name
-            return worker.is_file() and payload == expected and digest(payload) == source_hash
-        except (OSError, ValueError, KeyError, TypeError):
+                return None, None
+            worker = worker_info(self.data_dir, state["active"])
+            executable = Path(worker["executable"]).resolve()
+            payload = application_payload(executable, self.data_dir)
+            if (payload.name == self.canonical.name and payload.parent.parent == self.canonical.parent / "versions"
+                    and executable.is_file()):
+                return payload, worker.get("version")
+        except (OSError, ValueError, KeyError, TypeError, AttributeError):
+            pass
+        return None, None
+
+    def _has_installed_payload(self, payload, source_hash):
+        expected = self.canonical.parent / "versions" / source_hash / self.canonical.name
+        try:
+            return payload == expected and digest(payload) == source_hash
+        except OSError:
             return False
 
     def _open_window(self):
@@ -463,6 +483,10 @@ class Upgrade:
         for path in dict.fromkeys((app, entry)):
             if digest(path) != manifest["sha256"][path.name]:
                 raise ValueError("升级包校验失败。")
+        requested_version = version_tuple(manifest["version"])
+        _, installed_version = self._installed_application()
+        if _is_newer_version(installed_version, requested_version):
+            raise ValueError(DOWNGRADE_REFUSED)
         self._report("升级包校验通过，正在检查当前服务…")
         if self.port is None:
             runtime_file = self.data_dir / "runtime.json"
@@ -488,6 +512,8 @@ class Upgrade:
             legacy = health.get("router_protocol") is None
             if not legacy and health.get("router_protocol") != PROTOCOL:
                 raise ValueError("入口协议不兼容，未修改正在运行的服务。")
+            if _is_newer_version(status.get("version"), requested_version):
+                raise ValueError(DOWNGRADE_REFUSED)
             # This check precedes candidate construction, window changes and
             # stopping a legacy process. Unknown sharing owners are preserved.
             if status.get("sharing_settings_supported"):
@@ -719,10 +745,10 @@ def run_integrated(arguments, quiet=False, force=False):
     """A downloaded application is also its own verified upgrade payload."""
     from packet_inspector import VERSION
     from packet_inspector.service_options import argument_parser
-    from packet_inspector.updates import version_tuple
     options = argument_parser().parse_args(arguments)
     directory = options.data_dir.resolve()
     engine = Upgrade(directory, directory, options.config, options.port)
+    requested_version = version_tuple(VERSION)
     source = application_payload(sys.executable, directory)
     source_hash = digest(source)
     report = {"started": time.time(), "version": VERSION, "source_executable": str(Path(sys.executable).resolve())[:1000],
@@ -742,7 +768,8 @@ def run_integrated(arguments, quiet=False, force=False):
         record("complete", action="open_installed")
         return 0
 
-    if not force and engine._has_installed_payload(source_hash):
+    installed_payload, installed_version = engine._installed_application()
+    if not force and engine._has_installed_payload(installed_payload, source_hash):
         return open_installed("same_installed_payload")
 
     reason = "service_not_running"
@@ -750,21 +777,25 @@ def run_integrated(arguments, quiet=False, force=False):
         health = local_json(options.port, "/health", timeout=2, connect_timeout=STARTUP_CONNECT_SECONDS)
         status = local_json(options.port, "/api/status", timeout=3)
     except (ConnectionError, OSError, http.client.HTTPException):
-        pass
+        if _is_newer_version(installed_version, requested_version):
+            if force:
+                raise ValueError(DOWNGRADE_REFUSED) from None
+            report["installed_version"] = installed_version
+            return open_installed("newer_installed")
     else:
         if (health.get("app") != "codex-packet-inspector" or Path(status.get("data_dir", "")).resolve() != directory
                 or Path(status.get("profile", {}).get("config_path", "")).resolve() != options.config.resolve()):
             raise ValueError("此端口未使用当前配置，未执行升级。")
         current_version = version_tuple(status["version"])
         report.update(installed_version=status["version"], active_worker_id=status.get("worker_id", ""))
-        if current_version >= version_tuple(VERSION) and not force and engine.canonical.is_file():
-            installed_hash = engine._running_application_hash(status) if current_version == version_tuple(VERSION) else None
+        if current_version >= requested_version and not force and engine.canonical.is_file():
+            installed_hash = engine._running_application_hash(status) if current_version == requested_version else None
             report["installed_sha256"] = installed_hash
-            if current_version > version_tuple(VERSION) or source_hash == installed_hash:
-                return open_installed("newer_installed" if current_version > version_tuple(VERSION) else "same_payload")
-        if current_version > version_tuple(VERSION):
-            raise ValueError("已安装更新的版本，未执行降级。")
-        reason = "same_version_payload_changed" if current_version == version_tuple(VERSION) else "newer_payload"
+            if current_version > requested_version or source_hash == installed_hash:
+                return open_installed("newer_installed" if current_version > requested_version else "same_payload")
+        if current_version > requested_version:
+            raise ValueError(DOWNGRADE_REFUSED)
+        reason = "same_version_payload_changed" if current_version == requested_version else "newer_payload"
         if force:
             reason = "explicit_upgrade"
     record("preparing_upgrade", action="upgrade", reason=reason)

@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 from packet_inspector import upgrade
 from packet_inspector.frontend_dev import BuildProfile
-from packet_inspector.router import atomic_json
+from packet_inspector.router import PROTOCOL, atomic_json
 
 
 class IntegratedUpgradeTests(unittest.TestCase):
@@ -54,6 +54,12 @@ class IntegratedUpgradeTests(unittest.TestCase):
                     {"id": self.status["worker_id"], "port": 49123, "token": "fixture-control",
                      "version": self.status["version"], "executable": str(executable)})
         return executable
+
+    def save_installed_version(self, version):
+        self.status["version"] = version
+        self.install_worker(b"installed application")
+        atomic_json(self.data / "router-state.json", {"active": self.status["worker_id"], "protocol": PROTOCOL,
+                                                     "config": str(self.config)})
 
     def api(self, _port, path, **_kwargs):
         return {"app": "codex-packet-inspector"} if path == "/health" else self.status
@@ -128,11 +134,25 @@ class IntegratedUpgradeTests(unittest.TestCase):
         self.assertFalse(self.staged[0]["keywords"]["open_after"])
         self.assertEqual(self.report()["reason"], "explicit_upgrade")
 
-    def test_service_not_running_still_installs(self):
+    def test_service_not_running_still_installs_a_newer_download(self):
+        self.save_installed_version("8.9.0")
         with patch.object(upgrade, "local_json", side_effect=ConnectionRefusedError):
             self.assertEqual(upgrade.run_integrated(self.arguments), 0)
         self.installer.assert_called_once()
         self.assertEqual(self.report()["reason"], "service_not_running")
+
+    def test_service_not_running_opens_newer_installation_without_downgrading(self):
+        self.save_installed_version("9.0.1")
+        with patch.object(upgrade, "local_json", side_effect=ConnectionRefusedError):
+            self.assertEqual(upgrade.run_integrated(self.arguments), 0)
+            self.opener.assert_called_once()
+            self.assertEqual(self.report()["reason"], "newer_installed")
+            self.assertEqual(self.report()["installed_version"], "9.0.1")
+            with self.assertRaisesRegex(ValueError, "未执行降级"):
+                upgrade.run_integrated(self.arguments, force=True)
+        self.installer.assert_not_called()
+        self.opener.assert_called_once()
+        self.assertFalse((self.data / "updates").exists())
 
     def test_foreign_service_and_unmanaged_worker_are_never_overwritten(self):
         for foreign in (True, False):
