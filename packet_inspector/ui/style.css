@@ -1266,9 +1266,10 @@ body[data-desktop-startup] #record-count{visibility:hidden}
 .restart-notice-heading{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:4px 12px;min-width:0}
 .restart-notice-heading strong{min-width:0;font-size:var(--settings-label-size);font-weight:600}
 #settings-dialog #restart-notice-wsl{border-color:#dfba75;background:#fff;color:#875309}
-.restart-notice-items{display:flex;align-items:center;gap:6px;margin:0;padding:0;min-width:0;overflow-x:auto;overflow-y:hidden;list-style:none;scrollbar-width:thin}
-#settings-dialog :is(.restart-notice-tag,.restart-notice-message){font-size:var(--settings-detail-size);line-height:1.5}
-.restart-notice-tag{flex:none;padding:1px 7px;border:1px solid #edd7ac;border-radius:5px;background:#fffdf8;white-space:nowrap}
+.restart-notice-items{display:flex;align-items:center;gap:12px;margin:0;padding:0;min-inline-size:0;overflow-x:auto;overflow-y:hidden;list-style:disc inside;scrollbar-width:thin}
+#settings-dialog :is(.restart-notice-items,.restart-notice-message){font-size:var(--settings-detail-size);line-height:1.5}
+.restart-notice-items>li{flex:none;white-space:nowrap}
+.restart-notice-items>li::marker{color:var(--warn)}
 .restart-notice-message{min-inline-size:0;margin:0;overflow-wrap:anywhere}
 .restart-notice-message.error{max-block-size:4.5em;overflow:auto;scrollbar-width:thin}
 #settings-dialog #restart-notice-chatgpt{

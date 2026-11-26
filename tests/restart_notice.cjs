@@ -64,11 +64,18 @@ async function run() {
   await page.locator('#restart-notice-open').click();
   assert.equal(await page.locator('#settings-dialog').evaluate(node=>node.open),true);
   assert.equal(await page.locator('#restart-notice').isVisible(),true,'unapplied settings reveal the status card');
-  assert((await page.locator('#restart-notice-title').textContent()).includes('ChatGPT'));
+  assert.equal(await page.locator('#restart-notice-title').textContent(),'以下设置项在重启 ChatGPT 后生效');
   const settingsIds=['settings-dialog','restart-notice','settings-save','settings-restore','context-settings'];
   const settings=await rects(page,settingsIds);
   await page.evaluate(()=>{notice.change('context_tokens',null,250000);notice.change('compact_tokens',null,200000);});
   assert.deepEqual(await rects(page,settingsIds),settings,'adding pending settings must not move the form');
+  const pendingItems=page.locator('#restart-notice-items').getByRole('listitem');
+  assert.equal(await pendingItems.count(),3);
+  const itemStyles=await pendingItems.evaluateAll(nodes=>nodes.map(node=>{
+    const {listStyleType,listStylePosition,borderTopWidth,backgroundColor}=getComputedStyle(node);
+    return [listStyleType,listStylePosition,borderTopWidth,backgroundColor];
+  }));
+  for(const style of itemStyles)assert.deepEqual(style,['disc','inside','0px','rgba(0, 0, 0, 0)']);
   await assertPendingOutline(page.locator('[data-settings-field="context_tokens"]'));
   await assertPendingOutline(page.locator('[data-settings-field="compact_tokens"]'));
   await assertPendingOutline(page.locator('#connection-settings'));
@@ -259,7 +266,7 @@ async function run() {
       ?'待重启 ChatGPT 生效设置：图片解析\nWSL：WSL 配置 · Ubuntu'
       :'Settings pending a ChatGPT restart: Image\nWSL: WSL configuration · Ubuntu');
     assert.equal(await page.locator('#restart-notice-title').textContent(),language==='zh'
-      ?'重启 ChatGPT 后生效':'Restart ChatGPT to apply');
+      ?'重启 ChatGPT 并重新连接 WSL 后生效':'Restart ChatGPT and reconnect WSL to apply');
     const message=await page.locator('#restart-notice-message').textContent();
     assert.equal(message,language==='zh'
       ?'检测到 ChatGPT 重启后自动清除提醒。未检测到时可手动确认 ChatGPT 已重启 · WSL 仍需手动确认'

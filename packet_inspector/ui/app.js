@@ -490,7 +490,6 @@ globalThis.InspectorRestartNotice = {
       if(result.restart_notice)adopt(result.restart_notice);
       else if(result.reload_required){identify(status());mark("sharing");render();}
     }
-    function node(tag,cls,text) {const value=document.createElement(tag);value.className=cls;if(text)value.textContent=text;return value;}
     function pendingLabel(row) {return t(labels[row.key])+(row.scope?" · "+row.scope:"");}
     function pendingField(row) {
       if(row.key!=="capacity_retry")return row.key;
@@ -530,12 +529,22 @@ globalThis.InspectorRestartNotice = {
       badge.dataset.state=warning||failure?"error":"pending";
       const badgeLabel=warning?t("接入异常"):failure?t("状态异常"):items.length?restartLabel(items,portPending):"";
       $("restart-notice-label").textContent=badgeLabel;
-      $("restart-notice-title").textContent=t(portPending?"先重启本软件，再重启 ChatGPT App":optimizer&&chatgpt?"重启本软件与 ChatGPT App 后生效":optimizer?"重启本软件后生效":chatgpt?"重启 ChatGPT 后生效":wsl?"重新连接 WSL 会话后生效":failure?"待生效状态暂不可用":"配置生效状态");
+      $("restart-notice-title").textContent=t(
+        portPending?"先重启本软件，再重启 ChatGPT App":
+        optimizer&&chatgpt?"重启本软件与 ChatGPT App 后生效":
+        optimizer?"重启本软件后生效":
+        chatgpt&&wsl?"重启 ChatGPT 并重新连接 WSL 后生效":
+        chatgpt?"以下设置项在重启 ChatGPT 后生效":
+        wsl?"重新连接 WSL 会话后生效":failure?"待生效状态暂不可用":"配置生效状态");
       badge.title=warning||failure?[...problems.map(row=>[row.scope,t(row.reason),row.detail].filter(Boolean).join(" · ")),
         failure?t(failure):"",log?t("日志目录：{path}").replace("{path}",()=>log):"",t("点击打开日志目录")].filter(Boolean).join("\n"):
         (items.length?pendingTooltip(items,portPending):"");
       badge.setAttribute("aria-label",[badgeLabel,badge.title,t(warning||failure?"打开日志目录":"查看待生效配置或接入错误")].filter(Boolean).join(" · "));
-      const tags=$("restart-notice-items");tags.replaceChildren(...items.map(row=>node("li","restart-notice-tag",pendingLabel(row))));
+      $("restart-notice-items").replaceChildren(...items.map(row=>{
+        const item=document.createElement("li");
+        item.textContent=pendingLabel(row);
+        return item;
+      }));
       const message=$("restart-notice-message");
       const [messageStart,messageEnd=""]=chatgpt
         ?t(autoDetect&&!portPending&&!failure
