@@ -325,9 +325,9 @@
       <div class="settings-row">
         <span id="bad-request-retry-label" class="settings-key">异常重试</span>
         <div class="settings-controls settings-compound-controls">
-          <div class="settings-switch" title="仅重试通用 Bad Request；字段或参数错误保持原样。"><input id="bad-request-retry" type="checkbox" switch role="switch" aria-labelledby="bad-request-retry-label" aria-controls="bad-request-retry-count" aria-describedby="bad-request-retry-hint"></div>
+          <div class="settings-switch" data-settings-field="bad_request_retry_enabled" title="仅重试通用 Bad Request；字段或参数错误保持原样。"><input id="bad-request-retry" type="checkbox" switch role="switch" aria-labelledby="bad-request-retry-label" aria-controls="bad-request-retry-count" aria-describedby="bad-request-retry-hint"></div>
           <div class="settings-inline-fields">
-            <div class="settings-inline-field">
+            <div class="settings-inline-field" data-settings-field="bad_request_retry_max_retries">
               <label id="bad-request-retry-count-label" for="bad-request-retry-count">重试次数</label>
               <label class="settings-value-unit">
                 <input id="bad-request-retry-count" type="number" min="1" max="9" step="1" value="3" inputmode="numeric" aria-labelledby="bad-request-retry-count-label" aria-describedby="bad-request-retry-count-unit" required disabled>

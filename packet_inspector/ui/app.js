@@ -469,6 +469,14 @@ globalThis.InspectorRestartNotice = {
     }
     function node(tag,cls,text) {const value=document.createElement(tag);value.className=cls;if(text)value.textContent=text;return value;}
     function pendingLabel(row) {return t(labels[row.key])+(row.scope?" · "+row.scope:"");}
+    function pendingField(row) {
+      if(row.key!=="capacity_retry")return row.key;
+      if(["capacity_retry_enabled","capacity_retry_max_retries"].includes(row.field))return row.field;
+      const {before,after}=row;
+      if(Number.isInteger(before)&&Number.isInteger(after)&&before!==after)return "capacity_retry_max_retries";
+      if((before===null&&Number.isInteger(after))||(Number.isInteger(before)&&after===null))return "capacity_retry_enabled";
+      return null;
+    }
     function restartLabel(items,portPending=false) {
       const chatgpt=portPending||items.some(row=>row.target==="chatgpt"),optimizer=portPending||items.some(row=>row.target==="optimizer");
       return t(chatgpt&&optimizer?"ChatGPT 与本软件待重启":chatgpt?"ChatGPT 待重启":optimizer?"本软件待重启":"WSL 待重新连接");
@@ -519,10 +527,11 @@ globalThis.InspectorRestartNotice = {
         button.hidden=!needed;button.disabled=working||busy()||target==="chatgpt"&&portPending;
       }
       const pendingKeys=new Set(items.map(row=>row.key));
+      const pendingFields=new Set(items.map(pendingField));
       for(const wrapper of document.querySelectorAll("[data-settings-field]")) {
-        const field=wrapper.dataset.settingsField,key=["capacity_retry_enabled","capacity_retry_max_retries"].includes(field)?"capacity_retry":field;
-        wrapper.classList.toggle("restart-pending-field",pendingKeys.has(key));
+        wrapper.classList.toggle("restart-pending-field",pendingFields.has(wrapper.dataset.settingsField));
       }
+      $("capacity-retry-label").classList.toggle("restart-pending-label",pendingKeys.has("capacity_retry"));
       $("connection-settings").classList.toggle("restart-pending-field",["connection","sharing","wsl"].some(key=>pendingKeys.has(key)));
     }
     async function acknowledge(target) {

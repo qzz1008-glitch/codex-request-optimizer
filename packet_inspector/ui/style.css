@@ -691,8 +691,18 @@ input[type=checkbox][switch]:focus-visible{outline:2px solid var(--accent);outli
 #settings-dialog .settings-content>section:first-child{border-top:0}
 #settings-dialog .settings-content>section:last-child{padding-bottom:0}
 #settings-dialog :is(label,.settings-key){margin:0;color:var(--ink);font-size:var(--settings-label-size);line-height:var(--settings-label-line-height)}
-#settings-dialog .settings-key{min-inline-size:0;margin-block-start:calc((var(--settings-control-height) - 22px) / 2);font-weight:500;overflow-wrap:anywhere}
+#settings-dialog .settings-key{position:relative;min-inline-size:0;margin-block-start:calc((var(--settings-control-height) - 22px) / 2);font-weight:500;overflow-wrap:anywhere}
 #settings-dialog .settings-key:not(fieldset:disabled *){color:#486085}
+#settings-dialog .settings-key::before{
+  content:var(--settings-marker-content,none);position:absolute;inset-inline-start:-10px;
+  inset-block-start:calc((var(--settings-label-line-height) - 6px) / 2);border:3px solid var(--settings-marker-color);border-radius:50%
+}
+#settings-dialog :is(.settings-key.restart-pending-label,.settings-row:is(.restart-pending-field,:has(.restart-pending-field))>.settings-key){
+  --settings-marker-content:"";--settings-marker-color:var(--warn)
+}
+#settings-dialog :is(.settings-row:is(.settings-dirty,:has(.settings-dirty)),.settings-dirty>.settings-row)>.settings-key{
+  --settings-marker-content:"";--settings-marker-color:var(--accent)
+}
 #settings-dialog :is(button,input,select){font:inherit}
 #settings-dialog button{
   display:inline-flex;align-items:center;justify-content:center;min-block-size:var(--settings-control-height);
@@ -1268,7 +1278,7 @@ body[data-desktop-startup] #record-count{visibility:hidden}
 #settings-dialog #restart-notice-chatgpt:enabled:hover{border-color:var(--warn);background:#ffedc9}
 #settings-dialog #restart-notice-chatgpt:enabled:active{background:#ffe3ad}
 #settings-dialog #restart-notice-chatgpt:focus-visible{outline-offset:-1px}
-#settings-dialog .restart-pending-field{outline:1px solid #eac883;outline-offset:5px;border-radius:5px}
+#settings-dialog .restart-pending-field:not(.settings-dirty){outline:1px solid #eac883;outline-offset:5px;border-radius:5px}
 .inline-feedback .notice{position:static;inset:auto;z-index:auto;display:flex;align-items:center;gap:8px;width:100%;max-width:none;min-width:0;margin:0;padding:0;border:0;border-radius:0;background:none;box-shadow:none;color:inherit;font:inherit}
 .inline-feedback .notice>span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .inline-feedback .notice>a{flex:none;color:var(--accent);font-size:inherit;white-space:nowrap}

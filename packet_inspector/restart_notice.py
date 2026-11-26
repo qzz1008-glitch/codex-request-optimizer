@@ -48,6 +48,17 @@ class RestartNotices:
                 raise ValueError("invalid restart notice")
         return data
 
+    @staticmethod
+    def _snapshot_item(row):
+        item = {key: row[key] for key in ("key", "target", "scope")}
+        if row["key"] == "capacity_retry" and {"before", "after"} <= row.keys():
+            # The native retry setting is a limit when enabled and absent when disabled.
+            before, after = row["before"], row["after"]
+            if before != after and all(value is None or type(value) is int for value in (before, after)):
+                item["field"] = ("capacity_retry_enabled" if None in (before, after)
+                                 else "capacity_retry_max_retries")
+        return item
+
     def snapshot(self, *, port_pending=None):
         with self.guard:
             if not self.pending:
@@ -60,8 +71,7 @@ class RestartNotices:
                 self._detect_restart()
             return {"revision": self.memory["revision"],
                     "auto_detect_supported": os.name == "nt",
-                    "items": [{k: row[k] for k in ("key", "target", "scope")}
-                              for row in self.memory["items"].values()],
+                    "items": [self._snapshot_item(row) for row in self.memory["items"].values()],
                     "error": "待生效记录无法保存或读取，请勿据此判断配置已生效。" if self.error else ""}
 
     def _detect_restart(self):

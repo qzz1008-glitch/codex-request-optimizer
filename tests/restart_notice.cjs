@@ -323,6 +323,31 @@ async function run() {
   await page.locator('#restart-notice-open').click();
   assert.equal(await page.locator('#restart-notice').isVisible(),false);
   assert.deepEqual(await page.evaluate(()=>calls.at(-1)),['/api/open-directory',{path:'C:/fixture/logs'}]);cases++;
+
+  await load(page,{data_dir:'retry-fields',restart_notice:{revision:1,items:[]}});
+  await page.evaluate(()=>document.getElementById('settings-dialog').showModal());
+  const capacityKey=page.locator('#capacity-retry-label');
+  const markerColor=()=>capacityKey.evaluate(node=>getComputedStyle(node,'::before').borderTopColor);
+  const retryOutlines=page.locator('[data-settings-field^="capacity_retry_"].restart-pending-field');
+  for(const field of ['capacity_retry_max_retries','capacity_retry_enabled',null]) {
+    await page.evaluate(field=>{
+      const item={key:'capacity_retry',target:'chatgpt',scope:''};
+      if(field)item.field=field;
+      statusData.restart_notice={revision:statusData.restart_notice.revision+1,items:[item]};
+      notice.ingest();
+    },field);
+    assert.equal(await markerColor(),'rgb(162, 102, 0)');
+    assert.deepEqual(await retryOutlines.evaluateAll(nodes=>nodes.map(node=>node.dataset.settingsField)),field?[field]:[]);
+    if(field)await assertPendingOutline(retryOutlines);
+    cases++;
+  }
+  const countField=page.locator('[data-settings-field="capacity_retry_max_retries"]');
+  await countField.evaluate(node=>node.classList.add('settings-dirty'));
+  assert.equal(await markerColor(),'rgb(49, 95, 215)','draft edits change the left marker to blue');
+  await countField.evaluate(node=>node.classList.remove('settings-dirty'));
+  await page.locator('#restart-notice-chatgpt').press('Space');
+  assert.equal(await capacityKey.evaluate(node=>getComputedStyle(node,'::before').content),'none');
+  assert.equal(await retryOutlines.count(),0);cases++;
   console.log(JSON.stringify({restart_notice:'passed',browser_cases:cases}));
 }
 run().catch(error=>{console.error(error);process.exitCode=1;}).finally(async()=>{if(browser)await browser.close();});
