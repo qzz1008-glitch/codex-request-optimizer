@@ -31,12 +31,16 @@ async function run(){
     window.contextSettings=null;window.contextCustomValues=new Map();
     window.fillZstdLevel=()=>{};window.renderRecordScope=()=>{};
     window.setText=(node,value)=>node.textContent=value;
+    window.el=(tag,cls,text='')=>Object.assign(document.createElement(tag),{className:cls||'',textContent:text});
     window.settingsBaseline=null;
   });
   await page.addScriptTag({content:[controls,protection,draft,formats,storage].join('\n')});
   await page.evaluate(()=>{
     fillBadRequestRetry();fillCapacityRetry();fillPacketProtection();
-    fillContextSettings({context_tokens:null,compact_tokens:220000,max_context_tokens:500000});
+    fillContextSettings({context_tokens:null,compact_tokens:220000,max_context_tokens:500000,model_defaults:[
+      {model:'fixture',context_tokens:475000,compact_tokens:450000},
+      {model:'partial',context_tokens:null,compact_tokens:12345},
+    ]});
     state.status.storage={count:10000,stored:711120000};
     $('packet-limit').value='100000';$('storage-limit').value='1000';
     renderStorageInfo();renderRecordLimit($('packet-limit'));renderRecordLimit($('storage-limit'));
@@ -156,7 +160,7 @@ async function run(){
       ].map(element=>element.getBoundingClientRect().left)));
       const [sizeLimit,...retryLimits]=columns;
       for(const limit of retryLimits)assert.deepEqual(limit,sizeLimit,'The switches, number labels and fields share columns');
-      const contextRows=await settings.locator('.context-grid .settings-controls').evaluateAll(rows=>rows.map(row=>{
+      const contextRows=await settings.locator('.context-value-controls').evaluateAll(rows=>rows.map(row=>{
         const [toggle,field]=Array.from(row.children,child=>child.getBoundingClientRect());
         return {fieldLeft:field.left,aligned:toggle.right<field.left&&Math.abs(toggle.top+toggle.height/2-field.top-field.height/2)<1};
       }));
@@ -192,6 +196,33 @@ async function run(){
     assert.equal(await count.isDisabled(),true);
     assert.deepEqual(await page.evaluate(()=>changedSettings()),[],'an unchecked count does not leave a dirty draft');cases++;
   }
+  const defaultsTrigger=page.locator('#context-defaults-open'),defaultsDialog=page.locator('#context-defaults-dialog');
+  for(const [language,width] of [['zh',1120],['en',320]]){
+    await page.evaluate(language=>uiI18n.setLanguage(language,{persist:false}),language);
+    await page.setViewportSize({width,height:900});
+    const draft=await page.evaluate(()=>readSettingsDraft());
+    const recommendation=language==='zh'?'开启大小保护时，建议使用':'With size protection on, prefer';
+    assert((await defaultsTrigger.locator('..').textContent()).startsWith(recommendation));
+    assert.equal(await defaultsTrigger.textContent(),language==='zh'?'模型默认值':'Model defaults');
+    await defaultsTrigger.click();
+    assert(await defaultsDialog.evaluate(node=>node.matches(':modal')));
+    assert.deepEqual(await defaultsDialog.locator('tbody tr').evaluateAll(rows=>rows.map(row=>
+      Array.from(row.cells,cell=>cell.textContent))),[['fixture','475','450'],['partial','—','12.345']]);
+    const close=defaultsDialog.locator('button');
+    assert(await close.evaluate(node=>node===document.activeElement));
+    assert(await defaultsDialog.locator('#context-defaults-scroll').evaluate(node=>node.scrollWidth<=node.clientWidth+1));
+    if(language==='zh')await close.click();
+    else await page.keyboard.press('Escape');
+    assert.equal(await defaultsDialog.isVisible(),false);
+    assert(await defaultsTrigger.evaluate(node=>node===document.activeElement));
+    assert.deepEqual(await page.evaluate(()=>readSettingsDraft()),draft);
+    cases++;
+  }
+  await page.evaluate(()=>{delete contextSettings.model_defaults;});
+  await defaultsTrigger.click();
+  assert.equal(await defaultsDialog.locator('#context-defaults-message').textContent(),'This relay version does not provide model defaults');
+  assert.equal(await defaultsDialog.locator('table').isVisible(),false);
+  await page.keyboard.press('Escape');cases++;
   const storageLimit=page.locator('#storage-limit');
   const displayedLimit=storageLimit.locator('..').locator('.record-limit-formatted');
   assert.equal(await displayedLimit.isVisible(),true);

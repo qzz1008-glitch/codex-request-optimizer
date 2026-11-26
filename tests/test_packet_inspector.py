@@ -400,9 +400,37 @@ class ConfigTests(unittest.TestCase):
     def test_context_defaults_work_without_model_catalog(self):
         result=self.link.context_settings()
         self.assertIsNone(result["default_context_tokens"])
+        self.assertEqual(result["model_defaults"], [])
         result=self.link.save_context_settings({"context_tokens":240000,"compact_tokens":220000})
         self.assertEqual(result["context_tokens"],240000)
         self.assertEqual(result["effective_percent"],95)
+
+    def test_model_defaults_use_catalog_limits_without_configured_overrides(self):
+        self.path.write_text('model="base"\nmodel_context_window=600000\n'
+                             'model_auto_compact_token_limit=350000\nmodel_catalog_json="catalog.json"\n',
+                             encoding="utf8")
+        (self.root / "catalog.json").write_text(json.dumps({"models": [
+            {"slug": "base", "context_window": 500000, "max_context_window": 872000},
+            {"id": "custom", "max_context_window": 272000, "effective_context_window_percent": 90,
+             "auto_compact_token_limit": 220000},
+            {"slug": "capped", "context_window": 272000, "auto_compact_token_limit": 260000},
+            {"slug": "threshold-only", "auto_compact_token_limit": 12345},
+            {"slug": "unknown"},
+            {"slug": "base", "context_window": 10},
+            None,
+        ]}), encoding="utf8")
+        result = self.link.context_settings()
+        self.assertEqual(result["context_tokens"], 570000)
+        self.assertEqual(result["compact_tokens"], 350000)
+        self.assertEqual(result["default_context_tokens"], 475000)
+        self.assertEqual(result["max_context_tokens"], 828400)
+        self.assertEqual(result["model_defaults"], [
+            {"model": "base", "context_tokens": 475000, "compact_tokens": 450000},
+            {"model": "custom", "context_tokens": 244800, "compact_tokens": 220000},
+            {"model": "capped", "context_tokens": 258400, "compact_tokens": 244800},
+            {"model": "threshold-only", "context_tokens": None, "compact_tokens": 12345},
+            {"model": "unknown", "context_tokens": None, "compact_tokens": None},
+        ])
 
     def test_context_write_failure_preserves_original(self):
         original='model="m"\n'
@@ -1122,6 +1150,7 @@ class RelayTests(unittest.TestCase):
             status,info=self.api("/api/context-settings")
             self.assertEqual(status,200)
             self.assertIsNone(info["context_tokens"])
+            self.assertIsInstance(info["model_defaults"], list)
             status,result=self.api("/api/context-settings",{"context_tokens":240000,"compact_tokens":220000})
             self.assertEqual(status,200)
             self.assertEqual(result["context_tokens"],240000)

@@ -2538,6 +2538,26 @@ async function loadContextSettings() {
   try {fillContextSettings(await api("/api/context-settings"));}
   catch(error) {contextSettings=null;syncContextControls();contextMessage(()=>t("上下文配置读取失败：")+t(error.message),true);}
 }
+function openContextDefaults() {
+  const dialog=$("context-defaults-dialog"),scroll=$("context-defaults-scroll");
+  const defaults=contextSettings?.model_defaults;
+  const models=Array.isArray(defaults)?defaults:[];
+  const format=tokens=>Number.isSafeInteger(tokens)?nf.format(tokens/1000):"—";
+  $("context-defaults-rows").replaceChildren(...models.map(model=>{
+    const row=el("tr"),name=el("th","",model.model);
+    name.scope="row";
+    row.append(name,el("td","num",format(model.context_tokens)),el("td","num",format(model.compact_tokens)));
+    return row;
+  }));
+  const message=$("context-defaults-message");
+  scroll.hidden=!models.length;
+  message.hidden=!!models.length;
+  if(message.hidden)uiI18n.text(message,"");
+  else uiI18n.text(message,contextSettings&&!Array.isArray(defaults)?"当前中转版本未提供模型默认值":"暂未读取到本机模型默认值");
+  dialog.showModal();
+  scroll.scrollTop=0;
+}
+$("context-defaults-open").addEventListener("click",openContextDefaults);
 for(const key of ["context","compact"]) {
   const input=$(key+"-tokens"),toggle=$(key+"-custom");
   input.addEventListener("input",()=>contextMessage(""));

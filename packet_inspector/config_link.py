@@ -48,6 +48,29 @@ def toml_value(value):
     raise ValueError("不支持的 provider 配置类型")
 
 
+def _positive_int(value):
+    return value if type(value) is int and value > 0 else None
+
+
+def _model_context_limits(info):
+    maximum = _positive_int(info.get("max_context_window"))
+    window = _positive_int(info.get("context_window")) or maximum
+    maximum = maximum or window
+    percent = _positive_int(info.get("effective_context_window_percent")) or 95
+    if percent > 100:
+        percent = 95
+    threshold = info.get("auto_compact_token_limit")
+    if type(threshold) is not int:
+        threshold = None
+    # Codex's ModelInfo caps automatic compaction at 90% of the raw window.
+    if window is not None:
+        ceiling = window * 9 // 10
+        threshold = ceiling if threshold is None else min(threshold, ceiling)
+    usable = window * percent // 100 if window is not None else None
+    max_usable = maximum * percent // 100 if maximum is not None else None
+    return percent, usable, max_usable, threshold
+
+
 class ConfigLink:
     def __init__(self, config: Path, state_path: Path):
         self.config = config
@@ -61,32 +84,41 @@ class ConfigLink:
         _, data = self._read()
         return self._context_settings(data)
 
+    def _context_catalog(self, data):
+        catalog = data.get("model_catalog_json")
+        try:
+            catalog_path = Path(catalog).expanduser() if isinstance(catalog, str) and catalog else Path("models_cache.json")
+            if not catalog_path.is_absolute():
+                catalog_path = self.config.parent / catalog_path
+            cache = json.loads(catalog_path.read_text(encoding="utf-8-sig"))
+        except (OSError, ValueError, RuntimeError):
+            return {}
+        entries = cache.get("models") if isinstance(cache, dict) else cache
+        models = {}
+        if isinstance(entries, list):
+            for entry in entries:
+                if isinstance(entry, dict):
+                    name = entry.get("slug") or entry.get("id")
+                    if isinstance(name, str) and name.strip():
+                        models.setdefault(name, entry)
+        return models
+
     def _context_settings(self, data):
         model = data.get("model", "")
-        model_info = {}
-        catalog = data.get("model_catalog_json")
-        catalog_path = Path(catalog).expanduser() if catalog else self.config.parent / "models_cache.json"
-        if not catalog_path.is_absolute():
-            catalog_path = self.config.parent / catalog_path
-        try:
-            cache = json.loads(catalog_path.read_text(encoding="utf-8-sig"))
-            models = cache.get("models", []) if isinstance(cache, dict) else cache
-            model_info = next((m for m in models if isinstance(m, dict) and m.get("slug", m.get("id")) == model), {})
-        except (OSError, ValueError, TypeError):
-            pass
-        def positive_int(value):
-            return value if type(value) is int and value > 0 else None
-        percent = positive_int(model_info.get("effective_context_window_percent")) or 95
-        if percent > 100:
-            percent = 95
-        configured = positive_int(data.get("model_context_window"))
-        default = positive_int(model_info.get("context_window"))
-        maximum = positive_int(model_info.get("max_context_window")) or default
+        percent, default, maximum = 95, None, None
+        defaults = []
+        for name, entry in self._context_catalog(data).items():
+            model_percent, window, max_window, threshold = _model_context_limits(entry)
+            defaults.append({"model": name, "context_tokens": window, "compact_tokens": threshold})
+            if name == model:
+                percent, default, maximum = model_percent, window, max_window
+        configured = _positive_int(data.get("model_context_window"))
         return {"model": model, "config_path": str(self.config), "effective_percent": percent,
                 "context_tokens": configured * percent // 100 if configured else None,
-                "compact_tokens": positive_int(data.get("model_auto_compact_token_limit")),
-                "default_context_tokens": default * percent // 100 if default else None,
-                "max_context_tokens": maximum * percent // 100 if maximum else 10_000_000}
+                "compact_tokens": _positive_int(data.get("model_auto_compact_token_limit")),
+                "default_context_tokens": default,
+                "max_context_tokens": maximum if maximum is not None else 10_000_000,
+                "model_defaults": defaults}
 
     @staticmethod
     def _set_root_integer(text, data, key, value):

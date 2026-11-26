@@ -38,7 +38,9 @@ assert.equal(notice.textContent,'未找到 PowerShell，无法安装独立图片
 assert.equal(progress.textContent,'正在保存设置… 2/3');
 
 // Static interface labels, including titles and accessible names, have entries.
-const dictionary=vm.runInNewContext(translations.slice(translations.indexOf('const english = {'),translations.indexOf('\n  };')+5)+'\nenglish;');
+const dictionaryStart=translations.indexOf('const english = {');
+const dictionaryEnd=translations.indexOf('\n  };',dictionaryStart)+5;
+const dictionary=vm.runInNewContext(translations.slice(dictionaryStart,dictionaryEnd)+'\nenglish;');
 for(const file of ['index.html','tray.html']) {
   const html=fs.readFileSync('packet_inspector/ui/'+file,'utf8');
   const texts=[...html.matchAll(/>([^<>]+)</g)].map(match=>match[1].trim());
@@ -58,7 +60,7 @@ Object.assign(context,{
 });
 for(const name of ['renderStatus','renderContextPlaceholders','renderSettingsSaveProgress','renderUpdates',
   'renderConnectPrompt','renderExitRequest','showTab','renderOverview','renderHeaders',
-  'renderLanguageSelection','updateSettingsSaveState','resetSettingsSaveProgress','fillSettings',
+  'renderLanguageSelection','renderThemeSelection','updateSettingsSaveState','resetSettingsSaveProgress','fillSettings',
   'fillContextSettings','setSettingsMessage','setProxyTestStatus'])context[name]=(...args)=>calls.push([name,...args]);
 function extract(start,end) {
   const first=app.indexOf(start),last=app.indexOf(end,first);

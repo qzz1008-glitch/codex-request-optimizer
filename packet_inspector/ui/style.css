@@ -989,7 +989,40 @@ input[type=checkbox][switch]:focus-visible{outline:2px solid var(--accent);outli
 #settings-dialog .storage-directory-row>input{inline-size:100%;min-inline-size:0}
 #settings-dialog #linux-storage-targets input::placeholder{color:inherit}
 #settings-dialog .storage-directory-row>.help{grid-column:2/-1;margin:0}
-#settings-dialog .context-grid .settings-controls{flex-wrap:nowrap}
+#settings-dialog .context-heading{
+  display:flex;flex-wrap:wrap;align-items:center;gap:0 var(--settings-column-gap);
+  margin-block-end:6px;margin-inline-start:calc(-1 * var(--settings-section-indent))
+}
+#settings-dialog .context-heading h3{margin:0}
+#settings-dialog .context-heading .runtime-inline-hint{flex-basis:17em}
+#settings-dialog .context-value-controls{
+  display:flex;align-items:center;gap:var(--settings-column-gap);max-inline-size:100%
+}
+#settings-dialog #context-defaults-open{
+  display:inline;min-block-size:24px;padding:0 2px;border:0;background:transparent;
+  color:var(--accent);font:inherit;font-weight:600
+}
+#settings-dialog #context-defaults-open:is(:hover,:focus-visible){text-decoration:underline;text-underline-offset:3px}
+#context-defaults-dialog{
+  inline-size:min(580px,calc(100vw - 32px));max-block-size:min(580px,calc(100dvh - 40px));
+  padding:16px 20px;overflow:hidden
+}
+#context-defaults-dialog[open]{display:flex;flex-direction:column;gap:10px}
+#context-defaults-dialog:modal,#context-defaults-dialog::backdrop{overscroll-behavior:contain}
+#context-defaults-dialog::backdrop{overflow:hidden}
+#context-defaults-dialog .dialog-heading{flex:none;align-items:center;gap:12px}
+#context-defaults-title{margin:0;font-size:calc(18rem / 14);line-height:1.4}
+#context-defaults-dialog .dialog-heading button{min-inline-size:28px;min-block-size:28px;padding:0;border:0}
+#context-defaults-message{margin:0;overflow-wrap:anywhere}
+#context-defaults-scroll{
+  min-block-size:0;overflow:auto;overscroll-behavior:contain;border:1px solid var(--line);border-radius:8px
+}
+#context-defaults-scroll table{table-layout:fixed;border-collapse:separate;border-spacing:0;font-size:calc(13rem / 14)}
+#context-defaults-scroll thead{position:sticky;inset-block-start:0;z-index:1;background:var(--panel)}
+#context-defaults-scroll thead th:first-child{inline-size:42%}
+#context-defaults-scroll :is(th,td){padding:7px 10px;overflow-wrap:anywhere;white-space:normal}
+#context-defaults-scroll tbody th{font-weight:500}
+#context-defaults-scroll .num{text-align:end;font-variant-numeric:tabular-nums}
 #settings-dialog .record-limit-value{
   display:flex;align-items:center;gap:4px;inline-size:176px;max-inline-size:100%;
   font-variant-numeric:tabular-nums
