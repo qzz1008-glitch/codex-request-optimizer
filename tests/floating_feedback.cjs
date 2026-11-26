@@ -122,7 +122,8 @@ async function run(){
     assert.equal(install[1],button[1],'Both icons stay on the same line');
    }
    if(status==='available'){
-    assert(await installButton.locator('svg').evaluate(icon=>icon.getBBox().width>0),'The download icon renders');
+    assert(await installButton.locator('svg').evaluate(icon=>icon.getBBox().width>0),'The upgrade icon renders');
+    assert.equal(await installButton.locator('svg circle').count(),0,'The upgrade icon has no outer ring');
     const [notes,install]=await geometry(page,['updates-notes-open','updates-install']);
     assert(Math.abs(notes[0]-install[0]-install[2]-6)<=1,'The notes text follows the install icon');
     assert(await notesLink.evaluate(node=>{
