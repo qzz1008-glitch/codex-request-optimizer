@@ -129,7 +129,7 @@ async function run(){
      const {borderTopWidth,backgroundColor}=getComputedStyle(node);
      return borderTopWidth==='0px'&&backgroundColor==='rgba(0, 0, 0, 0)';
     }),'Release notes look like text');
-    assert.equal(await continuityHint.textContent(),language==='zh'?'中转服务平稳升级，仍可正常使用':'Relay stays available');
+    assert.equal(await continuityHint.textContent(),language==='zh'?'升级期间中转服务平稳切换，可正常处理请求':'Requests continue as usual');
     const hintAtEnd=await continuityHint.evaluate(node=>
      Math.abs(node.parentElement.getBoundingClientRect().right-node.getBoundingClientRect().right)<=1);
     assert(hintAtEnd,'The continuity hint is aligned to the right of the controls column');

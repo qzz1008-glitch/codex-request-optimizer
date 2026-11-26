@@ -990,7 +990,7 @@ const uiI18n = (() => {
     "正在检查更新…":"Checking for updates…",
     "已是最新版本。":"You are up to date.",
     "发现新版本，可以升级。":"A new version is available.",
-    "中转服务平稳升级，仍可正常使用":"Relay stays available",
+    "升级期间中转服务平稳切换，可正常处理请求":"Requests continue as usual",
     "正在下载并校验升级包…":"Downloading and verifying the upgrade…",
     "正在升级，旧请求继续完成…":"Upgrading. Existing requests continue to completion…",
     "升级已完成。":"Upgrade complete.",
