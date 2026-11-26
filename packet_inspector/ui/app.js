@@ -491,12 +491,15 @@ globalThis.InspectorRestartNotice = {
       else if(result.reload_required){identify(status());mark("sharing");render();}
     }
     function pendingLabel(row) {return t(labels[row.key])+(row.scope?" · "+row.scope:"");}
-    function pendingField(row) {
+    function pendingField(row,settings) {
       if(row.key!=="capacity_retry")return row.key;
       if(["capacity_retry_enabled","capacity_retry_max_retries"].includes(row.field))return row.field;
       const {before,after}=row;
       if(Number.isInteger(before)&&Number.isInteger(after)&&before!==after)return "capacity_retry_max_retries";
       if((before===null&&Number.isInteger(after))||(Number.isInteger(before)&&after===null))return "capacity_retry_enabled";
+      // Older relays report the retry group. Point to the control for its saved state.
+      if(settings?.capacity_retry_enabled===false)return "capacity_retry_enabled";
+      if(settings?.capacity_retry_enabled===true&&Number.isInteger(settings.capacity_retry_max_retries))return "capacity_retry_max_retries";
       return null;
     }
     function restartLabel(items,portPending=false) {
@@ -521,7 +524,11 @@ globalThis.InspectorRestartNotice = {
       const log=s?.active_log_dir||s?.log_dir||s?.data_dir||"";
       const failure=error||backendError||storageError,active=items.length>0||!!failure;
       const autoDetect=!!s?.restart_notice?.auto_detect_supported;
-      const nextKey=JSON.stringify([ledger.revision,items,details,s?.provider_warnings,s?.profile?.active,s?.wsl_connection,s?.connection_resume,autoDetect,portPending,problems,log,failure,working,!!busy(),uiI18n.language]);
+      const pendingFields=new Set(items.map(row=>pendingField(row,s)));
+      const nextKey=JSON.stringify([
+        ledger.revision,items,[...pendingFields],details,s?.provider_warnings,s?.profile?.active,
+        s?.wsl_connection,s?.connection_resume,autoDetect,portPending,problems,log,failure,working,!!busy(),uiI18n.language
+      ]);
       if(nextKey===renderKey)return;renderKey=nextKey;
       card.hidden=!active;
       card.dataset.state=active?"pending":"ready";
@@ -559,7 +566,6 @@ globalThis.InspectorRestartNotice = {
         button.hidden=!needed;button.disabled=working||busy()||target==="chatgpt"&&portPending;
       }
       const pendingKeys=new Set(items.map(row=>row.key));
-      const pendingFields=new Set(items.map(pendingField));
       for(const wrapper of document.querySelectorAll("[data-settings-field]")) {
         wrapper.classList.toggle("restart-pending-field",pendingFields.has(wrapper.dataset.settingsField));
       }

@@ -331,21 +331,41 @@ async function run() {
   assert.equal(await page.locator('#restart-notice').isVisible(),false);
   assert.deepEqual(await page.evaluate(()=>calls.at(-1)),['/api/open-directory',{path:'C:/fixture/logs'}]);cases++;
 
-  await load(page,{data_dir:'retry-fields',restart_notice:{revision:1,items:[]}});
+  await load(page,{data_dir:'retry-fields',capacity_retry_max_retries:15,restart_notice:{revision:1,items:[]}});
   await page.evaluate(()=>document.getElementById('settings-dialog').showModal());
   const capacityKey=page.locator('#capacity-retry-label');
   const markerColor=()=>capacityKey.evaluate(node=>getComputedStyle(node,'::before').borderTopColor);
   const retryOutlines=page.locator('[data-settings-field^="capacity_retry_"].restart-pending-field');
-  for(const field of ['capacity_retry_max_retries','capacity_retry_enabled',null]) {
-    await page.evaluate(field=>{
+  for(const [field,enabled,expected] of [
+    ['capacity_retry_max_retries',true,'capacity_retry_max_retries'],
+    ['capacity_retry_enabled',true,'capacity_retry_enabled'],
+    [null,true,'capacity_retry_max_retries'],
+    [null,false,'capacity_retry_enabled'],
+    [null,undefined,null],
+  ]) {
+    await page.evaluate(([field,enabled])=>{
       const item={key:'capacity_retry',target:'chatgpt',scope:''};
       if(field)item.field=field;
-      statusData.restart_notice={revision:statusData.restart_notice.revision+1,items:[item]};
+      statusData.capacity_retry_enabled=enabled;
+      statusData.restart_notice={revision:2,items:[item]};
       notice.ingest();
-    },field);
+    },[field,enabled]);
     assert.equal(await markerColor(),'rgb(162, 102, 0)');
-    assert.deepEqual(await retryOutlines.evaluateAll(nodes=>nodes.map(node=>node.dataset.settingsField)),field?[field]:[]);
-    if(field)await assertPendingOutline(retryOutlines);
+    assert.deepEqual(await retryOutlines.evaluateAll(nodes=>nodes.map(node=>node.dataset.settingsField)),expected?[expected]:[]);
+    if(expected)await assertPendingOutline(retryOutlines);
+    cases++;
+  }
+  for(const width of [420,1120]) {
+    await page.setViewportSize({width,height:900});
+    const {x,verticalOffset}=await capacityKey.evaluate(node=>{
+      const row=node.closest('.settings-row').getBoundingClientRect();
+      const label=node.getBoundingClientRect();
+      const marker=getComputedStyle(node,'::before');
+      const markerCenter=label.top+parseFloat(marker.insetBlockStart)+parseFloat(marker.marginBlockStart)+parseFloat(marker.blockSize)/2;
+      return {x:parseFloat(marker.insetInlineStart),verticalOffset:markerCenter-(row.top+row.height/2)};
+    });
+    assert.equal(x,-10,'the marker sits to the left of the label');
+    assert(Math.abs(verticalOffset)<1,'the marker is centered on the row, including when controls wrap');
     cases++;
   }
   const countField=page.locator('[data-settings-field="capacity_retry_max_retries"]');
