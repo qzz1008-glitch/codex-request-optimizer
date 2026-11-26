@@ -12,32 +12,32 @@
 .sharing-config{--sharing-label-width:56px;--sharing-field-gap:8px;--sharing-control-height:34px;--sharing-control-offset:calc(var(--sharing-label-width) + var(--sharing-field-gap));min-width:0;min-height:0;overflow:auto;scrollbar-gutter:stable;padding:2px 16px 4px 0;border-right:1px solid var(--line)}
 .sharing-config:lang(en){--sharing-label-width:84px}
 .sharing-card{min-width:0}.sharing-statistics{display:flex;flex-direction:column;min-width:0;min-height:0;overflow:hidden}
-.sharing-switch{position:absolute;left:50%;top:0;transform:translateX(-50%);display:inline-grid;grid-template-columns:repeat(2,minmax(0,1fr));padding:2px 4px;gap:4px;border:1px solid color-mix(in srgb,var(--accent) 22%,var(--line));border-radius:8px;background:color-mix(in srgb,var(--accent) 5%,var(--panel));box-shadow:inset 0 1px 0 #fff,0 1px 3px #132a4a08}
+.sharing-switch{position:absolute;left:50%;top:0;transform:translateX(-50%);display:inline-grid;grid-template-columns:repeat(2,minmax(0,1fr));padding:2px 4px;gap:4px;border:1px solid color-mix(in srgb,var(--accent) 22%,var(--line));border-radius:8px;background:color-mix(in srgb,var(--accent) 5%,var(--panel));box-shadow:inset 0 1px 0 var(--panel),0 1px 3px var(--shadow-edge,#132a4a08)}
 .sharing-switch button{display:inline-flex;align-items:center;justify-content:center;min-width:80px;min-height:28px;padding:3px 16px;border:0;border-radius:6px;background:transparent;color:color-mix(in srgb,var(--ink) 80%,var(--accent));font-size:13px;font-weight:600;line-height:20px;transition:background-color .16s ease,color .16s ease,box-shadow .16s ease}
 .sharing-switch button:hover:not([aria-pressed=true]){background:color-mix(in srgb,var(--accent) 9%,var(--panel));color:var(--accent)}
-.sharing-switch button[aria-pressed=true]{background:var(--accent);color:#fff;box-shadow:0 2px 5px #315fd72e,inset 0 1px 0 #ffffff26}
-.sharing-switch button[aria-pressed=true]:hover{background:color-mix(in srgb,var(--accent) 90%,var(--ink))}
+.sharing-switch button[aria-pressed=true]{background:var(--fill-primary,var(--accent));color:var(--ink-on-fill,#fff);box-shadow:0 2px 5px #315fd72e,inset 0 1px 0 #ffffff26}
+.sharing-switch button[aria-pressed=true]:hover{background:var(--fill-primary-hover,color-mix(in srgb,var(--accent) 90%,var(--ink)))}
 .sharing-switch button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .sharing-form{display:grid;gap:10px}.sharing-form[hidden]{display:none}
 .sharing-form>label{display:grid;grid-template-columns:var(--sharing-label-width) minmax(0,1fr);align-items:center;gap:var(--sharing-field-gap);min-width:0;font-size:12px;color:var(--muted)}
-.sharing-form input:not([type=checkbox]),.sharing-inline-editor input:not([type=checkbox]){width:100%;min-width:0;padding:8px 10px;border:1px solid var(--line);border-radius:6px;color:var(--ink);background:var(--panel);font:inherit;font-size:13px}
-.sharing-config .sharing-form>label>input,.sharing-config .sharing-amount-field,.sharing-config .sharing-expiry-control,.sharing-config .sharing-weekly-select{box-sizing:border-box;width:100%;height:var(--sharing-control-height);background-color:#fafbfc;font-size:13px;font-variant-numeric:tabular-nums}
+.sharing-form input:not([type=checkbox]),.sharing-inline-editor input:not([type=checkbox]){width:100%;min-width:0;padding:8px 10px;border:1px solid var(--line-control,var(--line));border-radius:6px;color:var(--ink);background:var(--surface-field,var(--panel));font:inherit;font-size:13px}
+.sharing-config .sharing-form>label>input,.sharing-config .sharing-amount-field,.sharing-config .sharing-expiry-control,.sharing-config .sharing-weekly-select{box-sizing:border-box;width:100%;height:var(--sharing-control-height);background-color:var(--surface-field,#fafbfc);font-size:13px;font-variant-numeric:tabular-nums}
 .sharing-config .sharing-expiry-control>.sharing-expiry-date,.sharing-config .sharing-amount-field>input{height:100%;min-height:0;padding-block:6px}
-.sharing-config .sharing-form>label>input:focus-visible{outline:0;border-color:var(--accent);box-shadow:0 0 0 2px #315fd71a;background:var(--panel)}
+.sharing-config .sharing-form>label>input:focus-visible{outline:0;border-color:var(--accent);box-shadow:0 0 0 2px var(--focus-halo,#315fd71a);background:var(--panel)}
 .sharing-config .sharing-form input::placeholder{color:var(--muted);opacity:.75}
-.sharing-amount-field{display:flex;align-items:center;min-width:0;padding-inline-end:10px;border:1px solid var(--line);border-radius:6px;background:var(--panel)}
+.sharing-amount-field{display:flex;align-items:center;min-width:0;padding-inline-end:10px;border:1px solid var(--line-control,var(--line));border-radius:6px;background:var(--surface-field,var(--panel))}
 .sharing-form .sharing-amount-field input{flex:1;width:0;min-width:0;border:0;border-radius:0;background:transparent;outline:0;box-shadow:none}
-.sharing-amount-field:focus-within{border-color:var(--accent);box-shadow:0 0 0 2px #315fd71a}
+.sharing-amount-field:focus-within{border-color:var(--accent);box-shadow:0 0 0 2px var(--focus-halo,#315fd71a)}
 .sharing-amount-unit{flex:none;color:var(--muted);font-size:12px;line-height:1;white-space:nowrap;pointer-events:none;user-select:none}
 .sharing-expiry{display:grid;grid-template-columns:var(--sharing-label-width) minmax(0,1fr);align-items:center;gap:var(--sharing-field-gap);min-width:0;font-size:12px;color:var(--muted)}.sharing-expiry>label{margin:0;white-space:nowrap}
-.sharing-expiry-control{display:flex;align-items:center;min-width:0;border:1px solid var(--line);border-radius:6px;background:var(--panel)}
-.sharing-expiry-control:focus-within{border-color:var(--accent);box-shadow:0 0 0 2px #315fd71a}
+.sharing-expiry-control{display:flex;align-items:center;min-width:0;border:1px solid var(--line-control,var(--line));border-radius:6px;background:var(--surface-field,var(--panel))}
+.sharing-expiry-control:focus-within{border-color:var(--accent);box-shadow:0 0 0 2px var(--focus-halo,#315fd71a)}
 .sharing-expiry-control .sharing-expiry-date{display:flex;flex:1;align-items:center;justify-content:space-between;gap:8px;width:0;min-width:0;padding:8px 10px;border:0;border-radius:5px;background:transparent;color:var(--ink);font-size:13px;font-variant-numeric:tabular-nums;text-align:left}.sharing-expiry-date svg{width:15px;height:15px;flex:none;color:var(--muted);pointer-events:none}
 .sharing-expiry-date:disabled{color:var(--muted);opacity:.5;cursor:default}
 .sharing-expiry-unlimited{display:inline-flex;align-items:center;gap:6px;margin:0;color:var(--ink);font-size:12px;white-space:nowrap;cursor:pointer}
-.sharing-calendar{position:fixed;z-index:40;display:grid;gap:8px;box-sizing:border-box;width:264px;max-width:calc(100vw - 24px);max-height:calc(100vh - 24px);overflow:auto;padding:12px;border:1px solid var(--line);border-radius:9px;background:var(--panel);color:var(--ink);box-shadow:0 6px 24px #0002}.sharing-calendar[hidden]{display:none}
+.sharing-calendar{position:fixed;z-index:40;display:grid;gap:8px;box-sizing:border-box;width:264px;max-width:calc(100vw - 24px);max-height:calc(100vh - 24px);overflow:auto;padding:12px;border:1px solid var(--line);border-radius:9px;background:var(--panel);color:var(--ink);box-shadow:0 6px 24px var(--shadow-edge,#0002)}.sharing-calendar[hidden]{display:none}
 .sharing-calendar-header{display:grid;grid-template-columns:28px minmax(0,1fr) 28px;align-items:center;text-align:center}.sharing-calendar-header strong{font-size:13px;font-weight:600}.sharing-calendar-header button{height:28px;min-height:0;padding:0;border:0;background:transparent;color:var(--muted);font-size:20px;line-height:1}
-.sharing-calendar-weekdays,.sharing-calendar-days{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:2px;text-align:center}.sharing-calendar-weekdays{color:var(--muted);font-size:11px;line-height:24px}.sharing-calendar-days button{height:29px;min-height:0;padding:0;border:0;border-radius:5px;background:transparent;color:var(--ink);font-size:12px;font-variant-numeric:tabular-nums}.sharing-calendar-days button:hover:not(:disabled){background:var(--bg)}.sharing-calendar-days button[aria-current=date]{box-shadow:inset 0 0 0 1px var(--line)}.sharing-calendar-days button[aria-pressed=true]{background:var(--accent);color:#fff}.sharing-calendar-days button[aria-pressed=true]:hover{background:var(--accent)}.sharing-calendar button:disabled{opacity:.3;cursor:default}
+.sharing-calendar-weekdays,.sharing-calendar-days{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:2px;text-align:center}.sharing-calendar-weekdays{color:var(--muted);font-size:11px;line-height:24px}.sharing-calendar-days button{height:29px;min-height:0;padding:0;border:0;border-radius:5px;background:transparent;color:var(--ink);font-size:12px;font-variant-numeric:tabular-nums}.sharing-calendar-days button:hover:not(:disabled){background:var(--bg)}.sharing-calendar-days button[aria-current=date]{box-shadow:inset 0 0 0 1px var(--line)}.sharing-calendar-days button[aria-pressed=true]{background:var(--fill-primary,var(--accent));color:var(--ink-on-fill,#fff)}.sharing-calendar-days button[aria-pressed=true]:hover{background:var(--accent)}.sharing-calendar button:disabled{opacity:.3;cursor:default}
 .sharing-calendar-footer{display:flex;align-items:center;justify-content:space-between;padding-top:10px;border-top:1px solid var(--line)}.sharing-calendar-footer>button{min-height:27px;padding:4px 10px;font-size:12px}
 .sharing-expiry-trigger::after,.sharing-weekly-control::after{content:"";display:inline-block;flex:none;width:5px;height:5px;margin-left:8px;border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;transform:translateY(-2px) rotate(45deg);opacity:.55}
 .sharing-expiry-trigger[aria-expanded=true]::after,.sharing-weekly-control:has(select:open)::after{transform:translateY(1px) rotate(225deg)}
@@ -46,7 +46,7 @@
 .sharing-budget-row,.sharing-weekly-row{display:grid;grid-template-columns:var(--sharing-label-width) minmax(0,1fr);align-items:center;gap:var(--sharing-field-gap);min-width:0}
 .sharing-budget-label{display:inline-flex;align-items:center;gap:4px;white-space:nowrap;font-size:12px;color:var(--muted)}
 .sharing-quota-help{display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;min-width:16px;padding:0;border:1px solid currentColor;border-radius:50%;background:transparent;color:var(--muted);font-size:11px;line-height:1}
-.sharing-quota-help:hover,.sharing-quota-help:focus-visible{color:var(--accent);background:#315fd70d}
+.sharing-quota-help:hover,.sharing-quota-help:focus-visible{color:var(--accent);background:var(--surface-hover,#315fd70d)}
 #quota-reference-dialog{width:380px;max-width:calc(100vw - 40px);padding:20px}
 .quota-reference-heading{display:flex;align-items:center;justify-content:space-between;gap:12px}
 .quota-reference-heading h2{margin:0;font-size:16px;line-height:1.5}
@@ -141,7 +141,7 @@
 .sharing-empty{text-align:center;color:var(--muted);padding:32px 10px;font-size:13px}
 .sharing-message{flex:none;box-sizing:border-box;margin:0;padding:10px 14px;border:1px solid var(--line);border-radius:7px;background:var(--panel);font-size:13px;line-height:1.6}
 .sharing-message.error{color:var(--danger);border-color:var(--danger)}
-.sharing-inline-editor{position:fixed;z-index:30;display:grid;gap:10px;box-sizing:border-box;width:256px;max-width:calc(100vw - 24px);padding:14px;border:1px solid var(--line);border-radius:9px;background:var(--panel);color:var(--ink);box-shadow:0 5px 24px #0002}
+.sharing-inline-editor{position:fixed;z-index:30;display:grid;gap:10px;box-sizing:border-box;width:256px;max-width:calc(100vw - 24px);padding:14px;border:1px solid var(--line);border-radius:9px;background:var(--panel);color:var(--ink);box-shadow:0 5px 24px var(--shadow-edge,#0002)}
 .sharing-inline-editor[data-field=expires_at],.sharing-inline-editor[data-field=expires_at] #sharing-inline-expiry-container,.sharing-inline-editor[data-field=expires_at] .sharing-expiry-control{display:contents}
 .sharing-inline-editor[data-field=expires_at]>label,.sharing-inline-editor[data-field=expires_at]>input,.sharing-inline-editor[data-field=expires_at]>.sharing-edit-message,.sharing-inline-editor[data-field=expires_at]>.sharing-inline-footer,#sharing-inline-expiry-date{display:none}
 /* Date edits report errors inside the calendar; its display:contents form must not reserve a feedback row. */
@@ -150,7 +150,7 @@
 .sharing-inline-footer{display:flex;align-items:center;gap:12px}
 .sharing-inline-actions{display:flex;justify-content:flex-end;gap:7px;margin-left:auto}.sharing-inline-actions button{min-height:28px;padding:4px 10px;font-size:12px}
 #sharing-delete-dialog{width:420px;max-width:calc(100vw - 40px);padding:24px}#sharing-delete-dialog h2{font-size:17px;margin-bottom:16px}#sharing-delete-dialog p{font-size:13px;line-height:1.7}.sharing-delete-name{font-weight:600;overflow-wrap:anywhere}#sharing-delete-dialog .button-row{justify-content:flex-end}
-.sharing-delete-button{background:var(--danger);border-color:var(--danger);color:#fff}.sharing-delete-button:hover{background:var(--danger);border-color:var(--danger);color:#fff;filter:brightness(.94)}
+.sharing-delete-button{background:var(--fill-danger,var(--danger));border-color:var(--fill-danger,var(--danger));color:var(--ink-on-fill,#fff)}.sharing-delete-button:hover{background:var(--fill-danger-hover,var(--danger));border-color:var(--fill-danger,var(--danger));color:var(--ink-on-fill,#fff);filter:brightness(.94)}
 .sharing-workspace button[aria-busy=true]::before,#sharing-delete-dialog button[aria-busy=true]::before{content:"";display:inline-block;width:10px;height:10px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;margin-right:7px;vertical-align:-2px;animation:sharing-spin .8s linear infinite}
 @keyframes sharing-spin{to{transform:rotate(360deg)}}
 @media(prefers-reduced-motion:reduce){.sharing-workspace button[aria-busy=true]::before,#sharing-delete-dialog button[aria-busy=true]::before{animation:none}.sharing-switch button{transition:none}}

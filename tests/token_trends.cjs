@@ -329,11 +329,25 @@ function eventRows(){return [
   for(const [index,[l,a,b]] of labs.entries())for(const [otherL,otherA,otherB] of labs.slice(0,index)) {
    assert.ok(Math.hypot(l-otherL,a-otherA,b-otherB)>.13,'Oklab color separation');
   }
-  for(const {color} of View.seriesPalette) {
+  function luminance(color) {
    const linear=[1,3,5].map(offset=>Number.parseInt(color.slice(offset,offset+2),16)/255).map(channel=>
     channel<=.04045?channel/12.92:((channel+.055)/1.055)**2.4);
-   const luminance=linear[0]*.2126+linear[1]*.7152+linear[2]*.0722;
-   assert.ok(1.05/(luminance+.05)>=4.5,'white background contrast');
+   return linear[0]*.2126+linear[1]*.7152+linear[2]*.0722;
+  }
+  for(const {color} of View.seriesPalette)assert.ok(1.05/(luminance(color)+.05)>=4.5,'light chart contrast');
+  for(const {color} of View.darkSeriesPalette)assert.ok((luminance(color)+.05)/(luminance('#1b232e')+.05)>=4.5,'dark chart contrast');
+  const chartSlots=new Map(result.series.map(group=>[group.id,group.colorSlot]));
+  context.uiAppearance={dark:true};
+  try {
+   result.render();
+   for(const group of result.series) {
+    const slot=chartSlots.get(group.id);
+    assert.equal(group.colorSlot,slot);
+    assert.equal(group.color,View.darkSeriesPalette[slot].color);
+   }
+  } finally {
+   delete context.uiAppearance;
+   result.render();
   }
   for(const row of [sample(50,rows[6].thread_id),sample(49,'new-session-color')])result.packets.set(row.id,row);
   result.render();

@@ -28,8 +28,10 @@ from .storage_paths import resolve_directory
 from .request_context import local_image_path
 from .proxy_settings import MAX_PROXY_SETTINGS_BYTES
 from .linux_images import SETTINGS_BYTES
+from .router import atomic_json
 
 UI_DIR = Path(__file__).with_name("ui")
+THEME_SCHEMES = {"light": "light", "dark": "dark", "system": "light dark"}
 UI_FILES = {"/": ("index.html", "text/html; charset=utf-8"),
             "/i18n.js": ("i18n.js", "text/javascript; charset=utf-8"),
             "/app.js": ("app.js", "text/javascript; charset=utf-8"),
@@ -164,6 +166,7 @@ class DesktopUI(ThreadingHTTPServer):
         self.updates_guard = threading.Lock()
         self.exit_requests = ExitRequests(exit_data_dir) if exit_data_dir is not None else None
         self.first_run_pending = Path(exit_data_dir) / FIRST_RUN_PENDING if exit_data_dir is not None else None
+        self.appearance_path = Path(exit_data_dir) / "ui-appearance.json" if exit_data_dir is not None else None
         self.exit_callback = None
         self.restart_requests = RestartRequests(exit_data_dir) if exit_data_dir is not None else None
         self.window_opened = 0
@@ -174,6 +177,18 @@ class DesktopUI(ThreadingHTTPServer):
     @property
     def ui_url(self):
         return f"http://127.0.0.1:{self.port}/"
+
+    @property
+    def theme(self):
+        if self.appearance_path is not None:
+            try:
+                data = json.loads(self.appearance_path.read_text(encoding="utf8"))
+                theme = data.get("theme") if isinstance(data, dict) else None
+                if isinstance(theme, str) and theme in THEME_SCHEMES:
+                    return theme
+            except (OSError, ValueError):
+                pass
+        return "light"
 
     def attach_relay(self, port):
         if not 1 <= port <= 65535:
@@ -218,6 +233,33 @@ class UIHandler(BaseHTTPRequestHandler):
 
     def _json(self, status, value):
         self._bytes(status, json.dumps(value, ensure_ascii=False).encode(), "application/json; charset=utf-8")
+
+    def _save_appearance(self):
+        path = self.server.appearance_path
+        if path is None:
+            self._reject_json(404, {"error": "ui_route_not_found"})
+            return
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            if self.headers.get("Transfer-Encoding") or not 1 <= length <= 256:
+                raise ValueError()
+        except ValueError:
+            self._reject_json(400, {"error": "invalid_ui_request_body"})
+            return
+        try:
+            data = json.loads(self.rfile.read(length))
+            theme = data.get("theme") if isinstance(data, dict) else None
+            if not isinstance(theme, str) or theme not in THEME_SCHEMES:
+                raise ValueError()
+        except (OSError, ValueError):
+            self._json(400, {"error": "无效的界面主题。"})
+            return
+        try:
+            atomic_json(path, {"theme": theme})
+        except OSError:
+            self._json(500, {"error": "界面主题未保存，请重试。"})
+            return
+        self._json(200, {"theme": theme})
 
     def _reject_json(self, status, value):
         discard_small_body(self)
@@ -494,6 +536,9 @@ class UIHandler(BaseHTTPRequestHandler):
         if path == "/api/desktop-startup" and self.command == "GET":
             self._json(200, {"ready": self.server.relay_ready.wait(15)})
             return
+        if path == "/api/appearance" and self.command == "POST":
+            self._save_appearance()
+            return
         if path.startswith("/api/") and not self.server.relay_ready.is_set():
             self._reject_json(503, {"error": "desktop_starting"})
             return
@@ -579,6 +624,10 @@ class UIHandler(BaseHTTPRequestHandler):
             if path == "/" and self.server.exit_requests is not None:
                 stage = b"sessions" if self.server.relay_ready.is_set() else b"service"
                 data = data.replace(b"<body>", b'<body data-desktop-startup="' + stage + b'">', 1)
+            if path in {"/", "/tray.html"} and self.server.appearance_path is not None:
+                theme = self.server.theme
+                setting = f'<meta name="color-scheme" content="{THEME_SCHEMES[theme]}" data-saved-theme="{theme}">'.encode("ascii")
+                data = data.replace(b'<meta name="color-scheme" content="light">', setting, 1)
             if path in {"/", "/tray.html"} and reload_page:
                 script = b"/__dev__/reload.js?view=tray" if path == "/tray.html" else b"/__dev__/reload.js"
                 data = data.replace(b"</head>", b'<script src="' + script + b'" defer></script></head>', 1)

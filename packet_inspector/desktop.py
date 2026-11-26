@@ -256,9 +256,10 @@ def run(arguments, *, entry_window=None, prepare_entry=None):
         # Explicitly require Chromium. Do not fall back to an external browser or IE.
         title = "Codex 请求优化器 · 开发版" if profile.development else "Codex 请求优化器"
         chrome = WindowChrome()
+        background = "#11161e" if ui.theme == "dark" else "#f5f7fb"
         window = webview.create_window(title, ui.ui_url if main_loaded else "about:blank",
                                        **window_geometry(ui_dir), maximized=False,
-                                       js_api=chrome, text_select=True, background_color="#f5f7fb", hidden=bool(options.desktop_check or not main_loaded))
+                                       js_api=chrome, text_select=True, background_color=background, hidden=bool(options.desktop_check or not main_loaded))
         chrome._bind(window)
         lifecycle = WindowLifecycle(window, lambda: tray_available(options.data_dir, status))
 

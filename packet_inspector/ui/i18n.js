@@ -1,5 +1,50 @@
 "use strict";
 
+// The desktop supplies its saved choice before paint. Storage also keeps the
+// tray in sync and covers hot-reloaded pages hosted by an older desktop.
+globalThis.uiAppearance = (() => {
+  const meta = document.querySelector?.('meta[name="color-scheme"]');
+  const storageKey = "packet-inspector-theme";
+  const saved = meta?.getAttribute("data-saved-theme");
+  const system = meta && globalThis.matchMedia?.("(prefers-color-scheme: dark)");
+  const normalize = value => value === "dark" || value === "system" ? value : "light";
+  let theme = "light", preview = null, dark = false;
+  function render() {
+    if (!meta) return;
+    const active = preview ?? theme;
+    const nextDark = active === "dark" || (active === "system" && !!system?.matches);
+    meta.content = active === "system" ? "light dark" : active;
+    document.documentElement.toggleAttribute("data-system-dark", active === "system" && nextDark);
+    if (nextDark !== dark) {
+      dark = nextDark;
+      globalThis.dispatchEvent(new Event("inspector-appearance-change"));
+    }
+  }
+  let initial = saved;
+  if (meta) {
+    if (!initial) try { initial = localStorage.getItem(storageKey); } catch (_) {}
+    theme = normalize(initial);
+    render();
+    system?.addEventListener("change", render);
+    globalThis.addEventListener("storage", event => {
+      if (event.key === storageKey) {
+        theme = normalize(event.newValue);
+        render();
+      }
+    });
+  }
+  function previewTheme(value) {
+    preview = value === null ? null : normalize(value);
+    render();
+  }
+  function setTheme(value) {
+    theme = normalize(value);
+    previewTheme(null);
+    try { localStorage.setItem(storageKey, theme); } catch (_) {}
+  }
+  return {get theme() { return theme; }, get dark() { return dark; }, persistent: !!saved, previewTheme, setTheme};
+})();
+
 const uiI18n = (() => {
   const english = {
     "接入管理":"Connection management",
@@ -945,6 +990,12 @@ const uiI18n = (() => {
     "设置":"Settings",
     "语言":"Language",
     "界面语言":"Language",
+    "界面主题":"Appearance",
+    "浅色":"Light",
+    "深色":"Dark",
+    "跟随系统":"Follow system",
+    "无效的界面主题。":"Invalid appearance setting.",
+    "界面主题未保存，请重试。":"Appearance could not be saved. Please try again.",
     "刷新":"Refresh",
     "入口端口":"Entry port",
     "中转入口":"Relay entry",

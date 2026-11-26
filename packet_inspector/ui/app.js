@@ -414,6 +414,7 @@ globalThis.InspectorConnections = {
     restartMotion.addEventListener("change",()=>{
       if(!restartMotion.matches)stopRestartMorph();
     });
+    globalThis.addEventListener("inspector-appearance-change",stopRestartMorph);
     for(const node of [controls,panel]) {
       node.addEventListener("pointerenter",event=>{if(event.pointerType==="touch")return;hover=true;show();});
       node.addEventListener("pointerleave",leave);
@@ -2570,7 +2571,8 @@ function readSettingsDraft() {
     linux_data_directories:state.status.linux_data_directories?linuxStorageDraft():"{}",
     max_storage_mb:$("storage-limit").value,
     max_packets:$("packet-limit").value,
-    language:settingsLanguage??uiI18n.language
+    language:settingsLanguage??uiI18n.language,
+    theme:$("ui-theme").value
   };
   if(settingsBaseline&&!draft.packet_size_protection_enabled)draft.budget=settingsBaseline.budget;
   if(settingsBaseline&&!draft.capacity_retry_enabled) {
@@ -2672,7 +2674,7 @@ async function saveSettings() {
   const proxyChanged=s.proxy_settings_supported&&changed.has("proxy_settings");
   const controls=new Map([...$("settings-dialog").querySelectorAll("input,select,button")].map(node=>[node,node.disabled]));
   let saved=0,error=null;
-  settingsSaveProgress={total:Number(!!entries.length)+Number(!!contextChanged)+Number(!!portChanged)+Number(!!proxyChanged)+Number(changed.has("language")),steps:[]};
+  settingsSaveProgress={total:Number(!!entries.length)+Number(!!contextChanged)+Number(!!portChanged)+Number(!!proxyChanged)+Number(changed.has("language"))+Number(changed.has("theme")),steps:[]};
   settingsSaving=true;settingsRevision++;
   for(const node of controls.keys())node.disabled=true;
   $("settings-dialog").setAttribute("aria-busy","true");renderSettingsSaveProgress();
@@ -2735,6 +2737,17 @@ async function saveSettings() {
         }
         try {await setInterfaceLanguage(draft.language);}
         finally {if(uiI18n.language===draft.language)settingsBaseline.language=draft.language;}
+        saved++;
+      });
+    }
+    if(changed.has("theme")) {
+      await runSettingsSaveStep("界面主题",async()=>{
+        if(uiAppearance.persistent) {
+          const result=await api("/api/appearance",{theme:draft.theme});
+          if(result.theme!==draft.theme)throw Error("界面主题未保存，请重试。");
+        }
+        uiAppearance.setTheme(draft.theme);
+        settingsBaseline.theme=draft.theme;
         saved++;
       });
     }
@@ -2882,6 +2895,7 @@ async function openSettings() {
     if(state.status.linux_data_directories)renderLinuxStorageTargets(await api("/api/connections").catch(()=>null));
     else $("linux-storage-targets").hidden=true;
     settingsLanguage=uiI18n.language;
+    $("ui-theme").value=uiAppearance.theme;
     settingsBaseline=readSettingsDraft();settingsEditing=true;
     resetSettingsSaveProgress();
     renderLanguageSelection();renderConnectionActions();renderUpdates();updateSettingsSaveState();
@@ -3802,6 +3816,8 @@ function discardSettingsDraft() {
   if(!settingsEditing&&!settingsBaseline&&settingsLanguage===null)return;
   const language=settingsBaseline?.language??state.status?.ui_language??uiI18n.language;
   settingsEditing=false;settingsBaseline=null;settingsLanguage=null;
+  uiAppearance.previewTheme(null);
+  $("ui-theme").value=uiAppearance.theme;
   const restore=setInterfaceLanguage(language,{persist:false});
   resetSettingsSaveProgress();
   setProxyTestStatus();
@@ -3829,6 +3845,9 @@ action("storage-dir-open",()=>openSettingsDirectory("storage-dir"));
 $("settings-dialog").addEventListener("cancel",event=>{event.preventDefault();closeSettings();});
 $("settings-dialog").addEventListener("close",()=>{
   if(!$("settings-dialog").open){closeZstdLevelPicker(false);discardSettingsDraft();}
+});
+$("ui-theme").addEventListener("change",event=>{
+  if(settingsEditing&&!settingsSaving)uiAppearance.previewTheme(event.target.value);
 });
 for(const id of ["capacity-retry-count","capacity-retry-delay"])$(id).addEventListener("input",event=>{
   if(event.target.valueAsNumber>99)event.target.value="99";
@@ -4066,10 +4085,15 @@ class TokenTrendView {
     "#245fcb","#b34a09","#087752","#b23873","#7046ac","#006e83","#b52e36","#816204",
     "#566479","#4d6f18","#2f3991","#864330","#13729e","#44255d","#8b2149","#04503f"
   ].map(color=>({color,lab:TokenTrendView.toOklab(color)}));
-  static farthestSwatch(available,usedLabs) {
+  // The same slots keep their hue family when the user changes appearance.
+  static darkSeriesPalette=[
+    "#80aaff","#f3a56f","#70d8ab","#f283ba","#bda3ff","#61cee2","#f0787d","#e5cd76",
+    "#b2c1d4","#a7cc73","#8a95ed","#db8b7c","#6baed3","#bf7ae1","#e785a0","#70ad9b"
+  ].map(color=>({color,lab:TokenTrendView.toOklab(color)}));
+  static farthestSwatch(palette,available,usedLabs) {
     let bestSlot,bestDistance=-1;
     for(const slot of available) {
-      const [lightness,a,b]=TokenTrendView.seriesPalette[slot].lab;
+      const [lightness,a,b]=palette[slot].lab;
       const distance=Math.min(...usedLabs.map(([otherLightness,otherA,otherB])=>
         (lightness-otherLightness)**2+(a-otherA)**2+(b-otherB)**2));
       if(distance>bestDistance){bestSlot=slot;bestDistance=distance;}
@@ -4417,7 +4441,9 @@ class TokenTrendView {
     const previous=new Map(this.series.map(group=>[group.id,group.colorSlot]));
     // Reserve retained colors before assigning any new session, even when it sorts first.
     const occupied=new Set(series.map(group=>previous.get(group.id)).filter(slot=>slot!==undefined));
-    const palette=TokenTrendView.seriesPalette,available=new Set(),usedLabs=[];
+    const dark=globalThis.uiAppearance?.dark;
+    const palette=dark?TokenTrendView.darkSeriesPalette:TokenTrendView.seriesPalette;
+    const available=new Set(),usedLabs=[];
     for(const [slot,swatch] of palette.entries()) {
       if(occupied.has(slot))usedLabs.push(swatch.lab);
       else available.add(slot);
@@ -4427,7 +4453,7 @@ class TokenTrendView {
       let slot=previous.get(group.id);
       if(slot===undefined) {
         if(available.size) {
-          slot=TokenTrendView.farthestSwatch(available,usedLabs);
+          slot=TokenTrendView.farthestSwatch(palette,available,usedLabs);
           available.delete(slot);usedLabs.push(palette[slot].lab);
         } else {
           while(occupied.has(fallback))fallback++;
@@ -4435,7 +4461,7 @@ class TokenTrendView {
         }
       }
       group.colorSlot=slot;
-      group.color=palette[slot]?.color??`hsl(${((slot-palette.length)*137.508)%360} 68% 28%)`;
+      group.color=palette[slot]?.color??`hsl(${((slot-palette.length)*137.508)%360} 68% ${dark?70:28}%)`;
     }
   }
   svgNode(tag,attrs={},text) {const node=document.createElementNS("http://www.w3.org/2000/svg",tag);for(const [name,value]of Object.entries(attrs))node.setAttribute(name,String(value));if(text!==undefined)node.textContent=text;return node;}
@@ -4754,6 +4780,7 @@ async function poll() {
   } catch(e) {fail(e);} finally {state.polling=false;}
 }
 const pollTimer=setInterval(poll,2000);
+globalThis.addEventListener("inspector-appearance-change",()=>tokenTrendView.render());
 document.addEventListener("visibilitychange",()=>{if(document.hidden){tokenTrendView.cancelPending();return;}if(workspaceView==="trends")tokenTrendView.refresh();else if(workspaceView==="records"){loadTokenWindow();loadMorePackets();loadListTokens();}});
 globalThis.InspectorConnectionControls=InspectorConnections.create({request:api});
 async function initializePage() {

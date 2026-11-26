@@ -3,6 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="light">
   <title>Codex 请求优化器</title>
   <link rel="stylesheet" href="/style.css">
   <link rel="stylesheet" href="/sharing.css">
@@ -237,6 +238,16 @@
     <div class="settings-content">
     <section id="general-settings" aria-labelledby="general-settings-title">
       <h3 id="general-settings-title">通用设置</h3>
+      <div class="settings-row" data-settings-field="theme">
+        <span id="settings-theme-label" class="settings-key">界面主题</span>
+        <div class="settings-controls">
+          <select id="ui-theme" aria-labelledby="settings-theme-label">
+            <option value="light">浅色</option>
+            <option value="dark">深色</option>
+            <option value="system">跟随系统</option>
+          </select>
+        </div>
+      </div>
       <div class="settings-row" data-settings-field="language">
         <span id="settings-language-label" class="settings-key">界面语言</span>
         <div class="settings-controls">

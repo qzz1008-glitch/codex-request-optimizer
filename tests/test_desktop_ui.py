@@ -141,6 +141,28 @@ class DesktopUITests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertTrue(json.loads(result)["ui_first_run_pending"])
 
+    def test_appearance_is_local_and_survives_a_new_desktop_instance(self):
+        self.ui.close()
+        self.ui = DesktopUI(None, exit_data_dir=self.folder).start()
+        self.assertIn(b'content="light" data-saved-theme="light"', self.request("/")[1])
+
+        route = "/api/appearance"
+        self.assertEqual(self.request(route, "POST", b'{"theme":"dark"}', {"Origin": "https://example.test"})[0], 403)
+        for theme in (None, ["dark"], "<script>"):
+            self.assertEqual(self.request(route, "POST", json.dumps({"theme": theme}))[0], 400)
+        self.assertEqual(self.request(route, "POST", b'{"theme":"dark"}')[0], 200)
+        self.assertEqual(self.backend.requests, [])
+        self.assertEqual(json.loads((self.folder / "ui-appearance.json").read_text(encoding="utf8")), {"theme": "dark"})
+
+        self.ui.close()
+        self.ui = DesktopUI(self.backend.server_port, exit_data_dir=self.folder).start()
+        self.assertEqual(self.ui.theme, "dark")
+        for page in ("/", "/tray.html"):
+            self.assertIn(b'content="dark" data-saved-theme="dark"', self.request(page)[1])
+        self.assertEqual(self.request(route, "POST", b'{"theme":"system"}')[0], 200)
+        self.assertIn(b'content="light dark" data-saved-theme="system"', self.request("/")[1])
+        self.assertEqual(self.backend.requests, [])
+
     def test_first_launch_is_claimed_once_and_stays_consumed_after_reopening(self):
         self.ui.close()
         self.ui = DesktopUI(self.backend.server_port, ui_dir=self.folder, exit_data_dir=self.folder).start()
