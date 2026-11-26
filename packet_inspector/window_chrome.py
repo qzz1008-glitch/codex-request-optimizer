@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import ctypes
 from ctypes import wintypes
+from functools import lru_cache
 import json
 import os
 
@@ -15,7 +16,13 @@ SWP_NOSIZE = 0x01
 SWP_NOMOVE = 0x02
 SWP_FRAMECHANGED = 0x20
 WM_WINDOWPOSCHANGING = 0x46
+WM_NCCALCSIZE = 0x83
+WM_NCHITTEST = 0x84
+HTCLIENT = 1
+HTTOP = 12
 MONITOR_DEFAULTTONEAREST = 2
+DWMWA_BORDER_COLOR = 34
+DWMWA_COLOR_NONE = 0xFFFFFFFE
 
 
 class WindowPos(ctypes.Structure):
@@ -34,6 +41,29 @@ class WindowInfo(ctypes.Structure):
 class MonitorInfo(ctypes.Structure):
     _fields_ = [("cbSize", wintypes.DWORD), ("rcMonitor", wintypes.RECT), ("rcWork", wintypes.RECT),
                 ("dwFlags", wintypes.DWORD)]
+
+
+@lru_cache(maxsize=1)
+def _window_api():
+    user = ctypes.WinDLL("user32", use_last_error=True)
+    user.IsZoomed.argtypes = user.IsIconic.argtypes = [wintypes.HWND]
+    user.IsZoomed.restype = user.IsIconic.restype = wintypes.BOOL
+    user.GetWindowInfo.argtypes = [wintypes.HWND, ctypes.POINTER(WindowInfo)]
+    user.GetWindowInfo.restype = wintypes.BOOL
+    user.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
+    user.GetWindowRect.restype = wintypes.BOOL
+    user.GetWindowLongW.argtypes = [wintypes.HWND, ctypes.c_int]
+    user.GetWindowLongW.restype = ctypes.c_long
+    user.SetWindowLongW.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_long]
+    user.SetWindowLongW.restype = ctypes.c_long
+    user.SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND, ctypes.c_int,
+                                  ctypes.c_int, ctypes.c_int, ctypes.c_int, wintypes.UINT]
+    user.SetWindowPos.restype = wintypes.BOOL
+    user.MonitorFromRect.argtypes = [ctypes.POINTER(wintypes.RECT), wintypes.DWORD]
+    user.MonitorFromRect.restype = wintypes.HMONITOR
+    user.GetMonitorInfoW.argtypes = [wintypes.HMONITOR, ctypes.POINTER(MonitorInfo)]
+    user.GetMonitorInfoW.restype = wintypes.BOOL
+    return user
 
 
 def _fit_maximized_window(user, hwnd, position):
@@ -84,28 +114,41 @@ class WindowChrome:
         window.events.restored += self._notify
 
     def _before_show(self):
-        self._install()
-        if not self._enabled or self._subclass_hwnd:
+        if os.name != "nt":
+            return
+        if self._subclass_hwnd:
+            self._install()
             return
 
         # Install on the UI thread before WinForms processes its first maximize.
-        user = ctypes.WinDLL("user32", use_last_error=True)
-        user.IsZoomed.argtypes = user.IsIconic.argtypes = [wintypes.HWND]
-        user.IsZoomed.restype = user.IsIconic.restype = wintypes.BOOL
-        user.GetWindowInfo.argtypes = [wintypes.HWND, ctypes.POINTER(WindowInfo)]
-        user.GetWindowInfo.restype = wintypes.BOOL
-        user.MonitorFromRect.argtypes = [ctypes.POINTER(wintypes.RECT), wintypes.DWORD]
-        user.MonitorFromRect.restype = wintypes.HMONITOR
-        user.GetMonitorInfoW.argtypes = [wintypes.HMONITOR, ctypes.POINTER(MonitorInfo)]
-        user.GetMonitorInfoW.restype = wintypes.BOOL
+        user = _window_api()
         common, callback_type = window_subclass_api()
+        resize_top = 0
 
         @callback_type
         def window_proc(hwnd, message, wparam, lparam, subclass_id, _data):
+            nonlocal resize_top
             if message == WM_NCDESTROY:
                 common.RemoveWindowSubclass(hwnd, self._position_callback, subclass_id)
                 self._subclass_hwnd = None
+            if (message == WM_NCCALCSIZE and lparam and not user.IsIconic(hwnd)
+                    and not (user.GetWindowLongW(hwnd, GWL_STYLE) & WS_CAPTION)):
+                # RECT is also the first member of NCCALCSIZE_PARAMS. Keep the
+                # side and bottom insets; the HTML title bar paints the top edge.
+                client = wintypes.RECT.from_address(lparam)
+                window_top = client.top
+                common.DefSubclassProc(hwnd, message, wparam, lparam)
+                if not user.IsZoomed(hwnd):
+                    resize_top = client.top - window_top
+                client.top = window_top
+                return 0
             result = common.DefSubclassProc(hwnd, message, wparam, lparam)
+            if message == WM_NCHITTEST and result == HTCLIENT and resize_top > 0 and not user.IsZoomed(hwnd):
+                frame = wintypes.RECT()
+                if user.GetWindowRect(hwnd, ctypes.byref(frame)):
+                    screen_y = ctypes.c_short((lparam >> 16) & 0xFFFF).value
+                    if frame.top <= screen_y < frame.top + resize_top:
+                        return HTTOP
             if message == WM_WINDOWPOSCHANGING and lparam and user.IsZoomed(hwnd) and not user.IsIconic(hwnd):
                 # WinForms validates WINDOWPOS first. Apply the work area to the final proposal.
                 _fit_maximized_window(user, hwnd, WindowPos.from_address(lparam))
@@ -116,33 +159,38 @@ class WindowChrome:
         if not common.SetWindowSubclass(hwnd, window_proc, 1, 0):
             raise ctypes.WinError(ctypes.get_last_error())
         self._subclass_hwnd = hwnd
+        self._install(refresh_frame=True)
 
-    def _install(self):
+        # With the top in the web view, the remaining DWM outline can be hidden
+        # without changing the resize region. Older Windows versions ignore this attribute.
+        set_attribute = ctypes.WinDLL("dwmapi").DwmSetWindowAttribute
+        set_attribute.argtypes = [wintypes.HWND, wintypes.DWORD, ctypes.c_void_p, wintypes.DWORD]
+        set_attribute.restype = ctypes.c_long
+        color = wintypes.DWORD(DWMWA_COLOR_NONE)
+        set_attribute(hwnd, DWMWA_BORDER_COLOR, ctypes.byref(color), ctypes.sizeof(color))
+
+    def _install(self, *, refresh_frame=False):
         if os.name != "nt":
             return
-        user = ctypes.WinDLL("user32", use_last_error=True)
-        user.GetWindowLongW.argtypes = [wintypes.HWND, ctypes.c_int]
-        user.GetWindowLongW.restype = ctypes.c_long
-        user.SetWindowLongW.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_long]
-        user.SetWindowLongW.restype = ctypes.c_long
-        user.SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND, ctypes.c_int,
-                                      ctypes.c_int, ctypes.c_int, ctypes.c_int, wintypes.UINT]
-        user.SetWindowPos.restype = wintypes.BOOL
+        user = _window_api()
         hwnd = int(self._window.native.Handle.ToInt64())
         style = user.GetWindowLongW(hwnd, GWL_STYLE)
-        if not style & WS_CAPTION:
+        if not refresh_frame and not (style & WS_CAPTION):
             self._enabled = True
             return
         # Keep the system resize border and window commands; remove only the
         # duplicate caption. WinForms can reapply it when showing/restoring.
-        ctypes.set_last_error(0)
-        previous = user.SetWindowLongW(hwnd, GWL_STYLE, style & ~WS_CAPTION)
-        if not previous and ctypes.get_last_error():
-            raise ctypes.WinError(ctypes.get_last_error())
+        if style & WS_CAPTION:
+            ctypes.set_last_error(0)
+            previous = user.SetWindowLongW(hwnd, GWL_STYLE, style & ~WS_CAPTION)
+            if not previous and ctypes.get_last_error():
+                raise ctypes.WinError(ctypes.get_last_error())
         flags = SWP_FRAMECHANGED | SWP_NOSIZE | SWP_NOMOVE | 0x04 | 0x10
         if not user.SetWindowPos(hwnd, None, 0, 0, 0, 0, flags):
-            user.SetWindowLongW(hwnd, GWL_STYLE, style)
-            raise ctypes.WinError(ctypes.get_last_error())
+            error = ctypes.get_last_error()
+            if style & WS_CAPTION:
+                user.SetWindowLongW(hwnd, GWL_STYLE, style)
+            raise ctypes.WinError(error)
         self._enabled = True
 
     def window_state(self):

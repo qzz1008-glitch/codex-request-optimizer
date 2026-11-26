@@ -61,6 +61,8 @@ async function run(){
     const choice=page.locator('#ui-theme'),dark=page.locator('#ui-theme-dark'),light=page.locator('#ui-theme-light');
     const saveButton=page.locator('#settings-save'),save=()=>saveButton.click();
     const waitForTheme=(view,dark)=>view.waitForFunction(dark=>(getComputedStyle(document.documentElement).colorScheme==='dark')===dark,dark);
+    await page.evaluate(()=>{renderWindowState({enabled:true,maximized:false});});
+    assert.equal(await page.evaluate(()=>document.elementFromPoint(innerWidth/2,2).closest('.app-header')!==null),true);
     await open();
     assert.equal(await choice.evaluate(node=>node.closest('.settings-row').previousElementSibling.dataset.settingsField),'language');
     const group=page.getByRole('group',{name:'界面主题'});
@@ -72,6 +74,12 @@ async function run(){
     assert.equal(await scheme(page),'dark','Changing the selection previews the new theme');
     assert.equal(await scheme(tray),'light','A preview does not change the tray');
     assert.equal(await page.evaluate(()=>uiAppearance.theme),'light');
+    assert.equal(await page.evaluate(()=>{
+      const settings=document.getElementById('settings-dialog');
+      return document.elementFromPoint(innerWidth/2,2)===settings;
+    }),true,'The settings backdrop covers the top of the desktop title bar');
+    assert.equal(await page.locator('#settings-dialog').evaluate(dialog=>getComputedStyle(dialog,'::backdrop').backgroundColor),
+      'rgba(5, 8, 13, 0.7)','The dark backdrop dims the desktop title bar with the rest of the page');
     await page.locator('#settings-restore').click();
     assert.equal(await light.isChecked(),true);assert.equal(await scheme(page),'light');
     await dark.click();await close();await open();

@@ -56,6 +56,7 @@ def check_window(window, options, instance, ui):
 
     try:
         import win32api
+        import win32con
         import win32gui
 
         ready()
@@ -72,6 +73,10 @@ def check_window(window, options, instance, ui):
             style = user.GetWindowLongW(hwnd, -16)
             assert not style & 0x00C00000, "duplicate native caption is still visible"
             assert style & 0x00040000, "native resize border was removed"
+            left, top, right, _ = win32gui.GetWindowRect(hwnd)
+            assert win32gui.ClientToScreen(hwnd, (0, 0))[1] == top, "native strip remains above the page"
+            point = win32api.MAKELONG((left + right) // 2, top)
+            assert win32gui.SendMessage(hwnd, win32con.WM_NCHITTEST, 0, point) == win32con.HTTOP, "top resize was lost"
 
         def fits_work_area():
             if not user.IsZoomed(hwnd):
@@ -105,6 +110,7 @@ def check_window(window, options, instance, ui):
         wait_until(lambda: str(window.native.WindowState) == "Minimized", "minimize button did not minimize")
         window.restore()
         wait_until(lambda: str(window.native.WindowState) == "Normal", "window did not restore after minimize")
+        native_frame()
         window.evaluate_js("document.getElementById('window-close').click(); true")
         lifecycle = window._optimizer_lifecycle
         wait_until(lambda: lifecycle.hidden.is_set() or str(window.native.WindowState) == "Minimized",
