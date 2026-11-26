@@ -2105,9 +2105,9 @@ function fillImageZstdLevel() {
   fillCompressionDescription("image-zstd-level-hint",automatic);
 }
 function fillCompressionDescription(id,automatic) {
-  let description="自行选择 zstd 压缩等级";
+  let description="手动选择";
   if(automatic)description="按大小保护上限动态调整压缩策略";
-  else if(!$("packet-size-protection").checked)description="自行选择 zstd 压缩等级。开启大小保护后可切换为自动";
+  else if(!$("packet-size-protection").checked)description="手动选择。开启大小保护后可切换为自动";
   uiI18n.text($(id),description);
 }
 function zstdLevelPickerTarget() {

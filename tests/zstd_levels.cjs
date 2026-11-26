@@ -35,8 +35,8 @@ const context={document,Event:class {constructor(type){this.type=type;}},
   el:(...args)=>new Element(...args),t:key=>key,
   uiI18n:{text:(node,value)=>{node.textContent=value;}},
   state:{status:{zstd_level:16,auto_zstd_level_enabled:false,auto_image_zstd_level_enabled:false}},settingsEditing:true,settingsSaving:false};
-const manualHint='自行选择 zstd 压缩等级';
-const protectionHint='自行选择 zstd 压缩等级。开启大小保护后可切换为自动';
+const manualHint='手动选择';
+const protectionHint='手动选择。开启大小保护后可切换为自动';
 const autoHint='按大小保护上限动态调整压缩策略';
 vm.createContext(context);
 for(const name of ['zstdLevelEstimates','imageZstdLevelEstimates']) {
