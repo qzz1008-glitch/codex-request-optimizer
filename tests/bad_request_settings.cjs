@@ -223,8 +223,8 @@ async function run(){
   const protectionRow=page.locator('#packet-size-protection-row');
   const protectionBackground=()=>protectionRow.evaluate(row=>getComputedStyle(row).backgroundColor);
   for(const [language,width,windowText,compactText] of [
-    ['zh',1120,'单次请求可用的上下文上限，未设置时使用模型默认值','触发会话压缩的上下文阈值，未设置时最高为原始上下文窗口的 90%'],
-    ['en',320,'Maximum usable context per request. If unset, uses Model defaults','Context threshold for automatic compaction. If unset, capped at 90% of the raw context window'],
+    ['zh',1120,'单次请求可用的上下文上限，未设置时使用模型默认值','触发会话压缩的上下文阈值，未设置时为窗口上限的 90%'],
+    ['en',320,'Maximum usable context per request. If unset, uses Model defaults','Context threshold for automatic compaction. If unset, uses 90% of the context window limit'],
   ]){
     await page.evaluate(language=>uiI18n.setLanguage(language,{persist:false}),language);
     await page.setViewportSize({width,height:900});
