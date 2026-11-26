@@ -794,7 +794,7 @@ input[type=checkbox][switch]:focus-visible{outline:2px solid var(--accent);outli
 }
 #settings-dialog .settings-key:not(fieldset:disabled *){color:var(--ink-blue,#486085)}
 #settings-dialog .settings-key::before{
-  content:var(--settings-marker-content,none);position:absolute;inset-inline-start:-10px;
+  content:var(--settings-marker-content,none);position:absolute;inset-inline-start:-13px;
   inset-block:0;margin-block:auto;box-sizing:border-box;inline-size:6px;block-size:6px;
   border:3px solid var(--settings-marker-color);border-radius:50%;pointer-events:none
 }
