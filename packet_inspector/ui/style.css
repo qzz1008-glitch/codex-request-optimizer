@@ -445,12 +445,18 @@ button.bar-delta[aria-expanded="true"]::after{transform:translateY(-35%) rotate(
   overflow-wrap:anywhere;
 }
 .breakdown-item-entry>:first-child{flex:none;white-space:nowrap;font-variant-numeric:tabular-nums}
-#tab-tree:not([hidden]){display:flex;flex-direction:column;height:100%;min-height:0}
+#tab-tree:not([hidden]){
+  --request-body-end-inset:6px;
+  display:flex;
+  flex-direction:column;
+  height:100%;
+  min-height:0;
+}
 .detail-content:has(>#tab-tree:not([hidden])){overflow:hidden;scrollbar-gutter:auto;padding-inline-end:0}
 #tab-tree>.tree-tools,#tab-tree>.search-results{
   flex:none;
   margin:0;
-  margin-inline-end:calc(var(--detail-content-inset) + var(--detail-scrollbar-size));
+  margin-inline-end:calc(var(--request-body-end-inset) + var(--detail-scrollbar-size));
   border:0;
   border-block-end:1px solid var(--detail-divider);
 }
@@ -495,8 +501,8 @@ button.bar-delta[aria-expanded="true"]::after{transform:translateY(-35%) rotate(
 }
 #tab-tree>.search-results{max-height:min(260px,40%);padding:7px 0;border-radius:0}
 .json-viewer{position:relative;flex:1;min-width:0;min-height:0;overflow:hidden;margin-inline-start:calc(-1 * var(--detail-content-inset))}
-.json-content{height:100%;margin:0;padding:8px var(--detail-content-inset) 4px 0;overflow:auto;scrollbar-gutter:stable;overscroll-behavior:contain;white-space:pre;word-break:normal;overflow-wrap:normal;font-family:Consolas,"Cascadia Mono",monospace;font-size:12px;line-height:1.65;tab-size:2}
-.request-body-text{padding-inline:var(--detail-content-inset);padding-block-end:14px;white-space:normal;font:inherit;font-size:.85rem;line-height:1.55}
+.json-content{height:100%;margin:0;padding-block:8px 4px;padding-inline:0 var(--request-body-end-inset);overflow:auto;scrollbar-gutter:stable;overscroll-behavior:contain;white-space:pre;word-break:normal;overflow-wrap:normal;font-family:Consolas,"Cascadia Mono",monospace;font-size:12px;line-height:1.65;tab-size:2}
+.request-body-text{padding-inline-start:var(--detail-content-inset);padding-block-end:14px;white-space:normal;font:inherit;font-size:.85rem;line-height:1.55}
 .request-body-text>.request-message{
   display:flex;
   flex-direction:column;
@@ -532,7 +538,7 @@ button.bar-delta[aria-expanded="true"]::after{transform:translateY(-35%) rotate(
   position:absolute;
   z-index:1;
   inset-block-start:6px;
-  inset-inline-end:calc(var(--detail-scrollbar-size) + 6px);
+  inset-inline-end:calc(var(--detail-scrollbar-size) + var(--request-body-end-inset));
   display:flex;
   gap:4px;
 }
