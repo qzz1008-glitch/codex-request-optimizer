@@ -3218,9 +3218,9 @@ function setRequestBodyTextMode(enabled) {
   const view=requestBodyView,root=$("request-body-text"),available=view?.id===state.selected;
   const showText=enabled&&available;
   if(showText&&!view.messages) {
-    view.messages=requestTextMessages(view.body).map(message=>({...message,author:t(message.role==="user"?"用户":"模型")}));
+    view.messages=requestTextMessages(view.body);
     const fragment=document.createDocumentFragment();
-    for(const {role,author,text,created} of view.messages) {
+    for(const {role,text,created} of view.messages) {
       const message=el("div","request-message");
       message.setAttribute("data-role",role);
       const meta=el("div","request-message-meta");
@@ -3230,7 +3230,7 @@ function setRequestBodyTextMode(enabled) {
         :el("span","request-message-time","—");
       if(hasTime)time.setAttribute("datetime",date.toISOString());
       time.title=hasTime?timestampFormat.format(date):t("未记录消息时间");
-      meta.append(el("strong","request-message-author",author),time);
+      meta.append(el("strong","request-message-author",role),time);
       message.append(meta,el("p","request-message-text",text));
       fragment.append(message);
     }
@@ -3256,7 +3256,7 @@ function setRequestBodyActions(view,showText) {
   const extension=showText?"txt":"json";
   if(view.output?.extension===extension)return;
   const text=showText
-    ?view.messages.map(({author,text})=>author+"\n"+text+"\n").join("\n")
+    ?view.messages.map(({role,text})=>role+"\n"+text+"\n").join("\n")
     :requestJsonText(view.body);
   view.output={extension,text};
   clearRequestBodyExport();
@@ -3405,10 +3405,10 @@ async function submitTreeQuery() {
 }
 function requestTextSearchHits(messages,query) {
   const needle=query.toLowerCase(),hits=[];
-  for(const [index,{author,text}] of messages.entries()) {
+  for(const [index,{role,text}] of messages.entries()) {
     const offset=text.toLowerCase().indexOf(needle);
     if(offset<0)continue;
-    hits.push({index,label:author+" · "+(index+1),preview:text.slice(Math.max(0,offset-45),offset+150)});
+    hits.push({index,label:role+" · "+(index+1),preview:text.slice(Math.max(0,offset-45),offset+150)});
     if(hits.length===60)break;
   }
   return hits;

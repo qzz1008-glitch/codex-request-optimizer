@@ -35,6 +35,7 @@ function fixture() {
   };
   vm.createContext(context);
   vm.runInContext(extract('function requestTextMessages(','function copyRequestBody('),context);
+  vm.runInContext(extract('function requestTextSearchHits(','async function searchBody('),context);
   vm.runInContext(extract('async function loadTree(path)','async function goPath(path)'),context);
   vm.runInContext(extract('function retainedReasoningEncryptedBytes(','function focusRequestBodyLine('),context);
   vm.runInContext(source.split(/\r?\n/).filter(line=>/^function compressedBytes\(/.test(line)).join('\n'),context);
@@ -47,11 +48,15 @@ function fixture() {
   let passed=0;
   {
     const c=fixture();
+    c.requestBodyView.body.input=[{role:'user',content:'cached private body'},{role:'assistant',content:'cached reply'}];
     c.setRequestBodyTextMode(true);
     assert.equal(c.$('request-body-text').hidden,false);
-    assert(c.$('request-body-text').firstChild);
+    const bubbles=c.$('request-body-text').firstChild.children;
+    assert.deepEqual(bubbles.map(bubble=>bubble.children[0].children[0].text),['user','assistant']);
     assert.equal(c.requestBodyView.output.extension,'txt');
-    assert.equal(c.requestBodyView.output.text,'用户\ncached private body\n');
+    assert.equal(c.requestBodyView.output.text,'user\ncached private body\n\nassistant\ncached reply\n');
+    const hits=c.requestTextSearchHits(c.requestBodyView.messages,'cached');
+    assert.deepEqual(Array.from(hits,hit=>hit.label),['user · 1','assistant · 2']);
     c.$('body-results').append('cached search preview');
     c.api=async()=>{throw Error('Removed body must not be fetched');};
     await c.loadTree('');
