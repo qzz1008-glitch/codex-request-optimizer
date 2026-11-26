@@ -255,6 +255,9 @@ async function run() {
   for(const language of ['zh','en'])for(const width of [320,420,1120]) {
     await page.setViewportSize({width,height:900});
     await page.evaluate(language=>{uiI18n.setLanguage(language,{persist:false});notice.render();},language);
+    assert.equal(await page.locator('#restart-notice-open').getAttribute('title'),language==='zh'
+      ?'待重启 ChatGPT 生效设置：图片解析\nWSL：WSL 配置 · Ubuntu'
+      :'Settings pending a ChatGPT restart: Image\nWSL: WSL configuration · Ubuntu');
     assert.equal(await page.locator('#restart-notice-title').textContent(),language==='zh'
       ?'重启 ChatGPT 后生效':'Restart ChatGPT to apply');
     const message=await page.locator('#restart-notice-message').textContent();

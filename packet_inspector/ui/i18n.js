@@ -105,7 +105,7 @@ const uiI18n = (() => {
     "接入同步":"Connection synchronization",
     "查看待生效配置与接入详情":"View pending changes and connection details",
     "待生效项目":"Pending changes",
-    "ChatGPT App：{items}":"ChatGPT App: {items}",
+    "待重启 ChatGPT 生效设置：{items}":"Settings pending a ChatGPT restart: {items}",
     "本软件：{items}":"This app: {items}",
     "WSL：{items}":"WSL: {items}",
     "本软件 → ChatGPT App：{items}":"This app → ChatGPT App: {items}",

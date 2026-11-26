@@ -474,14 +474,14 @@ globalThis.InspectorRestartNotice = {
       return t(chatgpt&&optimizer?"ChatGPT 与本软件待重启":chatgpt?"ChatGPT 待重启":optimizer?"本软件待重启":"WSL 待重新连接");
     }
     function pendingTooltip(items,portPending) {
-      const groups=new Map(),targets={chatgpt:"ChatGPT App：{items}",optimizer:"本软件：{items}",wsl:"WSL：{items}",port:"本软件 → ChatGPT App：{items}"};
+      const groups=new Map(),targets={chatgpt:"待重启 ChatGPT 生效设置：{items}",optimizer:"本软件：{items}",wsl:"WSL：{items}",port:"本软件 → ChatGPT App：{items}"};
       for(const row of items) {
         const target=row.key==="entry_port"&&portPending?"port":row.target;
         if(!groups.has(target))groups.set(target,new Set());
         groups.get(target).add(pendingLabel(row));
       }
       const separator=uiI18n.language==="en"?", ":"、";
-      return [t("待生效项目"),...Array.from(groups,([target,names])=>t(targets[target]).replace("{items}",()=>[...names].join(separator)))].join("\n");
+      return Array.from(groups,([target,names])=>t(targets[target]).replace("{items}",()=>[...names].join(separator))).join("\n");
     }
     function render() {
       const items=[...ledger.items],s=status();
