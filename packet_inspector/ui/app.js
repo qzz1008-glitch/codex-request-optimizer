@@ -1983,7 +1983,7 @@ function fillSettings() {
   $("runtime-settings-message").hidden=!!s.capacity_retry_supported;
   $("runtime-settings-message").textContent=s.capacity_retry_supported?"":t("当前中转暂不支持此功能");
   renderConnectionActions();
-  renderCompressionMode();renderLanguageSelection();fillZstdLevel();fillStorageDirectories();fillPacketProtection();syncContextControls();
+  renderCompressionMode();renderLanguageSelection();fillStorageDirectories();fillPacketProtection();syncContextControls();
   updateSettingsSaveState(false);
 }
 function renderSharingTabHint() {
@@ -2082,10 +2082,8 @@ function fillImageAnalysisMode() {
 }
 function fillZstdLevel() {
   const s=state.status,input=$("zstd-level"),supported=Number.isInteger(s.zstd_level);
-  $("auto-zstd-level-hint").textContent=Number.isInteger(s.auto_image_zstd_level)?t("对话按大小选档，图片请求使用{level}级；开启后禁用手动选择").replace("{level}",s.auto_image_zstd_level):t("根据请求大小自动选择合适的压缩等级，开启后禁用手动选择");
   const selected=settingsEditing?Number(input.value):(s.zstd_level??3);
   const automatic=$("packet-size-protection").checked&&$("auto-zstd-level").checked;
-  $("manual-compression-levels").disabled=automatic;
   input.value=String(selected);
   input.disabled=settingsSaving||!supported||automatic;
   $("zstd-level-open").disabled=input.disabled;
@@ -2094,8 +2092,6 @@ function fillZstdLevel() {
   if($("zstd-level-dialog").open) {
     if(zstdLevelPickerTarget().input.disabled)closeZstdLevelPicker();else renderZstdLevelRows();
   }
-  const message="";
-  $("zstd-level-message").textContent=message;$("zstd-level-message").hidden=!message;
 }
 function fillImageZstdLevel(automatic) {
   const s=state.status,input=$("image-zstd-level");
@@ -2104,6 +2100,7 @@ function fillImageZstdLevel(automatic) {
   input.disabled=settingsSaving||!Number.isInteger(s.image_zstd_level)||automatic;
   $("image-zstd-level-open").disabled=input.disabled;
   $("image-zstd-level-value").textContent=t("{level}级").replace("{level}",automatic?(s.auto_image_zstd_level??6):selected);
+  $("image-zstd-level-hint").hidden=!automatic;
 }
 function zstdLevelPickerTarget() {
   const image=$("zstd-level-dialog").dataset.target==="image";
@@ -3927,20 +3924,30 @@ $("service-restart-dialog").addEventListener("cancel",event=>{event.preventDefau
 action("connect-confirm-cancel",cancelConnectPrompt);action("connect-confirm-apply",confirmConnection);
 $("connect-confirm-dialog").addEventListener("cancel",event=>{event.preventDefault();cancelConnectPrompt();});
 function fillPacketProtection() {
-  const s=state.status,supported="packet_size_protection_enabled" in s,automatic=$("auto-zstd-level"),autoSupported=typeof s.auto_zstd_level_enabled==="boolean";
-  if(!settingsEditing){$("packet-size-protection").checked=!!s.packet_size_protection_enabled;$("budget").value=s.budget_bytes/1000;automatic.checked=autoSupported&&s.auto_zstd_level_enabled;}
-  if(!$("packet-size-protection").checked)automatic.checked=false;
-  $("budget").min=(s.packet_size_min_bytes||50001)/1000;$("budget").max=(s.packet_size_max_bytes||134217728)/1000;
-  $("packet-size-protection").disabled=settingsSaving||!supported;
-  $("budget").disabled=$("packet-size-protection").disabled||!$("packet-size-protection").checked;
-  automatic.disabled=$("packet-size-protection").disabled||!$("packet-size-protection").checked||!autoSupported;
-  automatic.closest(".settings-switch").title=!autoSupported?t("当前中转暂不支持按请求大小自动压缩"):!$("packet-size-protection").checked?t("请先开启请求大小保护"):"";
+  const s=state.status,supported="packet_size_protection_enabled" in s,autoSupported=typeof s.auto_zstd_level_enabled==="boolean";
+  const protection=$("packet-size-protection"),budget=$("budget");
+  const manual=$("manual-zstd-level"),automatic=$("auto-zstd-level"),hint=$("auto-zstd-level-hint");
+  if(!settingsEditing){
+    protection.checked=!!s.packet_size_protection_enabled;
+    budget.value=s.budget_bytes/1000;
+    automatic.checked=autoSupported&&s.auto_zstd_level_enabled;
+  }
+  if(!protection.checked||!autoSupported)automatic.checked=false;
+  manual.checked=!automatic.checked;
+  manual.disabled=settingsSaving;
+  budget.min=(s.packet_size_min_bytes||50001)/1000;budget.max=(s.packet_size_max_bytes||134217728)/1000;
+  protection.disabled=settingsSaving||!supported;
+  budget.disabled=protection.disabled||!protection.checked;
+  automatic.disabled=budget.disabled||!autoSupported;
+  const unavailable=!autoSupported?"当前中转暂不支持按请求大小自动压缩":!protection.checked?"请先开启请求大小保护":"";
+  hint.textContent=unavailable?t(unavailable):"";
+  hint.hidden=!unavailable;
   $("packet-size-message").hidden=supported;
   if(!supported)$("packet-size-message").textContent=t("当前中转暂不支持此功能");
   fillZstdLevel();
 }
 $("packet-size-protection").addEventListener("change",fillPacketProtection);
-$("auto-zstd-level").addEventListener("change",fillZstdLevel);
+$("zstd-level-mode").addEventListener("change",fillZstdLevel);
 async function applyLinkAction(which) {
   linkRevision++;
   try {

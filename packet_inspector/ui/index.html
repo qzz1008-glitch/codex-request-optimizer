@@ -368,31 +368,27 @@
     </section>
     <section id="compression-settings" aria-labelledby="compression-settings-title">
       <h3 id="compression-settings-title">传输压缩</h3>
-      <div class="settings-row auto-zstd-row" data-settings-field="auto_zstd_level_enabled">
-        <span id="auto-zstd-level-label" class="settings-key">自动压缩</span>
+      <div class="settings-row">
+        <span id="zstd-level-label" class="settings-key">对话压缩</span>
         <div class="settings-controls">
-          <div class="settings-switch"><input id="auto-zstd-level" type="checkbox" switch role="switch" aria-labelledby="auto-zstd-level-label" aria-describedby="auto-zstd-level-hint" aria-controls="manual-compression-levels" disabled></div>
-        <p id="auto-zstd-level-hint" class="help muted runtime-inline-hint">根据请求大小自动选择合适的压缩等级，开启后禁用手动选择</p>
+          <fieldset id="zstd-level-mode" class="image-mode-pills" data-settings-field="auto_zstd_level_enabled" aria-describedby="auto-zstd-level-hint">
+            <legend class="sr-only">对话压缩</legend>
+            <label for="manual-zstd-level"><input id="manual-zstd-level" type="radio" name="zstd-level-mode" value="manual" checked disabled><span>手动选择</span></label>
+            <label for="auto-zstd-level"><input id="auto-zstd-level" type="radio" name="zstd-level-mode" value="auto" aria-controls="zstd-level-open image-zstd-level-open" disabled><span>自动选择</span></label>
+          </fieldset>
+          <input id="zstd-level" type="hidden" value="3" disabled>
+          <button id="zstd-level-open" class="zstd-level-trigger" type="button" data-settings-field="zstd_level" aria-labelledby="zstd-level-label zstd-level-value" aria-haspopup="dialog" aria-controls="zstd-level-dialog" aria-expanded="false" disabled><span id="zstd-level-value">3级</span><svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+          <span id="auto-zstd-level-hint" class="compression-level-hint" hidden></span>
         </div>
       </div>
-      <fieldset id="manual-compression-levels">
-        <legend class="sr-only">手动压缩等级</legend>
-        <div class="settings-row zstd-level-control" data-settings-field="zstd_level">
-          <span id="zstd-level-label" class="settings-key">对话压缩</span>
-          <div class="settings-controls">
-            <input id="zstd-level" type="hidden" value="3" disabled>
-            <button id="zstd-level-open" class="zstd-level-trigger" type="button" aria-labelledby="zstd-level-label zstd-level-value" aria-haspopup="dialog" aria-controls="zstd-level-dialog" aria-describedby="auto-zstd-level-hint" aria-expanded="false" disabled><span id="zstd-level-value">3级</span><svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
-          </div>
+      <div class="settings-row" data-settings-field="image_zstd_level">
+        <span id="image-zstd-level-label" class="settings-key">图片压缩</span>
+        <div class="settings-controls">
+          <input id="image-zstd-level" type="hidden" value="6" disabled>
+          <button id="image-zstd-level-open" class="zstd-level-trigger" type="button" aria-labelledby="image-zstd-level-label image-zstd-level-value" aria-haspopup="dialog" aria-controls="zstd-level-dialog" aria-expanded="false" disabled><span id="image-zstd-level-value">6级</span><svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+          <span id="image-zstd-level-hint" class="compression-level-hint" hidden>自动模式下固定</span>
         </div>
-        <p id="zstd-level-message" data-feedback-inline class="help" role="status" hidden></p>
-        <div class="settings-row zstd-level-control" data-settings-field="image_zstd_level">
-          <span id="image-zstd-level-label" class="settings-key">图片压缩</span>
-          <div class="settings-controls">
-            <input id="image-zstd-level" type="hidden" value="6" disabled>
-            <button id="image-zstd-level-open" class="zstd-level-trigger" type="button" aria-labelledby="image-zstd-level-label image-zstd-level-value" aria-haspopup="dialog" aria-controls="zstd-level-dialog" aria-describedby="auto-zstd-level-hint" aria-expanded="false" disabled><span id="image-zstd-level-value">6级</span><svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
-          </div>
-        </div>
-      </fieldset>
+      </div>
     </section>
     <section id="context-settings" aria-labelledby="context-settings-title">
       <div class="context-heading">

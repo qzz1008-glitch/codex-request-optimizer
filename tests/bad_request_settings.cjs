@@ -9,6 +9,7 @@ const root=path.join(__dirname,'../packet_inspector/ui'),read=name=>fs.readFileS
 const html=read('index.html').replace(/<script\b[^>]*>[\s\S]*?<\/script>/g,'').replace(/<link\b[^>]*>/g,'');
 const controls=source.slice(source.indexOf('function contextMessage('),source.indexOf('let updateStatus=null'));
 const protection=source.slice(source.indexOf('function fillPacketProtection()'),source.indexOf('async function applyLinkAction('));
+const compressionLevels=source.slice(source.indexOf('function fillZstdLevel()'),source.indexOf('function zstdLevelPickerTarget()'));
 const draft=source.slice(source.indexOf('function readSettingsDraft()'),source.indexOf('function setSettingsMessage('));
 const formats=source.slice(source.indexOf('const nf = '),source.indexOf('let workspaceView='));
 const storage=source.slice(source.indexOf('function renderStorageInfo()'),source.indexOf('function signed('));
@@ -27,14 +28,15 @@ async function run(){
       bad_request_retry_enabled:false,bad_request_retry_supported:true,
       capacity_retry_supported:true,capacity_retry_mode:'native',capacity_retry_max_retries:15,capacity_retry_delay_seconds:30,
       packet_size_protection_enabled:false,budget_bytes:1000000,auto_zstd_level_enabled:false,
+      zstd_level:3,image_zstd_level:11,auto_image_zstd_level:6,
     }};
     window.contextSettings=null;window.contextCustomValues=new Map();
-    window.fillZstdLevel=()=>{};window.renderRecordScope=()=>{};
+    window.renderRecordScope=()=>{};
     window.setText=(node,value)=>node.textContent=value;
     window.el=(tag,cls,text='')=>Object.assign(document.createElement(tag),{className:cls||'',textContent:text});
     window.settingsBaseline=null;
   });
-  await page.addScriptTag({content:[controls,protection,draft,formats,storage].join('\n')});
+  await page.addScriptTag({content:[controls,protection,compressionLevels,draft,formats,storage].join('\n')});
   await page.evaluate(()=>{
     fillBadRequestRetry();fillCapacityRetry();fillPacketProtection();
     fillContextSettings({context_tokens:null,compact_tokens:220000,max_context_tokens:500000,model_defaults:[
@@ -90,8 +92,28 @@ async function run(){
   }
   await page.evaluate(()=>{settingsEditing=false;fillPacketProtection();fillCapacityRetry();settingsEditing=true;});
   const settings=page.locator('#settings-dialog .settings-content');
-  assert.equal(await settings.getByRole('switch').count(),9);
+  assert.equal(await settings.getByRole('switch').count(),8);
   assert.equal(await settings.getByRole('checkbox').count(),0);
+  const compressionMode=settings.getByRole('group',{name:'对话压缩'});
+  const manual=compressionMode.getByRole('radio',{name:'手动选择'});
+  const automatic=compressionMode.getByRole('radio',{name:'自动选择'});
+  const sizeProtection=settings.locator('#packet-size-protection');
+  const dialogLevel=settings.locator('#zstd-level-open'),imageLevel=settings.locator('#image-zstd-level-open');
+  assert.equal(await manual.isChecked(),true);
+  assert.equal(await automatic.isDisabled(),true);
+  await sizeProtection.check();
+  await manual.press('ArrowRight');
+  assert.equal(await automatic.isChecked(),true);
+  assert.equal(await dialogLevel.isDisabled(),true);
+  assert.equal(await imageLevel.isDisabled(),true);
+  assert.equal(await settings.locator('#image-zstd-level-value').textContent(),'6级');
+  assert.equal(await page.evaluate(()=>readSettingsDraft().auto_zstd_level_enabled),true);
+  await automatic.press('ArrowLeft');
+  assert.equal(await manual.isChecked(),true);
+  assert.equal(await dialogLevel.isDisabled(),false);
+  assert.equal(await imageLevel.isDisabled(),false);
+  assert.equal(await settings.locator('#image-zstd-level-value').textContent(),'11级');
+  await sizeProtection.uncheck();cases++;
   const interactive='input:not([type=hidden]),select,button,a[href],[tabindex]';
   assert.deepEqual(await settings.locator('.settings-row').locator(interactive).evaluateAll(nodes=>
     nodes.filter(node=>!node.closest('.settings-controls')).map(node=>node.id)),[]);
