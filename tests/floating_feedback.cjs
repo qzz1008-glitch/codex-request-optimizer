@@ -51,9 +51,9 @@ async function run(){
   extract('function message(','function fail(')
  ].join('\n')});
  await page.evaluate(()=>document.getElementById('settings-dialog').showModal());
- const heading=page.locator('#general-settings > .settings-section-heading');
  const updates=page.locator('#general-settings > #updates-settings');
  const checkButton=updates.locator('#updates-check'),installButton=updates.locator('#updates-install');
+ const repositoryLink=updates.locator('#updates-repository');
  const feedback=updates.locator('#updates-message'),controls=updates.locator('.updates-controls');
  const continuityHint=updates.locator('#updates-continuity-hint');
  const updateLayout=['updates-check','updates-repository','settings-dialog','settings-save','settings-restore'];
@@ -86,12 +86,11 @@ async function run(){
    node.getBoundingClientRect().top+parseFloat(getComputedStyle(node).paddingBlockStart));
   assert.equal(current[0],languageToggle[0],'The version starts at the shared controls column');
   assert(Math.abs(current[1]-labelTop)<=1,'The version lines up with the first line of its label');
-  assert(Math.abs(button[0]-current[0]-current[2]-6)<=1,'The check icon sits next to the version');
-  const title=await heading.locator('#general-settings-title').boundingBox();
-  assert(title.x+title.width<=repository[0],'The GitHub logo sits to the right of the general settings title');
-  assert(Math.abs(title.y+title.height/2-repository[1]-repository[3]/2)<=1,'The logo is centered on the heading row');
-  const logo=await heading.locator('#updates-repository svg').boundingBox();
-  assert(Math.abs(logo.x-languageToggle[0])<=1,'The visible GitHub logo aligns with the language toggle');
+  assert(Math.abs(repository[0]-current[0]-current[2]-6)<=1,'The GitHub link sits next to the version');
+  assert(Math.abs(button[0]-repository[0]-repository[2]-6)<=1,'The check icon follows the GitHub link');
+  assert.equal(repository[1],button[1],'Both icons share the same row');
+  assert.equal(await repositoryLink.getAttribute('aria-label'),language==='zh'?'GitHub 仓库':'GitHub repository');
+  const logo=await repositoryLink.locator('svg').boundingBox();
   assert.deepEqual([logo.width,logo.height],[20,20]);
   for(const status of ['checking','current','available','downloading','upgrading','complete','error']){
    await page.evaluate(status=>{updateStatus={state:status,current_version:'1.0.0',latest_version:'1.1.0',error:'Synthetic update error '.repeat(30)};renderUpdates();},status);
@@ -145,7 +144,12 @@ async function run(){
    }
    if(width>=1120)assert(await controls.evaluate(node=>node.scrollWidth===node.clientWidth),'The desktop update row fits without scrolling');
    assert.deepEqual(await geometry(page,updateLayout),before);
-  }cases++;
+  }
+  if(width===320){
+   await page.evaluate(()=>{updateStatus={state:'idle',current_version:'1.0.0-'+'prerelease'.repeat(10)};renderUpdates();});
+   assert(await controls.evaluate(node=>node.scrollWidth===node.clientWidth),'A long version leaves room for both icons');
+  }
+  cases++;
  }}
  await page.evaluate(()=>closeSettings());
  for(const language of ['zh','en']){
