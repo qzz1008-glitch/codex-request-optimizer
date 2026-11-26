@@ -446,17 +446,17 @@ button.bar-delta[aria-expanded="true"]::after{transform:translateY(-35%) rotate(
 }
 .breakdown-item-entry>:first-child{flex:none;white-space:nowrap;font-variant-numeric:tabular-nums}
 #tab-tree:not([hidden]){
-  --request-body-end-inset:6px;
+  --request-body-end-inset:3px;
   display:flex;
   flex-direction:column;
   height:100%;
   min-height:0;
+  padding-inline-end:var(--request-body-end-inset);
 }
 .detail-content:has(>#tab-tree:not([hidden])){overflow:hidden;scrollbar-gutter:auto;padding-inline-end:0}
 #tab-tree>.tree-tools,#tab-tree>.search-results{
   flex:none;
   margin:0;
-  margin-inline-end:calc(var(--request-body-end-inset) + var(--detail-scrollbar-size));
   border:0;
   border-block-end:1px solid var(--detail-divider);
 }
