@@ -2172,6 +2172,10 @@ function renderLanguageSelection() {
     button.disabled=settingsSaving;
   }
 }
+function renderThemeSelection() {
+  const theme=uiAppearance.dark?"dark":"light";
+  for(const option of $("ui-theme").querySelectorAll("input"))option.checked=option.value===theme;
+}
 function renderCompressionMode() {
   const s=state.status;if(!s)return;
   const connected=s.profile?.active===true;
@@ -2572,7 +2576,7 @@ function readSettingsDraft() {
     max_storage_mb:$("storage-limit").value,
     max_packets:$("packet-limit").value,
     language:settingsLanguage??uiI18n.language,
-    theme:$("ui-theme").value
+    theme:uiAppearance.activeTheme
   };
   if(settingsBaseline&&!draft.packet_size_protection_enabled)draft.budget=settingsBaseline.budget;
   if(settingsBaseline&&!draft.capacity_retry_enabled) {
@@ -2904,7 +2908,7 @@ async function openSettings() {
     if(state.status.linux_data_directories)renderLinuxStorageTargets(await api("/api/connections").catch(()=>null));
     else $("linux-storage-targets").hidden=true;
     settingsLanguage=uiI18n.language;
-    $("ui-theme").value=uiAppearance.theme;
+    renderThemeSelection();
     settingsBaseline=readSettingsDraft();settingsEditing=true;
     resetSettingsSaveProgress();
     renderLanguageSelection();renderConnectionActions();renderUpdates();updateSettingsSaveState();
@@ -3826,7 +3830,7 @@ function discardSettingsDraft() {
   const language=settingsBaseline?.language??state.status?.ui_language??uiI18n.language;
   settingsEditing=false;settingsBaseline=null;settingsLanguage=null;
   uiAppearance.previewTheme(null);
-  $("ui-theme").value=uiAppearance.theme;
+  renderThemeSelection();
   const restore=setInterfaceLanguage(language,{persist:false});
   resetSettingsSaveProgress();
   setProxyTestStatus();
@@ -3855,9 +3859,13 @@ $("settings-dialog").addEventListener("cancel",event=>{event.preventDefault();cl
 $("settings-dialog").addEventListener("close",()=>{
   if(!$("settings-dialog").open){closeZstdLevelPicker(false);discardSettingsDraft();}
 });
-$("ui-theme").addEventListener("change",event=>{
-  if(settingsEditing&&!settingsSaving)uiAppearance.previewTheme(event.target.value);
+$("ui-theme").addEventListener("click",({target})=>{
+  if(!settingsEditing||settingsSaving||!target.matches("input:checked"))return;
+  // A click also makes an existing "system" setting explicit when the color is already active.
+  uiAppearance.previewTheme(target.value===uiAppearance.theme?null:target.value);
+  updateSettingsSaveState();
 });
+globalThis.addEventListener("inspector-appearance-change",renderThemeSelection);
 for(const id of ["capacity-retry-count","capacity-retry-delay"])$(id).addEventListener("input",event=>{
   if(event.target.valueAsNumber>99)event.target.value="99";
 });

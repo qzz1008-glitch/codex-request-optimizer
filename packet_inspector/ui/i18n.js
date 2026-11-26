@@ -42,7 +42,14 @@ globalThis.uiAppearance = (() => {
     previewTheme(null);
     try { localStorage.setItem(storageKey, theme); } catch (_) {}
   }
-  return {get theme() { return theme; }, get dark() { return dark; }, persistent: !!saved, previewTheme, setTheme};
+  return {
+    get theme() { return theme; },
+    get activeTheme() { return preview ?? theme; },
+    get dark() { return dark; },
+    persistent: !!saved,
+    previewTheme,
+    setTheme
+  };
 })();
 
 const uiI18n = (() => {
@@ -993,7 +1000,6 @@ const uiI18n = (() => {
     "界面主题":"Appearance",
     "浅色":"Light",
     "深色":"Dark",
-    "跟随系统":"Follow system",
     "无效的界面主题。":"Invalid appearance setting.",
     "界面主题未保存，请重试。":"Appearance could not be saved. Please try again.",
     "刷新":"Refresh",
