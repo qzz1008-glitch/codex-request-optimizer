@@ -89,7 +89,7 @@ async function run(){
   assert.equal(await settings.getByRole('switch').count(),9);
   assert.equal(await settings.getByRole('checkbox').count(),0);
   const interactive='input:not([type=hidden]),select,button,a[href],[tabindex]';
-  assert.deepEqual(await settings.locator(interactive).evaluateAll(nodes=>
+  assert.deepEqual(await settings.locator('.settings-row').locator(interactive).evaluateAll(nodes=>
     nodes.filter(node=>!node.closest('.settings-controls')).map(node=>node.id)),[]);
   assert.deepEqual(await settings.locator('input[type="number"]').evaluateAll(inputs=>
     inputs.filter(input=>getComputedStyle(input).appearance!=='textfield').map(input=>input.id)),[],

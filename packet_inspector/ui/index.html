@@ -232,7 +232,7 @@
     <section id="restart-notice" class="restart-notice" data-state="ready" data-feedback-inline tabindex="-1" aria-live="polite" aria-labelledby="restart-notice-title" hidden>
       <div class="restart-notice-heading"><strong id="restart-notice-title">配置生效状态</strong><button id="restart-notice-wsl" type="button" hidden>WSL 已重新连接</button></div>
       <ul id="restart-notice-items" class="restart-notice-items" aria-label="待生效项目"></ul>
-      <p id="restart-notice-message" class="restart-notice-message"><span id="restart-notice-message-start">暂无待生效项目；新请求使用已保存的配置。</span><button id="restart-notice-chatgpt" type="button" hidden>ChatGPT 已重启</button><span id="restart-notice-message-end"></span></p>
+      <p id="restart-notice-message" class="restart-notice-message"><span id="restart-notice-message-start">暂无待生效项目；新请求使用已保存的配置</span><button id="restart-notice-chatgpt" type="button" hidden>ChatGPT 已重启</button><span id="restart-notice-message-end"></span></p>
     </section>
     <div class="settings-content">
     <section id="general-settings" aria-labelledby="general-settings-title">
@@ -253,7 +253,7 @@
         <span id="start-on-login-label" class="settings-key">开机启动</span>
         <div class="settings-controls">
           <div class="settings-switch"><input id="start-on-login" type="checkbox" switch role="switch" aria-labelledby="start-on-login-label" aria-describedby="startup-hint"></div>
-          <p id="startup-hint" class="muted help runtime-inline-hint">登录 Windows 后自动启动。</p>
+          <p id="startup-hint" class="muted help runtime-inline-hint">登录 Windows 后自动启动</p>
         </div>
       </div>
       <div id="sharing-tab-setting" class="settings-row" data-settings-field="sharing_tab_enabled" hidden>
@@ -298,7 +298,7 @@
                 <span id="budget-unit">KB</span>
               </label>
             </div>
-            <p id="packet-size-protection-hint" class="muted help runtime-inline-hint">将请求包大小控制在设定上限内。</p>
+            <p id="packet-size-protection-hint" class="muted help runtime-inline-hint">将请求包大小控制在设定上限内</p>
           </div>
         </div>
       </div>
@@ -322,14 +322,14 @@
                 <span id="capacity-retry-delay-unit">秒</span>
               </label>
             </div>
-            <p id="capacity-retry-hint" class="muted help runtime-inline-hint">模型容量不足时等待后重试。</p>
+          <p id="capacity-retry-hint" class="muted help runtime-inline-hint">模型容量不足时等待后重试</p>
           </div>
         </div>
       </div>
       <div class="settings-row">
         <span id="bad-request-retry-label" class="settings-key">异常重试</span>
         <div class="settings-controls settings-compound-controls">
-          <div class="settings-switch" data-settings-field="bad_request_retry_enabled" title="仅重试通用 Bad Request；字段或参数错误保持原样。"><input id="bad-request-retry" type="checkbox" switch role="switch" aria-labelledby="bad-request-retry-label" aria-controls="bad-request-retry-count" aria-describedby="bad-request-retry-hint"></div>
+          <div class="settings-switch" data-settings-field="bad_request_retry_enabled" title="仅重试通用 Bad Request；字段或参数错误保持原样"><input id="bad-request-retry" type="checkbox" switch role="switch" aria-labelledby="bad-request-retry-label" aria-controls="bad-request-retry-count" aria-describedby="bad-request-retry-hint"></div>
           <div class="settings-inline-fields">
             <div class="settings-inline-field" data-settings-field="bad_request_retry_max_retries">
               <label id="bad-request-retry-count-label" for="bad-request-retry-count">重试次数</label>
@@ -338,7 +338,7 @@
                 <span id="bad-request-retry-count-unit">次</span>
               </label>
             </div>
-            <p id="bad-request-retry-hint" class="muted help runtime-inline-hint">遇到通用 Bad Request 时自动重试。</p>
+          <p id="bad-request-retry-hint" class="muted help runtime-inline-hint">遇到通用 Bad Request 时自动重试</p>
           </div>
         </div>
       </div>
@@ -349,7 +349,7 @@
           <div class="settings-switch" data-settings-field="image_analysis_mode">
             <input id="image-analysis-mode" type="checkbox" switch role="switch" aria-labelledby="image-analysis-mode-label" aria-describedby="image-isolation-hint">
           </div>
-          <p id="image-isolation-hint" class="muted help runtime-inline-hint" aria-live="polite">图片由主会话解析，主请求较大。</p>
+          <p id="image-isolation-hint" class="muted help runtime-inline-hint" aria-live="polite">图片由主会话解析，主请求较大</p>
         </div>
       </div>
       <p id="image-isolation-message" data-feedback-source data-feedback-target="settings-inline-feedback" class="help" role="status" hidden></p>
@@ -360,7 +360,7 @@
         <span id="auto-zstd-level-label" class="settings-key">自动压缩</span>
         <div class="settings-controls">
           <div class="settings-switch"><input id="auto-zstd-level" type="checkbox" switch role="switch" aria-labelledby="auto-zstd-level-label" aria-describedby="auto-zstd-level-hint" aria-controls="manual-compression-levels" disabled></div>
-          <p id="auto-zstd-level-hint" class="help muted runtime-inline-hint">根据请求大小自动选择合适的压缩等级，开启后禁用手动选择。</p>
+        <p id="auto-zstd-level-hint" class="help muted runtime-inline-hint">根据请求大小自动选择合适的压缩等级，开启后禁用手动选择</p>
         </div>
       </div>
       <fieldset id="manual-compression-levels">
@@ -452,7 +452,7 @@
               <label class="sr-only" for="proxy-address">代理地址</label><input id="proxy-address" name="proxy-address" type="text" inputmode="url" maxlength="2048" placeholder="http://proxy:8080" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" required disabled>
             </div>
             <div class="proxy-test-actions">
-              <button id="proxy-test" type="button" title="测试当前配置，不保存；不发送对话或 Codex 登录凭据。">测试</button>
+              <button id="proxy-test" type="button" title="测试当前配置，不保存；不发送对话或 Codex 登录凭据">测试</button>
               <output id="proxy-test-result" class="proxy-test-result" role="status" aria-live="polite" aria-atomic="true">
                 <span id="proxy-test-state"></span>
                 <span id="proxy-test-elapsed" hidden></span>

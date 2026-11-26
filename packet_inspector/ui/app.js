@@ -602,7 +602,7 @@ globalThis.InspectorRestartNotice = {
         ?t(autoDetect&&!portPending&&!failure
           ?"检测到 ChatGPT 重启后自动清除提醒。未检测到时可手动确认 {confirm}"
           :"重启后可选择 {confirm}，清除提醒").split("{confirm}")
-        :[t(wsl?"完成上述操作后再确认；确认只清除提醒。":optimizer?"重启本软件后，状态会自动更新。":"暂无待生效项目；新请求使用已保存的配置。")];
+        :[t(wsl?"完成上述操作后再确认；确认只清除提醒":optimizer?"重启本软件后，状态会自动更新":"暂无待生效项目；新请求使用已保存的配置")];
       $("restart-notice-message-start").textContent=failure?t(failure)+(chatgpt?" "+messageStart:""):messageStart;
       $("restart-notice-message-end").textContent=messageEnd+(chatgpt&&wsl&&!failure?" · "+t("WSL 仍需手动确认"):"");
       message.classList.toggle("error",!!failure);
@@ -1969,9 +1969,9 @@ function fillSettings() {
   fillBadRequestRetry();
   fillProxySettings();
   fillImageAnalysisMode();
-  $("startup-hint").textContent=t(s.start_on_login_supported?(s.startup_state_known===false?"无法读取开机启动状态，请重新保存设置。":"登录 Windows 后自动启动。"):"开机启动仅支持已安装的 Windows 版本。");
+  $("startup-hint").textContent=t(s.start_on_login_supported?(s.startup_state_known===false?"无法读取开机启动状态，请重新保存设置":"登录 Windows 后自动启动"):"开机启动仅支持已安装的 Windows 版本");
   $("runtime-settings-message").hidden=!!s.capacity_retry_supported;
-  $("runtime-settings-message").textContent=s.capacity_retry_supported?"":t("当前中转暂不支持此功能。");
+  $("runtime-settings-message").textContent=s.capacity_retry_supported?"":t("当前中转暂不支持此功能");
   renderConnectionActions();
   renderCompressionMode();renderLanguageSelection();fillZstdLevel();fillStorageDirectories();fillPacketProtection();syncContextControls();
   updateSettingsSaveState(false);
@@ -2007,9 +2007,9 @@ function fillProxySettings(force=false) {
   const address=value?.invalid?t("代理地址无效"):value?.address||t("直接连接");
   $("proxy-detected-address").value=address;$("proxy-detected-address").title=address;
   const warnings=[];
-  if(detected.pac_url||detected.auto_discovery)warnings.push(t("检测到 PAC/自动发现。转发依照 HTTP/HTTPS 代理配置。")+(detected.pac_url?" "+detected.pac_url:""));
-  if(detected.unsupported_all_proxy)warnings.push(t("ALL_PROXY 未用于转发，请配置 HTTP/HTTPS 代理。"));
-  $("proxy-detection-warning").textContent=warnings.join(" ");$("proxy-detection-warning").hidden=manual||!warnings.length;
+  if(detected.pac_url||detected.auto_discovery)warnings.push(t("检测到 PAC/自动发现。转发依照 HTTP/HTTPS 代理配置")+(detected.pac_url?" "+detected.pac_url:""));
+  if(detected.unsupported_all_proxy)warnings.push(t("ALL_PROXY 未用于转发，请配置 HTTP/HTTPS 代理"));
+  $("proxy-detection-warning").textContent=warnings.join(" · ");$("proxy-detection-warning").hidden=manual||!warnings.length;
 }
 function setProxyTestStatus(status="",elapsedMs) {
   const labels={ok:"已连通",rejected:"响应异常",failed:"连接失败",timeout:"测试超时",stale:"需重测",error:"测试失败"};
@@ -2064,15 +2064,15 @@ function fillImageAnalysisMode() {
   if(!settingsEditing)input.checked=imageAnalysisMode()==="optimized";
   input.disabled=settingsSaving||!canSwitch;
   let hint=input.checked
-    ?"图片由独立会话解析，主请求较小。"
-    :"图片由主会话解析，主请求较大。";
-  if(!input.checked&&legacyImageAnalysisPending())hint="保存后恢复原生图片解析。";
-  else if(!canSwitch)hint=nativeSupported?"当前中转仅支持原生图片解析。":"当前中转暂不支持此功能。";
+    ?"图片由独立会话解析，主请求较小"
+    :"图片由主会话解析，主请求较大";
+  if(!input.checked&&legacyImageAnalysisPending())hint="保存后恢复原生图片解析";
+  else if(!canSwitch)hint=nativeSupported?"当前中转仅支持原生图片解析":"当前中转暂不支持此功能";
   uiI18n.text($("image-isolation-hint"),hint);
 }
 function fillZstdLevel() {
   const s=state.status,input=$("zstd-level"),supported=Number.isInteger(s.zstd_level);
-  $("auto-zstd-level-hint").textContent=Number.isInteger(s.auto_image_zstd_level)?t("对话按大小选档，图片请求使用{level}级；开启后禁用手动选择。").replace("{level}",s.auto_image_zstd_level):t("根据请求大小自动选择合适的压缩等级，开启后禁用手动选择。");
+  $("auto-zstd-level-hint").textContent=Number.isInteger(s.auto_image_zstd_level)?t("对话按大小选档，图片请求使用{level}级；开启后禁用手动选择").replace("{level}",s.auto_image_zstd_level):t("根据请求大小自动选择合适的压缩等级，开启后禁用手动选择");
   const selected=settingsEditing?Number(input.value):(s.zstd_level??3);
   const automatic=$("packet-size-protection").checked&&$("auto-zstd-level").checked;
   $("manual-compression-levels").disabled=automatic;
@@ -2388,7 +2388,7 @@ function fillStorageDirectories() {
   input.placeholder=s.data_dir||"";
   input.disabled=settingsSaving||!supported;
   $("storage-paths-hint").hidden=!s.storage_paths_pending;
-  $("storage-paths-hint").textContent=s.storage_paths_pending?t("目录已保存，重启本软件后生效，原目录数据保留。"):"";
+  $("storage-paths-hint").textContent=s.storage_paths_pending?t("目录已保存，重启本软件后生效，原目录数据保留"):"";
   fillDirectoryOpenButtons();
 }
 function renderLinuxStorageTargets(remote) {
@@ -2464,7 +2464,7 @@ function renderEntryPortStatus() {
   else if(port.pending){label="先重启优化器，再重启 ChatGPT App";kind="pending";}
   else if(s.profile?.active){label="";kind="active";}
   node.textContent=t(label);node.dataset.state=kind;node.hidden=!label;
-  node.title=supported?t("当前端口：{port}").replace("{port}",port.current_port)+(port.pending?" · "+t("待生效端口：{port}").replace("{port}",port.configured_port)+"\n"+t("入口服务重新启动后应用新端口，重启 ChatGPT App 生效。"):""):"";
+  node.title=supported?t("当前端口：{port}").replace("{port}",port.current_port)+(port.pending?" · "+t("待生效端口：{port}").replace("{port}",port.configured_port)+"\n"+t("入口服务重新启动后应用新端口，重启 ChatGPT App 生效"):""):"";
   if(kind==="error")node.title=t(label)+(node.title?"\n"+node.title:"");
 }
 function providerStatus(s) {
@@ -2761,7 +2761,7 @@ function renderUpdates() {
   const labels={idle:"可检查 GitHub 上的最新版本。",checking:"正在检查更新…",current:"已是最新版本。",available:"发现新版本，可以升级。",downloading:"正在下载并校验升级包…",upgrading:"正在升级，旧请求继续完成…",complete:"升级已完成。"};
   const message=$("updates-message");
   message.hidden=supported&&(!displayedState||displayedState==="idle");
-  setText(message,!supported?t("Linux 版请通过替换安装包更新。"):displayedState==="error"?t(u.error):showLatest?t("最新版本：{version}").replace("{version}",u.latest_version):t(labels[displayedState]||labels.idle));
+  setText(message,!supported?t("Linux 版请通过替换安装包更新"):displayedState==="error"?t(u.error):showLatest?t("最新版本：{version}").replace("{version}",u.latest_version):t(labels[displayedState]||labels.idle));
   message.title=message.textContent;
   message.classList.toggle("error",supported&&displayedState==="error");
 }
@@ -3690,7 +3690,7 @@ async function setInterfaceLanguage(language,{persist=true}={}) {
     if($("connect-confirm-dialog").open)renderConnectPrompt();
     if($("exit-confirm-dialog").open)renderExitRequest();
     if(state.status) {
-      if(!("packet_size_protection_enabled" in state.status))$("packet-size-message").textContent=t("当前中转暂不支持此功能。");
+      if(!("packet_size_protection_enabled" in state.status))$("packet-size-message").textContent=t("当前中转暂不支持此功能");
     }
     if(state.detail) {
       showTab(state.tab);renderOverview(state.detail);renderHeaders(state.detail);
@@ -3791,9 +3791,9 @@ function fillPacketProtection() {
   $("packet-size-protection").disabled=settingsSaving||!supported;
   $("budget").disabled=$("packet-size-protection").disabled||!$("packet-size-protection").checked;
   automatic.disabled=$("packet-size-protection").disabled||!$("packet-size-protection").checked||!autoSupported;
-  automatic.closest(".settings-switch").title=!autoSupported?t("当前中转暂不支持按请求大小自动压缩。"):!$("packet-size-protection").checked?t("请先开启请求大小保护"):"";
+  automatic.closest(".settings-switch").title=!autoSupported?t("当前中转暂不支持按请求大小自动压缩"):!$("packet-size-protection").checked?t("请先开启请求大小保护"):"";
   $("packet-size-message").hidden=supported;
-  if(!supported)$("packet-size-message").textContent=t("当前中转暂不支持此功能。");
+  if(!supported)$("packet-size-message").textContent=t("当前中转暂不支持此功能");
   fillZstdLevel();
 }
 $("packet-size-protection").addEventListener("change",fillPacketProtection);
