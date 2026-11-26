@@ -106,6 +106,9 @@ async function run(){
   const sizeRowDimensions=()=>protectionRow.evaluate(row=>[row.offsetWidth,row.offsetHeight]);
   const dialogLevel=settings.locator('#zstd-level-open'),imageLevel=settings.locator('#image-zstd-level-open');
   const compressionHints=settings.locator('#auto-zstd-level-hint,#image-zstd-level-hint');
+  for(const mode of [compressionMode,imageMode]){
+    assert.deepEqual(await mode.locator('label').allTextContents(),['自动','手动']);
+  }
   assert.equal(await manual.isChecked(),true);
   assert.equal(await automatic.isDisabled(),true);
   assert.equal(await imageManual.isChecked(),true);
@@ -123,7 +126,7 @@ async function run(){
     await settings.locator(`label[for="${id}"]`).hover();
     assert.equal(await protectionBackground(),normalBackground,'Enabled Auto does not highlight size protection');
   }
-  await manual.press('ArrowRight');
+  await manual.press('ArrowLeft');
   assert.equal(await automatic.isChecked(),true);
   assert.equal(await dialogLevel.isDisabled(),true);
   assert.equal(await imageManual.isChecked(),true);
@@ -131,8 +134,8 @@ async function run(){
   assert.equal(await settings.locator('#image-zstd-level-value').textContent(),'11级');
   assert.equal(await page.evaluate(()=>readSettingsDraft().auto_zstd_level_enabled),true);
   assert.equal(await page.evaluate(()=>readSettingsDraft().auto_image_zstd_level_enabled),false);
-  await automatic.press('ArrowLeft');
-  await imageManual.press('ArrowRight');
+  await automatic.press('ArrowRight');
+  await imageManual.press('ArrowLeft');
   assert.equal(await manual.isChecked(),true);
   assert.equal(await imageAutomatic.isChecked(),true);
   assert.equal(await dialogLevel.isDisabled(),false);
@@ -144,7 +147,7 @@ async function run(){
   await page.evaluate(()=>uiI18n.setLanguage('zh',{persist:false}));
   assert.equal(await page.evaluate(()=>readSettingsDraft().auto_zstd_level_enabled),false);
   assert.equal(await page.evaluate(()=>readSettingsDraft().auto_image_zstd_level_enabled),true);
-  await manual.press('ArrowRight');
+  await manual.press('ArrowLeft');
   await sizeProtection.uncheck();
   assert.equal(await manual.isChecked(),true);
   assert.equal(await imageManual.isChecked(),true);
@@ -200,6 +203,10 @@ async function run(){
     assert.equal(await page.locator('#packet-limit-unit').textContent(),language==='zh'?'条':'req.');
     for(const width of [320,540,600,1120]){
       await page.setViewportSize({width,height:900});
+      assert(await compressionHints.evaluateAll(hints=>hints.every(hint=>{
+        const bounds=hint.getBoundingClientRect(),controls=hint.parentElement.getBoundingClientRect();
+        return getComputedStyle(hint).textAlign==='end'&&Math.abs(bounds.right-controls.right)<1;
+      })),`Both compression hints align to the right at ${width}px in ${language}`);
       const rows=await settings.locator('.settings-row').evaluateAll(nodes=>nodes.map(row=>{
         const [key,controls]=row.children;
         const names=key.getBoundingClientRect(),values=controls.getBoundingClientRect();

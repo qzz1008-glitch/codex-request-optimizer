@@ -825,7 +825,7 @@ input[type=checkbox][switch]:focus-visible{outline:2px solid var(--accent);outli
 }
 #settings-dialog .help{margin:10px 0 0;overflow-wrap:anywhere}
 #settings-dialog .help.error{color:var(--danger)}
-#settings-dialog :is(.runtime-inline-hint,.entry-port-hint,#storage-paths-hint,#proxy-detection-warning){
+#settings-dialog :is(.runtime-inline-hint,.entry-port-hint,.compression-level-hint,#storage-paths-hint,#proxy-detection-warning){
   padding-inline-end:12px;text-align:end
 }
 #settings-dialog .settings-dirty{border-radius:8px;outline:2px solid var(--accent);outline-offset:3px;background-color:var(--soft)}
@@ -889,7 +889,7 @@ input[type=checkbox][switch]:focus-visible{outline:2px solid var(--accent);outli
 #settings-dialog #proxy-settings{min-inline-size:0;margin:0;padding:0;border:0}
 #settings-dialog .zstd-level-trigger{inline-size:96px;max-inline-size:100%;justify-self:start;justify-content:flex-end;gap:8px;font-variant-numeric:tabular-nums}
 #settings-dialog .zstd-level-trigger:disabled{background:var(--bg);color:var(--muted);opacity:.65}
-#settings-dialog .compression-level-hint{flex:1 1 12ch;min-inline-size:0;overflow-wrap:anywhere}
+#settings-dialog .compression-level-hint{flex:1 1 12ch;min-inline-size:0;overflow-wrap:break-word}
 #zstd-level-dialog{width:min(640px,calc(100vw - 32px));max-height:min(640px,calc(100vh - 40px));padding:20px;overflow:hidden}
 #zstd-level-dialog[open]{display:flex;flex-direction:column}
 #zstd-level-dialog .dialog-heading{flex:none;align-items:center;gap:16px;margin-bottom:6px}
