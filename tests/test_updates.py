@@ -10,7 +10,7 @@ from unittest.mock import Mock, patch
 from urllib.request import Request
 
 from packet_inspector.router import atomic_json
-from packet_inspector.updates import ASSET, LEGACY_ASSET, GitHubRedirect, Updates, version_tuple
+from packet_inspector.updates import ASSET, LEGACY_ASSET, VERSION_CHECK_INTERVAL, GitHubRedirect, Updates, version_tuple
 
 
 class Reply(io.BytesIO):
@@ -148,6 +148,45 @@ class UpdateTests(unittest.TestCase):
             self.updates.configure({"automatic": True})
             self.updates.poll()
             start.assert_called_once_with("check")
+
+    def test_periodic_check_fetches_release_at_startup_then_hourly(self):
+        self.updates.periodic_checks = True
+        first = self.release_reply()
+        self.release["tag_name"] = "v9.2.0"
+        self.opener.open.side_effect = [first, self.release_reply()]
+        start = 100_000
+        with patch("packet_inspector.updates.time.time", return_value=start) as wall_time, \
+                patch("packet_inspector.updates.time.monotonic", return_value=start) as clock, \
+                patch.object(self.updates, "install") as install:
+            self.updates.poll()
+            self.updates.task.join(timeout=3)
+            self.assertEqual(self.updates.status()["latest_version"], "9.1.0")
+
+            wall_time.return_value = clock.return_value = start + VERSION_CHECK_INTERVAL - 60
+            self.updates.poll()
+            self.assertEqual(self.opener.open.call_count, 1)
+
+            wall_time.return_value = clock.return_value = start + VERSION_CHECK_INTERVAL
+            self.updates.poll()
+            self.updates.task.join(timeout=3)
+            self.assertEqual(self.updates.status()["latest_version"], "9.2.0")
+            install.assert_not_called()
+
+    def test_failed_periodic_check_keeps_available_release(self):
+        self.opener.open.return_value = self.release_reply()
+        self.updates.check()
+        self.opener.open.side_effect = OSError("offline")
+        self.updates.start("check", periodic=True)
+        self.updates.task.join(timeout=3)
+        self.assertEqual(self.updates.status()["state"], "available")
+        self.assertEqual(self.updates.status()["latest_version"], "9.1.0")
+
+    def test_periodic_check_skips_running_upgrade(self):
+        self.updates.periodic_checks = True
+        atomic_json(self.updates.state_path, {"state": "upgrading", "upgrade_started": 10})
+        with patch.object(self.updates, "start") as start:
+            self.updates.poll()
+            start.assert_not_called()
 
     def test_queued_install_reports_busy_before_first_state_write(self):
         self.opener.open.return_value = self.release_reply()

@@ -2389,7 +2389,7 @@ for(const key of ["context","compact"]) {
     syncContextControls();contextMessage("");
   });
 }
-let updateStatus=null, updateBusy=false, updateAction="", updateFeedbackVisible=false;
+let updateStatus=null, updateBusy=false, updateAction="";
 let updateRevision=0,updateStatusLoading=false;
 function readSettingsDraft() {
   const draft={
@@ -2598,11 +2598,11 @@ function renderUpdates() {
   const u=updateStatus;
   const supported=u?.supported!==false&&state.status?.updates_supported!==false;
   const currentVersion=u?.current_version||state.status?.version;
-  $("updates-versions").textContent=currentVersion||"";
+  setText($("updates-versions"),currentVersion||"");
   const displayedState=updateBusy?(updateAction==="check"?"checking":"downloading"):u?.state;
   const checking=displayedState==="checking",installing=["downloading","upgrading"].includes(displayedState);
   const busy=checking||installing,available=displayedState==="available";
-  if(busy||available)updateFeedbackVisible=true;
+  const showLatest=u?.latest_version&&(available||checking&&!updateBusy&&u.periodic_check);
   const checkButton=$("updates-check"),installButton=$("updates-install");
   const disabled=settingsSaving||busy||!supported;
   checkButton.disabled=disabled;
@@ -2612,8 +2612,8 @@ function renderUpdates() {
   installButton.setAttribute("aria-busy",String(supported&&installing));
   const labels={idle:"可检查 GitHub 上的最新版本。",checking:"正在检查更新…",current:"已是最新版本。",available:"发现新版本，可以升级。",downloading:"正在下载并校验升级包…",upgrading:"正在升级，旧请求继续完成…",complete:"升级已完成。"};
   const message=$("updates-message");
-  message.hidden=!updateFeedbackVisible&&supported;
-  message.textContent=!supported?t("Linux 版请通过替换安装包更新。"):displayedState==="error"?t(u.error):available&&u.latest_version?t("最新版本：{version}").replace("{version}",u.latest_version):t(labels[displayedState]||labels.idle);
+  message.hidden=supported&&(!displayedState||displayedState==="idle");
+  setText(message,!supported?t("Linux 版请通过替换安装包更新。"):displayedState==="error"?t(u.error):showLatest?t("最新版本：{version}").replace("{version}",u.latest_version):t(labels[displayedState]||labels.idle));
   message.title=message.textContent;
   message.classList.toggle("error",supported&&displayedState==="error");
 }
@@ -2628,7 +2628,7 @@ async function performUpdate(which) {
   if(updateStatus?.supported===false||state.status?.updates_supported===false)return;
   if(settingsSaving||updateBusy||["checking","downloading","upgrading"].includes(updateStatus?.state))return;
   if(which==="install"&&updateStatus?.state!=="available")return;
-  updateRevision++;updateBusy=true;updateAction=which;updateFeedbackVisible=true;renderUpdates();
+  updateRevision++;updateBusy=true;updateAction=which;renderUpdates();
   try {
     updateStatus=await api("/api/updates",{action:which});
     // Older services can acknowledge an install before its first state write.
@@ -2640,7 +2640,6 @@ async function performUpdate(which) {
 async function openSettings() {
   if(settingsOpening||compressionSaving||exitSaving||connectSaving||connectChecking||firstRunChecking||$("connect-confirm-dialog").open||$("exit-confirm-dialog").open||$("compression-confirm-dialog").open||$("settings-dialog").open)return;
   settingsOpening=true;
-  updateFeedbackVisible=updateBusy||["available","checking","downloading","upgrading"].includes(updateStatus?.state);
   try {
     await Promise.all([refreshStatus(true),loadContextSettings(),loadUpdates()]);
     if(state.status.linux_data_directories)renderLinuxStorageTargets(await api("/api/connections").catch(()=>null));
@@ -3621,6 +3620,7 @@ action("ui-refresh",()=>{if(state.status?.ui_live_reload)location.reload();});
 action("updates-check",()=>performUpdate("check"));
 action("updates-install",()=>performUpdate("install"));
 setInterval(()=>{if($("settings-dialog").open&&!settingsSaving&&!updateBusy&&["checking","downloading","upgrading"].includes(updateStatus?.state))loadUpdates();},2000);
+setInterval(()=>{if(!document.hidden&&$("settings-dialog").open&&!settingsSaving)loadUpdates();},30000);
 action("compression-connect",()=>requestCompressionChange("connected"));
 action("compression-disconnect",()=>requestCompressionChange("disconnected"));
 action("compression-confirm-cancel",cancelCompressionChange);action("compression-confirm-apply",confirmCompressionChange);

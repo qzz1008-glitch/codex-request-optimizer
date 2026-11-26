@@ -22,6 +22,7 @@ from .router import atomic_json
 ASSET = "CodexPacketInspector.exe"
 LEGACY_ASSET = "CodexRequestOptimizer-Upgrade.exe"
 REPOSITORY = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
+VERSION_CHECK_INTERVAL = 3600
 
 
 def version_tuple(value):
@@ -70,7 +71,7 @@ def github_opener():
 
 
 class Updates:
-    def __init__(self, directory, config, port, current_version=VERSION, *, opener=None):
+    def __init__(self, directory, config, port, current_version=VERSION, *, opener=None, periodic_checks=False):
         self.supported = os.name == "nt"
         self.directory, self.config = Path(directory), Path(config)
         self.port, self.current_version = port, current_version
@@ -81,6 +82,7 @@ class Updates:
         self.opener = opener or github_opener()
         self.guard, self.task = threading.Lock(), None
         self.action = ""
+        self.periodic_checks = periodic_checks
         self.next_poll = 0
 
     def settings(self):
@@ -229,7 +231,7 @@ class Updates:
         with Path(path).open("rb") as stream:
             return hashlib.file_digest(stream, "sha256").hexdigest()
 
-    def start(self, action):
+    def start(self, action, *, periodic=False):
         if not self.supported:
             raise ValueError("Linux 服务器版请通过替换 Linux 安装包更新。")
         if action not in {"check", "install"}:
@@ -241,30 +243,47 @@ class Updates:
             def run():
                 try:
                     with file_lock(self.directory / "update-check.lock", blocking=False):
-                        if action == "check":
-                            atomic_json(self.state_path, {**self.cached(), "state": "checking", "error": "", "attempted": time.time()})
-                            checked = self.check()
-                            if self.settings()["automatic"] and checked["state"] == "available":
+                        previous = self.cached()
+                        if periodic and previous.get("state") == "upgrading":
+                            return
+                        try:
+                            if action == "check":
+                                atomic_json(self.state_path, {**previous, "state": "checking", "error": "",
+                                                              "attempted": time.time(), "periodic_check": periodic})
+                                checked = self.check()
+                                if not periodic and self.settings()["automatic"] and checked["state"] == "available":
+                                    self.install()
+                            else:
                                 self.install()
-                        else:
-                            self.install()
+                        except Exception as exc:
+                            # Keep the diagnostic short and avoid persisting request details.
+                            error = str(exc)[:300] if isinstance(exc, ValueError) else "检查或升级失败：" + type(exc).__name__
+                            cached = self.cached()
+                            cached.pop("periodic_check", None)
+                            last_state = previous.get("state")
+                            state = last_state if periodic and last_state in {"available", "current", "complete"} else "error"
+                            atomic_json(self.state_path, {**cached, "state": state, "error": error})
                 except BlockingIOError:
                     pass
-                except Exception as exc:
-                    # Never include request objects or headers in persisted errors.
-                    error = str(exc)[:300] if isinstance(exc, ValueError) else "检查或升级失败：" + type(exc).__name__
-                    atomic_json(self.state_path, {**self.cached(), "state": "error", "error": error})
             self.task = threading.Thread(target=run, daemon=True)
             self.task.start()
         return self.status()
 
     def poll(self):
-        if not self.supported:
+        now = time.monotonic()
+        if not self.supported or now < self.next_poll:
             return
-        if time.monotonic() < self.next_poll:
+        self.next_poll = now + 60
+        automatic = self.settings()["automatic"]
+        if not automatic and not self.periodic_checks:
             return
-        self.next_poll = time.monotonic() + 60
-        cached = self.cached()
-        if (self.settings()["automatic"] and time.time() - cached.get("checked", 0) >= 6 * 3600
-                and time.time() - cached.get("attempted", 0) >= 900):
-            self.start("check")
+        cached = self.status()
+        if cached.get("state") == "upgrading":
+            return
+        now = time.time()
+        checked, attempted = cached.get("checked", 0), cached.get("attempted", 0)
+        if automatic:
+            if now - checked >= 6 * 3600 and now - attempted >= 900:
+                self.start("check")
+        elif now - max(checked, attempted) >= VERSION_CHECK_INTERVAL:
+            self.start("check", periodic=True)

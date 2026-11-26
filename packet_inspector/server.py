@@ -161,7 +161,7 @@ class InspectorServer(ThreadingHTTPServer):
     allow_reuse_address = True
 
     def __init__(self, address, data_dir, config_path, upstream=None, *, worker_id="", public_port=None, worker_token="", startup=None,
-                 ui_forward_port=None):
+                 ui_forward_port=None, periodic_update_checks=False):
         self.ui_forward_port = validate_port(ui_forward_port) if ui_forward_port is not None else None
         self.startup = startup
         self._startup_step("settings.read")
@@ -287,7 +287,7 @@ class InspectorServer(ThreadingHTTPServer):
         self.configuration_prepared = False
         if not worker_id:
             self._refresh_image_configuration()
-        self.updates = Updates(self.data_dir, self.link.config, self.public_port)
+        self.updates = Updates(self.data_dir, self.link.config, self.public_port, periodic_checks=periodic_update_checks)
         self.analysis_errors = 0
         self.maintenance_errors = 0
         self.installation_guard = threading.Lock()
@@ -1991,7 +1991,7 @@ def run_server(args, on_started, trace):
     try:
         server = InspectorServer(("127.0.0.1", args.port), args.data_dir, args.config, args.upstream,
                                  worker_id=args.worker_id, public_port=args.public_port, worker_token=worker_token, startup=trace,
-                                 ui_forward_port=args.ui_forward_port)
+                                 ui_forward_port=args.ui_forward_port, periodic_update_checks=True)
     except OSError as exc:
         if args.worker_id:
             raise RuntimeError("worker port is occupied") from None

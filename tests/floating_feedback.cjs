@@ -32,13 +32,14 @@ async function run(){
  const page=await load();
  await page.addScriptTag({content:[
   "window.$=id=>document.getElementById(id);window.state={status:{version:'1.0.0',entry_port:{pending:false}}};",
-  "window.updateStatus=null;window.updateBusy=false;window.settingsSaving=false;window.updateAction='';window.updateFeedbackVisible=true;",
+  "window.updateStatus=null;window.updateBusy=false;window.settingsSaving=false;window.updateAction='';",
   "window.updateRevision=0;window.updateStatusLoading=false;window.settingsOpening=false;window.compressionSaving=false;window.exitSaving=false;window.connectSaving=false;window.connectChecking=false;",
   "window.firstRunChecking=false;window.refreshStatus=async()=>{};window.loadContextSettings=async()=>{};window.readSettingsDraft=()=>({});",
   "window.settingsSaveProgress={total:0,steps:[]};window.renderLanguageSelection=()=>{};window.renderConnectionActions=()=>{};window.updateSettingsSaveState=()=>{};",
   "window.closeZstdLevelPicker=()=>{};window.discardSettingsDraft=()=>{};",
   "window.fail=error=>{throw error;};",
   "function el(tag,cls,value){const node=document.createElement(tag);node.className=cls;node.textContent=value;return node;}",
+  app.match(/^function setText\(.*$/m)[0],
   extract('function renderUpdates()','async function selectPacket('),
   app.match(/^function action\(.*$/m)[0],
   app.match(/^action\("updates-(?:check|install)",.*$/gm).join('\n'),
@@ -132,7 +133,7 @@ async function run(){
  await page.evaluate(()=>closeSettings());
  for(const language of ['zh','en']){
   await page.evaluate(async language=>{
-   uiI18n.setLanguage(language,{persist:false});updateStatus=null;updateFeedbackVisible=false;
+   uiI18n.setLanguage(language,{persist:false});updateStatus=null;
    window.updateRequests=[];window.cachedUpdate={state:'idle',current_version:'1.0.0'};
    window.api=async(path,data)=>{
     if(path!=='/api/updates')throw Error('Unexpected request: '+path);
@@ -160,24 +161,30 @@ async function run(){
    assert.equal(await installButton.isDisabled(),false);
    assert.equal(await page.evaluate(()=>updateRequests.filter(action=>action==='check').length),1,'reopening reads cached status without another release check');cases++;
   }
-  await page.evaluate(async()=>{closeSettings();updateStatus=null;updateFeedbackVisible=false;await openSettings();});
-  assert(await feedback.isVisible(),'available status loaded from the backend is also shown');
-  assert((await feedback.textContent()).includes('1.1.0'));
+  await page.evaluate(async()=>{
+   closeSettings();updateStatus=null;updateRequests.length=0;
+   cachedUpdate={state:'available',current_version:'0.9.0',latest_version:'0.10.0'};
+   await openSettings();
+  });
+  assert(await feedback.isVisible(),'a background release result is visible on opening settings');
+  assert((await feedback.textContent()).includes('0.10.0'));
+  assert.deepEqual(await page.evaluate(()=>updateRequests),['status']);
   assert(await installButton.isVisible());cases++;
   await checkButton.click();
-  await page.waitForFunction(()=>updateRequests.filter(action=>action==='check').length===2&&!updateBusy);
+  await page.waitForFunction(()=>updateRequests.filter(action=>action==='check').length===1&&!updateBusy);
   assert(await installButton.isVisible());
   await installButton.click();
   await page.waitForFunction(()=>updateStatus?.state==='downloading'&&!updateBusy);
-  assert.deepEqual(await page.evaluate(()=>updateRequests.filter(action=>action!=='status')),['check','check','install']);
+  assert.deepEqual(await page.evaluate(()=>updateRequests.filter(action=>action!=='status')),['check','install']);
   assert.equal(await checkButton.isDisabled(),true);
   assert.equal(await installButton.getAttribute('aria-busy'),'true');
   assert.equal(await installButton.isDisabled(),true);
   await page.evaluate(async()=>{cachedUpdate={state:'complete',current_version:'1.1.0'};await loadUpdates();});
   assert.equal(await checkButton.isDisabled(),false);
   assert.equal(await installButton.isVisible(),false);cases++;
-  await page.evaluate(async()=>{closeSettings();cachedUpdate={state:'current',current_version:'1.1.0',latest_version:'1.1.0'};updateStatus=null;updateFeedbackVisible=false;await openSettings();});
-  assert.equal(await feedback.isVisible(),false,'a current cached version keeps the default display');
+  await page.evaluate(async()=>{closeSettings();cachedUpdate={state:'current',current_version:'1.1.0',latest_version:'1.1.0'};updateStatus=null;await openSettings();});
+  assert(await feedback.isVisible(),'an up-to-date result is visible when settings reopen');
+  assert.equal(await feedback.textContent(),language==='zh'?'已是最新版本。':'You are up to date.');
   assert.equal(await checkButton.isDisabled(),false);
   assert.equal(await installButton.isVisible(),false);cases++;
   await page.evaluate(()=>closeSettings());
