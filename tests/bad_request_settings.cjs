@@ -197,6 +197,11 @@ async function run(){
   assert.equal(await displayedLimit.isVisible(),true);
   await storageLimit.fill('1200');
   assert.equal(await displayedLimit.isVisible(),false,'Editing shows the native numeric input');
+  const outlines=await storageLimit.evaluate(input=>[
+    getComputedStyle(input).outlineStyle,
+    getComputedStyle(input.closest('.settings-value-unit')).outlineStyle,
+  ]);
+  assert.deepEqual(outlines,['none','solid'],'A focused unit field only highlights its outer frame');
   await page.evaluate(()=>{
     renderRecordLimit($('storage-limit'));
     state.status.storage={count:10001,stored:1711120000};renderStorageInfo();

@@ -819,7 +819,7 @@ input[type=checkbox][switch]:focus-visible{outline:2px solid var(--accent);outli
 #settings-dialog input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}
 #settings-dialog input::placeholder{color:var(--muted);opacity:1}
 #settings-dialog :is(input:not([switch]),select):disabled{background:var(--bg);opacity:.55;cursor:default}
-#settings-dialog :is(button,input,select,.repository-link):focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+#settings-dialog :is(button,input,select,.repository-link):focus-visible:not(:where(.settings-value-unit input)){outline:2px solid var(--accent);outline-offset:2px}
 #settings-dialog :is(.help,.entry-port-hint,.entry-port-status,.proxy-test-result,.settings-save-log,.settings-inline-feedback,.record-limit-value){
   color:var(--muted);font-size:var(--settings-detail-size);line-height:1.5
 }
