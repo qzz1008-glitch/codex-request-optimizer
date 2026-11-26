@@ -22,7 +22,7 @@ from .router import atomic_json
 ASSET = "CodexPacketInspector.exe"
 LEGACY_ASSET = "CodexRequestOptimizer-Upgrade.exe"
 REPOSITORY = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
-VERSION_CHECK_INTERVAL = 3600
+VERSION_CHECK_INTERVAL = 6 * 3600
 
 
 def version_tuple(value):
@@ -231,6 +231,23 @@ class Updates:
         with Path(path).open("rb") as stream:
             return hashlib.file_digest(stream, "sha256").hexdigest()
 
+    def _check_with_status(self, previous, periodic):
+        attempted = time.time()
+        try:
+            atomic_json(self.state_path, {**previous, "state": "checking", "error": "",
+                                          "attempted": attempted, "periodic_check": periodic})
+            return self.check()
+        except Exception:
+            state = previous.get("state")
+            if state not in {"available", "current", "complete"}:
+                state = "idle"
+                if previous.get("latest_version"):
+                    state = "available" if previous.get("asset") else "current"
+            cached = {**previous, "state": state, "attempted": attempted, "error": ""}
+            cached.pop("periodic_check", None)
+            atomic_json(self.state_path, cached)
+            return None
+
     def start(self, action, *, periodic=False):
         if not self.supported:
             raise ValueError("Linux 服务器版请通过替换 Linux 安装包更新。")
@@ -248,21 +265,15 @@ class Updates:
                             return
                         try:
                             if action == "check":
-                                atomic_json(self.state_path, {**previous, "state": "checking", "error": "",
-                                                              "attempted": time.time(), "periodic_check": periodic})
-                                checked = self.check()
-                                if not periodic and self.settings()["automatic"] and checked["state"] == "available":
-                                    self.install()
-                            else:
-                                self.install()
+                                checked = self._check_with_status(previous, periodic)
+                                if (periodic or checked is None or checked["state"] != "available"
+                                        or not self.settings()["automatic"]):
+                                    return
+                            self.install()
                         except Exception as exc:
                             # Keep the diagnostic short and avoid persisting request details.
                             error = str(exc)[:300] if isinstance(exc, ValueError) else "检查或升级失败：" + type(exc).__name__
-                            cached = self.cached()
-                            cached.pop("periodic_check", None)
-                            last_state = previous.get("state")
-                            state = last_state if periodic and last_state in {"available", "current", "complete"} else "error"
-                            atomic_json(self.state_path, {**cached, "state": state, "error": error})
+                            atomic_json(self.state_path, {**self.cached(), "state": "error", "error": error})
                 except BlockingIOError:
                     pass
             self.task = threading.Thread(target=run, daemon=True)
@@ -280,10 +291,6 @@ class Updates:
         cached = self.status()
         if cached.get("state") == "upgrading":
             return
-        now = time.time()
         checked, attempted = cached.get("checked", 0), cached.get("attempted", 0)
-        if automatic:
-            if now - checked >= 6 * 3600 and now - attempted >= 900:
-                self.start("check")
-        elif now - max(checked, attempted) >= VERSION_CHECK_INTERVAL:
-            self.start("check", periodic=True)
+        if time.time() - max(checked, attempted) >= VERSION_CHECK_INTERVAL:
+            self.start("check", periodic=not automatic)

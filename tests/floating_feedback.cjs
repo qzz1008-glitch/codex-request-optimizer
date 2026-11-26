@@ -58,7 +58,7 @@ async function run(){
  assert.equal(await updates.locator('button').count(),2);
  for(const width of [320,500,1120,1600]){await page.setViewportSize({width,height:900});
  for(const language of ['zh','en']){
-  await page.evaluate(language=>{uiI18n.setLanguage(language,{persist:false});updateFeedbackVisible=false;updateStatus={state:'idle',current_version:'1.0.0'};renderUpdates();},language);
+  await page.evaluate(language=>{uiI18n.setLanguage(language,{persist:false});updateStatus={state:'idle',current_version:'1.0.0'};renderUpdates();},language);
   assert.equal(await updates.locator('.settings-key').textContent(),language==='zh'?'软件版本':'Software version');
   assert.equal(await updates.locator('#updates-versions').textContent(),'1.0.0');
   assert.equal(await installButton.isVisible(),false);
@@ -170,6 +170,15 @@ async function run(){
   assert((await feedback.textContent()).includes('0.10.0'));
   assert.deepEqual(await page.evaluate(()=>updateRequests),['status']);
   assert(await installButton.isVisible());cases++;
+  await page.evaluate(async()=>{
+   const request=window.api;
+   window.api=async()=>{throw Error('offline');};
+   try {await loadUpdates();await performUpdate('check');}
+   finally {window.api=request;}
+  });
+  assert((await feedback.textContent()).includes('0.10.0'),'failed checks leave the previously displayed version');
+  assert(await checkButton.isEnabled());
+  await noPopup(page);cases++;
   await checkButton.click();
   await page.waitForFunction(()=>updateRequests.filter(action=>action==='check').length===1&&!updateBusy);
   assert(await installButton.isVisible());

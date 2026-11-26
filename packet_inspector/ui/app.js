@@ -2621,7 +2621,10 @@ async function loadUpdates() {
   if(updateStatusLoading||updateBusy)return;
   const revision=updateRevision;updateStatusLoading=true;
   try {const result=await api("/api/updates");if(revision===updateRevision&&!updateBusy)updateStatus=result;}
-  catch(error){if(revision===updateRevision&&!updateBusy)updateStatus={...updateStatus,state:"error",error:error.message};}
+  catch(error){
+    if(revision===updateRevision&&!updateBusy&&["downloading","upgrading"].includes(updateStatus?.state))
+      updateStatus={...updateStatus,state:"error",error:error.message};
+  }
   finally {updateStatusLoading=false;renderUpdates();}
 }
 async function performUpdate(which) {
@@ -2634,7 +2637,7 @@ async function performUpdate(which) {
     // Older services can acknowledge an install before its first state write.
     if(which==="install"&&updateStatus.state==="available")updateStatus={...updateStatus,state:"downloading"};
   }
-  catch(error){updateStatus={...updateStatus,state:"error",error:error.message};}
+  catch(error){if(which==="install")updateStatus={...updateStatus,state:"error",error:error.message};}
   finally {updateBusy=false;updateAction="";renderUpdates();}
 }
 async function openSettings() {
