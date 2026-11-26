@@ -14,6 +14,10 @@ from packet_inspector.updates import ASSET, LEGACY_ASSET, GitHubRedirect, Update
 
 
 class Reply(io.BytesIO):
+    def __init__(self, body, link=""):
+        super().__init__(body)
+        self.headers = {"Link": link}
+
     def __enter__(self):
         return self
     def __exit__(self, *_args):
@@ -39,10 +43,10 @@ class UpdateTests(unittest.TestCase):
         self.directory = Path(self.temporary.name)
         self.package = b"verified-upgrade-fixture"
         self.sha = hashlib.sha256(self.package).hexdigest()
-        self.release = {"tag_name": "v9.1.0", "prerelease": False, "draft": False,
+        self.release = {"tag_name": "v9.1.1", "prerelease": False, "draft": False,
                         "assets": [{"id": 123, "name": ASSET, "size": len(self.package), "digest": "sha256:" + self.sha}]}
         self.opener = Mock()
-        self.updates = Updates(self.directory, self.directory / "config.toml", 47844, "0.6.0", opener=self.opener)
+        self.updates = Updates(self.directory, self.directory / "config.toml", 47844, "9.1.0", opener=self.opener)
 
     def release_reply(self):
         return Reply(json.dumps(self.release).encode())
@@ -51,13 +55,65 @@ class UpdateTests(unittest.TestCase):
         self.opener.open.return_value = self.release_reply()
         result = self.updates.check()
         self.assertEqual(result["state"], "available")
-        self.assertEqual(result["latest_version"], "9.1.0")
+        self.assertEqual(result["latest_version"], "9.1.1")
         self.assertGreater(version_tuple("v0.10.0"), version_tuple("0.9.0"))
         self.assertNotIn("Authorization", dict(self.opener.open.call_args.args[0].header_items()))
         self.release["assets"][0]["digest"] = None
         self.opener.open.return_value = self.release_reply()
         with self.assertRaises(ValueError):
             self.updates.check()
+
+    def test_adjacent_patch_uses_latest_release_notes_without_a_history_request(self):
+        self.release["body"] = "## English\r\n\r\nNew fixes\r\n\r\n## 简体中文\r\n\r\n这次修复"
+        self.opener.open.return_value = self.release_reply()
+        result = self.updates.check()
+        self.opener.open.assert_called_once()
+        self.assertEqual(result["release_notes"], [{"version": "9.1.1", "zh": "这次修复", "en": "New fixes"}])
+        self.assertTrue(result["release_notes_complete"])
+
+    def test_caches_localized_notes_for_the_full_offered_version_range(self):
+        self.updates.current_version = "9.0.7"
+        self.release["body"] = "## 简体中文\n新版本\n\n## English\nLatest"
+        next_page = '<https://api.github.com/repositories/123/releases?per_page=30&page=2>; rel="next"'
+        self.opener.open.side_effect = [
+            self.release_reply(),
+            Reply(json.dumps([
+                {"tag_name": "v9.1.1", "body": "## English\nDuplicate"},
+                {"tag_name": "v9.0.8", "body": "## English\nEarlier"},
+                {"tag_name": "v9.0.9", "draft": True},
+                {"tag_name": "v9.0.10", "prerelease": True},
+                {"tag_name": "v9.1.1-beta"},
+                {"tag_name": "v9.1.2"},
+            ]).encode(), next_page),
+            Reply(json.dumps([
+                {"tag_name": "v9.1.0", "body": "## 简体中文\n中间版本"},
+                {"tag_name": "v9.0.7"}, {"tag_name": "v9.0.6"},
+            ]).encode()),
+        ]
+        result = self.updates.check()
+        notes = [
+            {"version": "9.1.1", "zh": "新版本", "en": "Latest"},
+            {"version": "9.1.0", "zh": "中间版本"},
+            {"version": "9.0.8", "en": "Earlier"},
+        ]
+        self.assertTrue(result["release_notes_complete"])
+        self.assertEqual(result["release_notes"], notes)
+        calls = self.opener.open.call_args_list
+        self.assertEqual(len(calls), 3)
+        self.assertTrue(calls[-1].args[0].full_url.endswith("/releases?per_page=30&page=2"))
+        self.assertEqual(self.updates.status()["release_notes"], notes)
+        self.updates.current_version = "9.1.0"
+        self.assertEqual(self.updates.status()["release_notes"], notes[:1])
+
+    def test_history_error_does_not_hide_the_available_upgrade(self):
+        self.updates.current_version = "9.0.0"
+        self.release["body"] = "## English\nStill available"
+        self.opener.open.side_effect = [self.release_reply(), OSError("offline")]
+        result = self.updates.check()
+        self.assertEqual(result["state"], "available")
+        self.assertEqual(result["asset"]["name"], ASSET)
+        self.assertFalse(result["release_notes_complete"])
+        self.assertEqual(result["release_notes"], [{"version": "9.1.1", "en": "Still available"}])
 
     def test_download_verifies_checksum_then_launches_same_upgrade_engine_with_local_profile(self):
         self.opener.open.side_effect = [self.release_reply(), Reply(self.package)]
@@ -152,15 +208,15 @@ class UpdateTests(unittest.TestCase):
     def test_periodic_check_fetches_release_at_startup_then_every_six_hours(self):
         self.updates.periodic_checks = True
         first = self.release_reply()
-        self.release["tag_name"] = "v9.2.0"
-        self.opener.open.side_effect = [first, self.release_reply()]
+        self.release["tag_name"] = "v9.1.2"
+        self.opener.open.side_effect = [first, self.release_reply(), Reply(b"[]")]
         start, interval = 100_000, 6 * 3600
         with patch("packet_inspector.updates.time.time", return_value=start) as wall_time, \
                 patch("packet_inspector.updates.time.monotonic", return_value=start) as clock, \
                 patch.object(self.updates, "install") as install:
             self.updates.poll()
             self.updates.task.join(timeout=3)
-            self.assertEqual(self.updates.status()["latest_version"], "9.1.0")
+            self.assertEqual(self.updates.status()["latest_version"], "9.1.1")
 
             wall_time.return_value = clock.return_value = start + interval - 60
             self.updates.poll()
@@ -169,7 +225,7 @@ class UpdateTests(unittest.TestCase):
             wall_time.return_value = clock.return_value = start + interval
             self.updates.poll()
             self.updates.task.join(timeout=3)
-            self.assertEqual(self.updates.status()["latest_version"], "9.2.0")
+            self.assertEqual(self.updates.status()["latest_version"], "9.1.2")
             install.assert_not_called()
 
     def test_failed_periodic_check_keeps_available_release(self):
@@ -179,7 +235,7 @@ class UpdateTests(unittest.TestCase):
         self.updates.start("check", periodic=True)
         self.updates.task.join(timeout=3)
         status = self.updates.status()
-        self.assertEqual((status["state"], status["latest_version"], status["error"]), ("available", "9.1.0", ""))
+        self.assertEqual((status["state"], status["latest_version"], status["error"]), ("available", "9.1.1", ""))
 
     def test_first_failed_check_leaves_version_status_idle(self):
         self.opener.open.side_effect = OSError("offline")

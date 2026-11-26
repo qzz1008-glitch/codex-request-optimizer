@@ -2757,6 +2757,9 @@ function renderUpdates() {
   installButton.hidden=!supported||!(available||installing);
   installButton.disabled=disabled;
   installButton.setAttribute("aria-busy",String(supported&&installing));
+  const notesLink=$("updates-notes-open");
+  notesLink.hidden=!supported||!available;
+  notesLink.disabled=settingsSaving;
   $("updates-continuity-hint").hidden=!supported||!available;
   const labels={idle:"可检查 GitHub 上的最新版本。",checking:"正在检查更新…",current:"已是最新版本。",available:"发现新版本，可以升级。",downloading:"正在下载并校验升级包…",upgrading:"正在升级，旧请求继续完成…",complete:"升级已完成。"};
   const message=$("updates-message");
@@ -2764,6 +2767,35 @@ function renderUpdates() {
   setText(message,!supported?t("Linux 版请通过替换安装包更新"):displayedState==="error"?t(u.error):showLatest?t("最新版本：{version}").replace("{version}",u.latest_version):t(labels[displayedState]||labels.idle));
   message.title=message.textContent;
   message.classList.toggle("error",supported&&displayedState==="error");
+}
+function openUpdateNotes() {
+  const trigger=$("updates-notes-open"),dialog=$("updates-notes-dialog"),content=$("updates-notes-content");
+  if(trigger.hidden||trigger.disabled||dialog.open)return;
+  const notes=updateStatus?.release_notes||[];
+  content.replaceChildren();
+  for(const entry of notes){
+    const release=el("section","update-release-notes");
+    release.append(el("h3","",`v${entry.version}`));
+    const body=entry[uiI18n.language];
+    if(body){
+      for(const paragraph of body.split(/\n[ \t]*\n+/)){
+        const lines=paragraph.split("\n"),list=lines.every(line=>/^[-*] +/.test(line));
+        const block=el(list?"ul":"p");
+        for(const line of list?lines:[paragraph]){
+          const item=list?el("li"):block;
+          const text=list?line.replace(/^[-*] +/,""):line;
+          item.append(...text.split(/\*\*([^*\n]+)\*\*/g).map((part,index)=>index%2?el("strong","",part):part));
+          if(list)block.append(item);
+        }
+        release.append(block);
+      }
+    }else release.append(el("p","muted",t("此版本未提供当前语言的更新内容")));
+    content.append(release);
+  }
+  if(!notes.length)content.append(el("p","muted",t("暂无更新内容，可重新检查更新")));
+  else if(updateStatus.release_notes_complete===false)content.append(el("p","muted",t("部分版本的更新内容暂不可用")));
+  dialog.showModal();
+  content.scrollTop=0;
 }
 async function loadUpdates() {
   if(updateStatusLoading||updateBusy)return;
@@ -3770,6 +3802,7 @@ action("settings-save",saveSettings);
 action("ui-refresh",()=>{if(state.status?.ui_live_reload)location.reload();});
 action("updates-check",()=>performUpdate("check"));
 action("updates-install",()=>performUpdate("install"));
+action("updates-notes-open",openUpdateNotes);
 setInterval(()=>{if($("settings-dialog").open&&!settingsSaving&&!updateBusy&&["checking","downloading","upgrading"].includes(updateStatus?.state))loadUpdates();},2000);
 setInterval(()=>{if(!document.hidden&&$("settings-dialog").open&&!settingsSaving)loadUpdates();},30000);
 action("compression-connect",()=>requestCompressionChange("connected"));

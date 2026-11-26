@@ -42,7 +42,7 @@ async function run(){
   app.match(/^function setText\(.*$/m)[0],
   extract('function renderUpdates()','async function selectPacket('),
   app.match(/^function action\(.*$/m)[0],
-  app.match(/^action\("updates-(?:check|install)",.*$/gm).join('\n'),
+  app.match(/^action\("updates-(?:check|install|notes-open)",.*$/gm).join('\n'),
   extract('globalThis.InspectorRestartNotice = {','\nconst $ ='),
   "window.restartNotices=InspectorRestartNotice.create({status:()=>state.status,request:async()=>{},openSettings:async()=>{}});",
   extract('function setSettingsMessage(','async function runSettingsSaveStep('),
@@ -53,17 +53,19 @@ async function run(){
  await page.evaluate(()=>document.getElementById('settings-dialog').showModal());
  const updates=page.locator('#general-settings > #updates-settings');
  const checkButton=updates.locator('#updates-check'),installButton=updates.locator('#updates-install');
+ const notesLink=updates.locator('#updates-notes-open'),notesDialog=page.locator('#updates-notes-dialog');
  const repositoryLink=updates.locator('#updates-repository');
  const feedback=updates.locator('#updates-message'),controls=updates.locator('.updates-controls');
  const continuityHint=updates.locator('#updates-continuity-hint');
  const updateLayout=['updates-check','updates-repository','settings-dialog','settings-save','settings-restore'];
- assert.equal(await updates.locator('button').count(),2);
+ assert.equal(await updates.locator('button').count(),3);
  for(const width of [320,500,1120,1600]){await page.setViewportSize({width,height:900});
  for(const language of ['zh','en']){
   await page.evaluate(language=>{uiI18n.setLanguage(language,{persist:false});updateStatus={state:'idle',current_version:'1.0.0'};renderUpdates();},language);
   assert.equal(await updates.locator('.settings-key').textContent(),language==='zh'?'软件版本':'Software version');
   assert.equal(await updates.locator('#updates-versions').textContent(),'1.0.0');
   assert.equal(await installButton.isVisible(),false);
+  assert.equal(await notesLink.isVisible(),false);
   assert.equal(await continuityHint.isVisible(),false);
   for(const [button,label] of [[checkButton,updateLabels[language].check],[installButton,updateLabels[language].install]]){
    assert.equal((await button.textContent()).trim(),'','The controls use icons only');
@@ -101,6 +103,7 @@ async function run(){
    assert.equal(await checkButton.getAttribute('aria-busy'),String(checking));
    assert.equal(await checkButton.locator('.update-spinner').isVisible(),checking);
    assert.equal(await installButton.isVisible(),hasInstall);
+   assert.equal(await notesLink.isVisible(),status==='available');
    assert.equal(await continuityHint.isVisible(),status==='available');
    assert.equal(await installButton.getAttribute('aria-busy'),String(installing));
    if(hasInstall)assert.equal(await installButton.isDisabled(),installing);
@@ -119,7 +122,13 @@ async function run(){
    }
    if(status==='available'){
     assert(await installButton.locator('svg').evaluate(icon=>icon.getBBox().width>0),'The download icon renders');
-    assert.equal(await continuityHint.textContent(),language==='zh'?'升级时中转服务无缝切换':'Seamless relay handover during updates');
+    const [notes,install]=await geometry(page,['updates-notes-open','updates-install']);
+    assert(Math.abs(notes[0]-install[0]-install[2]-6)<=1,'The notes text follows the install icon');
+    assert(await notesLink.evaluate(node=>{
+     const {borderTopWidth,backgroundColor}=getComputedStyle(node);
+     return borderTopWidth==='0px'&&backgroundColor==='rgba(0, 0, 0, 0)';
+    }),'Release notes look like text');
+    assert.equal(await continuityHint.textContent(),language==='zh'?'升级时中转服务无缝切换':'Seamless relay handover');
     const hintAtEnd=await continuityHint.evaluate(node=>
      Math.abs(node.parentElement.getBoundingClientRect().right-node.getBoundingClientRect().right)<=1);
     assert(hintAtEnd,'The continuity hint is aligned to the right of the controls column');
@@ -129,13 +138,13 @@ async function run(){
      assert(Math.abs(hint[1]+hint[3]/2-install[1]-install[3]/2)<=1,'The desktop hint shares the version row');
     }
     assert(await controls.evaluate(node=>{
-     const {left,right}=node.getBoundingClientRect(),install=node.querySelector('#updates-install');
+     const {left,right}=node.getBoundingClientRect(),notes=node.querySelector('#updates-notes-open');
      const priorScroll=node.scrollLeft;
-     node.scrollLeft+=install.getBoundingClientRect().right-right;
-     const bounds=install.getBoundingClientRect();
+     node.scrollLeft+=notes.getBoundingClientRect().right-right;
+     const bounds=notes.getBoundingClientRect();
      node.scrollLeft=priorScroll;
      return bounds.left>=left-1&&bounds.right<=right+1;
-    }),'The install button can scroll into view on a narrow row');
+    }),'The notes text can scroll into view on a narrow row');
    }
    if(status==='current'){
     assert.equal(await feedback.textContent(),language==='zh'?'已是最新版本。':'You are up to date.');
@@ -159,7 +168,10 @@ async function run(){
    window.api=async(path,data)=>{
     if(path!=='/api/updates')throw Error('Unexpected request: '+path);
     updateRequests.push(data?.action||'status');
-    if(data?.action==='check')cachedUpdate={state:'available',current_version:'1.0.0',latest_version:'1.1.0'};
+    if(data?.action==='check')cachedUpdate={state:'available',current_version:'1.0.0',latest_version:'1.1.0',release_notes:[
+     {version:'1.1.0',zh:'这个版本的说明\n\n'.repeat(30)+'- **优化** <img src=x>',en:'Notes for this version\n\n'.repeat(30)+'- **Improved** <img src=x>'},
+     {version:'1.0.5',en:'Earlier version notes'},
+    ]};
     return {...cachedUpdate};
    };
    await openSettings();
@@ -174,6 +186,38 @@ async function run(){
   assert(await installButton.isVisible());
   assert.equal(await checkButton.isDisabled(),false);
   assert.deepEqual(await page.evaluate(()=>updateRequests.filter(action=>action!=='status')),['check']);cases++;
+  const notesLabel=language==='zh'?'更新内容':'Release notes';
+  assert.equal(await notesLink.textContent(),notesLabel);
+  assert.equal(await notesDialog.isVisible(),false);
+  await notesLink.press('Enter');
+  await notesDialog.waitFor({state:'visible'});
+  assert.equal(await page.getByRole('dialog',{name:notesLabel,exact:true}).count(),1);
+  assert.deepEqual(await notesDialog.locator('section h3').allTextContents(),['v1.1.0','v1.0.5']);
+  assert.equal(await notesDialog.locator('strong').textContent(),language==='zh'?'优化':'Improved');
+  assert.equal(await notesDialog.locator('img').count(),0,'External Markdown is rendered as text');
+  assert((await notesDialog.textContent()).includes(language==='zh'?'此版本未提供当前语言的更新内容':'Earlier version notes'));
+  const closeNotes=notesDialog.getByRole('button',{name:language==='zh'?'关闭':'Close',exact:true});
+  assert(await closeNotes.evaluate(node=>node===document.activeElement));
+  await page.keyboard.press('Escape');
+  assert.equal(await notesDialog.isVisible(),false);
+  assert(await notesLink.evaluate(node=>node===document.activeElement));
+  await notesLink.click();
+  await closeNotes.click();
+  assert.equal(await notesDialog.isVisible(),false);
+  assert.equal(await page.locator('#settings-dialog').isVisible(),true);cases++;
+  if(language==='zh'){
+   await page.setViewportSize({width:360,height:520});
+   await notesLink.press('Space');
+   await notesDialog.waitFor({state:'visible'});
+   const scroller=notesDialog.getByRole('region',{name:'版本说明'});
+   assert(await scroller.evaluate(node=>node.scrollHeight>node.clientHeight));
+   await scroller.press('End');
+   await page.waitForFunction(()=>document.getElementById('updates-notes-content').scrollTop>0);
+   const box=await notesDialog.boundingBox();
+   assert(box.x>=0&&box.x+box.width<=360&&box.y>=0&&box.y+box.height<=520);
+   await page.keyboard.press('Escape');
+   await page.setViewportSize({width:1600,height:900});cases++;
+  }
   for(let reopen=0;reopen<2;reopen++){
    await page.evaluate(async()=>{closeSettings();await openSettings();});
    assert(await feedback.isVisible(),'an available update remains visible after reopening settings');
@@ -192,6 +236,10 @@ async function run(){
   assert((await feedback.textContent()).includes('0.10.0'));
   assert.deepEqual(await page.evaluate(()=>updateRequests),['status']);
   assert(await installButton.isVisible());cases++;
+  await notesLink.click();
+  assert((await notesDialog.textContent()).includes(language==='zh'?'暂无更新内容，可重新检查更新':'Check for updates again to load release notes'));
+  await page.keyboard.press('Escape');
+  assert.deepEqual(await page.evaluate(()=>updateRequests),['status'],'The dialog reads the cached release notes');
   await page.evaluate(async()=>{
    const request=window.api;
    window.api=async()=>{throw Error('offline');};

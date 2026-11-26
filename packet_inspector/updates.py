@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+from http.client import HTTPException
 import json
 import os
 from pathlib import Path
@@ -23,6 +24,8 @@ ASSET = "CodexPacketInspector.exe"
 LEGACY_ASSET = "CodexRequestOptimizer-Upgrade.exe"
 REPOSITORY = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
 VERSION_CHECK_INTERVAL = 6 * 3600
+RELEASE_JSON_LIMIT = 2 * 1024 * 1024
+RELEASE_LANGUAGE_HEADING = re.compile(r"^#{1,6}[ \t]+(简体中文|中文|English)[ \t]*#*[ \t]*$", re.I | re.M)
 
 
 def version_tuple(value):
@@ -30,6 +33,29 @@ def version_tuple(value):
     if not match:
         raise ValueError("版本号格式无效。")
     return tuple(int(part) for part in match.groups())
+
+
+def read_release_json(response):
+    raw = response.read(RELEASE_JSON_LIMIT + 1)
+    if len(raw) > RELEASE_JSON_LIMIT:
+        raise ValueError("版本信息过大。")
+    return json.loads(raw)
+
+
+def localized_release_notes(release):
+    notes = {"version": str(release["tag_name"]).removeprefix("v")}
+    body = release.get("body")
+    if not isinstance(body, str):
+        return notes
+    body = body.replace("\r\n", "\n").replace("\r", "\n")
+    headings = list(RELEASE_LANGUAGE_HEADING.finditer(body))
+    for index, heading in enumerate(headings):
+        end = headings[index + 1].start() if index + 1 < len(headings) else len(body)
+        content = body[heading.end():end].strip()
+        if content:
+            language = "en" if heading.group(1).lower() == "english" else "zh"
+            notes[language] = content
+    return notes
 
 
 def github_credential():
@@ -97,10 +123,14 @@ class Updates:
 
     def status(self):
         cached = self.cached()
-        if cached.get("state") == "available" and version_tuple(cached["latest_version"]) <= version_tuple(self.current_version):
-            cached = {key: value for key, value in cached.items() if key != "asset"}
-            cached["state"] = "current"
-            atomic_json(self.state_path, cached)
+        if cached.get("state") == "available":
+            installed = version_tuple(self.current_version)
+            if version_tuple(cached["latest_version"]) <= installed:
+                cached = {key: value for key, value in cached.items() if key not in {"asset", "release_notes", "release_notes_complete"}}
+                cached["state"] = "current"
+                atomic_json(self.state_path, cached)
+            elif cached.get("release_notes"):
+                cached["release_notes"] = [note for note in cached["release_notes"] if version_tuple(note["version"]) > installed]
         result_path = self.directory / "upgrade-result.json"
         if cached.get("state") == "upgrading" and result_path.exists():
             result = json.loads(result_path.read_text(encoding="utf8"))
@@ -145,28 +175,58 @@ class Updates:
             headers["Authorization"] = "Bearer " + token
         return self.opener.open(Request(url, headers=headers), timeout=30)
 
+    def _release_notes(self, api, token, latest_release, installed, latest):
+        notes = {latest: localized_release_notes(latest_release)}
+        # Within one minor version, this is the largest possible number of matches.
+        expected = latest[2] - installed[2] if latest[:2] == installed[:2] else None
+        if len(notes) == expected:
+            return list(notes.values()), True
+
+        complete, page = False, 1
+        try:
+            while True:
+                with self._request(f"{api}?per_page=30&page={page}", token) as response:
+                    releases = read_release_json(response)
+                    pagination = response.headers.get("Link", "")
+                if not isinstance(releases, list):
+                    break
+                for release in releases:
+                    if not isinstance(release, dict) or release.get("draft") or release.get("prerelease"):
+                        continue
+                    try:
+                        version = version_tuple(release.get("tag_name"))
+                    except ValueError:
+                        continue
+                    if installed < version < latest and version not in notes:
+                        notes[version] = localized_release_notes(release)
+                if len(notes) == expected or not re.search(r';\s*rel="next"', pagination):
+                    complete = True
+                    break
+                page += 1
+        except (OSError, ValueError, HTTPException):
+            pass
+        return [notes[version] for version in sorted(notes, reverse=True)], complete
+
     def check(self):
         if not self.supported:
             raise ValueError("Linux 服务器版不使用 Windows EXE 更新源。")
         repository = self.settings()["repository"]
         token = ""
-        api = "https://api.github.com/repos/" + repository + "/releases/latest"
+        api = "https://api.github.com/repos/" + repository + "/releases"
         try:
-            response = self._request(api)
+            response = self._request(api + "/latest")
         except HTTPError as exc:
             if exc.code not in {401, 403, 404}:
                 raise
             token = github_credential()
             if not token:
                 raise ValueError("仓库尚无正式版本，或私有仓库需要先登录 GitHub CLI。") from None
-            response = self._request(api, token)
+            response = self._request(api + "/latest", token)
         with response:
-            raw = response.read(2 * 1024 * 1024 + 1)
-        if len(raw) > 2 * 1024 * 1024:
-            raise ValueError("版本信息过大。")
-        release = json.loads(raw)
+            release = read_release_json(response)
         latest = str(release["tag_name"]).removeprefix("v")
-        newer = version_tuple(latest) > version_tuple(self.current_version)
+        installed, offered = version_tuple(self.current_version), version_tuple(latest)
+        newer = offered > installed
         if release.get("draft") or release.get("prerelease"):
             raise ValueError("更新源返回了非正式版本。")
         result = {"state": "available" if newer else "current", "latest_version": latest,
@@ -181,6 +241,7 @@ class Updates:
             if not isinstance(asset.get("id"), int) or not isinstance(asset.get("size"), int) or not 0 < asset["size"] <= 300 * 1024 * 1024:
                 raise ValueError("正式版文件信息无效。")
             result["asset"] = {"id": asset["id"], "name": asset["name"], "size": asset["size"], "sha256": asset["digest"][7:]}
+            result["release_notes"], result["release_notes_complete"] = self._release_notes(api, token, release, installed, offered)
         atomic_json(self.state_path, result)
         return result
 
