@@ -1178,7 +1178,7 @@ dialog{width:min(760px,calc(var(--desktop-width) - 80px));max-height:calc(var(--
   background: var(--panel);
 }
 .header-compression[data-server-panel-open]::after {
-  inset-block: 50% -4px;
+  inset-block: calc(25% - 2px) -4px;
   border-inline: 1px solid var(--line);
   pointer-events: none;
 }
