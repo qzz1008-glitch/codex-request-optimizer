@@ -541,7 +541,7 @@ globalThis.InspectorRestartNotice = {
         optimizer&&chatgpt?"重启本软件与 ChatGPT App 后生效":
         optimizer?"重启本软件后生效":
         chatgpt&&wsl?"重启 ChatGPT 并重新连接 WSL 后生效":
-        chatgpt?"以下设置项在重启 ChatGPT 后生效":
+        chatgpt?"待重启ChatGPT生效设置":
         wsl?"重新连接 WSL 会话后生效":failure?"待生效状态暂不可用":"配置生效状态");
       badge.title=warning||failure?[...problems.map(row=>[row.scope,t(row.reason),row.detail].filter(Boolean).join(" · ")),
         failure?t(failure):"",log?t("日志目录：{path}").replace("{path}",()=>log):"",t("点击打开日志目录")].filter(Boolean).join("\n"):

@@ -64,7 +64,7 @@ async function run() {
   await page.locator('#restart-notice-open').click();
   assert.equal(await page.locator('#settings-dialog').evaluate(node=>node.open),true);
   assert.equal(await page.locator('#restart-notice').isVisible(),true,'unapplied settings reveal the status card');
-  assert.equal(await page.locator('#restart-notice-title').textContent(),'以下设置项在重启 ChatGPT 后生效');
+  assert.equal(await page.locator('#restart-notice-title').textContent(),'待重启ChatGPT生效设置');
   const settingsIds=['settings-dialog','restart-notice','settings-save','settings-restore','context-settings'];
   const settings=await rects(page,settingsIds);
   await page.evaluate(()=>{notice.change('context_tokens',null,250000);notice.change('compact_tokens',null,200000);});
