@@ -500,7 +500,7 @@ button.bar-delta[aria-expanded="true"]::after{transform:translateY(-35%) rotate(
   .request-body-modes>input:checked+label{forced-color-adjust:none;background:Highlight;color:HighlightText}
 }
 #tab-tree>.search-results{max-height:min(260px,40%);padding:7px 0;border-radius:0}
-.json-viewer{position:relative;flex:1;min-width:0;min-height:0;overflow:hidden;margin-inline-start:calc(-1 * var(--detail-content-inset))}
+.json-viewer{position:relative;flex:1;min-width:0;min-height:0;overflow:hidden;margin-block-start:6px;margin-inline-start:calc(-1 * var(--detail-content-inset))}
 .json-content{height:100%;margin:0;padding-block:8px 4px;padding-inline:0 var(--request-body-end-inset);overflow:auto;scrollbar-gutter:stable;overscroll-behavior:contain;white-space:pre;word-break:normal;overflow-wrap:normal;font-family:Consolas,"Cascadia Mono",monospace;font-size:12px;line-height:1.65;tab-size:2}
 .request-body-text{padding-inline-start:var(--detail-content-inset);padding-block-end:14px;white-space:normal;font:inherit;font-size:.85rem;line-height:1.55}
 .request-body-text>.request-message{
