@@ -140,7 +140,6 @@ globalThis.InspectorConnections = {
       const label = localLabel.getBoundingClientRect();
       const deviceToggle = list.querySelector(".connection-device-actions");
       const address = list.querySelector(".connection-device-info strong");
-      const badgeVisible = restartBadge.dataset.visible === "true";
       panel.style.setProperty("--connection-panel-top", `${trigger.bottom + 4}px`);
       panel.style.paddingInlineEnd = "";
       if (deviceToggle) {
@@ -150,9 +149,8 @@ globalThis.InspectorConnections = {
         const edgeInset = panel.offsetWidth - panel.clientWidth - 1;
         panel.style.paddingInlineEnd = `${Math.max(0, frameEndPadding + localEnd - remoteEnd - edgeInset)}px`;
       }
-      const addressInset = address ? address.getBoundingClientRect().left - panel.getBoundingClientRect().left : 7;
-      const badgeSpace = badgeVisible ? restartBadge.offsetWidth + 16 : 8;
-      const minWidth = addressInset + label.width + badgeSpace + localToggle.width + frameEndPadding;
+      const addressInset = address ? address.getBoundingClientRect().left - panel.getBoundingClientRect().left : 28;
+      const minWidth = addressInset + label.width + 8 + localToggle.width + frameEndPadding;
       const availableWidth = panelRight - viewToggle.getBoundingClientRect().right - 4;
       panel.style.setProperty("--connection-panel-min-width", `${minWidth}px`);
       panel.style.setProperty("--connection-panel-available-width", `${Math.max(minWidth, availableWidth)}px`);
@@ -161,12 +159,8 @@ globalThis.InspectorConnections = {
       panel.style.left = `${panelLeft}px`;
       controls.style.setProperty("--connection-frame-left", `${panelLeft - trigger.left}px`);
       controls.style.setProperty("--connection-frame-width", `${width}px`);
-      localLabel.style.translate = `${panelLeft + addressInset - trigger.left - localLabel.offsetLeft}px`;
-      if (badgeVisible) {
-        const gap = parseFloat(getComputedStyle(controls.parentElement).columnGap) || 0;
-        const badgeRight = trigger.left - gap;
-        restartBadge.style.setProperty("--connection-badge-offset", `${localToggle.left - 8 - badgeRight}px`);
-      }
+      // The local label and the end of the compact badge align with the server addresses.
+      controls.parentElement.style.setProperty("--connection-local-start", `${panelLeft + addressInset - trigger.left}px`);
     }
     function hide() {
       clearTimeout(closeTimer);
@@ -312,15 +306,13 @@ globalThis.InspectorConnections = {
     document.addEventListener("pointerdown",event=>{if(!inDropdown(event.target))hide();});
     document.addEventListener("keydown",event=>{if(event.key==="Escape"&&(isOpen()||openRequested)){hide();event.stopPropagation();}});
     globalThis.addEventListener("resize",place);
-    const restartBadgeObserver=new MutationObserver(place);
-    restartBadgeObserver.observe(restartBadge,{attributeFilter:["data-visible"]});
     applyButton.addEventListener("click",apply);
     cancelButton.addEventListener("click",()=>dialog.close());
     document.addEventListener("close",event=>{
       if(event.target instanceof HTMLDialogElement)offerReconnect();
       if(event.target===dialog)schedule();
     },true);
-    globalThis.addEventListener("pagehide",()=>{disposed=true;restartBadgeObserver.disconnect();clearTimeout(timer);clearTimeout(closeTimer);});
+    globalThis.addEventListener("pagehide",()=>{disposed=true;clearTimeout(timer);clearTimeout(closeTimer);});
     render();poll();
     return {render,hide};
   }
@@ -350,6 +342,7 @@ globalThis.InspectorRestartNotice = {
     const $=id=>document.getElementById(id), labels={connection:"Codex 接入",context_tokens:"有效上下文",
       compact_tokens:"自动压缩阈值",capacity_retry:"容量不足重试",image_analysis_mode:"图片解析",
       entry_port:"入口端口",sharing:"共享额度来源",wsl:"WSL 配置",storage_dir:"数据目录"};
+    const card=$("restart-notice"),badge=$("restart-notice-open");
     let ledger={revision:0,items:[]},storageKey="",authoritative=false,ackLegacy=false,details=null,working=false,error="",storageError="",backendError="",renderKey="";
     function save() {
       try {localStorage.setItem(storageKey,JSON.stringify({ledger,ackLegacy,details}));storageError="";}
@@ -441,7 +434,6 @@ globalThis.InspectorRestartNotice = {
       return [t("待生效项目"),...Array.from(groups,([target,names])=>t(targets[target]).replace("{items}",()=>[...names].join(separator)))].join("\n");
     }
     function render() {
-      const card=$("restart-notice"),badge=$("restart-notice-open");if(!card||!badge)return;
       const items=[...ledger.items],s=status();
       if(s?.storage_paths_pending)items.push({key:"storage_dir",target:"optimizer",scope:""});
       const chatgpt=items.some(row=>row.target==="chatgpt"),wsl=items.some(row=>row.target==="wsl"),optimizer=items.some(row=>row.target==="optimizer");
@@ -455,12 +447,13 @@ globalThis.InspectorRestartNotice = {
       card.dataset.state=active?"pending":"ready";
       badge.dataset.visible=String(active||warning);badge.tabIndex=active||warning?0:-1;
       badge.dataset.state=warning||failure?"error":"pending";
-      badge.textContent=warning?t("接入异常"):failure?t("状态异常"):items.length?restartLabel(items,portPending):"";
+      const badgeLabel=warning?t("接入异常"):failure?t("状态异常"):items.length?restartLabel(items,portPending):"";
+      $("restart-notice-label").textContent=badgeLabel;
       $("restart-notice-title").textContent=t(portPending?"先重启本软件，再重启 ChatGPT App":optimizer&&chatgpt?"重启本软件与 ChatGPT App 后生效":optimizer?"重启本软件后生效":chatgpt?"重启 ChatGPT App 后生效":wsl?"重新连接 WSL 会话后生效":failure?"待生效状态暂不可用":"配置生效状态");
       badge.title=warning||failure?[...problems.map(row=>[row.scope,t(row.reason),row.detail].filter(Boolean).join(" · ")),
         failure?t(failure):"",log?t("日志目录：{path}").replace("{path}",()=>log):"",t("点击打开日志目录")].filter(Boolean).join("\n"):
         (items.length?pendingTooltip(items,portPending):"");
-      badge.setAttribute("aria-label",[badge.textContent,badge.title,t(warning||failure?"打开日志目录":"查看待生效配置或接入错误")].filter(Boolean).join(" · "));
+      badge.setAttribute("aria-label",[badgeLabel,badge.title,t(warning||failure?"打开日志目录":"查看待生效配置或接入错误")].filter(Boolean).join(" · "));
       const tags=$("restart-notice-items");tags.replaceChildren(...items.map(row=>node("li","restart-notice-tag",pendingLabel(row))));
       const message=$("restart-notice-message");
       const [messageStart,messageEnd=""]=chatgpt
@@ -491,11 +484,21 @@ globalThis.InspectorRestartNotice = {
       } catch(failure) {error=failure.message||String(failure);}
       finally {working=false;render();}
     }
-    $("restart-notice-open").addEventListener("click",async()=>{
+    badge.addEventListener("click",async()=>{
       if(InspectorRestartNotice.connectionProblems(status(),details).length||error||backendError||storageError){await openLogs();return;}
       await openSettings();render();
-      $("restart-notice").focus();
+      card.focus();
     });
+    const localToggle = $("request-compression"), viewToggle = $("view-toggle");
+    const badgeSizeObserver = new ResizeObserver(() => {
+      const gap = parseFloat(getComputedStyle(badge.parentElement).columnGap) || 0;
+      const available = localToggle.getBoundingClientRect().left - viewToggle.getBoundingClientRect().right - gap - 4;
+      badge.style.setProperty("--restart-badge-max-width", `${Math.max(24, available)}px`);
+    });
+    for (const element of [badge.closest(".app-header"), viewToggle, localToggle, $("window-controls")]) {
+      badgeSizeObserver.observe(element);
+    }
+    globalThis.addEventListener("pagehide", () => badgeSizeObserver.disconnect(), {once:true});
     for(const target of ["chatgpt","wsl"])$("restart-notice-"+target).addEventListener("click",()=>acknowledge(target));
     return {ingest,adopt,change,connection,sharing,render,acknowledge};
   }

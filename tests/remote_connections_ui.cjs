@@ -10,7 +10,7 @@ const localControls=[
   `const state={status:null}, restartNotices={connection(){}};
    let settingsOpening=false, settingsEditing=false, settingsSaving=false, compressionSaving=false,
        exitSaving=false, connectSaving=false, connectChecking=false, linkSaving='', compressionTarget=null,
-       connectSource=null, exitFinished=false, startupConnectChecked=true, desktopOpenRevision=0,
+       connectSource=null, exitFinished=false, firstRunWindow=null, firstRunChecking=false, desktopOpenRevision=0,
        compressionRevision=0, linkRevision=0;
    function setText(node,value) {node.textContent=value;}
    function fail(error) {throw error;}
@@ -380,22 +380,30 @@ const localControls=[
       });
       await reopenPanel();
       await page.waitForFunction(()=>document.querySelectorAll('.connection-device').length===2);
-      await page.locator('#restart-notice-open').evaluate(node=>{node.dataset.visible='true';});
+      const restartBadge=page.locator('#restart-notice-open');
+      await restartBadge.evaluate(node=>{node.dataset.visible='true';node.dataset.state='pending';});
       const localStart=await textLeft(localLabel);
       for(const server of await serverAddress.all()){
         assert(Math.abs(localStart-await textLeft(server))<1,'Addresses of different lengths align with the local label');
       }
-      const restart=await page.locator('#restart-notice-open').boundingBox();
+      const restart=await restartBadge.boundingBox();
       const viewSwitch=await page.locator('#view-toggle').boundingBox();
       const dropdown=await panel.boundingBox();
       const labelWithBadge=await localLabel.boundingBox();
+      const serverStatus=await panel.locator('.connection-device-state').first().boundingBox();
       assert(viewSwitch.x+viewSwitch.width<=restart.x,'The restart badge clears the view switch');
-      assert(labelWithBadge.x+labelWithBadge.width<=restart.x,'The label clears the restart badge inside the local row');
-      assert(restart.x+restart.width<=(await localToggle.boundingBox()).x,'The restart badge clears the local buttons');
+      assert.equal(restart.width,24,'The status dot keeps a 24px target');
+      assert(Math.abs(restart.x+restart.width-labelWithBadge.x)<1,'The restart dot sits to the left of the local label');
+      assert(Math.abs(restart.x+restart.width/2-serverStatus.x-serverStatus.width/2)<1,'Status dots align across device rows');
       assert(viewSwitch.x+viewSwitch.width<=dropdown.x+1,'The joined frame leaves the view switch uncovered');
+      const dotColor=node=>getComputedStyle(node,'::before').borderTopColor;
+      const pendingColor=await restartBadge.evaluate(dotColor);
+      await restartBadge.evaluate(node=>{node.dataset.state='error';});
+      assert.notEqual(await restartBadge.evaluate(dotColor),pendingColor,'A connection error has its own dot color');
+      await restartBadge.evaluate(node=>{node.dataset.state='pending';});
       await assertDropdownFrame();
-      await page.locator('#restart-notice-open').evaluate(node=>node.addEventListener('click',()=>fixture.badgeClicked=true,{once:true}));
-      await page.locator('#restart-notice-open').click();
+      await restartBadge.evaluate(node=>node.addEventListener('click',()=>fixture.badgeClicked=true,{once:true}));
+      await restartBadge.click();
       assert.equal(await page.evaluate(()=>fixture.badgeClicked),true,'The restart notice stays clickable inside the open dropdown');
       await page.evaluate(()=>{
         for(let index=1;index<=20;index++)fixture.rows.push({id:`scroll-${index}`,name:`10.0.1.${index}`,kind:'ssh',state:'connected'});
@@ -405,6 +413,9 @@ const localControls=[
       await assertDropdownFrame();
       await page.mouse.move(0,page.viewportSize().height-1);
       await page.keyboard.press('Escape');await panel.waitFor({state:'hidden'});
+      assert(await restartBadge.evaluate(node=>getComputedStyle(node).whiteSpace==='nowrap'&&
+        getComputedStyle(node.firstElementChild).position!=='absolute'&&node.scrollWidth<=node.clientWidth),
+        'Closing the dropdown restores the full label on one line');
       await page.evaluate(()=>fixture.rows.splice(1));
       const buttonColors=button=>{const style=getComputedStyle(button);return [style.color,style.backgroundColor];};
       const normalColors=await localConnect.evaluate(buttonColors);

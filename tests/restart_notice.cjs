@@ -234,10 +234,11 @@ async function run() {
       assert((await page.locator('#restart-notice-open').getAttribute('aria-label')).startsWith(example[language]));
       assert.equal(await page.locator('#restart-notice-open').evaluate(node=>node.scrollWidth>node.clientWidth),false,
         'Restart targets must fit in the badge: '+example.name+' / '+language);
+      assert.equal(await page.locator('#restart-notice-label').evaluate(node=>getComputedStyle(node).whiteSpace),'nowrap');
       const [views,badge,connect]=await rects(page,['view-toggle','restart-notice-open','request-compression']);
       assert(views[0]+views[2]<=badge[0]&&badge[0]+badge[2]<=connect[0],'Named targets must fit the header');
       const [header]=await page.locator('.app-header').evaluate(node=>{const box=node.getBoundingClientRect();return [[box.y,box.height]];});
-      assert(badge[1]>=header[0]&&badge[1]+badge[3]<=header[0]+header[1],'Wrapped restart targets must stay inside the title bar');
+      assert(badge[1]>=header[0]&&badge[1]+badge[3]<=header[0]+header[1],'The restart badge must stay inside the title bar');
       await page.locator('#restart-notice-open').click();
       assert.equal(await page.locator('#settings-dialog').evaluate(node=>node.open),true);
       assert.equal(await page.evaluate(()=>calls.length),0,'Opening the reminder must not restart or acknowledge either app');
@@ -276,10 +277,11 @@ async function run() {
 
   await load(page,{data_dir:'warning-priority',active_log_dir:'C:/fixture/active-logs',log_dir:'C:/fixture/new-logs',
     restart_notice:{revision:1,items:[{key:'connection',target:'chatgpt',scope:''}]},provider_warnings:[]});
-  const normalHeader=await rects(page,['restart-notice-open',...headerIds]);
+  const warningHeaderIds=['view-toggle',...headerIds];
+  const normalHeader=await rects(page,warningHeaderIds);
   const pendingColor=await page.locator('#restart-notice-open').evaluate(node=>getComputedStyle(node).backgroundColor);
   await page.evaluate(()=>{statusData.provider_warnings=[{provider:'fixture',detail:'Synthetic connection warning'}];notice.ingest();});
-  assert.deepEqual(await rects(page,['restart-notice-open',...headerIds]),normalHeader,'errors replace the badge without shifting the header');
+  assert.deepEqual(await rects(page,warningHeaderIds),normalHeader,'errors replace the badge without shifting the other controls');
   assert.notEqual(await page.locator('#restart-notice-open').evaluate(node=>getComputedStyle(node).backgroundColor),pendingColor,'errors have a distinct color');
   assert.equal(await page.locator('#restart-notice-open').getAttribute('data-state'),'error');
   assert.equal(await page.locator('#restart-notice-open').textContent(),'接入异常','errors take priority over a pending restart');
