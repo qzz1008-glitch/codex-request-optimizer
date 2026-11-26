@@ -13,6 +13,13 @@ const openLogSource=app.slice(app.indexOf('async function openLogDirectory()'),a
 const html=read('index.html').replace(/<script\b[^>]*>[\s\S]*?<\/script>/g,'').replace(/<link\b[^>]*>/g,'');
 let browser,cases=0;
 const rects=(page,ids)=>page.evaluate(ids=>ids.map(id=>{const r=document.getElementById(id).getBoundingClientRect();return [r.x,r.y,r.width,r.height];}),ids);
+async function assertPendingOutline(field) {
+  const appearance=await field.evaluate(node=>{
+    const {outlineStyle,outlineColor}=getComputedStyle(node);
+    return [outlineStyle,outlineColor,getComputedStyle(node,'::after').content,node.getAttribute('data-restart-label')];
+  });
+  assert.deepEqual(appearance,['solid','rgb(234, 200, 131)','none',null]);
+}
 async function load(page,initial={}) {
   await page.goto('http://restart.test/');
   await page.addStyleTag({content:read('style.css')});
@@ -62,7 +69,11 @@ async function run() {
   const settings=await rects(page,settingsIds);
   await page.evaluate(()=>{notice.change('context_tokens',null,250000);notice.change('compact_tokens',null,200000);});
   assert.deepEqual(await rects(page,settingsIds),settings,'adding pending settings must not move the form');
-  assert.equal(await page.locator('[data-settings-field="context_tokens"]').getAttribute('data-restart-label'),'ChatGPT 待重启');
+  await assertPendingOutline(page.locator('[data-settings-field="context_tokens"]'));
+  await assertPendingOutline(page.locator('[data-settings-field="compact_tokens"]'));
+  await assertPendingOutline(page.locator('#connection-settings'));
+  assert.equal(await page.locator('#connection-settings h3').textContent(),'网络连接');
+  assert.equal(await page.locator('[data-settings-field="entry_port"].restart-pending-field').count(),0);
   const top=(await rects(page,['restart-notice']))[0];
   await page.locator('.settings-content').evaluate(node=>node.scrollTop=node.scrollHeight);
   assert.deepEqual((await rects(page,['restart-notice']))[0],top,'the restart card stays above the form scroll area');cases++;
@@ -104,7 +115,7 @@ async function run() {
   assert.equal(await page.locator('#restart-notice-open').textContent(),'本软件待重启');
   assert.equal(await page.locator('#restart-notice-title').textContent(),'重启本软件后生效');
   assert.equal(await page.locator('#restart-notice-chatgpt').evaluate(node=>node.hidden),true);
-  assert.equal(await page.locator('[data-settings-field="storage_dir"]').getAttribute('data-restart-label'),'本软件待重启');
+  await assertPendingOutline(page.locator('[data-settings-field="storage_dir"]'));
   await page.evaluate(()=>notice.change('compact_tokens',null,250000));
   assert.equal(await page.locator('#restart-notice-open').textContent(),'ChatGPT 与本软件待重启');
   assert.equal(await page.locator('#restart-notice-title').textContent(),'重启本软件与 ChatGPT App 后生效');
@@ -149,6 +160,7 @@ async function run() {
   await page.evaluate(()=>document.getElementById('settings-dialog').showModal());
   assert.equal(await page.locator('#restart-notice-open').textContent(),'ChatGPT 与本软件待重启');
   assert((await page.locator('#restart-notice-title').textContent()).includes('先重启本软件'));
+  await assertPendingOutline(page.locator('[data-settings-field="entry_port"]'));
   assert.equal(await page.locator('#restart-notice-chatgpt').isDisabled(),true);
   await page.evaluate(()=>notice.acknowledge('chatgpt'));
   assert.equal(await page.evaluate(()=>calls.length),0,'port changes cannot be acknowledged before applying the port');
@@ -187,6 +199,7 @@ async function run() {
   assert.equal(await page.locator('#restart-notice-open').getAttribute('data-visible'),'false');
   assert.equal(await page.locator('#restart-notice').getAttribute('data-state'),'ready');cases++;
   assert.equal(await page.locator('#restart-notice').isVisible(),false,'clearing every pending item hides the entire card');
+  assert.equal(await page.locator('#settings-dialog .restart-pending-field').count(),0,'clearing the notice removes the field outlines');
   assert.equal(await page.locator('#restart-notice').evaluate(node=>node.getBoundingClientRect().height),0);
   await page.evaluate(()=>{document.getElementById('settings-dialog').close();document.documentElement.classList.add('desktop-titlebar');document.getElementById('window-controls').hidden=false;});
   for(const language of ['zh','en']) {

@@ -469,16 +469,12 @@ globalThis.InspectorRestartNotice = {
         const button=$("restart-notice-"+target),needed=target==="chatgpt"?chatgpt:wsl;
         button.hidden=!needed;button.disabled=working||busy()||target==="chatgpt"&&portPending;
       }
+      const pendingKeys=new Set(items.map(row=>row.key));
       for(const wrapper of document.querySelectorAll("[data-settings-field]")) {
         const field=wrapper.dataset.settingsField,key=["capacity_retry_enabled","capacity_retry_max_retries"].includes(field)?"capacity_retry":field;
-        const pending=items.filter(row=>row.key===key);
-        wrapper.classList.toggle("restart-pending-field",pending.length>0);
-        if(pending.length)wrapper.dataset.restartLabel=restartLabel(pending);else delete wrapper.dataset.restartLabel;
+        wrapper.classList.toggle("restart-pending-field",pendingKeys.has(key));
       }
-      const connectionItems=items.filter(row=>["connection","sharing","wsl"].includes(row.key));
-      $("connection-settings").classList.toggle("restart-pending-connection",!!connectionItems.length);
-      $("connection-pending-label").hidden=!connectionItems.length;
-      $("connection-pending-label").textContent=connectionItems.length?restartLabel(connectionItems):"";
+      $("connection-settings").classList.toggle("restart-pending-field",["connection","sharing","wsl"].some(key=>pendingKeys.has(key)));
     }
     async function acknowledge(target) {
       if(working||busy()||target==="chatgpt"&&status()?.entry_port?.pending)return;

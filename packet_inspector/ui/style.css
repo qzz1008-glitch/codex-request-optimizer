@@ -1189,13 +1189,10 @@ body[data-desktop-startup] #record-count{visibility:hidden}
 .restart-notice-actions{display:flex;flex-wrap:wrap;gap:6px}
 #settings-dialog .restart-notice-actions button{border-color:#dfba75;background:#fff;color:#875309}
 .restart-notice-items{display:flex;align-items:center;gap:6px;margin:0;padding:0;min-width:0;overflow-x:auto;overflow-y:hidden;list-style:none;scrollbar-width:thin}
-#settings-dialog :is(.restart-notice-tag,.restart-notice-message,.connection-pending-label){font-size:var(--settings-detail-size);line-height:1.5}
+#settings-dialog :is(.restart-notice-tag,.restart-notice-message){font-size:var(--settings-detail-size);line-height:1.5}
 .restart-notice-tag{flex:none;padding:1px 7px;border:1px solid #edd7ac;border-radius:5px;background:#fffdf8;white-space:nowrap}
 .restart-notice-message{margin:0;overflow:auto;white-space:nowrap;scrollbar-width:thin}
-#settings-dialog .restart-pending-field{position:relative;outline:1px solid #eac883;outline-offset:5px;border-radius:5px}
-.restart-pending-field::after{content:attr(data-restart-label);position:absolute;right:2px;top:-13px;padding:0 4px;background:var(--panel);color:#96600b;font-size:var(--settings-detail-size);font-weight:500;line-height:1.25;pointer-events:none}
-#connection-settings.restart-pending-connection>h3{color:#96600b}
-.connection-pending-label{display:inline-block;vertical-align:middle;margin-left:5px;padding:0 6px;border:1px solid #eac883;border-radius:5px;background:#fff8eb;color:#875309;font-weight:500;letter-spacing:normal}
+#settings-dialog .restart-pending-field{outline:1px solid #eac883;outline-offset:5px;border-radius:5px}
 .inline-feedback .notice{position:static;inset:auto;z-index:auto;display:flex;align-items:center;gap:8px;width:100%;max-width:none;min-width:0;margin:0;padding:0;border:0;border-radius:0;background:none;box-shadow:none;color:inherit;font:inherit}
 .inline-feedback .notice>span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .inline-feedback .notice>a{flex:none;color:var(--accent);font-size:inherit;white-space:nowrap}
