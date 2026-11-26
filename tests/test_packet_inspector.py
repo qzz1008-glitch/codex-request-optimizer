@@ -957,7 +957,8 @@ class RelayTests(unittest.TestCase):
 
     def test_json_image_relay_uses_stateless_auto_levels_without_conversation_protection(self):
         settings = {"auto_detect_providers":True, "packet_size_protection_enabled":True,
-                    "auto_zstd_level_enabled":True, "zstd_level":1, "budget_bytes":1_000_000}
+                    "auto_zstd_level_enabled":False, "auto_image_zstd_level_enabled":True,
+                    "zstd_level":1, "budget_bytes":1_000_000}
         policy = self.server.compression_policy
         with patch.dict(self.server.settings, settings), \
                 patch.object(policy, "reserve", wraps=policy.reserve) as reserve, \
