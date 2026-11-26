@@ -121,7 +121,7 @@ def changes_provider(files, edits):
                for name, raw in edits.items())
 
 
-def provider_reload_settings(files, edits):
+def provider_reload_changes(files, edits):
     def split(raw):
         document = tomlkit.parse(raw.decode("utf-8-sig")).unwrap()
         providers = document.get("model_providers", {})
@@ -130,25 +130,56 @@ def provider_reload_settings(files, edits):
             for name, provider in providers.items():
                 if not isinstance(provider, dict):
                     continue
+                values = {}
                 for key in ("stream_max_retries", "request_max_retries"):
                     if key in provider:
-                        retries[name, key] = provider.pop(key)
+                        values[key] = provider.pop(key)
+                if values:
+                    retries[name] = values
         return document, retries
 
     settings = set()
-    for name, raw in edits.items():
-        before, before_retries = split(files[name] or b"")
-        after, after_retries = split(raw)
-        if before_retries != after_retries:
-            settings.add("capacity_retry")
-        if before != after:
-            settings.add("connection")
-    return settings
+    previous, current = {}, {}
+    for name, raw in files.items():
+        before, before_retries = split(raw or b"")
+        after_retries = before_retries
+        if name in edits:
+            after, after_retries = split(edits[name])
+            if before != after:
+                settings.add("connection")
+        if before_retries:
+            previous[name] = before_retries
+        if after_retries:
+            current[name] = after_retries
+    retry_change = None
+    if previous != current:
+        retry_change = tuple(hashlib.sha256(json.dumps(values, sort_keys=True, default=str).encode()).hexdigest()
+                             for values in (previous, current))
+    return settings, retry_change
 
 
-def remember_pending_settings(record, settings):
-    pending = record.get("pending_settings", ["unrecorded"]) if record.get("reload_required") else ()
-    record.update(reload_required=True, pending_settings=sorted(set(pending) | settings))
+def remember_pending_settings(record, settings, *, retry_change=None):
+    pending = set(record.get("pending_settings") or ["unrecorded"]) if record.get("reload_required") else set()
+    pending.update(settings)
+    if retry_change is not None:
+        before, after = retry_change
+        if "capacity_retry" not in pending:
+            record["retry_reload_baseline"] = before
+        # An older pending entry may lack a baseline. Only a confirmed
+        # reconnect can clear it in that case.
+        if record.get("retry_reload_baseline") == after:
+            pending.discard("capacity_retry")
+            record.pop("retry_reload_baseline")
+        else:
+            pending.add("capacity_retry")
+    elif not settings:
+        pending.add("unrecorded")
+
+    record["reload_required"] = bool(pending)
+    if pending:
+        record["pending_settings"] = sorted(pending)
+    else:
+        record.pop("pending_settings", None)
 
 
 class TunnelHandler(RouterHandler):
@@ -492,7 +523,7 @@ class RemoteRelays:
                             self._save(key, prior)
                             raise
                 if edits or aliases:
-                    settings = provider_reload_settings(files, edits)
+                    settings, retry_change = provider_reload_changes(files, edits)
                     expected = {name: hashlib.sha256(raw).hexdigest() if raw is not None else None
                                 for name, raw in files.items()}
                     updates = {name: base64.b64encode(raw).decode("ascii") for name, raw in edits.items()}
@@ -503,7 +534,7 @@ class RemoteRelays:
                     if migration.get("changed"):
                         settings.add("connection")
                     if outcome["changed"] or migration.get("changed"):
-                        remember_pending_settings(record, settings or {"unrecorded"})
+                        remember_pending_settings(record, settings, retry_change=retry_change)
                     files.update(edits)
                 active = bool(endpoint)
                 if endpoint:
@@ -553,6 +584,7 @@ class RemoteRelays:
                     record.pop("provider_migration_waiting", None)
                 record["reload_required"] = result["reload_required"] = False
                 record.pop("pending_settings", None)
+                record.pop("retry_reload_baseline", None)
                 result["pending_settings"] = []
                 if active:
                     self._save(key, record)

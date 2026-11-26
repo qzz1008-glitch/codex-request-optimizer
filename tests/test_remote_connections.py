@@ -992,7 +992,7 @@ class WindowsRemoteRelayTests(unittest.TestCase):
         self.assertFalse(resumed(self.host, "reconnect")["reload_required"])
         self.assertFalse(resumed(self.host, "images")["reload_required"])
 
-    def test_names_pending_retry_setting_until_remote_reconnect(self):
+    def test_reverting_remote_retry_limit_clears_pending_notice(self):
         limit = 30
         self.relays.retry_limit = lambda: limit
         original_ssh = self.relays.ssh
@@ -1006,13 +1006,56 @@ class WindowsRemoteRelayTests(unittest.TestCase):
         linked = self.relays(self.host, "activate")
         self.assertEqual(linked["pending_settings"], ["capacity_retry", "connection"])
         self.assertEqual(self.relays(self.host, "reconnect")["pending_settings"], [])
-        for limit in (40, 30):
+        for limit in (40, 45):
             pending = self.relays(self.host, None)
             self.assertTrue(pending["reload_required"])
             self.assertEqual(pending["pending_settings"], ["capacity_retry"])
-        self.assertEqual(self.relays(self.host, None)["pending_settings"], ["capacity_retry"])
+            config = tomllib.loads(self.config.read_text(encoding="utf8"))
+            self.assertEqual(config["model_providers"][PROVIDER]["stream_max_retries"], limit)
 
-        key = linked["account_key"]
+        self.relays.close()
+        resumed = self.manager()
+        resumed.retry_limit = lambda: limit
+        self.assertEqual(resumed(self.host, None)["pending_settings"], ["capacity_retry"])
+        limit = 30
+        reverted = resumed(self.host, None)
+        self.assertFalse(reverted["reload_required"])
+        self.assertEqual(reverted["pending_settings"], [])
+        config = tomllib.loads(self.config.read_text(encoding="utf8"))
+        self.assertEqual(config["model_providers"][PROVIDER]["stream_max_retries"], 30)
+        stored = dict(resumed.records())[linked["account_key"]]
+        self.assertNotIn("pending_settings", stored)
+        self.assertNotIn("retry_reload_baseline", stored)
+
+    def test_reverting_remote_retry_settings_keeps_connection_notice(self):
+        limit = None
+        self.relays.retry_limit = lambda: limit
+        self.assertEqual(self.relays(self.host, "activate")["pending_settings"], ["connection"])
+        limit = 40
+        self.assertEqual(self.relays(self.host, None)["pending_settings"], ["capacity_retry", "connection"])
+        limit = None
+        reverted = self.relays(self.host, None)
+        self.assertTrue(reverted["reload_required"])
+        self.assertEqual(reverted["pending_settings"], ["connection"])
+
+    def test_legacy_pending_retry_notice_without_baseline_requires_reconnect(self):
+        limit = 30
+        self.relays.retry_limit = lambda: limit
+
+        def ssh(host, action, **options):
+            if action == "tunnel_reconnect":
+                return {"state": "reloaded", "codex_restart": {"supported": True}}
+            return self.ssh(host, action, **options)
+
+        self.relays.ssh = ssh
+        key = self.relays(self.host, "activate")["account_key"]
+        legacy = dict(self.relays.records())[key]
+        legacy.pop("retry_reload_baseline")
+        legacy["pending_settings"] = ["capacity_retry"]
+        self.relays._save(key, legacy)
+        for limit in (40, 30):
+            self.assertEqual(self.relays(self.host, None)["pending_settings"], ["capacity_retry"])
+
         legacy = dict(self.relays.records())[key]
         legacy.pop("pending_settings")
         self.relays._save(key, legacy)
