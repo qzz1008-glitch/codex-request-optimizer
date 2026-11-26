@@ -111,6 +111,23 @@
 .packet-table .sort-arrow{position:static;flex:0 0 auto;margin-left:3px;font-size:11px;line-height:1}
 .packet-table .sort-arrow:empty{display:none}
 .packet-table td{height:32px;padding:5px 4px;vertical-align:middle;border-bottom:1px solid var(--line-subtle,#e9edf3);line-height:20px;text-align:center;white-space:nowrap;overflow-wrap:normal;overflow:hidden;text-overflow:ellipsis}
+:root:is(:has(> head > meta[name="color-scheme"][content="dark"]),[data-system-dark]) .packet-table tbody{
+  --surface-warning:#463319;
+  --surface-warning-hover:#553c20;
+  --surface-info:#1c3860;
+  --surface-info-hover:#20476d;
+  --surface-success:#163b2e;
+  --surface-success-hover:#1b4a39;
+  --surface-error:#4e2535;
+  --surface-error-hover:#603143;
+  --surface-raised:#34343e;
+  --surface-active:#3f424e;
+  --protection-predictive:#c4a7ff;
+  --protection-overflow:#ffc574;
+  --protection-retry:#77dcea;
+  --protection-optimization:#83bdff;
+  --packet-marker-width:4px;
+}
 .packet-table tbody tr{--row-bg:var(--panel);--row-hover:var(--surface-hover,#f4f7fc);cursor:pointer;background:var(--row-bg);transition:background-color .12s ease}
 .packet-table tbody tr.request-waiting{--row-bg:var(--surface-warning,#fff9e9);--row-hover:var(--surface-warning-hover,#fff1cd)}
 .packet-table tbody tr.request-streaming{--row-bg:var(--surface-info,#edf5ff);--row-hover:var(--surface-info-hover,#dfedff)}
@@ -126,7 +143,7 @@
 [data-mechanism="retry"]{--protection-color:var(--protection-retry,#167f8e)}
 [data-mechanism="optimization"]{--protection-color:var(--protection-optimization,#3f78c5)}
 .packet-table .packet-compressed{position:relative}
-.packet-protection-markers{position:absolute;inset:3px 0 3px auto;display:flex;flex-direction:column;gap:1px;width:3px;overflow:hidden;border-radius:2px}
+.packet-protection-markers{position:absolute;inset:3px 0 3px auto;display:flex;flex-direction:column;gap:1px;width:var(--packet-marker-width,3px);overflow:hidden;border-radius:2px}
 .packet-protection-marker{display:block;flex:1;min-height:0;background:var(--protection-color)}
 .packet-table .packet-open{display:inline-flex;flex-direction:row;flex-wrap:nowrap;align-items:center;justify-content:center;gap:6px;border:0;border-radius:3px;padding:0;background:none;font:inherit;line-height:20px;color:inherit;text-align:center;font-variant-numeric:tabular-nums;white-space:nowrap}
 .packet-date{color:var(--muted);font-size:11px}
