@@ -197,7 +197,24 @@ async function run(){
   assert.equal(await notesDialog.locator('img').count(),0,'External Markdown is rendered as text');
   assert((await notesDialog.textContent()).includes(language==='zh'?'此版本未提供当前语言的更新内容':'Earlier version notes'));
   const closeNotes=notesDialog.getByRole('button',{name:language==='zh'?'关闭':'Close',exact:true});
+  const navigation=notesDialog.getByRole('navigation',{name:language==='zh'?'版本导航':'Version navigation'});
+  const firstVersion=navigation.getByRole('link',{name:'v1.1.0'}),earlierVersion=navigation.getByRole('link',{name:'v1.0.5'});
+  const scroller=notesDialog.getByRole('region',{name:language==='zh'?'版本说明':'Version notes'});
+  assert.deepEqual(await navigation.getByRole('link').allTextContents(),['v1.1.0','v1.0.5']);
+  assert.equal(await firstVersion.getAttribute('aria-current'),'location');
+  const navBox=await navigation.boundingBox(),contentBox=await scroller.boundingBox();
+  assert(navBox.x+navBox.width<contentBox.x,'The version links are left of the release notes');
   assert(await closeNotes.evaluate(node=>node===document.activeElement));
+  const hash=await page.evaluate(()=>location.hash);
+  await earlierVersion.press('Enter');
+  assert.equal(await earlierVersion.getAttribute('aria-current'),'location');
+  assert.equal(await page.evaluate(()=>location.hash),hash);
+  const target=notesDialog.getByRole('region',{name:'v1.0.5'});
+  assert(await target.evaluate(node=>node===document.activeElement));
+  assert((await target.boundingBox()).y<contentBox.y+contentBox.height,'The earlier version is visible after selecting it');
+  await firstVersion.click();
+  assert.equal(await firstVersion.getAttribute('aria-current'),'location');
+  assert.equal(await scroller.evaluate(node=>node.scrollTop),0);
   await page.keyboard.press('Escape');
   assert.equal(await notesDialog.isVisible(),false);
   assert(await notesLink.evaluate(node=>node===document.activeElement));
@@ -209,10 +226,12 @@ async function run(){
    await page.setViewportSize({width:360,height:520});
    await notesLink.press('Space');
    await notesDialog.waitFor({state:'visible'});
-   const scroller=notesDialog.getByRole('region',{name:'版本说明'});
+   const mobileNav=await navigation.boundingBox(),mobileContent=await scroller.boundingBox();
+   assert(mobileNav.y+mobileNav.height<mobileContent.y,'The version links are above the notes on narrow screens');
    assert(await scroller.evaluate(node=>node.scrollHeight>node.clientHeight));
    await scroller.press('End');
    await page.waitForFunction(()=>document.getElementById('updates-notes-content').scrollTop>0);
+   await page.waitForFunction(()=>document.querySelector('#updates-notes-navigation [aria-current]').textContent==='v1.0.5');
    const box=await notesDialog.boundingBox();
    assert(box.x>=0&&box.x+box.width<=360&&box.y>=0&&box.y+box.height<=520);
    await page.keyboard.press('Escape');
@@ -238,6 +257,7 @@ async function run(){
   assert(await installButton.isVisible());cases++;
   await notesLink.click();
   assert((await notesDialog.textContent()).includes(language==='zh'?'暂无更新内容，可重新检查更新':'Check for updates again to load release notes'));
+  assert.equal(await notesDialog.getByRole('navigation').count(),0);
   await page.keyboard.press('Escape');
   assert.deepEqual(await page.evaluate(()=>updateRequests),['status'],'The dialog reads the cached release notes');
   await page.evaluate(async()=>{

@@ -926,6 +926,7 @@ const uiI18n = (() => {
     "检查更新":"Check for updates",
     "立即升级":"Install update",
     "更新内容":"Release notes",
+    "版本导航":"Version navigation",
     "版本说明":"Version notes",
     "此版本未提供当前语言的更新内容":"Release notes for this version are unavailable in the selected language",
     "暂无更新内容，可重新检查更新":"Check for updates again to load release notes",

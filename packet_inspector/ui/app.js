@@ -2768,14 +2768,57 @@ function renderUpdates() {
   message.title=message.textContent;
   message.classList.toggle("error",supported&&displayedState==="error");
 }
+function wireUpdateNotesNavigation(navigation, content) {
+  const links=[...navigation.children],releases=[...content.querySelectorAll(".update-release-notes")];
+  const nativeTracking=CSS.supports("scroll-target-group: auto");
+  let lastPosition=0;
+  const select=link=>{
+    if(!link||link.hasAttribute("aria-current"))return;
+    navigation.querySelector("[aria-current]")?.removeAttribute("aria-current");
+    link.setAttribute("aria-current","location");
+  };
+  for(const [index,link] of links.entries()){
+    link.addEventListener("click",event=>{
+      event.preventDefault();
+      const release=releases[index];
+      release.focus({preventScroll:true});
+      content.scrollTop+=release.getBoundingClientRect().top-content.getBoundingClientRect().top-2;
+      lastPosition=content.scrollTop;
+      select(link);
+    });
+  }
+  content.onscrollend=links.length<2?null:()=>{
+    if(content.scrollTop===lastPosition)return;
+    lastPosition=content.scrollTop;
+    if(lastPosition>0&&content.scrollHeight-content.clientHeight-lastPosition<=1){
+      select(links.at(-1));
+      return;
+    }
+    const current=nativeTracking?navigation.querySelector(":target-current"):null;
+    const top=content.getBoundingClientRect().top+3;
+    select(current||links[releases.findLastIndex(release=>release.getBoundingClientRect().top<=top)]);
+  };
+  select(links[0]);
+}
 function openUpdateNotes() {
   const trigger=$("updates-notes-open"),dialog=$("updates-notes-dialog"),content=$("updates-notes-content");
   if(trigger.hidden||trigger.disabled||dialog.open)return;
   const notes=updateStatus?.release_notes||[];
+  const navigation=$("updates-notes-navigation");
+  navigation.replaceChildren();
+  navigation.hidden=!notes.length;
   content.replaceChildren();
-  for(const entry of notes){
+  for(const [index,entry] of notes.entries()){
     const release=el("section","update-release-notes");
-    release.append(el("h3","",`v${entry.version}`));
+    release.id=`update-release-${index}`;
+    release.tabIndex=-1;
+    const heading=el("h3","",`v${entry.version}`);
+    heading.id=`${release.id}-heading`;
+    release.setAttribute("aria-labelledby",heading.id);
+    release.append(heading);
+    const link=el("a","",heading.textContent);
+    link.href="#"+release.id;
+    navigation.append(link);
     const body=entry[uiI18n.language];
     if(body){
       for(const paragraph of body.split(/\n[ \t]*\n+/)){
@@ -2794,7 +2837,9 @@ function openUpdateNotes() {
   }
   if(!notes.length)content.append(el("p","muted",t("暂无更新内容，可重新检查更新")));
   else if(updateStatus.release_notes_complete===false)content.append(el("p","muted",t("部分版本的更新内容暂不可用")));
+  wireUpdateNotesNavigation(navigation,content);
   dialog.showModal();
+  navigation.scrollTo(0,0);
   content.scrollTop=0;
 }
 async function loadUpdates() {

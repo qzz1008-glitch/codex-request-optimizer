@@ -527,7 +527,10 @@
       <h2 id="updates-notes-title">更新内容</h2>
       <form method="dialog"><button type="submit" autofocus>关闭</button></form>
     </div>
-    <div id="updates-notes-content" tabindex="0" role="region" aria-label="版本说明"></div>
+    <div id="updates-notes-layout">
+      <nav id="updates-notes-navigation" aria-label="版本导航" hidden></nav>
+      <div id="updates-notes-content" tabindex="0" role="region" aria-label="版本说明"></div>
+    </div>
   </dialog>
   <dialog id="zstd-level-dialog" aria-labelledby="zstd-level-title" aria-describedby="zstd-level-note">
     <div class="dialog-heading"><h2 id="zstd-level-title">选择压缩等级</h2><button id="zstd-level-close" type="button" aria-label="关闭等级选择">✕</button></div>
