@@ -356,11 +356,9 @@ button.other-session-group{background:#f5f2fc;border-color:#e7e0f5}
   min-width:0;
   border:1px solid var(--detail-frame-line);
   border-radius:8px;
+  border-start-end-radius:0;
   background:var(--panel);
   overflow:hidden;
-}
-.detail:has(#request-info-tabs > [aria-selected="true"]:nth-last-child(1 of :not([hidden]))) > #packet-detail{
-  border-start-end-radius:0;
 }
 .detail-content{
   flex:1;
