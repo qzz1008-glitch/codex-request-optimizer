@@ -1237,10 +1237,11 @@ body[data-desktop-startup] #record-count{visibility:hidden}
 .restart-notice-items{display:flex;align-items:center;gap:6px;margin:0;padding:0;min-width:0;overflow-x:auto;overflow-y:hidden;list-style:none;scrollbar-width:thin}
 #settings-dialog :is(.restart-notice-tag,.restart-notice-message){font-size:var(--settings-detail-size);line-height:1.5}
 .restart-notice-tag{flex:none;padding:1px 7px;border:1px solid #edd7ac;border-radius:5px;background:#fffdf8;white-space:nowrap}
-.restart-notice-message{min-inline-size:0;max-block-size:4.5em;margin:0;overflow:auto;overflow-wrap:anywhere;scrollbar-width:thin}
+.restart-notice-message{min-inline-size:0;margin:0;overflow-wrap:anywhere}
+.restart-notice-message.error{max-block-size:4.5em;overflow:auto;scrollbar-width:thin}
 #settings-dialog #restart-notice-chatgpt{
-  display:inline;min-block-size:0;padding:0 6px;border:1px solid #b48335;border-radius:5px;
-  background:#fffdf8;color:#875309;font:inherit;font-weight:600;line-height:calc(4 / 3)
+  display:inline;min-block-size:24px;padding-block:2px;padding-inline:6px;border:1px solid #b48335;border-radius:5px;
+  background:#fffdf8;color:#875309;font:inherit;font-weight:600
 }
 #settings-dialog #restart-notice-chatgpt:enabled:hover{border-color:var(--warn);background:#ffedc9}
 #settings-dialog #restart-notice-chatgpt:enabled:active{background:#ffe3ad}

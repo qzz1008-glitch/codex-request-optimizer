@@ -252,12 +252,14 @@ async function run() {
     items:[{key:'image_analysis_mode',target:'chatgpt',scope:''},{key:'wsl',target:'wsl',scope:'Ubuntu'}]}});
   await page.locator('#restart-notice-open').click();
   const inlineConfirmation=page.locator('#restart-notice-message #restart-notice-chatgpt');
-  for(const language of ['zh','en'])for(const width of [420,1120]) {
+  for(const language of ['zh','en'])for(const width of [320,420,1120]) {
     await page.setViewportSize({width,height:900});
     await page.evaluate(language=>{uiI18n.setLanguage(language,{persist:false});notice.render();},language);
     const message=await page.locator('#restart-notice-message').textContent();
     assert(message.includes(language==='zh'?'自动清除':'automatically')&&message.includes('WSL'));
-    assert(message.includes(language==='zh'?'未检测到时可手动确认 ChatGPT 已重启。':'Select ChatGPT restarted if needed.'));
+    assert(message.endsWith(language==='zh'
+      ?'未检测到时可手动确认 ChatGPT 已重启 · WSL 仍需手动确认'
+      :'Select ChatGPT restarted if needed · Confirm WSL reconnections manually'));
     assert.equal(await page.locator('.restart-notice-heading #restart-notice-chatgpt').count(),0);
     assert.equal(await inlineConfirmation.isEnabled(),true);
     const appearance=await inlineConfirmation.evaluate(node=>{
@@ -266,8 +268,10 @@ async function run() {
     });
     assert.deepEqual(appearance,['none','solid','1px']);
     const [text,action]=await rects(page,['restart-notice-message','restart-notice-chatgpt']);
+    assert(action[3]>=24,'the confirmation has a 24px minimum height');
     assert(action[0]>=text[0]&&action[0]+action[2]<=text[0]+text[2],'the confirmation fits the message width');
     assert(action[1]>=text[1]&&action[1]+action[3]<=text[1]+text[3],'the inline confirmation is visible within the message');
+    assert.equal(await page.locator('#restart-notice-message').evaluate(node=>node.scrollHeight>node.clientHeight),false);
     assert.equal(await page.locator('#restart-notice').evaluate(node=>node.scrollHeight>node.clientHeight),false);
     cases++;
   }
