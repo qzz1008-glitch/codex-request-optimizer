@@ -51,6 +51,7 @@ async function run(){
   extract('function message(','function fail(')
  ].join('\n')});
  await page.evaluate(()=>document.getElementById('settings-dialog').showModal());
+ const heading=page.locator('#general-settings > .settings-section-heading');
  const updates=page.locator('#general-settings > #updates-settings');
  const checkButton=updates.locator('#updates-check'),installButton=updates.locator('#updates-install');
  const feedback=updates.locator('#updates-message'),controls=updates.locator('.updates-controls');
@@ -79,13 +80,16 @@ async function run(){
   const [button,repository]=before;
   const [current]=await geometry(page,['updates-versions']);
   const [languageToggle]=await geometry(page,['language-toggle']);
-  const label=await updates.locator('.settings-key').boundingBox();
+  const labelTop=await updates.locator('.settings-key').evaluate(node=>
+   node.getBoundingClientRect().top+parseFloat(getComputedStyle(node).paddingBlockStart));
   assert.equal(current[0],languageToggle[0],'The version starts at the shared controls column');
-  assert(Math.abs(current[1]-label.y)<=1,'The version lines up with the first line of its label');
+  assert(Math.abs(current[1]-labelTop)<=1,'The version lines up with the first line of its label');
   assert(Math.abs(button[0]-current[0]-current[2]-6)<=1,'The check icon sits next to the version');
-  assert(button[0]+button[2]<=repository[0]);
-  const rightInset=await updates.locator('.updates-actions').evaluate(node=>node.getBoundingClientRect().right-node.querySelector('#updates-repository svg').getBoundingClientRect().right);
-  assert(Math.abs(rightInset-12)<=1,'The GitHub logo remains at the right edge');
+  const title=await heading.locator('#general-settings-title').boundingBox();
+  assert(title.x+title.width<=repository[0],'The GitHub logo sits to the right of the general settings title');
+  assert(Math.abs(title.y+title.height/2-repository[1]-repository[3]/2)<=1,'The logo is centered on the heading row');
+  const rightInset=await heading.evaluate(node=>node.getBoundingClientRect().right-node.querySelector('#updates-repository svg').getBoundingClientRect().right);
+  assert(Math.abs(rightInset-12)<=1,'The GitHub logo is aligned to the right edge');
   for(const status of ['checking','current','available','downloading','upgrading','complete','error']){
    await page.evaluate(status=>{updateStatus={state:status,current_version:'1.0.0',latest_version:'1.1.0',error:'Synthetic update error '.repeat(30)};renderUpdates();},status);
    const checking=status==='checking',installing=['downloading','upgrading'].includes(status);

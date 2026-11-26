@@ -691,7 +691,12 @@ input[type=checkbox][switch]:focus-visible{outline:2px solid var(--accent);outli
   display:grid;grid-template-columns:minmax(0,1fr);row-gap:var(--settings-row-gap)
 }
 #settings-dialog .settings-content>section{margin:0;padding:20px 0;padding-inline-start:var(--settings-section-indent);border-top:1px solid var(--line)}
-#settings-dialog .settings-content>section>h3{margin-block-end:6px;margin-inline-start:calc(-1 * var(--settings-section-indent))}
+#settings-dialog .settings-content>section>:is(h3,.settings-section-heading){margin-block-end:6px;margin-inline-start:calc(-1 * var(--settings-section-indent))}
+#settings-dialog .settings-section-heading{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+#settings-dialog .settings-section-heading h3{margin:0}
+#settings-dialog .repository-link{display:inline-flex;align-items:center;justify-content:center;flex:none;inline-size:24px;block-size:24px;margin-inline-start:auto;margin-inline-end:8px;border-radius:6px;color:var(--muted)}
+#settings-dialog .repository-link:hover{color:var(--ink);background:var(--bg)}
+#settings-dialog .repository-link:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 #settings-dialog .settings-content>section:first-child{border-top:0}
 #settings-dialog .settings-content>section:last-child{padding-bottom:0}
 #settings-dialog :is(label,.settings-key){margin:0;color:var(--ink);font-size:var(--settings-label-size);line-height:var(--settings-label-line-height)}
@@ -886,14 +891,9 @@ input[type=checkbox][switch]:focus-visible{outline:2px solid var(--accent);outli
 #settings-dialog .record-limit-edit:not(:focus-within) .record-limit-formatted{visibility:visible}
 #settings-dialog .record-limit-edit:not(:focus-within):has(.record-limit-formatted:not(:empty)) input{opacity:0}
 #settings-dialog .record-limit-edit:has(input:disabled) .record-limit-formatted{opacity:.55}
-#settings-dialog .repository-link{display:inline-flex;align-items:center;justify-content:center;flex:none;width:24px;height:24px;margin-inline-start:auto;margin-inline-end:8px;border-radius:6px;color:var(--muted)}
-#settings-dialog .repository-link:hover{color:var(--ink);background:var(--bg)}
-#settings-dialog .repository-link:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
-#settings-dialog .updates-actions{flex-wrap:nowrap;align-items:flex-start;column-gap:8px}
 #settings-dialog .updates-controls{
   display:flex;align-items:center;flex:1;min-inline-size:0;gap:6px;overflow-x:auto;overscroll-behavior-x:contain;scrollbar-width:thin
 }
-#settings-dialog .updates-actions .repository-link{margin-block-start:calc((var(--settings-control-height) - 24px) / 2)}
 #settings-dialog :is(#updates-versions,.updates-status){
   flex:none;min-inline-size:0;margin:0;overflow:hidden;text-align:start;text-overflow:ellipsis;white-space:nowrap
 }
