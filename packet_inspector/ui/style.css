@@ -1447,13 +1447,22 @@ body[data-desktop-startup] #record-count{visibility:hidden}
   &[data-state="error"]{color:var(--danger)}
   &[data-state="error"]:hover{background:var(--surface-error-hover,#ffe4e4)}
 }
-#settings-dialog>.restart-notice{flex:none;min-block-size:112px;display:grid;grid-template-rows:minmax(32px,auto) 30px auto;gap:5px;margin:16px var(--settings-padding) 8px;padding:10px 14px;border:1px solid var(--line);border-radius:10px;background:var(--soft);color:var(--muted)}
+#settings-dialog>.restart-notice{
+  flex:none;display:grid;gap:3px;margin:8px var(--settings-padding) 4px;padding:8px 14px;
+  border:1px solid var(--line);border-radius:10px;background:var(--soft);color:var(--muted)
+}
+#settings-dialog>.restart-notice:not([hidden])+.settings-content>section:first-child{padding-block-start:12px}
 #settings-dialog>.restart-notice[data-state="pending"]{background:var(--surface-warning,#fff8eb);border-color:var(--line-warning,#eac883);color:var(--theme-warn,#875309)}
 .restart-notice-heading{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:4px 12px;min-width:0}
 .restart-notice-heading strong{min-width:0;font-size:var(--settings-label-size);font-weight:600}
 #settings-dialog #restart-notice-wsl{border-color:var(--line-warning,#dfba75);background:var(--panel);color:var(--theme-warn,#875309)}
-.restart-notice-items{display:flex;align-items:center;gap:12px;margin:0;padding:0;min-inline-size:0;overflow-x:auto;overflow-y:hidden;list-style:disc inside;scrollbar-width:thin}
-#settings-dialog :is(.restart-notice-items,.restart-notice-message){font-size:var(--settings-detail-size);line-height:1.5}
+.restart-notice-items{
+  display:flex;align-items:center;gap:12px;margin:0;padding:0;min-inline-size:0;
+  /* Keep room for a thin scrollbar when more pending items appear. */
+  min-block-size:calc(1lh + 8px);overflow-x:auto;overflow-y:hidden;list-style:disc inside;scrollbar-width:thin
+}
+.restart-notice-items:empty{display:none}
+#settings-dialog :is(.restart-notice-items,.restart-notice-message){font-size:var(--settings-detail-size);line-height:1.4}
 .restart-notice-items>li{flex:none;white-space:nowrap}
 .restart-notice-items>li::marker{color:var(--warn)}
 .restart-notice-message{min-inline-size:0;margin:0;overflow-wrap:anywhere}

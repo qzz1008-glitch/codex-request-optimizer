@@ -191,7 +191,7 @@ async function run() {
     const [title,wslAction]=await rects(page,['restart-notice-title','restart-notice-wsl']);
     assert(title[0]+title[2]<=wslAction[0],'the title and WSL confirmation must not overlap');
     const overflow=await page.locator('#restart-notice').evaluate(node=>node.scrollHeight>node.clientHeight);
-    assert.equal(overflow,false,'card content stays within its fixed height');
+    assert.equal(overflow,false,'the card contains all of its rows');
     await page.locator('.settings-content').evaluate(node=>node.scrollTop=0);
     const connection=await page.locator('#connection-settings').boundingBox();
     assert(connection.width>0);
@@ -364,7 +364,7 @@ async function run() {
       const markerCenter=label.top+parseFloat(marker.insetBlockStart)+parseFloat(marker.marginBlockStart)+parseFloat(marker.blockSize)/2;
       return {x:parseFloat(marker.insetInlineStart),verticalOffset:markerCenter-(row.top+row.height/2)};
     });
-    assert.equal(x,-10,'the marker sits to the left of the label');
+    assert.equal(x,-13,'the marker sits to the left of the label');
     assert(Math.abs(verticalOffset)<1,'the marker is centered on the row, including when controls wrap');
     cases++;
   }
