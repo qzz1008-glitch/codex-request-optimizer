@@ -55,6 +55,7 @@ async function run(){
  const updates=page.locator('#general-settings > #updates-settings');
  const checkButton=updates.locator('#updates-check'),installButton=updates.locator('#updates-install');
  const feedback=updates.locator('#updates-message'),controls=updates.locator('.updates-controls');
+ const continuityHint=updates.locator('#updates-continuity-hint');
  const updateLayout=['updates-check','updates-repository','settings-dialog','settings-save','settings-restore'];
  assert.equal(await updates.locator('button').count(),2);
  for(const width of [320,500,1120,1600]){await page.setViewportSize({width,height:900});
@@ -63,6 +64,7 @@ async function run(){
   assert.equal(await updates.locator('.settings-key').textContent(),language==='zh'?'软件版本':'Software version');
   assert.equal(await updates.locator('#updates-versions').textContent(),'1.0.0');
   assert.equal(await installButton.isVisible(),false);
+  assert.equal(await continuityHint.isVisible(),false);
   for(const [button,label] of [[checkButton,updateLabels[language].check],[installButton,updateLabels[language].install]]){
    assert.equal((await button.textContent()).trim(),'','The controls use icons only');
    assert.equal(await button.getAttribute('title'),label);
@@ -99,6 +101,7 @@ async function run(){
    assert.equal(await checkButton.getAttribute('aria-busy'),String(checking));
    assert.equal(await checkButton.locator('.update-spinner').isVisible(),checking);
    assert.equal(await installButton.isVisible(),hasInstall);
+   assert.equal(await continuityHint.isVisible(),status==='available');
    assert.equal(await installButton.getAttribute('aria-busy'),String(installing));
    if(hasInstall)assert.equal(await installButton.isDisabled(),installing);
    assert.equal(await installButton.locator('.update-spinner').isVisible(),installing);
@@ -116,6 +119,15 @@ async function run(){
    }
    if(status==='available'){
     assert(await installButton.locator('svg').evaluate(icon=>icon.getBBox().width>0),'The download icon renders');
+    assert.equal(await continuityHint.textContent(),language==='zh'?'升级期间中转服务保持运行':'Relay stays online during the update');
+    const hintAtEnd=await continuityHint.evaluate(node=>
+     Math.abs(node.parentElement.getBoundingClientRect().right-node.getBoundingClientRect().right)<=1);
+    assert(hintAtEnd,'The continuity hint is aligned to the right of the controls column');
+    if(width>=1120){
+     const [hint,install]=await geometry(page,['updates-continuity-hint','updates-install']);
+     assert(hint[0]>=install[0]+install[2],'The hint follows the install button');
+     assert(Math.abs(hint[1]+hint[3]/2-install[1]-install[3]/2)<=1,'The desktop hint shares the version row');
+    }
     assert(await controls.evaluate(node=>{
      const {left,right}=node.getBoundingClientRect(),install=node.querySelector('#updates-install');
      const priorScroll=node.scrollLeft;
@@ -160,6 +172,7 @@ async function run(){
   for(let reopen=0;reopen<2;reopen++){
    await page.evaluate(async()=>{closeSettings();await openSettings();});
    assert(await feedback.isVisible(),'an available update remains visible after reopening settings');
+   assert(await continuityHint.isVisible(),'the cached update still shows the relay notice');
    assert((await feedback.textContent()).includes('1.1.0'));
    assert(await installButton.isVisible());
    assert.equal(await installButton.isDisabled(),false);

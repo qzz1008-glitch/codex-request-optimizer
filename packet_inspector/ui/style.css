@@ -892,8 +892,9 @@ input[type=checkbox][switch]:focus-visible{outline:2px solid var(--accent);outli
 #settings-dialog .record-limit-edit:not(:focus-within):has(.record-limit-formatted:not(:empty)) input{opacity:0}
 #settings-dialog .record-limit-edit:has(input:disabled) .record-limit-formatted{opacity:.55}
 #settings-dialog .updates-controls{
-  display:flex;align-items:center;flex:1;min-inline-size:0;gap:6px;overflow-x:auto;overscroll-behavior-x:contain;scrollbar-width:thin
+  display:flex;align-items:center;flex:auto;min-inline-size:0;gap:6px;overflow-x:auto;overscroll-behavior-x:contain;scrollbar-width:thin
 }
+#settings-dialog #updates-continuity-hint{flex:0 1 auto;margin-inline-start:auto}
 #settings-dialog :is(#updates-versions,.updates-status){
   flex:none;min-inline-size:0;margin:0;overflow:hidden;text-align:start;text-overflow:ellipsis;white-space:nowrap
 }

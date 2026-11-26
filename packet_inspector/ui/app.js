@@ -2757,6 +2757,7 @@ function renderUpdates() {
   installButton.hidden=!supported||!(available||installing);
   installButton.disabled=disabled;
   installButton.setAttribute("aria-busy",String(supported&&installing));
+  $("updates-continuity-hint").hidden=!supported||!available;
   const labels={idle:"可检查 GitHub 上的最新版本。",checking:"正在检查更新…",current:"已是最新版本。",available:"发现新版本，可以升级。",downloading:"正在下载并校验升级包…",upgrading:"正在升级，旧请求继续完成…",complete:"升级已完成。"};
   const message=$("updates-message");
   message.hidden=supported&&(!displayedState||displayedState==="idle");
