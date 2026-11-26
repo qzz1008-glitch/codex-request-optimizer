@@ -382,6 +382,27 @@ const localControls=[
       await page.waitForFunction(()=>document.querySelectorAll('.connection-device').length===2);
       const restartBadge=page.locator('#restart-notice-open');
       await restartBadge.evaluate(node=>{node.dataset.visible='true';node.dataset.state='pending';});
+      const restartSurface=restartBadge.locator('.restart-notice-surface');
+      await page.mouse.move(0,page.viewportSize().height-1);
+      await page.keyboard.press('Escape');await panel.waitFor({state:'hidden'});
+      await restartSurface.evaluate(node=>Promise.all(node.getAnimations().map(animation=>animation.finished)));
+      await reopenPanel();
+      const [capsule,taper,dot]=await restartSurface.evaluate(node=>{
+        const [animation]=node.getAnimations();
+        const {duration}=animation.effect.getTiming();
+        animation.pause();
+        const frames=[0,duration*.35,duration].map(time=>{
+          animation.currentTime=time;
+          const {left,width,height}=node.getBoundingClientRect();
+          return {x:left+width/2,width,height};
+        });
+        animation.finish();
+        return frames;
+      });
+      assert(capsule.width>taper.width&&taper.width>dot.width,'The visible badge shrinks continuously');
+      assert(capsule.height>taper.height&&taper.height>dot.height,'The badge gets rounder as it shrinks');
+      assert((taper.x-capsule.x)*(taper.x-dot.x)<0,'The badge moves toward the dot while shrinking');
+      assert.equal(dot.width,8,'The animation settles on the status dot');
       const localStart=await textLeft(localLabel);
       for(const server of await serverAddress.all()){
         assert(Math.abs(localStart-await textLeft(server))<1,'Addresses of different lengths align with the local label');
@@ -396,15 +417,20 @@ const localControls=[
       assert(Math.abs(restart.x+restart.width-labelWithBadge.x)<1,'The restart dot sits to the left of the local label');
       assert(Math.abs(restart.x+restart.width/2-serverStatus.x-serverStatus.width/2)<1,'Status dots align across device rows');
       assert(viewSwitch.x+viewSwitch.width<=dropdown.x+1,'The joined frame leaves the view switch uncovered');
-      const dotColor=node=>getComputedStyle(node,'::before').borderTopColor;
-      const pendingColor=await restartBadge.evaluate(dotColor);
+      const dotColor=node=>getComputedStyle(node).backgroundColor;
+      const pendingColor=await restartSurface.evaluate(dotColor);
       await restartBadge.evaluate(node=>{node.dataset.state='error';});
-      assert.notEqual(await restartBadge.evaluate(dotColor),pendingColor,'A connection error has its own dot color');
+      assert.notEqual(await restartSurface.evaluate(dotColor),pendingColor,'A connection error has its own dot color');
       await restartBadge.evaluate(node=>{node.dataset.state='pending';});
       await assertDropdownFrame();
       await restartBadge.evaluate(node=>node.addEventListener('click',()=>fixture.badgeClicked=true,{once:true}));
       await restartBadge.click();
       assert.equal(await page.evaluate(()=>fixture.badgeClicked),true,'The restart notice stays clickable inside the open dropdown');
+      await page.emulateMedia({reducedMotion:'reduce'});
+      await reopenPanel();
+      assert.equal(await restartSurface.evaluate(node=>node.getAnimations().length),0,'Reduced motion keeps the badge static');
+      assert.equal((await restartSurface.boundingBox()).width,8,'Reduced motion keeps the final dot shape');
+      await page.emulateMedia({reducedMotion:'no-preference'});
       await page.evaluate(()=>{
         for(let index=1;index<=20;index++)fixture.rows.push({id:`scroll-${index}`,name:`10.0.1.${index}`,kind:'ssh',state:'connected'});
       });

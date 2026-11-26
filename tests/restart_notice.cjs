@@ -287,10 +287,11 @@ async function run() {
     restart_notice:{revision:1,items:[{key:'connection',target:'chatgpt',scope:''}]},provider_warnings:[]});
   const warningHeaderIds=['view-toggle',...headerIds];
   const normalHeader=await rects(page,warningHeaderIds);
-  const pendingColor=await page.locator('#restart-notice-open').evaluate(node=>getComputedStyle(node).backgroundColor);
+  const surface=page.locator('.restart-notice-surface');
+  const pendingColor=await surface.evaluate(node=>getComputedStyle(node).backgroundColor);
   await page.evaluate(()=>{statusData.provider_warnings=[{provider:'fixture',detail:'Synthetic connection warning'}];notice.ingest();});
   assert.deepEqual(await rects(page,warningHeaderIds),normalHeader,'errors replace the badge without shifting the other controls');
-  assert.notEqual(await page.locator('#restart-notice-open').evaluate(node=>getComputedStyle(node).backgroundColor),pendingColor,'errors have a distinct color');
+  assert.notEqual(await surface.evaluate(node=>getComputedStyle(node).backgroundColor),pendingColor,'errors have a distinct color');
   assert.equal(await page.locator('#restart-notice-open').getAttribute('data-state'),'error');
   assert.equal(await page.locator('#restart-notice-open').textContent(),'接入异常','errors take priority over a pending restart');
   assert((await page.locator('#restart-notice-open').getAttribute('title')).includes('Synthetic connection warning'));

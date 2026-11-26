@@ -7,6 +7,9 @@ globalThis.InspectorConnections = {
     const headerToggle=get("request-compression");
     const localLabel=controls.querySelector(".connection-local-label");
     const restartBadge=get("restart-notice-open");
+    const restartSurface = restartBadge.querySelector(".restart-notice-surface");
+    const restartLabel = get("restart-notice-label");
+    const restartMotion = matchMedia("(prefers-reduced-motion: no-preference)");
     const viewToggle=get("view-toggle");
     const settingsButton=get("settings-open");
     const dialog=get("devices-confirm-dialog"), list=get("connection-devices-list");
@@ -16,6 +19,7 @@ globalThis.InspectorConnections = {
     let rows=[],hasServers=false,loading=false,submitting=false,catalogError="",revision="",timer=null,closeTimer=null,hover=false;
     let openRequested=false,focusOnOpen=false;
     let plan=null,finished=false,disposed=false;
+    let surfaceAnimation, labelAnimation;
     const text=(node,value)=>{if(node.textContent!==value)node.textContent=value;};
     const isOpen=()=>nativePopover?panel.matches(":popover-open"):!panel.hidden;
     const inDropdown=node=>controls.contains(node)||panel.contains(node)||(isOpen()&&restartBadge.contains(node));
@@ -162,11 +166,52 @@ globalThis.InspectorConnections = {
       // The local label and the end of the compact badge align with the server addresses.
       controls.parentElement.style.setProperty("--connection-local-start", `${panelLeft + addressInset - trigger.left}px`);
     }
+    function restartSurfaceFrame() {
+      const {x, y, width, height} = restartSurface.getBoundingClientRect();
+      const {borderRadius, backgroundColor, borderTopColor} = getComputedStyle(restartSurface);
+      return {x:x+width/2, y:y+height/2, width, height, borderRadius, backgroundColor, borderColor:borderTopColor};
+    }
+    function setPanelMode(mode) {
+      const expanded = mode !== null;
+      if (expanded === controls.hasAttribute("data-server-panel-open")) return;
+      // Read the current frame so reversing an unfinished transition starts where it is visible.
+      const from = restartMotion.matches && restartBadge.dataset.visible === "true" ? restartSurfaceFrame() : null;
+      surfaceAnimation?.cancel();
+      labelAnimation?.cancel();
+      if (expanded) {
+        controls.dataset.serverPanelOpen = mode;
+        place();
+      } else controls.removeAttribute("data-server-panel-open");
+      if (!from) return;
+
+      // Animate the surface independently of the button's hit target.
+      const to = restartSurfaceFrame();
+      const capsule = expanded ? from : to, dot = expanded ? to : from;
+      const taper = {
+        x: dot.x + (capsule.x - dot.x) * .28,
+        y: dot.y + (capsule.y - dot.y) * .28,
+        width: dot.width + (capsule.width - dot.width) * .38,
+        height: dot.height + (capsule.height - dot.height) * .45,
+        borderRadius: capsule.x > dot.x
+          ? "28% 78% 78% 28% / 55% 50% 50% 55%" : "78% 28% 28% 78% / 50% 55% 55% 50%"
+      };
+      const keyframe = ({x, y, width, height, ...paint}) => ({
+        ...paint,
+        inlineSize: `${width}px`,
+        blockSize: `${height}px`,
+        transform: `translate(${x-to.x}px, ${y-to.y}px)`
+      });
+      const timing = {duration:340, easing:"cubic-bezier(.26,.1,.3,1)"};
+      surfaceAnimation = restartSurface.animate([
+        keyframe(from), {...keyframe(taper), offset:expanded ? .62 : .38}, keyframe(to)
+      ], timing);
+      if (!expanded) labelAnimation = restartLabel.animate([{opacity:0}, {opacity:0, offset:.65}, {opacity:1}], timing);
+    }
     function hide() {
       clearTimeout(closeTimer);
       openRequested=false;focusOnOpen=false;
       if(nativePopover){if(isOpen())panel.hidePopover();}else{panel.hidden=true;}
-      controls.removeAttribute("data-server-panel-open");
+      setPanelMode(null);
     }
     function focusFirstAction() {
       controls.dataset.serverPanelOpen="";
@@ -188,8 +233,7 @@ globalThis.InspectorConnections = {
       openRequested=false;focusOnOpen=false;
       if(!shouldOpen||disposed||document.querySelector("dialog[open]"))return;
       if(nativePopover)panel.showPopover({source:controls});else{panel.hidden=false;}
-      controls.dataset.serverPanelOpen=hover&&!focus?"hover":"";
-      place();
+      setPanelMode(hover&&!focus?"hover":"");
       if(focus)focusFirstAction();
     }
     function leave() {
@@ -286,7 +330,13 @@ globalThis.InspectorConnections = {
       finally {submitting=false;offerReconnect();render();schedule();}
     }
     if(!nativePopover){panel.hidden=true;panel.classList.add("connection-panel-fallback");}
-    else panel.addEventListener("toggle",()=>{if(!isOpen())controls.removeAttribute("data-server-panel-open");});
+    else panel.addEventListener("toggle",()=>{if(!isOpen())setPanelMode(null);});
+    restartMotion.addEventListener("change",()=>{
+      if(!restartMotion.matches) {
+        surfaceAnimation?.cancel();
+        labelAnimation?.cancel();
+      }
+    });
     for(const node of [controls,panel]) {
       node.addEventListener("pointerenter",event=>{if(event.pointerType==="touch")return;hover=true;show();});
       node.addEventListener("pointerleave",leave);

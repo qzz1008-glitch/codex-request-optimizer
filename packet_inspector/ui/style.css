@@ -1180,28 +1180,45 @@ body[data-desktop-startup] #record-count{visibility:hidden}
 #settings-dialog .settings-inline-feedback .settings-save-log{max-height:18px;margin:0;gap:0;scrollbar-width:none;overscroll-behavior:contain}
 #settings-dialog .settings-inline-feedback .settings-step-label{overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 .restart-notice-badge{
+  --restart-badge-fill:#fff7e7;
+  --restart-badge-stroke:#e6c178;
+  position:relative;
+  isolation:isolate;
   display:inline-flex;
   align-items:center;
   justify-content:center;
   flex:none;
   min-block-size:28px;
   max-inline-size:var(--restart-badge-max-width,none);
-  padding:2px 6px;
-  border:1px solid #e6c178;
+  padding:3px 7px;
+  border:0;
   border-radius:7px;
-  background:#fff7e7;
+  background:transparent;
   color:#875309;
   font-size:12px;
   font-weight:600;
   line-height:14px;
   white-space:nowrap;
 }
-.restart-notice-badge>span{overflow:hidden;text-overflow:ellipsis}
+.restart-notice-surface{
+  position:absolute;
+  top:50%;
+  left:50%;
+  translate:-50% -50%;
+  z-index:-1;
+  inline-size:100%;
+  block-size:100%;
+  border:1px solid var(--restart-badge-stroke);
+  border-radius:7px;
+  background:var(--restart-badge-fill);
+  pointer-events:none;
+}
+#restart-notice-label{overflow:hidden;text-overflow:ellipsis}
 .restart-notice-badge[data-visible="false"]{visibility:hidden;pointer-events:none}
-.restart-notice-badge:hover{background:#ffedc9;border-color:#d6a84d}
+.restart-notice-badge:hover{--restart-badge-fill:#ffedc9;--restart-badge-stroke:#d6a84d}
 .restart-notice-badge:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
-.restart-notice-badge[data-state="error"]{border-color:#e4abab;background:#fff1f1;color:var(--danger)}
-.restart-notice-badge[data-state="error"]:hover{background:#ffe4e4;border-color:#ce8989}
+.restart-notice-badge[data-state="error"]{--restart-badge-fill:#fff1f1;--restart-badge-stroke:#e4abab;color:var(--danger)}
+.restart-notice-badge[data-state="error"]:hover{--restart-badge-fill:#ffe4e4;--restart-badge-stroke:#ce8989}
 .restart-notice-badge:has(+ .header-compression[data-server-panel-open]){
   position:absolute;
   top:50%;
@@ -1216,15 +1233,21 @@ body[data-desktop-startup] #record-count{visibility:hidden}
   background:transparent;
   color:var(--warn);
 
-  & > span{
+  & > #restart-notice-label{
     position:absolute;
     inline-size:1px;
     block-size:1px;
     clip-path:inset(50%);
   }
-  &::before{content:"";border:4px solid currentColor;border-radius:50%}
+  & > .restart-notice-surface{
+    inline-size:8px;
+    block-size:8px;
+    border-color:currentColor;
+    border-radius:50%;
+    background:currentColor;
+  }
   &:hover{background:#ffedc9}
-  &:active::before{scale:.8}
+  &:active > .restart-notice-surface{scale:.8}
   &:focus-visible{outline-offset:-2px}
   &[data-state="error"]{color:var(--danger)}
   &[data-state="error"]:hover{background:#ffe4e4}
