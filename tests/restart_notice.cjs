@@ -260,7 +260,11 @@ async function run() {
     assert(message.includes(language==='zh'?'未检测到时可手动确认 ChatGPT 已重启。':'Select ChatGPT restarted if needed.'));
     assert.equal(await page.locator('.restart-notice-heading #restart-notice-chatgpt').count(),0);
     assert.equal(await inlineConfirmation.isEnabled(),true);
-    assert.equal(await inlineConfirmation.evaluate(node=>getComputedStyle(node).textDecorationLine),'underline');
+    const appearance=await inlineConfirmation.evaluate(node=>{
+      const {textDecorationLine,borderTopStyle,borderTopWidth}=getComputedStyle(node);
+      return [textDecorationLine,borderTopStyle,borderTopWidth];
+    });
+    assert.deepEqual(appearance,['none','solid','1px']);
     const [text,action]=await rects(page,['restart-notice-message','restart-notice-chatgpt']);
     assert(action[0]>=text[0]&&action[0]+action[2]<=text[0]+text[2],'the confirmation fits the message width');
     assert(action[1]>=text[1]&&action[1]+action[3]<=text[1]+text[3],'the inline confirmation is visible within the message');

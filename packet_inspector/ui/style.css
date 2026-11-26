@@ -1239,9 +1239,11 @@ body[data-desktop-startup] #record-count{visibility:hidden}
 .restart-notice-tag{flex:none;padding:1px 7px;border:1px solid #edd7ac;border-radius:5px;background:#fffdf8;white-space:nowrap}
 .restart-notice-message{min-inline-size:0;max-block-size:4.5em;margin:0;overflow:auto;overflow-wrap:anywhere;scrollbar-width:thin}
 #settings-dialog #restart-notice-chatgpt{
-  display:inline;min-block-size:0;padding:0;border:0;border-radius:2px;background:none;
-  color:var(--accent);font:inherit;text-decoration:underline;text-underline-offset:.15em
+  display:inline;min-block-size:0;padding:0 6px;border:1px solid #b48335;border-radius:5px;
+  background:#fffdf8;color:#875309;font:inherit;font-weight:600;line-height:calc(4 / 3)
 }
+#settings-dialog #restart-notice-chatgpt:enabled:hover{border-color:var(--warn);background:#ffedc9}
+#settings-dialog #restart-notice-chatgpt:enabled:active{background:#ffe3ad}
 #settings-dialog #restart-notice-chatgpt:focus-visible{outline-offset:-1px}
 #settings-dialog .restart-pending-field{outline:1px solid #eac883;outline-offset:5px;border-radius:5px}
 .inline-feedback .notice{position:static;inset:auto;z-index:auto;display:flex;align-items:center;gap:8px;width:100%;max-width:none;min-width:0;margin:0;padding:0;border:0;border-radius:0;background:none;box-shadow:none;color:inherit;font:inherit}
