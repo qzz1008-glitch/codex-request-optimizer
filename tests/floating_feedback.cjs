@@ -35,7 +35,8 @@ async function run(){
   "window.updateStatus=null;window.updateBusy=false;window.settingsSaving=false;window.updateAction='';",
   "window.updateRevision=0;window.updateStatusLoading=false;window.settingsOpening=false;window.compressionSaving=false;window.exitSaving=false;window.connectSaving=false;window.connectChecking=false;",
   "window.firstRunChecking=false;window.refreshStatus=async()=>{};window.loadContextSettings=async()=>{};window.readSettingsDraft=()=>({});",
-  "window.settingsSaveProgress={total:0,steps:[]};window.renderLanguageSelection=()=>{};window.renderConnectionActions=()=>{};window.updateSettingsSaveState=()=>{};",
+  "window.settingsSaveProgress={total:0,steps:[]};window.renderLanguageSelection=()=>{};window.renderThemeSelection=()=>{};",
+  "window.renderConnectionActions=()=>{};window.updateSettingsSaveState=()=>{};",
   "window.closeZstdLevelPicker=()=>{};window.discardSettingsDraft=()=>{};",
   "window.fail=error=>{throw error;};",
   "function el(tag,cls,value){const node=document.createElement(tag);node.className=cls;node.textContent=value;return node;}",
@@ -128,7 +129,7 @@ async function run(){
      const {borderTopWidth,backgroundColor}=getComputedStyle(node);
      return borderTopWidth==='0px'&&backgroundColor==='rgba(0, 0, 0, 0)';
     }),'Release notes look like text');
-    assert.equal(await continuityHint.textContent(),language==='zh'?'升级时中转服务平稳过渡':'Smooth relay handover');
+    assert.equal(await continuityHint.textContent(),language==='zh'?'中转服务平稳升级，仍可正常使用':'Relay stays available');
     const hintAtEnd=await continuityHint.evaluate(node=>
      Math.abs(node.parentElement.getBoundingClientRect().right-node.getBoundingClientRect().right)<=1);
     assert(hintAtEnd,'The continuity hint is aligned to the right of the controls column');
