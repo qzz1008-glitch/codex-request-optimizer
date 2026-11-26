@@ -498,12 +498,13 @@
               <span class="record-limit-prefix"><span id="packet-limit-usage">—</span><span aria-hidden="true">/</span></span>
               <label class="settings-value-unit record-limit-field">
                 <span class="record-limit-edit">
-                  <input id="packet-limit" type="number" min="10" max="100000" inputmode="numeric" aria-labelledby="packet-limit-label" aria-describedby="packet-limit-usage packet-limit-unit" required>
+                  <input id="packet-limit" type="number" min="10" max="100000" inputmode="numeric" aria-labelledby="packet-limit-label" aria-describedby="packet-limit-usage packet-limit-unit packet-limit-hint" required>
                   <span class="record-limit-formatted" aria-hidden="true"></span>
                 </span>
                 <span id="packet-limit-unit" data-i18n="settings.unit.requests">条</span>
               </label>
             </div>
+            <p id="packet-limit-hint" class="muted help runtime-inline-hint">最多保留的请求记录数</p>
           </div>
         </div>
         <div class="settings-row" data-settings-field="max_storage_mb">
@@ -513,12 +514,13 @@
               <span class="record-limit-prefix"><span id="storage-limit-usage">—</span><span aria-hidden="true">/</span></span>
               <label class="settings-value-unit record-limit-field">
                 <span class="record-limit-edit">
-                  <input id="storage-limit" type="number" min="17" max="8590" step="1" inputmode="numeric" aria-labelledby="storage-limit-label" aria-describedby="storage-limit-usage storage-limit-unit" required>
+                  <input id="storage-limit" type="number" min="17" max="8590" step="1" inputmode="numeric" aria-labelledby="storage-limit-label" aria-describedby="storage-limit-usage storage-limit-unit storage-limit-hint" required>
                   <span class="record-limit-formatted" aria-hidden="true"></span>
                 </span>
                 <span id="storage-limit-unit">MB</span>
               </label>
             </div>
+            <p id="storage-limit-hint" class="muted help runtime-inline-hint">请求记录及详情的空间上限</p>
           </div>
         </div>
       </div>
