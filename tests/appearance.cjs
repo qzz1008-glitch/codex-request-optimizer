@@ -58,26 +58,31 @@ async function run(){
       await page.locator('#settings-dialog').waitFor({state:'visible'});
     };
     const close=()=>page.locator('#settings-close').click();
-    const choice=page.locator('#ui-theme');
-    const save=()=>page.locator('#settings-save').click();
+    const choice=page.locator('#ui-theme'),dark=page.locator('#ui-theme-dark'),light=page.locator('#ui-theme-light');
+    const saveButton=page.locator('#settings-save'),save=()=>saveButton.click();
     const waitForTheme=(view,dark)=>view.waitForFunction(dark=>(getComputedStyle(document.documentElement).colorScheme==='dark')===dark,dark);
     await open();
-    assert.equal(await page.getByRole('combobox',{name:'界面主题'}).inputValue(),'light');
-    await choice.selectOption('dark');
+    assert.equal(await choice.evaluate(node=>node.closest('.settings-row').previousElementSibling.dataset.settingsField),'language');
+    const group=page.getByRole('group',{name:'界面主题'});
+    assert.equal(await group.getByRole('radio').count(),2);
+    assert.equal(await group.getByRole('radio',{name:'浅色'}).isChecked(),true);
+    await light.press('ArrowLeft');
+    assert.equal(await dark.isChecked(),true,'The arrow key changes the selected theme');
+    assert.equal(await dark.evaluate(input=>getComputedStyle(input.nextElementSibling).outlineStyle),'solid');
     assert.equal(await scheme(page),'dark','Changing the selection previews the new theme');
     assert.equal(await scheme(tray),'light','A preview does not change the tray');
     assert.equal(await page.evaluate(()=>uiAppearance.theme),'light');
     await page.locator('#settings-restore').click();
-    assert.equal(await choice.inputValue(),'light');assert.equal(await scheme(page),'light');
-    await choice.selectOption('dark');await close();await open();
-    assert.equal(await choice.inputValue(),'light');assert.equal(await scheme(page),'light');assert.deepEqual(writes,[]);
+    assert.equal(await light.isChecked(),true);assert.equal(await scheme(page),'light');
+    await dark.click();await close();await open();
+    assert.equal(await light.isChecked(),true);assert.equal(await scheme(page),'light');assert.deepEqual(writes,[]);
 
-    await choice.selectOption('dark');await save();
+    await dark.click();await save();
     await waitForTheme(tray,true);
     assert.deepEqual(writes,[['/api/appearance',{theme:'dark'}]]);
     for(const [view,selector] of [
       [page,'.app-header'],[page,'.sessions-sidebar'],[page,'.requests-sidebar'],[page,'.detail'],[page,'.app-footer'],
-      [page,'.trend-charts'],[page,'.sharing-section:first-child'],[page,'#settings-dialog'],[page,'#ui-theme'],[tray,'.tray-panel']
+      [page,'.trend-charts'],[page,'.sharing-section:first-child'],[page,'#settings-dialog'],[page,'#ui-theme input:checked+span'],[tray,'.tray-panel']
     ]){
       const {background,text}=await styles(view,selector),luminanceBG=luminance(background);
       assert(!background.startsWith('rgba')&&luminanceBG<.1,`${selector} uses a dark surface (${background})`);
@@ -88,31 +93,44 @@ async function run(){
     await page.emulateMedia({colorScheme:'light'});
     assert.equal(await scheme(page),'dark','An explicit choice does not follow OS changes');
     await close();await page.reload();await open();
-    assert.equal(await choice.inputValue(),'dark');
+    assert.equal(await dark.isChecked(),true);
     await page.evaluate(()=>uiI18n.setLanguage('en',{persist:false}));
-    assert.equal(await page.getByRole('combobox',{name:'Appearance'}).inputValue(),'dark');
-    assert.deepEqual(await choice.locator('option').allTextContents(),['Light','Dark','Follow system']);
+    const englishGroup=page.getByRole('group',{name:'Appearance'});
+    assert.equal(await englishGroup.getByRole('radio',{name:'Dark'}).isChecked(),true);
+    assert.equal(await englishGroup.getByRole('radio',{name:'Light'}).isChecked(),false);
+    await page.emulateMedia({forcedColors:'active'});
+    assert.equal(await dark.evaluate(input=>getComputedStyle(input.nextElementSibling).forcedColorAdjust),'none');
+    await page.emulateMedia({forcedColors:'none'});
 
-    await choice.selectOption('system');await save();
-    await page.waitForFunction(()=>uiAppearance.theme==='system'&&!settingsSaving);
+    saved='system';
+    await close();await page.reload();await open();
     await waitForTheme(page,false);
+    assert.equal(await light.isChecked(),true);
+    assert.equal(await saveButton.isDisabled(),true,'An existing system preference is preserved until a choice is made');
     await page.emulateMedia({colorScheme:'dark'});await waitForTheme(page,true);
+    assert.equal(await dark.isChecked(),true);
     await page.emulateMedia({colorScheme:'light'});await waitForTheme(page,false);
     rejectSave=true;
-    await choice.selectOption('dark');await save();
+    await dark.click();await save();
     await page.waitForFunction(()=>document.querySelector('#settings-message').classList.contains('error'));
     assert.equal(await page.evaluate(()=>uiAppearance.theme),'system','A failed write keeps the saved choice');
     await close();assert.equal(await scheme(page),'light','Closing after a failed write discards the preview');
 
-    rejectSave=false;olderDesktop=true;
+    rejectSave=false;await open();await light.click();await save();
+    await page.waitForFunction(()=>uiAppearance.theme==='light'&&!settingsSaving);
+    assert.deepEqual(writes.at(-1),['/api/appearance',{theme:'light'}],'Clicking the current system color chooses a fixed theme');
+    await page.emulateMedia({colorScheme:'dark'});
+    assert.equal(await scheme(page),'light');
+
+    olderDesktop=true;
     await page.goto('http://appearance.test/');await open();
     const count=writes.length;
-    await choice.selectOption('dark');await save();
+    await dark.click();await save();
     await page.waitForFunction(()=>uiAppearance.theme==='dark'&&!settingsSaving);
     await page.reload();await waitForTheme(page,true);
     assert.equal(writes.length,count,'A hot reload under an older desktop can use local storage');
     assert.deepEqual(errors,[]);
-    console.log('Appearance: settings, persistence, tray synchronization, system changes and contrast passed.');
+    console.log('Appearance: segmented controls, keyboard preview, saving, tray synchronization, legacy preferences and contrast passed.');
   } finally {await browser.close();}
 }
 

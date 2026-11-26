@@ -238,16 +238,6 @@
     <div class="settings-content">
     <section id="general-settings" aria-labelledby="general-settings-title">
       <h3 id="general-settings-title">通用设置</h3>
-      <div class="settings-row" data-settings-field="theme">
-        <span id="settings-theme-label" class="settings-key">界面主题</span>
-        <div class="settings-controls">
-          <select id="ui-theme" aria-labelledby="settings-theme-label">
-            <option value="light">浅色</option>
-            <option value="dark">深色</option>
-            <option value="system">跟随系统</option>
-          </select>
-        </div>
-      </div>
       <div class="settings-row" data-settings-field="language">
         <span id="settings-language-label" class="settings-key">界面语言</span>
         <div class="settings-controls">
@@ -255,6 +245,15 @@
             <button id="language-zh" type="button" data-language="zh" aria-pressed="true" lang="zh-CN">中文</button>
             <button id="language-en" type="button" data-language="en" aria-pressed="false" lang="en">English</button>
           </div>
+        </div>
+      </div>
+      <div class="settings-row" data-settings-field="theme">
+        <span id="settings-theme-label" class="settings-key">界面主题</span>
+        <div class="settings-controls">
+          <fieldset id="ui-theme" class="image-mode-pills" aria-labelledby="settings-theme-label">
+            <label for="ui-theme-dark"><input id="ui-theme-dark" type="radio" name="ui-theme" value="dark"><span>深色</span></label>
+            <label for="ui-theme-light"><input id="ui-theme-light" type="radio" name="ui-theme" value="light" checked><span>浅色</span></label>
+          </fieldset>
         </div>
       </div>
       <div class="settings-row" data-settings-field="start_on_login">
@@ -295,7 +294,7 @@
             </button>
             <button id="updates-notes-open" class="link-button" type="button" aria-haspopup="dialog" aria-controls="updates-notes-dialog" hidden>更新内容</button>
           </div>
-          <span id="updates-continuity-hint" class="muted help runtime-inline-hint" hidden>升级时中转服务无缝切换</span>
+          <span id="updates-continuity-hint" class="muted help runtime-inline-hint" hidden>升级时中转服务平稳过渡</span>
         </div>
       </div>
     </section>

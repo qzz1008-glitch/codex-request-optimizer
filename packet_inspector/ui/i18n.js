@@ -42,7 +42,14 @@ globalThis.uiAppearance = (() => {
     previewTheme(null);
     try { localStorage.setItem(storageKey, theme); } catch (_) {}
   }
-  return {get theme() { return theme; }, get dark() { return dark; }, persistent: !!saved, previewTheme, setTheme};
+  return {
+    get theme() { return theme; },
+    get activeTheme() { return preview ?? theme; },
+    get dark() { return dark; },
+    persistent: !!saved,
+    previewTheme,
+    setTheme
+  };
 })();
 
 const uiI18n = (() => {
@@ -983,7 +990,7 @@ const uiI18n = (() => {
     "正在检查更新…":"Checking for updates…",
     "已是最新版本。":"You are up to date.",
     "发现新版本，可以升级。":"A new version is available.",
-    "升级时中转服务无缝切换":"Seamless relay handover",
+    "升级时中转服务平稳过渡":"Smooth relay handover",
     "正在下载并校验升级包…":"Downloading and verifying the upgrade…",
     "正在升级，旧请求继续完成…":"Upgrading. Existing requests continue to completion…",
     "升级已完成。":"Upgrade complete.",
@@ -993,7 +1000,6 @@ const uiI18n = (() => {
     "界面主题":"Appearance",
     "浅色":"Light",
     "深色":"Dark",
-    "跟随系统":"Follow system",
     "无效的界面主题。":"Invalid appearance setting.",
     "界面主题未保存，请重试。":"Appearance could not be saved. Please try again.",
     "刷新":"Refresh",

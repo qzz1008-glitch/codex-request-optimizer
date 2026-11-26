@@ -2172,6 +2172,10 @@ function renderLanguageSelection() {
     button.disabled=settingsSaving;
   }
 }
+function renderThemeSelection() {
+  const theme=uiAppearance.dark?"dark":"light";
+  for(const option of $("ui-theme").querySelectorAll("input"))option.checked=option.value===theme;
+}
 function renderCompressionMode() {
   const s=state.status;if(!s)return;
   const connected=s.profile?.active===true;
@@ -2572,7 +2576,7 @@ function readSettingsDraft() {
     max_storage_mb:$("storage-limit").value,
     max_packets:$("packet-limit").value,
     language:settingsLanguage??uiI18n.language,
-    theme:$("ui-theme").value
+    theme:uiAppearance.activeTheme
   };
   if(settingsBaseline&&!draft.packet_size_protection_enabled)draft.budget=settingsBaseline.budget;
   if(settingsBaseline&&!draft.capacity_retry_enabled) {
@@ -2790,27 +2794,36 @@ function renderUpdates() {
   message.title=message.textContent;
   message.classList.toggle("error",supported&&displayedState==="error");
 }
-function wireUpdateNotesNavigation(navigation, content) {
+function wireUpdateNotesNavigation(navigation, content, dialog) {
   const links=[...navigation.children],releases=[...content.querySelectorAll(".update-release-notes")];
   const nativeTracking=CSS.supports("scroll-target-group: auto");
-  let lastPosition=0;
+  const motion=matchMedia("(prefers-reduced-motion: no-preference)");
+  let lastPosition=0,navigationRequest=0;
   const select=link=>{
     if(!link||link.hasAttribute("aria-current"))return;
     navigation.querySelector("[aria-current]")?.removeAttribute("aria-current");
     link.setAttribute("aria-current","location");
   };
   for(const [index,link] of links.entries()){
-    link.addEventListener("click",event=>{
+    link.addEventListener("click",async event=>{
       event.preventDefault();
       const release=releases[index];
-      release.focus({preventScroll:true});
-      content.scrollTop+=release.getBoundingClientRect().top-content.getBoundingClientRect().top-2;
-      lastPosition=content.scrollTop;
+      const request=++navigationRequest,invoker=document.activeElement;
+      const top=content.scrollTop+release.getBoundingClientRect().top-content.getBoundingClientRect().top-2;
+      const destination=Math.max(0,Math.min(top,content.scrollHeight-content.clientHeight));
+      lastPosition=destination;
       select(link);
+      const scroll=content.scrollTo({top:destination,behavior:motion.matches?"smooth":"instant"});
+      if(scroll){
+        await scroll;
+        if(Math.abs(content.scrollTop-destination)>1)return;
+      }
+      if(request===navigationRequest&&dialog.open&&release.isConnected&&document.activeElement===invoker)
+        release.focus({preventScroll:true});
     });
   }
   content.onscrollend=links.length<2?null:()=>{
-    if(content.scrollTop===lastPosition)return;
+    if(Math.abs(content.scrollTop-lastPosition)<=1)return;
     lastPosition=content.scrollTop;
     if(lastPosition>0&&content.scrollHeight-content.clientHeight-lastPosition<=1){
       select(links.at(-1));
@@ -2859,7 +2872,7 @@ function openUpdateNotes() {
   }
   if(!notes.length)content.append(el("p","muted",t("暂无更新内容，可重新检查更新")));
   else if(updateStatus.release_notes_complete===false)content.append(el("p","muted",t("部分版本的更新内容暂不可用")));
-  wireUpdateNotesNavigation(navigation,content);
+  wireUpdateNotesNavigation(navigation,content,dialog);
   dialog.showModal();
   navigation.scrollTo(0,0);
   content.scrollTop=0;
@@ -2895,7 +2908,7 @@ async function openSettings() {
     if(state.status.linux_data_directories)renderLinuxStorageTargets(await api("/api/connections").catch(()=>null));
     else $("linux-storage-targets").hidden=true;
     settingsLanguage=uiI18n.language;
-    $("ui-theme").value=uiAppearance.theme;
+    renderThemeSelection();
     settingsBaseline=readSettingsDraft();settingsEditing=true;
     resetSettingsSaveProgress();
     renderLanguageSelection();renderConnectionActions();renderUpdates();updateSettingsSaveState();
@@ -3817,7 +3830,7 @@ function discardSettingsDraft() {
   const language=settingsBaseline?.language??state.status?.ui_language??uiI18n.language;
   settingsEditing=false;settingsBaseline=null;settingsLanguage=null;
   uiAppearance.previewTheme(null);
-  $("ui-theme").value=uiAppearance.theme;
+  renderThemeSelection();
   const restore=setInterfaceLanguage(language,{persist:false});
   resetSettingsSaveProgress();
   setProxyTestStatus();
@@ -3846,9 +3859,13 @@ $("settings-dialog").addEventListener("cancel",event=>{event.preventDefault();cl
 $("settings-dialog").addEventListener("close",()=>{
   if(!$("settings-dialog").open){closeZstdLevelPicker(false);discardSettingsDraft();}
 });
-$("ui-theme").addEventListener("change",event=>{
-  if(settingsEditing&&!settingsSaving)uiAppearance.previewTheme(event.target.value);
+$("ui-theme").addEventListener("click",({target})=>{
+  if(!settingsEditing||settingsSaving||!target.matches("input:checked"))return;
+  // A click also makes an existing "system" setting explicit when the color is already active.
+  uiAppearance.previewTheme(target.value===uiAppearance.theme?null:target.value);
+  updateSettingsSaveState();
 });
+globalThis.addEventListener("inspector-appearance-change",renderThemeSelection);
 for(const id of ["capacity-retry-count","capacity-retry-delay"])$(id).addEventListener("input",event=>{
   if(event.target.valueAsNumber>99)event.target.value="99";
 });

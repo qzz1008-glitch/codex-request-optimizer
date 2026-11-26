@@ -128,7 +128,7 @@ async function run(){
      const {borderTopWidth,backgroundColor}=getComputedStyle(node);
      return borderTopWidth==='0px'&&backgroundColor==='rgba(0, 0, 0, 0)';
     }),'Release notes look like text');
-    assert.equal(await continuityHint.textContent(),language==='zh'?'升级时中转服务无缝切换':'Seamless relay handover');
+    assert.equal(await continuityHint.textContent(),language==='zh'?'升级时中转服务平稳过渡':'Smooth relay handover');
     const hintAtEnd=await continuityHint.evaluate(node=>
      Math.abs(node.parentElement.getBoundingClientRect().right-node.getBoundingClientRect().right)<=1);
     assert(hintAtEnd,'The continuity hint is aligned to the right of the controls column');
@@ -205,16 +205,28 @@ async function run(){
   const navBox=await navigation.boundingBox(),contentBox=await scroller.boundingBox();
   assert(navBox.x+navBox.width<contentBox.x,'The version links are left of the release notes');
   assert(await closeNotes.evaluate(node=>node===document.activeElement));
+  const smooth=language==='zh';
+  await page.emulateMedia({reducedMotion:smooth?'no-preference':'reduce'});
+  const scrollEnd=await scroller.evaluate(node=>{
+   window.notesScrollOffsets=[];
+   node.onscroll=()=>window.notesScrollOffsets.push(node.scrollTop);
+   return node.scrollHeight-node.clientHeight;
+  });
+  assert(scrollEnd>0);
   const hash=await page.evaluate(()=>location.hash);
   await earlierVersion.press('Enter');
   assert.equal(await earlierVersion.getAttribute('aria-current'),'location');
   assert.equal(await page.evaluate(()=>location.hash),hash);
   const target=notesDialog.getByRole('region',{name:'v1.0.5'});
-  assert(await target.evaluate(node=>node===document.activeElement));
+  await page.waitForFunction(()=>Math.abs($('updates-notes-content').scrollTop-
+   ($('updates-notes-content').scrollHeight-$('updates-notes-content').clientHeight))<=1);
+  await page.waitForFunction(id=>document.activeElement.id===id,await target.getAttribute('id'));
+  assert.equal(await page.evaluate(end=>window.notesScrollOffsets.some(offset=>offset>1&&offset<end-1),scrollEnd),smooth);
   assert((await target.boundingBox()).y<contentBox.y+contentBox.height,'The earlier version is visible after selecting it');
   await firstVersion.click();
   assert.equal(await firstVersion.getAttribute('aria-current'),'location');
-  assert.equal(await scroller.evaluate(node=>node.scrollTop),0);
+  await page.waitForFunction(()=>$('updates-notes-content').scrollTop===0);
+  await page.emulateMedia({reducedMotion:'no-preference'});
   await page.keyboard.press('Escape');
   assert.equal(await notesDialog.isVisible(),false);
   assert(await notesLink.evaluate(node=>node===document.activeElement));

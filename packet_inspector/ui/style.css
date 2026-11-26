@@ -797,7 +797,6 @@ input[type=checkbox][switch]:focus-visible{outline:2px solid var(--accent);outli
   border-radius:var(--settings-control-radius);background:var(--surface-field,var(--panel));color:var(--ink);
   font-size:var(--settings-detail-size);line-height:1.5;text-align:start
 }
-#settings-dialog #ui-theme{min-inline-size:115px}
 #settings-dialog input[type=number]{appearance:textfield;font-variant-numeric:tabular-nums;text-align:end}
 #settings-dialog input[type=number]::-webkit-inner-spin-button,
 #settings-dialog input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}
@@ -833,6 +832,12 @@ input[type=checkbox][switch]:focus-visible{outline:2px solid var(--accent);outli
 #settings-dialog .image-mode-pills span{color:var(--muted)}
 #settings-dialog .image-mode-pills label:has(input:disabled){opacity:.5;cursor:default}
 #settings-dialog .image-mode-pills input:disabled{opacity:0;cursor:default}
+#settings-dialog #ui-theme span{min-inline-size:66px;font-weight:600}
+#settings-dialog #ui-theme input:not(:checked,:disabled):hover+span{color:var(--ink);background:var(--soft)}
+@media (forced-colors:active){
+  #settings-dialog #ui-theme input:checked+span{forced-color-adjust:none;background:Highlight;color:HighlightText}
+  #settings-dialog #ui-theme input:focus-visible+span{outline-color:Highlight}
+}
 #settings-dialog .entry-port-row input{inline-size:84px;max-inline-size:100%}
 #settings-dialog .entry-port-row .settings-controls>:is(.entry-port-details,.entry-port-hint){flex:1 1 12em}
 #settings-dialog .entry-port-details{display:flex;flex-wrap:wrap;column-gap:12px;min-inline-size:0}
