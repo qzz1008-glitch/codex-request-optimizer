@@ -2,28 +2,26 @@
 
 适用于 Windows x64（64 位）。
 
-0.9.3 改进首次接入、跨设备解图、请求大小保护和趋势浏览。
+0.9.5 带来独立的对话与图片压缩设置、更快的桌面启动，以及新的版本和主题设置。
 
-- **首次安装**默认开启大小保护、容量重试和异常重试。独立图片工具配置成功后开启解图优化，首次打开时可确认是否接入 Codex。
-- **独立解图**现可用于 WSL 和已接入的 SSH 服务器。解析优先使用发起轮次的模型，待分析的图片会保留给独立解图会话。
-- **自动压缩**在快速压缩后的请求仍超过上限时尝试更高等级的无损压缩，采用较小的请求包执行大小保护。
-- **连接管理**修复 Windows 代理选择和 Codex 回环连接问题。普通 Linux SSH 重连时会提示确认，重启对应后台可能中断该连接上正在运行的任务。
-- **趋势浏览**可在选中会话时将两张图一起移到对应时段。密集图表在界面切换后绘制，让切换更流畅。
-- **设置与共享**统一输入框、数字和单位的布局。共享工作区改为按需开启。
+- **传输压缩** 可分别为对话和图片选择手动或自动 zstd 压缩。对话请求接近预测保护阈值时，自动尝试更高等级的无损压缩，并用更小的结果判断是否触发大小保护。
+- **连接与重启提示** Windows、WSL 和 SSH 使用一致的 Codex 接入规则。设置页和连接菜单提示哪些改动需要重新加载，恢复设置后会清除相应提示。
+- **桌面与主题** 主窗口可在中转就绪前打开，缩短启动等待。浅色和深色主题可即时预览并保存。设置中可以查看对应模型的默认上下文窗口和压缩阈值。
+- **检查更新** 定期自动检查新版本，可在设置中阅读中英文版本记录。打开较旧的安装文件时会保留较新的本机版本。
+- **请求分析** 大小构成直接显示变化量，推理条目可分别展开密文与其他内容的变化。点击趋势图可定位到对应会话。
 
-运行正式版 **CodexPacketInspector.exe** 安装或升级，也可在设置中检查更新。升级保留已有记录、设置和开发或正式模式。
+运行正式版 **CodexPacketInspector.exe** 安装或升级，也可在设置中检查更新。升级保留已有记录、设置和安装模式。支持无缝交接的版本可在升级期间继续处理在途请求。
 
 ## English
 
 For Windows x64 (64-bit).
 
-0.9.3 improves first-run setup, image analysis across devices, request size protection, and trend browsing.
+0.9.5 adds independent conversation and image compression controls, faster desktop startup, and new version and theme settings.
 
-- **First-time installations** enable size protection, capacity retries, and request error retries by default. Image analysis optimization turns on when the separate image tool is configured successfully. On first launch you can confirm whether to connect Codex.
-- **Separate-session image analysis** now supports WSL and connected SSH servers. It prefers the model from the calling turn and keeps the images available to the analysis session.
-- **Automatic compression** tries a higher lossless level if fast compression leaves a request over the limit. Size protection uses the smaller of the two results.
-- **Connection management** fixes Windows proxy selection and Codex loopback connections. Standard Linux SSH reconnections ask for confirmation, since restarting the corresponding backend may interrupt tasks still running on that connection.
-- **Trend browsing** moves both charts to the selected session's time range. Dense charts render after the view transition for smoother switching.
-- **Settings and sharing** align input controls, numbers, and units. The sharing workspace can now be enabled when needed.
+- **Transfer compression** Choose manual or automatic zstd separately for conversations and images. Near the predictive protection threshold, automatic conversation compression tries a higher lossless level and uses the smaller result to decide whether to trigger size protection.
+- **Connections and restart prompts** Windows, WSL, and SSH follow the same Codex connection rules. Settings and the connection menu show which changes require a reload and clear the corresponding prompts when changes are reverted.
+- **Desktop and themes** The main window can open while the relay starts. Preview and save either light or dark mode, and see the default context window and compaction threshold for each model in Settings.
+- **Updates** The app checks for new versions periodically and shows release notes in Chinese and English in Settings. Opening an older installer preserves the newer installed version.
+- **Request analysis** View changes directly in the size breakdown and expand reasoning entries to see separate changes for encrypted and other content. Click a point in a trend chart to jump to the corresponding session.
 
-Run the release **CodexPacketInspector.exe** to install or upgrade, or check for updates in Settings. Upgrading preserves records, settings, and the installed development or release mode.
+Run the release **CodexPacketInspector.exe** to install or upgrade, or check for updates in Settings. Upgrades preserve records, settings, and the installed mode. Versions that support seamless handover can continue processing in-flight requests during the upgrade.
