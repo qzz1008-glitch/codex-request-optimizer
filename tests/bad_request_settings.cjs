@@ -218,15 +218,34 @@ async function run(){
     assert.equal(await count.isDisabled(),true);
     assert.deepEqual(await page.evaluate(()=>changedSettings()),[],'an unchecked count does not leave a dirty draft');cases++;
   }
-  const defaultsTrigger=page.locator('#context-defaults-open'),defaultsDialog=page.locator('#context-defaults-dialog');
-  for(const [language,width] of [['zh',1120],['en',320]]){
+  const windowHelp=page.locator('#context-window-hint'),compactHelp=page.locator('#context-compact-hint');
+  const defaultsTrigger=windowHelp.locator('#context-defaults-open'),defaultsDialog=page.locator('#context-defaults-dialog');
+  const protectionRow=page.locator('#packet-size-protection-row');
+  const protectionBackground=()=>protectionRow.evaluate(row=>getComputedStyle(row).backgroundColor);
+  for(const [language,width,windowText,compactText] of [
+    ['zh',1120,'单次请求可用的上下文上限，未设置时使用模型默认值','达到阈值时自动压缩会话历史，未设置时按 Codex 默认规则计算'],
+    ['en',320,'Maximum usable context per request. If unset, uses Model defaults','Compacts history at this threshold. If unset, Codex calculates it'],
+  ]){
     await page.evaluate(language=>uiI18n.setLanguage(language,{persist:false}),language);
     await page.setViewportSize({width,height:900});
     const draft=await page.evaluate(()=>readSettingsDraft());
-    const recommendation=language==='zh'?'开启大小保护时，建议使用':'With size protection on, prefer';
-    assert((await defaultsTrigger.locator('..').textContent()).startsWith(recommendation));
-    assert.equal(await defaultsTrigger.textContent(),language==='zh'?'模型默认值':'Model defaults');
-    await defaultsTrigger.click();
+    assert.equal(await windowHelp.textContent(),windowText);
+    assert.equal(await compactHelp.textContent(),compactText);
+    await page.mouse.move(0,0);
+    const idle=await protectionBackground();
+    if(language==='zh'){
+      await defaultsTrigger.hover();
+      assert.notEqual(await protectionBackground(),idle,'Hover highlights size protection');
+      await page.mouse.move(0,0);
+      assert.equal(await protectionBackground(),idle);
+      await defaultsTrigger.click();
+    }else{
+      await contextSwitch.focus();
+      await page.keyboard.press('Tab');
+      assert(await defaultsTrigger.evaluate(node=>node.matches(':focus-visible')));
+      assert.notEqual(await protectionBackground(),idle,'Keyboard focus also highlights size protection');
+      await page.keyboard.press('Enter');
+    }
     assert(await defaultsDialog.evaluate(node=>node.matches(':modal')));
     assert.deepEqual(await defaultsDialog.locator('tbody tr').evaluateAll(rows=>rows.map(row=>
       Array.from(row.cells,cell=>cell.textContent))),[['fixture','475','450'],['partial','—','12.345']]);

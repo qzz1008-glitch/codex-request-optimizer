@@ -298,7 +298,7 @@
       </div>
     </section>
     <section id="request-protection-settings"><h3>请求保护</h3>
-      <div class="settings-row">
+      <div id="packet-size-protection-row" class="settings-row">
         <span id="packet-size-protection-label" class="settings-key">大小保护</span>
         <div class="settings-controls settings-compound-controls">
           <div class="settings-switch" data-settings-field="packet_size_protection_enabled"><input id="packet-size-protection" type="checkbox" switch role="switch" aria-labelledby="packet-size-protection-label" aria-controls="budget" aria-describedby="packet-size-protection-hint"></div>
@@ -391,10 +391,7 @@
       </div>
     </section>
     <section id="context-settings" aria-labelledby="context-settings-title">
-      <div class="context-heading">
-        <h3 id="context-settings-title">上下文设置</h3>
-        <p class="muted help runtime-inline-hint">开启大小保护时，建议使用 <button id="context-defaults-open" type="button" aria-haspopup="dialog" aria-controls="context-defaults-dialog">模型默认值</button></p>
-      </div>
+      <h3 id="context-settings-title">上下文设置</h3>
       <div class="context-grid">
         <div class="settings-row" role="group" aria-labelledby="context-label" data-settings-field="context_tokens">
           <span id="context-label" class="settings-key">窗口上限</span>
@@ -406,7 +403,7 @@
                 <span id="context-unit">k</span>
               </label>
             </div>
-            <p id="context-window-hint" class="muted help runtime-inline-hint">单次请求可用的上下文上限</p>
+            <p id="context-window-hint" class="muted help runtime-inline-hint">单次请求可用的上下文上限，未设置时使用<button id="context-defaults-open" type="button" aria-haspopup="dialog" aria-controls="context-defaults-dialog">模型默认值</button></p>
           </div>
         </div>
         <div class="settings-row" role="group" aria-labelledby="compact-label" data-settings-field="compact_tokens">
@@ -419,7 +416,7 @@
                 <span id="compact-unit">k</span>
               </label>
             </div>
-            <p id="context-compact-hint" class="muted help runtime-inline-hint">达到此阈值时自动压缩会话历史</p>
+            <p id="context-compact-hint" class="muted help runtime-inline-hint">达到阈值时自动压缩会话历史，未设置时按 Codex 默认规则计算</p>
           </div>
         </div>
       </div>

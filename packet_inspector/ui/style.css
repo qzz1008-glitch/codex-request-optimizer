@@ -984,12 +984,10 @@ input[type=checkbox][switch]:focus-visible{outline:2px solid var(--accent);outli
 #settings-dialog .storage-directory-row>input{inline-size:100%;min-inline-size:0}
 #settings-dialog #linux-storage-targets input::placeholder{color:inherit}
 #settings-dialog .storage-directory-row>.help{grid-column:2/-1;margin:0}
-#settings-dialog .context-heading{
-  display:flex;flex-wrap:wrap;align-items:center;gap:0 var(--settings-column-gap);
-  margin-block-end:6px;margin-inline-start:calc(-1 * var(--settings-section-indent))
+#settings-dialog #packet-size-protection-row{margin-inline-start:-8px;padding-inline-start:8px}
+#settings-dialog:has(#context-defaults-open:is(:hover,:focus-visible)) #packet-size-protection-row{
+  border-radius:8px;background:var(--soft);box-shadow:inset 0 0 0 1px var(--line-control,#b9c9ed)
 }
-#settings-dialog .context-heading h3{margin:0}
-#settings-dialog .context-heading .runtime-inline-hint{flex-basis:17em}
 #settings-dialog .context-value-controls{
   display:flex;align-items:center;gap:var(--settings-column-gap);max-inline-size:100%
 }
