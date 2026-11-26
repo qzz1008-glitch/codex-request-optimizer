@@ -389,23 +389,48 @@ const localControls=[
       await page.mouse.move(0,page.viewportSize().height-1);
       await page.keyboard.press('Escape');await panel.waitFor({state:'hidden'});
       await restartSurface.evaluate(node=>Promise.all(node.getAnimations().map(animation=>animation.finished)));
+      await page.evaluate(fallback=>{
+        const random=Math.random;
+        fixture.restoreRandom=()=>{Math.random=random;};
+        Math.random=()=>fallback ? .12 : .88;
+      },fallback);
       await reopenPanel();
-      const [capsule,taper,dot]=await restartSurface.evaluate(node=>{
+      const [capsule,taper,squeeze,dot]=await restartSurface.evaluate(node=>{
+        fixture.restoreRandom();
         const [animation]=node.getAnimations();
         const {duration}=animation.effect.getTiming();
         animation.pause();
-        const frames=[0,duration*.35,duration].map(time=>{
-          animation.currentTime=time;
-          const {left,width,height}=node.getBoundingClientRect();
-          return {x:left+width/2,width,height};
+        const frames=[0,.35,.8,1].map(progress=>{
+          animation.currentTime=duration*progress;
+          const {left,top,width,height}=node.getBoundingClientRect();
+          return {x:left+width/2,y:top+height/2,width,height};
         });
-        animation.finish();
+        animation.currentTime=duration*.35;
         return frames;
       });
       assert(capsule.width>taper.width&&taper.width>dot.width,'The visible badge shrinks continuously');
       assert(capsule.height>taper.height&&taper.height>dot.height,'The badge gets rounder as it shrinks');
       assert((taper.x-capsule.x)*(taper.x-dot.x)<0,'The badge moves toward the dot while shrinking');
+      const progress=(taper.x-capsule.x)/(dot.x-capsule.x);
+      const bend=taper.y-(capsule.y+(dot.y-capsule.y)*progress);
+      assert((fallback?-bend:bend)>2&&Math.abs(bend)<=7.1,'The random bias produces a shallow arc in either direction');
+      assert(Math.hypot(squeeze.x-dot.x,squeeze.y-dot.y)<.25,'The rebound stays on the dot center');
+      assert(squeeze.width<dot.width&&squeeze.height>dot.height,'The drop squeezes slightly before becoming round');
       assert.equal(dot.width,8,'The animation settles on the status dot');
+      assert.equal(dot.height,8,'The settled dot is round');
+      await page.mouse.move(0,page.viewportSize().height-1);
+      await page.keyboard.press('Escape');await panel.waitFor({state:'hidden'});
+      const reverseStart=await restartSurface.evaluate(node=>{
+        const [animation]=node.getAnimations();
+        animation.pause();animation.currentTime=0;
+        const {left,top,width,height}=node.getBoundingClientRect();
+        animation.finish();
+        return {x:left+width/2,y:top+height/2};
+      });
+      assert(Math.hypot(reverseStart.x-taper.x,reverseStart.y-taper.y)<.25,
+        'Reversing mid-arc starts at the visible position');
+      await reopenPanel();
+      await restartSurface.evaluate(node=>Promise.all(node.getAnimations().map(animation=>animation.finished)));
       const localStart=await textLeft(localLabel);
       for(const server of await serverAddress.all()){
         assert(Math.abs(localStart-await textLeft(server))<1,'Addresses of different lengths align with the local label');

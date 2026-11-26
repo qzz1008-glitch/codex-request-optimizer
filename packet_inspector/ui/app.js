@@ -20,6 +20,7 @@ globalThis.InspectorConnections = {
     let openRequested=false,focusOnOpen=false;
     let plan=null,finished=false,disposed=false;
     let surfaceAnimation, labelAnimation;
+    let restartBendFactor = 0;
     const text=(node,value)=>{if(node.textContent!==value)node.textContent=value;};
     const isOpen=()=>nativePopover?panel.matches(":popover-open"):!panel.hidden;
     const inDropdown=node=>controls.contains(node)||panel.contains(node)||(isOpen()&&restartBadge.contains(node));
@@ -186,25 +187,47 @@ globalThis.InspectorConnections = {
 
       // Animate the surface independently of the button's hit target.
       const to = restartSurfaceFrame();
+      if (expanded) {
+        const direction = Math.random() < .5 ? -1 : 1;
+        restartBendFactor = direction * (.6 + Math.random() * .4);
+      }
+      const startX = from.x - to.x, startY = from.y - to.y;
+      // Budget for the visible offset when reversing an unfinished arc.
+      const maxBend = Math.max(0, Math.min(7 - Math.abs(startY), Math.abs(startX) / 4));
+      const bend = restartBendFactor * maxBend;
+      const arrival = expanded ? .78 : 1;
+      const steps = 12;
+      const path = Array.from({length:steps + 1}, (_, index) => {
+        const time = index / steps;
+        const progress = time * time * (3 - 2 * time); // Ease in and out along the arc.
+        const remaining = 1 - progress;
+        const x = startX * remaining;
+        const y = (startY + 4 * bend * progress) * remaining;
+        return {offset:time * arrival, transform:`translate(${x}px, ${y}px)`};
+      });
+
       const capsule = expanded ? from : to, dot = expanded ? to : from;
       const taper = {
-        x: dot.x + (capsule.x - dot.x) * .28,
-        y: dot.y + (capsule.y - dot.y) * .28,
-        width: dot.width + (capsule.width - dot.width) * .38,
-        height: dot.height + (capsule.height - dot.height) * .45,
+        width: dot.width + (capsule.width - dot.width) * .43,
+        height: dot.height + (capsule.height - dot.height) * .32,
         borderRadius: capsule.x > dot.x
           ? "28% 78% 78% 28% / 55% 50% 50% 55%" : "78% 28% 28% 78% / 50% 55% 55% 50%"
       };
-      const keyframe = ({x, y, width, height, ...paint}) => ({
+      const shapeFrame = ({x, y, width, height, ...paint}, offset) => ({
         ...paint,
+        offset,
         inlineSize: `${width}px`,
-        blockSize: `${height}px`,
-        transform: `translate(${x-to.x}px, ${y-to.y}px)`
+        blockSize: `${height}px`
       });
-      const timing = {duration:340, easing:"cubic-bezier(.26,.1,.3,1)"};
-      surfaceAnimation = restartSurface.animate([
-        keyframe(from), {...keyframe(taper), offset:expanded ? .62 : .38}, keyframe(to)
-      ], timing);
+      const shape = [shapeFrame(from, 0), shapeFrame(taper, expanded ? .49 : .42)];
+      if (expanded) {
+        const squeezed = {...to, width:to.width * .82, height:to.height * 1.18};
+        shape.push({...shapeFrame(squeezed, arrival), easing:"ease-out"});
+      }
+      shape.push(shapeFrame(to, 1));
+      const timing = {duration:350};
+      const frames = [...path, ...shape].sort((a, b) => a.offset - b.offset);
+      surfaceAnimation = restartSurface.animate(frames, timing);
       if (!expanded) labelAnimation = restartLabel.animate([{opacity:0}, {opacity:0, offset:.65}, {opacity:1}], timing);
     }
     function hide() {
