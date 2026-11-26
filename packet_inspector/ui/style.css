@@ -1005,6 +1005,7 @@ input[type=checkbox][switch]:focus-visible{outline:2px solid var(--accent);outli
   flex:none;inline-size:var(--settings-control-height);block-size:var(--settings-control-height);padding:0
 }
 #settings-dialog #settings-close{color:var(--muted);font-size:18px;line-height:1}
+#settings-dialog #updates-install{color:var(--accent)}
 #settings-dialog .updates-icon-button svg{inline-size:16px;block-size:16px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
 #settings-dialog .updates-icon-button[aria-busy=true] svg{display:none}
 #settings-dialog :is(.updates-icon-button,.repository-link):focus-visible{outline-offset:-3px}

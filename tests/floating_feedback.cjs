@@ -119,7 +119,7 @@ async function run(){
    if(hasInstall){
     const [install]=await geometry(page,['updates-install']);
     assert(Math.abs(install[0]-result[0]-result[2]-6)<=1,'The install icon sits directly after the result');
-    assert.equal(install[1],button[1],'Both icons stay on the same line');
+    assert.deepEqual(install.slice(1),button.slice(1),'Both update buttons have the same size and vertical position');
    }
    if(status==='available'){
     assert(await installButton.locator('svg').evaluate(icon=>icon.getBBox().width>0),'The upgrade icon renders');
