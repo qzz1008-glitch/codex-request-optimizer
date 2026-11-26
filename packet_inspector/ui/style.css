@@ -1039,7 +1039,6 @@ dialog{width:min(760px,calc(var(--desktop-width) - 80px));max-height:calc(var(--
 .connection-device-state[data-status=connected]{color:var(--green)}
 .connection-device-state:is([data-status=disconnected],[data-status=unknown])::before{background:transparent}
 .connection-device-state:is([data-status=pending],[data-status=warning]){color:var(--warn)}
-.connection-device-state[data-status=pending]::before{outline:1px solid currentColor;outline-offset:2px}
 .connection-device-state[data-status=error]{color:var(--danger)}
 .connection-device-state[data-status=error]::before{border-radius:2px;transform:rotate(45deg)}
 .compression-toggle button:hover{background:transparent;color:var(--muted)}

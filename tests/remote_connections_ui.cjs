@@ -304,6 +304,9 @@ const localControls=[
       await page.locator('#devices-confirm-cancel').click();
       await page.evaluate(()=>{fixture.reconnectError='Native restart timed out; reminder retained';fixture.rows[1].reload_required=true;});
       await page.locator('#compression-connect').hover();await panel.waitFor({state:'visible'});
+      const pendingDot=panel.locator('.connection-device-state[data-status="pending"]');
+      assert.equal(await pendingDot.evaluate(node=>getComputedStyle(node,'::before').outlineStyle),'none',
+        'The pending server dot has no outer ring');
       await reconnect.click();await page.locator('#devices-confirm-apply').click();
       await page.waitForFunction(()=>document.querySelector('#devices-confirm-apply').textContent==='重试');
       assert.match(await page.locator('#devices-confirm-targets').textContent(),/Native restart timed out/);
