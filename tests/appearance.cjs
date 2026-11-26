@@ -18,6 +18,10 @@ function luminance(color){
   const channels=color.match(/\d+/g).slice(0,3).map(value=>Number(value)/255).map(value=>value<=.04045?value/12.92:((value+.055)/1.055)**2.4);
   return channels[0]*.2126+channels[1]*.7152+channels[2]*.0722;
 }
+function contrastRatio(first,second){
+  const levels=[luminance(first),luminance(second)];
+  return (Math.max(...levels)+.05)/(Math.min(...levels)+.05);
+}
 
 async function run(){
   const browser=await chromium.launch({executablePath,headless:true});
@@ -90,14 +94,22 @@ async function run(){
     assert.deepEqual(writes,[['/api/appearance',{theme:'dark'}]]);
     for(const [view,selector] of [
       [page,'.app-header'],[page,'.sessions-sidebar'],[page,'.requests-sidebar'],[page,'.detail'],[page,'.app-footer'],
-      [page,'.trend-charts'],[page,'.sharing-section:first-child'],[page,'#settings-dialog'],[page,'#ui-theme input:checked+span'],[tray,'.tray-panel']
+      [page,'.trend-charts'],[page,'.sharing-section:first-child'],[page,'#settings-dialog'],[tray,'.tray-panel']
     ]){
       const {background,text}=await styles(view,selector),luminanceBG=luminance(background);
       assert(!background.startsWith('rgba')&&luminanceBG<.1,`${selector} uses a dark surface (${background})`);
-      assert((luminance(text)+.05)/(luminanceBG+.05)>=4.5,`${selector} text contrasts with the dark surface`);
+      assert(contrastRatio(text,background)>=4.5,`${selector} text contrasts with the dark surface`);
     }
+    const darkChoiceSelector='#ui-theme-dark+span';
+    const darkChoice=await styles(page,darkChoiceSelector),track=await styles(page,'#ui-theme');
+    assert(contrastRatio(darkChoice.background,track.background)>=3,'The dark choice stands out from its control');
+    assert(contrastRatio(darkChoice.text,darkChoice.background)>=4.5,'The dark choice text is readable');
+    await dark.hover();
+    const hoveredChoice=await styles(page,darkChoiceSelector);
+    assert.notEqual(hoveredChoice.background,darkChoice.background,'The dark choice changes shade on hover');
+    assert(contrastRatio(hoveredChoice.text,hoveredChoice.background)>=4.5,'The hovered dark choice text is readable');
     const button=await styles(page,'#settings-save');
-    assert((luminance(button.background)+.05)/(luminance(button.text)+.05)>=4.5,'Filled buttons use a readable foreground');
+    assert(contrastRatio(button.background,button.text)>=4.5,'Filled buttons use a readable foreground');
     await page.emulateMedia({colorScheme:'light'});
     assert.equal(await scheme(page),'dark','An explicit choice does not follow OS changes');
     await close();await page.reload();await open();

@@ -850,8 +850,8 @@ input[type=checkbox][switch]:focus-visible{outline:2px solid var(--accent);outli
 #settings-dialog .image-mode-pills label:has(input:disabled){opacity:.5;cursor:default}
 #settings-dialog .image-mode-pills input:disabled{opacity:0;cursor:default}
 #ui-theme-dark+span{
-  --theme-choice-bg:#263447;--theme-choice-hover:#2e405b;--theme-choice-ink:#edf4ff;
-  --theme-choice-line:#7c90ac;--theme-choice-accent:#a8c7ff
+  --theme-choice-bg:#496795;--theme-choice-hover:#536f9e;--theme-choice-ink:#f6f9ff;
+  --theme-choice-line:#98afd0;--theme-choice-accent:#c7deff
 }
 #ui-theme-light+span{
   --theme-choice-bg:#edf3ff;--theme-choice-hover:#e2ebfc;--theme-choice-ink:#293954;
