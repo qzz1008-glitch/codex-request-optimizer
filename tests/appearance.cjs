@@ -71,6 +71,8 @@ async function run(){
     assert.equal(await choice.evaluate(node=>node.closest('.settings-row').previousElementSibling.dataset.settingsField),'language');
     const group=page.getByRole('group',{name:'界面主题'});
     assert.equal(await group.getByRole('radio').count(),2);
+    assert.deepEqual(await group.locator('label span').evaluateAll(labels=>labels.map(label=>getComputedStyle(label).fontWeight)),
+      ['400','400'],'Theme choices use regular font weight');
     assert.equal(await group.getByRole('radio',{name:'浅色'}).isChecked(),true);
     await light.press('ArrowLeft');
     assert.equal(await dark.isChecked(),true,'The arrow key changes the selected theme');

@@ -858,7 +858,7 @@ input[type=checkbox][switch]:focus-visible{outline:2px solid var(--accent);outli
   --theme-choice-line:#7889a6;--theme-choice-accent:#315cca
 }
 #settings-dialog #ui-theme span{
-  min-inline-size:66px;font-weight:600;background:var(--theme-choice-bg);color:var(--theme-choice-ink);
+  min-inline-size:66px;background:var(--theme-choice-bg);color:var(--theme-choice-ink);
   border:1px solid var(--theme-choice-line)
 }
 #settings-dialog #ui-theme input:not(:disabled):hover+span{background:var(--theme-choice-hover)}
