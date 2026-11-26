@@ -911,7 +911,7 @@ const uiI18n = (() => {
     "上游原始输入 Token":"Actual upstream input tokens",
     "向 Codex 报告的输入 Token":"Input tokens reported to Codex",
     "大小保护":"Request size protection",
-    "将请求包大小控制在设定上限内":"Keep requests within the configured size limit",
+    "通过大小预测、超限压缩等机制控制请求大小":"Predicts request size and compresses requests over the limit",
     "按大小保护上限动态调整压缩策略":"Adjusts compression based on the size protection limit",
     "自行选择 zstd 压缩等级":"Choose a zstd compression level",
     "自行选择 zstd 压缩等级。开启大小保护后可切换为自动":"Choose a zstd compression level. Enable size protection to switch to Auto.",
