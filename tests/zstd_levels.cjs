@@ -33,7 +33,7 @@ class Element {
 const context={document,Event:class {constructor(type){this.type=type;}},
   $:id=>{if(!elements.has(id))elements.set(id,new Element());return elements.get(id);},
   el:(...args)=>new Element(...args),t:key=>key,
-  state:{status:{zstd_level:16}},settingsEditing:true,settingsSaving:false};
+  state:{status:{zstd_level:16,auto_zstd_level_enabled:false,auto_image_zstd_level_enabled:false}},settingsEditing:true,settingsSaving:false};
 vm.createContext(context);
 for(const name of ['zstdLevelEstimates','imageZstdLevelEstimates']) {
   const start=source.indexOf(`const ${name} = [`);
@@ -94,20 +94,27 @@ context.state.status.image_zstd_level=12;
 context.state.status.auto_image_zstd_level=6;
 context.fillZstdLevel();
 assert.equal(context.$('image-zstd-level').value,'12');
+assert.equal(context.$('image-zstd-level-open').disabled,false);
+assert.equal(context.$('image-zstd-level-value').textContent,'12级');
+context.$('auto-image-zstd-level').checked=true;
+context.fillZstdLevel();
 assert.equal(context.$('image-zstd-level').disabled,true);
 assert.equal(context.$('image-zstd-level-open').disabled,true);
 assert.equal(context.$('image-zstd-level-value').textContent,'6级');
-assert.equal(context.$('image-zstd-level-hint').hidden,false);
+assert.equal(context.$('image-zstd-level-hint').textContent,'原始正文达到大小保护上限的 90% 时尝试压缩');
 context.settingsEditing=true;
 context.$('auto-zstd-level').checked=false;
 context.fillZstdLevel();
 assert.equal(context.$('zstd-level-open').disabled,false);
+assert.equal(context.$('image-zstd-level-open').disabled,true);
+context.$('auto-image-zstd-level').checked=false;
+context.fillZstdLevel();
 assert.equal(context.$('image-zstd-level').disabled,false);
 assert.equal(context.$('image-zstd-level-open').disabled,false);
 assert.equal(context.$('image-zstd-level-value').textContent,'12级');
-assert.equal(context.$('image-zstd-level-hint').hidden,true);
+assert.equal(context.$('image-zstd-level-hint').textContent,'按所选等级压缩');
 context.$('image-zstd-level').value='17';
-context.$('auto-zstd-level').checked=true;
+context.$('auto-image-zstd-level').checked=true;
 context.fillZstdLevel();
 assert.equal(context.$('image-zstd-level').value,'17');
 assert.equal(context.$('image-zstd-level-value').textContent,'6级');
@@ -142,7 +149,7 @@ assert.equal(context.$('zstd-level-options').children[0].children[3].textContent
 context.closeZstdLevelPicker();
 context.openZstdLevelPicker('image');
 context.$('packet-size-protection').checked=true;
-context.$('auto-zstd-level').checked=true;
+context.$('auto-image-zstd-level').checked=true;
 context.fillZstdLevel();
 assert.equal(context.$('zstd-level-dialog').open,false);
 context.selectZstdLevel(18);
@@ -152,18 +159,32 @@ assert.equal(context.$('image-zstd-level-value').textContent,'6级');
 vm.runInContext(source.slice(source.indexOf('function fillPacketProtection()'),
   source.indexOf('$("packet-size-protection").addEventListener')),context);
 context.settingsEditing=false;
-Object.assign(context.state.status,{packet_size_protection_enabled:true,auto_zstd_level_enabled:true,budget_bytes:1000000});
+Object.assign(context.state.status,{packet_size_protection_enabled:true,auto_zstd_level_enabled:true,auto_image_zstd_level_enabled:false,budget_bytes:1000000});
 context.fillPacketProtection();
 assert.equal(context.$('auto-zstd-level').checked,true);
 assert.equal(context.$('manual-zstd-level').checked,false);
-assert.equal(context.$('auto-zstd-level-hint').hidden,true);
+assert.equal(context.$('auto-zstd-level-hint').textContent,'按大小保护上限自动选档');
+assert.equal(context.$('manual-image-zstd-level').checked,true);
+assert.equal(context.$('image-zstd-level-open').disabled,false);
 context.settingsEditing=true;
 context.$('packet-size-protection').checked=false;
 context.fillPacketProtection();
 assert.equal(context.$('manual-zstd-level').checked,true);
 assert.equal(context.$('auto-zstd-level').disabled,true);
-assert.equal(context.$('auto-zstd-level-hint').textContent,'请先开启请求大小保护');
+assert.equal(context.$('manual-image-zstd-level').checked,true);
+assert.equal(context.$('auto-image-zstd-level').disabled,true);
+assert.equal(context.$('auto-zstd-level-hint').textContent,'按所选等级压缩 · 开启大小保护后可选自动');
+assert.equal(context.$('image-zstd-level-hint').textContent,'按所选等级压缩 · 开启大小保护后可选自动');
 assert.equal(context.$('zstd-level-open').disabled,false);
+assert.equal(context.$('image-zstd-level-open').disabled,false);
+
+// Older relays still apply one mode to both request types.
+delete context.state.status.auto_image_zstd_level_enabled;
+context.settingsEditing=false;
+context.fillPacketProtection();
+assert.equal(context.$('auto-image-zstd-level').checked,true);
+assert.equal(context.$('auto-image-zstd-level').disabled,true);
+assert(context.$('image-zstd-level-hint').textContent.includes('更新中转后可独立选择图片模式'));
 
 const html=fs.readFileSync('packet_inspector/ui/index.html','utf8');
 assert(html.includes('scope="colgroup" colspan="2"'));
@@ -172,7 +193,7 @@ assert(!html.includes('image-upload-optimization'));
 const translations=fs.readFileSync('packet_inspector/ui/i18n.js','utf8');
 const englishStart=translations.indexOf('const english = {');
 const dictionary=vm.runInNewContext(translations.slice(englishStart,translations.indexOf('\n  };',englishStart)+5)+'\nenglish;');
-for(const label of ['原始请求＜1.5 MB','原始请求≥1.5 MB','手动选择','自动选择','自动模式下固定','压缩耗时']) {
+for(const label of ['原始请求＜1.5 MB','原始请求≥1.5 MB','手动','自动','按所选等级压缩','压缩耗时']) {
   assert(html.includes(label));
   assert(dictionary[label]);
 }

@@ -2088,19 +2088,27 @@ function fillZstdLevel() {
   input.disabled=settingsSaving||!supported||automatic;
   $("zstd-level-open").disabled=input.disabled;
   $("zstd-level-value").textContent=t("{level}级").replace("{level}",selected);
-  fillImageZstdLevel(automatic);
+  fillCompressionDescription("auto-zstd-level-hint",automatic?"按大小保护上限自动选档":"按所选等级压缩",
+    typeof s.auto_zstd_level_enabled==="boolean"?"":"当前中转暂不支持按请求大小自动压缩");
+  fillImageZstdLevel();
   if($("zstd-level-dialog").open) {
     if(zstdLevelPickerTarget().input.disabled)closeZstdLevelPicker();else renderZstdLevelRows();
   }
 }
-function fillImageZstdLevel(automatic) {
+function fillImageZstdLevel() {
   const s=state.status,input=$("image-zstd-level");
   const selected=settingsEditing&&input.value?Number(input.value):(s.image_zstd_level??6);
+  const automatic=$("packet-size-protection").checked&&$("auto-image-zstd-level").checked;
   input.value=String(selected);
   input.disabled=settingsSaving||!Number.isInteger(s.image_zstd_level)||automatic;
   $("image-zstd-level-open").disabled=input.disabled;
   $("image-zstd-level-value").textContent=t("{level}级").replace("{level}",automatic?(s.auto_image_zstd_level??6):selected);
-  $("image-zstd-level-hint").hidden=!automatic;
+  fillCompressionDescription("image-zstd-level-hint",automatic?"原始正文达到大小保护上限的 90% 时尝试压缩":"按所选等级压缩",
+    typeof s.auto_image_zstd_level_enabled==="boolean"?"":"更新中转后可独立选择图片模式");
+}
+function fillCompressionDescription(id,description,unavailable) {
+  const note=unavailable||($("packet-size-protection").checked?"":"开启大小保护后可选自动");
+  $(id).textContent=note?`${t(description)} · ${t(note)}`:t(description);
 }
 function zstdLevelPickerTarget() {
   const image=$("zstd-level-dialog").dataset.target==="image";
@@ -2570,6 +2578,7 @@ for(const key of ["context","compact"]) {
 let updateStatus=null, updateBusy=false, updateAction="";
 let updateRevision=0,updateStatusLoading=false;
 function readSettingsDraft() {
+  const sizeProtection=$("packet-size-protection").checked;
   const draft={
     entry_port:$("entry-port").value,
     proxy_settings:state.status.proxy_settings_supported?proxySettingsDraft():"",
@@ -2577,8 +2586,10 @@ function readSettingsDraft() {
     egress_port:$("exit-port").value,
     zstd_level:$("zstd-level").value,
     image_zstd_level:$("image-zstd-level").value,
-    packet_size_protection_enabled:$("packet-size-protection").checked,
-    auto_zstd_level_enabled:$("packet-size-protection").checked&&$("auto-zstd-level").checked,
+    packet_size_protection_enabled:sizeProtection,
+    auto_zstd_level_enabled:sizeProtection&&$("auto-zstd-level").checked,
+    auto_image_zstd_level_enabled:typeof state.status.auto_image_zstd_level_enabled==="boolean"
+      ?sizeProtection&&$("auto-image-zstd-level").checked:null,
     budget:$("budget").value,
     start_on_login:$("start-on-login").checked,
     sharing_tab_enabled:$("sharing-tab-enabled").checked,
@@ -2674,6 +2685,7 @@ async function saveSettings() {
     ["image_zstd_level","image_zstd_level",Number(draft.image_zstd_level),Number.isInteger(s.image_zstd_level)],
     ["packet_size_protection_enabled","packet_size_protection_enabled",draft.packet_size_protection_enabled,protectionSupported],
     ["auto_zstd_level_enabled","auto_zstd_level_enabled",draft.auto_zstd_level_enabled,typeof s.auto_zstd_level_enabled==="boolean"],
+    ["auto_image_zstd_level_enabled","auto_image_zstd_level_enabled",draft.auto_image_zstd_level_enabled,typeof s.auto_image_zstd_level_enabled==="boolean"],
     ["budget","budget_bytes",Math.round(Number(draft.budget)*1000),protectionSupported],
     ["start_on_login","start_on_login",draft.start_on_login,s.start_on_login_supported],
     ["sharing_tab_enabled","sharing_tab_enabled",draft.sharing_tab_enabled,typeof s.sharing_tab_enabled==="boolean"],
@@ -3924,30 +3936,34 @@ $("service-restart-dialog").addEventListener("cancel",event=>{event.preventDefau
 action("connect-confirm-cancel",cancelConnectPrompt);action("connect-confirm-apply",confirmConnection);
 $("connect-confirm-dialog").addEventListener("cancel",event=>{event.preventDefault();cancelConnectPrompt();});
 function fillPacketProtection() {
-  const s=state.status,supported="packet_size_protection_enabled" in s,autoSupported=typeof s.auto_zstd_level_enabled==="boolean";
+  const s=state.status,supported="packet_size_protection_enabled" in s;
+  const autoSupported=typeof s.auto_zstd_level_enabled==="boolean",imageAutoSupported=typeof s.auto_image_zstd_level_enabled==="boolean";
   const protection=$("packet-size-protection"),budget=$("budget");
-  const manual=$("manual-zstd-level"),automatic=$("auto-zstd-level"),hint=$("auto-zstd-level-hint");
+  const automatic=$("auto-zstd-level"),imageAutomatic=$("auto-image-zstd-level");
   if(!settingsEditing){
     protection.checked=!!s.packet_size_protection_enabled;
     budget.value=s.budget_bytes/1000;
-    automatic.checked=autoSupported&&s.auto_zstd_level_enabled;
+    automatic.checked=s.auto_zstd_level_enabled===true;
+    imageAutomatic.checked=s.auto_image_zstd_level_enabled===true;
   }
   if(!protection.checked||!autoSupported)automatic.checked=false;
-  manual.checked=!automatic.checked;
-  manual.disabled=settingsSaving;
+  // Older relays share the conversation mode with image requests.
+  if(!protection.checked||!imageAutoSupported)imageAutomatic.checked=automatic.checked;
+  $("manual-zstd-level").checked=!automatic.checked;
+  $("manual-zstd-level").disabled=settingsSaving;
+  $("manual-image-zstd-level").checked=!imageAutomatic.checked;
+  $("manual-image-zstd-level").disabled=settingsSaving||!imageAutoSupported;
   budget.min=(s.packet_size_min_bytes||50001)/1000;budget.max=(s.packet_size_max_bytes||134217728)/1000;
   protection.disabled=settingsSaving||!supported;
   budget.disabled=protection.disabled||!protection.checked;
   automatic.disabled=budget.disabled||!autoSupported;
-  const unavailable=!autoSupported?"当前中转暂不支持按请求大小自动压缩":!protection.checked?"请先开启请求大小保护":"";
-  hint.textContent=unavailable?t(unavailable):"";
-  hint.hidden=!unavailable;
+  imageAutomatic.disabled=budget.disabled||!imageAutoSupported;
   $("packet-size-message").hidden=supported;
   if(!supported)$("packet-size-message").textContent=t("当前中转暂不支持此功能");
   fillZstdLevel();
 }
 $("packet-size-protection").addEventListener("change",fillPacketProtection);
-$("zstd-level-mode").addEventListener("change",fillZstdLevel);
+for(const id of ["zstd-level-mode","image-zstd-level-mode"])$(id).addEventListener("change",fillPacketProtection);
 async function applyLinkAction(which) {
   linkRevision++;
   try {

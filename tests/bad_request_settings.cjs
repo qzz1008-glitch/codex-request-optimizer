@@ -27,7 +27,7 @@ async function run(){
     window.state={status:{
       bad_request_retry_enabled:false,bad_request_retry_supported:true,
       capacity_retry_supported:true,capacity_retry_mode:'native',capacity_retry_max_retries:15,capacity_retry_delay_seconds:30,
-      packet_size_protection_enabled:false,budget_bytes:1000000,auto_zstd_level_enabled:false,
+      packet_size_protection_enabled:false,budget_bytes:1000000,auto_zstd_level_enabled:false,auto_image_zstd_level_enabled:false,
       zstd_level:3,image_zstd_level:11,auto_image_zstd_level:6,
     }};
     window.contextSettings=null;window.contextCustomValues=new Map();
@@ -95,25 +95,58 @@ async function run(){
   assert.equal(await settings.getByRole('switch').count(),8);
   assert.equal(await settings.getByRole('checkbox').count(),0);
   const compressionMode=settings.getByRole('group',{name:'对话压缩'});
-  const manual=compressionMode.getByRole('radio',{name:'手动选择'});
-  const automatic=compressionMode.getByRole('radio',{name:'自动选择'});
+  const imageMode=settings.getByRole('group',{name:'图片压缩'});
+  const manual=compressionMode.getByRole('radio',{name:'手动'});
+  const automatic=compressionMode.getByRole('radio',{name:'自动'});
+  const imageManual=imageMode.getByRole('radio',{name:'手动'});
+  const imageAutomatic=imageMode.getByRole('radio',{name:'自动'});
   const sizeProtection=settings.locator('#packet-size-protection');
+  const protectionRow=settings.locator('#packet-size-protection-row');
+  const protectionBackground=()=>protectionRow.evaluate(row=>getComputedStyle(row).backgroundColor);
+  const sizeRowDimensions=()=>protectionRow.evaluate(row=>[row.offsetWidth,row.offsetHeight]);
   const dialogLevel=settings.locator('#zstd-level-open'),imageLevel=settings.locator('#image-zstd-level-open');
   assert.equal(await manual.isChecked(),true);
   assert.equal(await automatic.isDisabled(),true);
+  assert.equal(await imageManual.isChecked(),true);
+  assert.equal(await imageAutomatic.isDisabled(),true);
+  const normalBackground=await protectionBackground(),normalSize=await sizeRowDimensions();
+  for(const id of ['auto-zstd-level','auto-image-zstd-level']){
+    await settings.locator(`label[for="${id}"]`).hover();
+    assert.notEqual(await protectionBackground(),normalBackground,'Hovering unavailable Auto highlights its prerequisite');
+    assert.deepEqual(await sizeRowDimensions(),normalSize,'The highlight preserves layout');
+    await page.mouse.move(1,1);
+    assert.equal(await protectionBackground(),normalBackground);
+  }
   await sizeProtection.check();
+  for(const id of ['auto-zstd-level','auto-image-zstd-level']){
+    await settings.locator(`label[for="${id}"]`).hover();
+    assert.equal(await protectionBackground(),normalBackground,'Enabled Auto does not highlight size protection');
+  }
   await manual.press('ArrowRight');
   assert.equal(await automatic.isChecked(),true);
   assert.equal(await dialogLevel.isDisabled(),true);
-  assert.equal(await imageLevel.isDisabled(),true);
-  assert.equal(await settings.locator('#image-zstd-level-value').textContent(),'6级');
-  assert.equal(await page.evaluate(()=>readSettingsDraft().auto_zstd_level_enabled),true);
-  await automatic.press('ArrowLeft');
-  assert.equal(await manual.isChecked(),true);
-  assert.equal(await dialogLevel.isDisabled(),false);
+  assert.equal(await imageManual.isChecked(),true);
   assert.equal(await imageLevel.isDisabled(),false);
   assert.equal(await settings.locator('#image-zstd-level-value').textContent(),'11级');
-  await sizeProtection.uncheck();cases++;
+  assert.equal(await page.evaluate(()=>readSettingsDraft().auto_zstd_level_enabled),true);
+  assert.equal(await page.evaluate(()=>readSettingsDraft().auto_image_zstd_level_enabled),false);
+  await automatic.press('ArrowLeft');
+  await imageManual.press('ArrowRight');
+  assert.equal(await manual.isChecked(),true);
+  assert.equal(await imageAutomatic.isChecked(),true);
+  assert.equal(await dialogLevel.isDisabled(),false);
+  assert.equal(await imageLevel.isDisabled(),true);
+  assert.equal(await settings.locator('#image-zstd-level-value').textContent(),'6级');
+  assert.match(await settings.locator('#image-zstd-level-hint').textContent(),/大小保护.*90%/);
+  assert.equal(await page.evaluate(()=>readSettingsDraft().auto_zstd_level_enabled),false);
+  assert.equal(await page.evaluate(()=>readSettingsDraft().auto_image_zstd_level_enabled),true);
+  await manual.press('ArrowRight');
+  await sizeProtection.uncheck();
+  assert.equal(await manual.isChecked(),true);
+  assert.equal(await imageManual.isChecked(),true);
+  assert.equal(await imageLevel.isDisabled(),false);
+  assert.equal(await settings.locator('#image-zstd-level-value').textContent(),'11级');
+  cases++;
   const interactive='input:not([type=hidden]),select,button,a[href],[tabindex]';
   assert.deepEqual(await settings.locator('.settings-row').locator(interactive).evaluateAll(nodes=>
     nodes.filter(node=>!node.closest('.settings-controls')).map(node=>node.id)),[]);
@@ -220,8 +253,6 @@ async function run(){
   }
   const windowHelp=page.locator('#context-window-hint'),compactHelp=page.locator('#context-compact-hint');
   const defaultsTrigger=windowHelp.locator('#context-defaults-open'),defaultsDialog=page.locator('#context-defaults-dialog');
-  const protectionRow=page.locator('#packet-size-protection-row');
-  const protectionBackground=()=>protectionRow.evaluate(row=>getComputedStyle(row).backgroundColor);
   for(const [language,width,windowText,compactText] of [
     ['zh',1120,'单次请求可用的上下文上限，未设置时使用模型默认值','触发会话压缩的上下文阈值，未设置时为窗口上限的 90%'],
     ['en',320,'Maximum usable context per request. If unset, uses Model defaults','Context threshold for automatic compaction. If unset, uses 90% of the context window limit'],

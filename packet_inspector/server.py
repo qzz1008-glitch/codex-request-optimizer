@@ -147,8 +147,12 @@ def protection_settings(saved, *, default_enabled=False):
     budget = values.get("budget_bytes", DEFAULT_BUDGET_BYTES)
     values["budget_bytes"] = (max(MIN_BUDGET_BYTES, min(MAX_BODY, budget))
                               if type(budget) is int else DEFAULT_BUDGET_BYTES)
-    values["auto_zstd_level_enabled"] = (values.get("auto_zstd_level_enabled") is True
-                                         and values["packet_size_protection_enabled"] is True)
+    size_protection = values["packet_size_protection_enabled"] is True
+    conversation_auto = values.get("auto_zstd_level_enabled") is True
+    values["auto_zstd_level_enabled"] = conversation_auto and size_protection
+    # Older settings used the same mode for both request types.
+    values["auto_image_zstd_level_enabled"] = (values.get("auto_image_zstd_level_enabled", conversation_auto) is True
+                                               and size_protection)
     for key, default in (("sharing_port", 47846), ("egress_port", 47847)):
         value = values.get(key)
         values[key] = value if type(value) is int and 1 <= value <= 65535 else default
@@ -741,6 +745,7 @@ class InspectorServer(ThreadingHTTPServer):
                 "zstd_level": self.settings["zstd_level"],
                 "image_zstd_level": self.settings["image_zstd_level"],
                 "auto_zstd_level_enabled": self.settings["auto_zstd_level_enabled"],
+                "auto_image_zstd_level_enabled": self.settings["auto_image_zstd_level_enabled"],
                 "auto_image_zstd_level": AUTO_IMAGE_ZSTD_LEVEL,
                 "ui_language": self.settings["ui_language"],
                 "packet_size_protection_enabled": self.settings["packet_size_protection_enabled"],
@@ -1254,14 +1259,15 @@ class Handler(BaseHTTPRequestHandler):
                     raise ValueError("请求大小保护开关值冲突")
                 if protection_values:
                     candidate["packet_size_protection_enabled"] = protection_values[0]
-                if "auto_zstd_level_enabled" in data:
-                    if not isinstance(data["auto_zstd_level_enabled"], bool):
-                        raise ValueError("invalid boolean setting: auto_zstd_level_enabled")
-                    if data["auto_zstd_level_enabled"] and not candidate["packet_size_protection_enabled"]:
-                        raise ValueError("请先开启请求大小保护")
-                    candidate["auto_zstd_level_enabled"] = data["auto_zstd_level_enabled"]
-                if not candidate["packet_size_protection_enabled"]:
-                    candidate["auto_zstd_level_enabled"] = False
+                for key in ("auto_zstd_level_enabled", "auto_image_zstd_level_enabled"):
+                    if key in data:
+                        if not isinstance(data[key], bool):
+                            raise ValueError("invalid boolean setting: " + key)
+                        if data[key] and not candidate["packet_size_protection_enabled"]:
+                            raise ValueError("请先开启请求大小保护")
+                        candidate[key] = data[key]
+                    if not candidate["packet_size_protection_enabled"]:
+                        candidate[key] = False
                 for key in ("capture_enabled", "start_on_login", "sharing_tab_enabled",
                             "capacity_retry_enabled", "bad_request_retry_enabled"):
                     if key in data:
@@ -1589,7 +1595,8 @@ class Handler(BaseHTTPRequestHandler):
             image_isolation = self.server.image_isolation
             image_configured = self.server.image_config.state.get("enabled", False)
             image_origin = ssh_origin or wsl_origin
-            auto_zstd_level = (protection_enabled and self.server.settings["auto_zstd_level_enabled"]
+            auto_mode_key = "auto_image_zstd_level_enabled" if json_image else "auto_zstd_level_enabled"
+            auto_zstd_level = (protection_enabled and self.server.settings[auto_mode_key]
                                and compression == "zstd")
             auto_eligible = (auto_zstd_level and writes_responses and not json_image and response_path.endswith("/responses")
                              and self.headers.get("Content-Encoding", "identity").strip().lower() in {"", "identity", "zstd"})

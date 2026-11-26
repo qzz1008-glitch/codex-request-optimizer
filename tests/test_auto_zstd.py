@@ -374,19 +374,27 @@ class AutomaticTransportTests(unittest.TestCase):
                         self.assertEqual(zstandard.ZstdDecompressor().decompress(result.body), raw)
 
     def test_saved_settings_preserve_manual_level_and_require_size_protection(self):
-        for saved, enabled in (({}, False),
-                                ({'auto_zstd_level_enabled': True}, False),
-                                ({'packet_size_protection_enabled': True, 'auto_zstd_level_enabled': True}, True)):
+        protected = {'packet_size_protection_enabled': True}
+        for saved, conversation_auto, image_auto in (
+            ({}, False, False),
+            ({'auto_zstd_level_enabled': True, 'auto_image_zstd_level_enabled': True}, False, False),
+            ({**protected, 'auto_zstd_level_enabled': True}, True, True),
+            ({**protected, 'auto_zstd_level_enabled': True, 'auto_image_zstd_level_enabled': False}, True, False),
+            ({**protected, 'auto_zstd_level_enabled': False, 'auto_image_zstd_level_enabled': True}, False, True),
+        ):
             with self.subTest(saved=saved), tempfile.TemporaryDirectory() as folder:
                 root = Path(folder)
                 config = root / 'config.toml'
                 config.write_text('model="test"', encoding='utf-8')
                 data = root / 'data'
                 data.mkdir()
-                (data / 'settings.json').write_text(json.dumps({'zstd_level': 9, **saved}), encoding='utf-8')
+                (data / 'settings.json').write_text(json.dumps({'zstd_level': 9, 'image_zstd_level': 11, **saved}), encoding='utf-8')
                 with InspectorServer(('127.0.0.1', 0), data, config, 'http://127.0.0.1:9/v1') as server:
-                    self.assertEqual(server.status()['auto_zstd_level_enabled'], enabled)
+                    status = server.status()
+                    self.assertEqual(status['auto_zstd_level_enabled'], conversation_auto)
+                    self.assertEqual(status['auto_image_zstd_level_enabled'], image_auto)
                     self.assertEqual(server.settings['zstd_level'], 9)
+                    self.assertEqual(server.settings['image_zstd_level'], 11)
 
     def test_image_rewrite_skips_compression_for_small_body_and_keeps_paths(self):
         from packet_inspector.image_isolation import ImageIsolation
@@ -429,19 +437,40 @@ class AutomaticRelayTests(unittest.TestCase):
 
     def test_settings_validate_atomically_and_parent_disable_restores_manual_mode(self):
         before = self.server.settings_path.read_bytes()
-        for invalid in (True, 1, 'true', None):
-            with self.subTest(invalid=invalid):
-                self.assertEqual(self.api('/api/settings', {'auto_zstd_level_enabled': invalid, 'zstd_level': 7})[0], 400)
-                self.assertEqual(self.server.settings_path.read_bytes(), before)
+        modes = ('auto_zstd_level_enabled', 'auto_image_zstd_level_enabled')
+        for key in modes:
+            for invalid in (True, 1, 'true', None):
+                with self.subTest(key=key, invalid=invalid):
+                    self.assertEqual(self.api('/api/settings', {key: invalid, 'zstd_level': 7})[0], 400)
+                    self.assertEqual(self.server.settings_path.read_bytes(), before)
         self.enable()
-        self.assertTrue(json.loads(self.server.settings_path.read_text())['auto_zstd_level_enabled'])
+        self.assertEqual(self.api('/api/settings', {'auto_image_zstd_level_enabled': True})[0], 200)
+        saved = json.loads(self.server.settings_path.read_text())
+        self.assertTrue(all(saved[key] for key in modes))
         status, result = self.api('/api/settings', {'packet_size_protection_enabled': False})
         self.assertEqual(status, 200)
-        self.assertFalse(result['auto_zstd_level_enabled'])
+        self.assertFalse(any(result[key] for key in modes))
         self.assertEqual(result['zstd_level'], 9)
         raw = encode({'input': 'retained ' * 1000})
         self.assertEqual(self.relay(raw)[0], 200)
         self.assertEqual(self.latest()[0]['relay_zstd_level'], 9)
+
+    def test_each_request_type_uses_its_own_compression_mode(self):
+        dialogue = encode({'input': 'conversation ' * 1000})
+        image = encode({'prompt': 'image prompt ' * 1000})
+        for conversation_auto, image_auto, dialogue_level, image_level in (
+            (True, False, None, 11), (False, True, 9, None),
+        ):
+            with self.subTest(conversation_auto=conversation_auto, image_auto=image_auto):
+                status, result = self.api('/api/settings', {
+                    'packet_size_protection_enabled': True, 'image_zstd_level': 11,
+                    'auto_zstd_level_enabled': conversation_auto, 'auto_image_zstd_level_enabled': image_auto,
+                })
+                self.assertEqual(status, 200, result)
+                self.assertEqual(self.relay(dialogue)[0], 200)
+                self.assertEqual(self.latest()[0]['transport_zstd_level'], dialogue_level)
+                self.assertEqual(self.relay(image, path='/images/edits')[0], 200)
+                self.assertEqual(self.latest()[0]['transport_zstd_level'], image_level)
 
     def test_fast_packet_schedules_high_next_and_small_main_body_releases_the_lock(self):
         self.enable()
