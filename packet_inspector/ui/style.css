@@ -1226,17 +1226,23 @@ body[data-desktop-startup] #record-count{visibility:hidden}
   background:var(--restart-badge-fill);
   pointer-events:none;
 }
+.restart-notice-outline,.restart-notice-caption{display:none;position:fixed;inset:0 auto auto 0;pointer-events:none}
+.restart-notice-outline{width:1px;height:1px;overflow:visible;z-index:-1}
+.restart-notice-caption{overflow:hidden;text-overflow:ellipsis}
+.restart-notice-caption::before{content:attr(data-caption)}
+.restart-notice-badge[data-morphing] > :is(.restart-notice-outline,.restart-notice-caption){display:block}
+.restart-notice-badge[data-morphing] > :is(.restart-notice-surface,#restart-notice-label){opacity:0}
 #restart-notice-label{overflow:hidden;text-overflow:ellipsis}
 .restart-notice-badge[data-visible="false"]{visibility:hidden;pointer-events:none}
 .restart-notice-badge:hover{--restart-badge-fill:#ffedc9;--restart-badge-stroke:#d6a84d}
 .restart-notice-badge:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
 .restart-notice-badge[data-state="error"]{--restart-badge-fill:#fff1f1;--restart-badge-stroke:#e4abab;color:var(--danger)}
 .restart-notice-badge[data-state="error"]:hover{--restart-badge-fill:#ffe4e4;--restart-badge-stroke:#ce8989}
+/* Center the trigger without making it a containing block for the viewport-positioned outline. */
 .restart-notice-badge:has(+ .header-compression[data-server-panel-open]){
   position:absolute;
-  top:50%;
+  top:calc(50% - 12px);
   right:calc(100% - var(--connection-local-start,0px));
-  translate:0 -50%;
   z-index:1;
   inline-size:24px;
   min-block-size:24px;

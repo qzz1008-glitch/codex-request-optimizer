@@ -9,7 +9,10 @@ globalThis.InspectorConnections = {
     const restartBadge=get("restart-notice-open");
     const restartSurface = restartBadge.querySelector(".restart-notice-surface");
     const restartLabel = get("restart-notice-label");
+    const restartOutline = restartBadge.querySelector(".restart-notice-outline path");
+    const restartCaption = restartBadge.querySelector(".restart-notice-caption");
     const restartMotion = matchMedia("(prefers-reduced-motion: no-preference)");
+    const supportsRestartMorph = CSS.supports("d", 'path("M 0 0 L 1 1")');
     const viewToggle=get("view-toggle");
     const settingsButton=get("settings-open");
     const dialog=get("devices-confirm-dialog"), list=get("connection-devices-list");
@@ -19,8 +22,8 @@ globalThis.InspectorConnections = {
     let rows=[],hasServers=false,loading=false,submitting=false,catalogError="",revision="",timer=null,closeTimer=null,hover=false;
     let openRequested=false,focusOnOpen=false;
     let plan=null,finished=false,disposed=false;
-    let surfaceAnimation, labelAnimation;
-    let restartBendFactor = 0;
+    const restartDuration = 280;
+    let restartAnimations = [], restartBendFactor = .85;
     const text=(node,value)=>{if(node.textContent!==value)node.textContent=value;};
     const isOpen=()=>nativePopover?panel.matches(":popover-open"):!panel.hidden;
     const inDropdown=node=>controls.contains(node)||panel.contains(node)||(isOpen()&&restartBadge.contains(node));
@@ -170,65 +173,110 @@ globalThis.InspectorConnections = {
     function restartSurfaceFrame() {
       const {x, y, width, height} = restartSurface.getBoundingClientRect();
       const {borderRadius, backgroundColor, borderTopColor} = getComputedStyle(restartSurface);
-      return {x:x+width/2, y:y+height/2, width, height, borderRadius, backgroundColor, borderColor:borderTopColor};
+      const radius = Math.min(width / 2, height / 2, Number.parseFloat(borderRadius));
+      // Inset the path by half its stroke to match the static badge's border box.
+      return {x:x + width / 2, y:y + height / 2, halfWidth:(width - 1) / 2, halfHeight:(height - 1) / 2,
+        radius:Math.max(0, radius - .5), fill:backgroundColor, stroke:borderTopColor};
+    }
+    function restartCaptionFrame() {
+      const {left, top, width} = restartLabel.getBoundingClientRect();
+      return {left:`${left}px`, top:`${top}px`, width:`${width}px`, color:getComputedStyle(restartLabel).color};
+    }
+    function restartOutlinePath(front, tail, direction) {
+      function roundedEnd({x, y, halfHeight, radius}, outward, vertical) {
+        const endX = x + outward * radius;
+        const tangentX = x + outward * radius * .552285;
+        const tangentY = vertical * radius * .552285;
+        const startY = y - vertical * halfHeight, finishY = y + vertical * halfHeight;
+        const firstCorner = startY + vertical * radius, lastCorner = finishY - vertical * radius;
+        return `C ${tangentX} ${startY} ${endX} ${firstCorner - tangentY} ${endX} ${firstCorner} V ${lastCorner} ` +
+          `C ${endX} ${lastCorner + tangentY} ${tangentX} ${finishY} ${x} ${finishY}`;
+      }
+      const span = (front.x - tail.x) / 3;
+      const frontTop = front.y - front.halfHeight, frontBottom = front.y + front.halfHeight;
+      const tailTop = tail.y - tail.halfHeight, tailBottom = tail.y + tail.halfHeight;
+      return `M ${tail.x} ${tailTop} C ${tail.x + span} ${tailTop} ${front.x - span} ${frontTop} ${front.x} ${frontTop} ` +
+        `${roundedEnd(front, direction, 1)} C ${front.x - span} ${frontBottom} ${tail.x + span} ${tailBottom} ${tail.x} ${tailBottom} ` +
+        `${roundedEnd(tail, -direction, -1)} Z`;
+    }
+    function restartOutlineFrames(capsule, dot, captionEnd) {
+      const direction = dot.x >= capsule.x ? 1 : -1;
+      const bend = Math.min(6, Math.abs(dot.x - capsule.x) / 9) * restartBendFactor;
+      const mix = (start, end, progress) => start + (end - start) * progress;
+      function ease(time, start, end) {
+        const t = Math.min(1, Math.max(0, (time - start) / (end - start)));
+        return t * t * (3 - 2 * t);
+      }
+      function end(side, travel, shrink, pinch = 0) {
+        const halfHeight = mix(capsule.halfHeight, dot.halfHeight, shrink) - pinch;
+        return {
+          x:mix(capsule.x + side * (capsule.halfWidth - capsule.radius), dot.x, travel),
+          y:mix(capsule.y, dot.y, travel) + 4 * bend * travel * (1 - travel),
+          halfHeight,
+          radius:Math.min(halfHeight, mix(capsule.radius, dot.radius, shrink))
+        };
+      }
+      const steps = 24;
+      const frames = Array.from({length:steps + 1}, (_, index) => {
+        const time = index / steps;
+        const frontTravel = ease(time, .08, .8), tailTravel = ease(time, .24, 1);
+        const pinch = dot.halfHeight * frontTravel * tailTravel * (1 - tailTravel);
+        const front = end(direction, frontTravel, ease(time, .07, .72));
+        const tail = end(-direction, tailTravel, ease(time, .2, .84), pinch);
+        return {offset:time, d:`path("${restartOutlinePath(front, tail, direction)}")`};
+      });
+      Object.assign(frames[0], {fill:capsule.fill, stroke:capsule.stroke});
+      Object.assign(frames[steps], {fill:dot.fill, stroke:dot.stroke});
+      frames.push({offset:captionEnd, fill:capsule.fill, stroke:capsule.stroke});
+      return frames.sort((a, b) => a.offset - b.offset);
+    }
+    function stopRestartMorph() {
+      restartBadge.removeAttribute("data-morphing");
+      for (const animation of restartAnimations) animation.cancel();
+      restartAnimations = [];
+    }
+    function playRestartMorph(expanded, capsule, dot, caption) {
+      const playbackRate = expanded ? 1 : -1;
+      const [current] = restartAnimations;
+      if (current && current.playState !== "finished") {
+        if (current.currentTime === (expanded ? restartDuration : 0)) stopRestartMorph();
+        else for (const animation of restartAnimations) {
+          animation.updatePlaybackRate(playbackRate);
+          animation.play();
+        }
+        return;
+      }
+      stopRestartMorph();
+      if (expanded) restartBendFactor = .75 + Math.random() * .25;
+      Object.assign(restartCaption.style, caption);
+      restartCaption.dataset.caption = restartLabel.textContent;
+      restartBadge.dataset.morphing = "";
+      const captionEnd = .18;
+      const timing = {duration:restartDuration, fill:"both"};
+      const outline = restartOutline.animate(restartOutlineFrames(capsule, dot, captionEnd), timing);
+      const label = restartCaption.animate([{opacity:1}, {offset:captionEnd, opacity:0}, {opacity:0}], timing);
+      restartAnimations = [outline, label];
+      for (const animation of restartAnimations) {
+        animation.currentTime = expanded ? 0 : restartDuration;
+        animation.playbackRate = playbackRate;
+      }
+      outline.onfinish = () => {
+        if (restartAnimations[0] === outline && outline.playState === "finished") stopRestartMorph();
+      };
     }
     function setPanelMode(mode) {
       const expanded = mode !== null;
       if (expanded === controls.hasAttribute("data-server-panel-open")) return;
-      // Read the current frame so reversing an unfinished transition starts where it is visible.
-      const from = restartMotion.matches && restartBadge.dataset.visible === "true" ? restartSurfaceFrame() : null;
-      surfaceAnimation?.cancel();
-      labelAnimation?.cancel();
+      const animate = supportsRestartMorph && restartMotion.matches && restartBadge.dataset.visible === "true";
+      const from = animate ? restartSurfaceFrame() : null;
+      const caption = animate && expanded ? restartCaptionFrame() : null;
       if (expanded) {
         controls.dataset.serverPanelOpen = mode;
         place();
       } else controls.removeAttribute("data-server-panel-open");
-      if (!from) return;
-
-      // Animate the surface independently of the button's hit target.
+      if (!from) return stopRestartMorph();
       const to = restartSurfaceFrame();
-      if (expanded) {
-        const direction = Math.random() < .5 ? -1 : 1;
-        restartBendFactor = direction * (.6 + Math.random() * .4);
-      }
-      const startX = from.x - to.x, startY = from.y - to.y;
-      // Budget for the visible offset when reversing an unfinished arc.
-      const maxBend = Math.max(0, Math.min(7 - Math.abs(startY), Math.abs(startX) / 4));
-      const bend = restartBendFactor * maxBend;
-      const arrival = expanded ? .78 : 1;
-      const steps = 12;
-      const path = Array.from({length:steps + 1}, (_, index) => {
-        const time = index / steps;
-        const progress = time * time * (3 - 2 * time); // Ease in and out along the arc.
-        const remaining = 1 - progress;
-        const x = startX * remaining;
-        const y = (startY + 4 * bend * progress) * remaining;
-        return {offset:time * arrival, transform:`translate(${x}px, ${y}px)`};
-      });
-
-      const capsule = expanded ? from : to, dot = expanded ? to : from;
-      const taper = {
-        width: dot.width + (capsule.width - dot.width) * .43,
-        height: dot.height + (capsule.height - dot.height) * .32,
-        borderRadius: capsule.x > dot.x
-          ? "28% 78% 78% 28% / 55% 50% 50% 55%" : "78% 28% 28% 78% / 50% 55% 55% 50%"
-      };
-      const shapeFrame = ({x, y, width, height, ...paint}, offset) => ({
-        ...paint,
-        offset,
-        inlineSize: `${width}px`,
-        blockSize: `${height}px`
-      });
-      const shape = [shapeFrame(from, 0), shapeFrame(taper, expanded ? .49 : .42)];
-      if (expanded) {
-        const squeezed = {...to, width:to.width * .82, height:to.height * 1.18};
-        shape.push({...shapeFrame(squeezed, arrival), easing:"ease-out"});
-      }
-      shape.push(shapeFrame(to, 1));
-      const timing = {duration:350};
-      const frames = [...path, ...shape].sort((a, b) => a.offset - b.offset);
-      surfaceAnimation = restartSurface.animate(frames, timing);
-      if (!expanded) labelAnimation = restartLabel.animate([{opacity:0}, {opacity:0, offset:.65}, {opacity:1}], timing);
+      playRestartMorph(expanded, expanded ? from : to, expanded ? to : from, caption ?? restartCaptionFrame());
     }
     function hide() {
       clearTimeout(closeTimer);
@@ -355,10 +403,7 @@ globalThis.InspectorConnections = {
     if(!nativePopover){panel.hidden=true;panel.classList.add("connection-panel-fallback");}
     else panel.addEventListener("toggle",()=>{if(!isOpen())setPanelMode(null);});
     restartMotion.addEventListener("change",()=>{
-      if(!restartMotion.matches) {
-        surfaceAnimation?.cancel();
-        labelAnimation?.cancel();
-      }
+      if(!restartMotion.matches)stopRestartMorph();
     });
     for(const node of [controls,panel]) {
       node.addEventListener("pointerenter",event=>{if(event.pointerType==="touch")return;hover=true;show();});
@@ -378,7 +423,7 @@ globalThis.InspectorConnections = {
     });
     document.addEventListener("pointerdown",event=>{if(!inDropdown(event.target))hide();});
     document.addEventListener("keydown",event=>{if(event.key==="Escape"&&(isOpen()||openRequested)){hide();event.stopPropagation();}});
-    globalThis.addEventListener("resize",place);
+    globalThis.addEventListener("resize",()=>{stopRestartMorph();place();});
     applyButton.addEventListener("click",apply);
     cancelButton.addEventListener("click",()=>dialog.close());
     document.addEventListener("close",event=>{

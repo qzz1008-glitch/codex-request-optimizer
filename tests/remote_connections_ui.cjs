@@ -386,51 +386,69 @@ const localControls=[
       const restartBadge=page.locator('#restart-notice-open');
       await restartBadge.evaluate(node=>{node.dataset.visible='true';node.dataset.state='pending';});
       const restartSurface=restartBadge.locator('.restart-notice-surface');
+      const restartOutline=restartBadge.locator('.restart-notice-outline path');
+      const waitForRestart=()=>page.waitForFunction(()=>!document.getElementById('restart-notice-open').hasAttribute('data-morphing'));
       await page.mouse.move(0,page.viewportSize().height-1);
-      await page.keyboard.press('Escape');await panel.waitFor({state:'hidden'});
-      await restartSurface.evaluate(node=>Promise.all(node.getAnimations().map(animation=>animation.finished)));
+      const closingStartsAtDot=await restartOutline.evaluate(node=>{
+        document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));
+        const [outline]=node.getAnimations();
+        return outline.playbackRate===-1&&outline.currentTime===outline.effect.getTiming().duration;
+      });
+      assert(closingStartsAtDot,'Closing after the badge settles plays the outline backwards from the dot');
+      await panel.waitFor({state:'hidden'});
+      await waitForRestart();
+      const staticCapsule=await restartSurface.boundingBox();
       await page.evaluate(fallback=>{
         const random=Math.random;
         fixture.restoreRandom=()=>{Math.random=random;};
         Math.random=()=>fallback ? .12 : .88;
       },fallback);
       await reopenPanel();
-      const [capsule,taper,squeeze,dot]=await restartSurface.evaluate(node=>{
+      const {frames,continuous,reverseRate}=await restartOutline.evaluate(async node=>{
         fixture.restoreRandom();
-        const [animation]=node.getAnimations();
-        const {duration}=animation.effect.getTiming();
-        animation.pause();
-        const frames=[0,.35,.8,1].map(progress=>{
-          animation.currentTime=duration*progress;
+        const caption=node.closest('button').querySelector('.restart-notice-caption');
+        const [outline]=node.getAnimations(), [label]=caption.getAnimations();
+        const {duration}=outline.effect.getTiming();
+        outline.pause();label.pause();
+        const sample=progress=>{
+          outline.currentTime=label.currentTime=duration*progress;
           const {left,top,width,height}=node.getBoundingClientRect();
-          return {x:left+width/2,y:top+height/2,width,height};
-        });
-        animation.currentTime=duration*.35;
-        return frames;
+          return {left,x:left+width/2,y:top+height/2,width,height,captionOpacity:Number(getComputedStyle(caption).opacity)};
+        };
+        const frames=[0,.22,.57,.83,1].map(sample);
+        sample(.57);
+        const before=getComputedStyle(node).d;
+        document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));
+        const continuous=node.getAnimations()[0]===outline&&getComputedStyle(node).d===before;
+        await outline.ready;
+        const reverseRate=outline.playbackRate;
+        outline.finish();
+        return {frames,continuous,reverseRate};
       });
-      assert(capsule.width>taper.width&&taper.width>dot.width,'The visible badge shrinks continuously');
-      assert(capsule.height>taper.height&&taper.height>dot.height,'The badge gets rounder as it shrinks');
+      const [capsule,captionFaded,taper,tail,dot]=frames;
+      assert(Math.abs(capsule.left-staticCapsule.x-.5)<.1&&Math.abs(capsule.width-staticCapsule.width+1)<.1,
+        'The outline starts at the original badge bounds with a half-pixel inset for the stroke');
+      assert.equal(capsule.captionOpacity,1,'The caption begins in place');
+      assert.equal(captionFaded.captionOpacity,0,'The caption fades before the body reaches the dot');
+      assert(capsule.width>taper.width&&taper.width>tail.width&&tail.width>dot.width,'The outline progressively narrows');
+      assert(capsule.height>taper.height&&taper.height>dot.height,'The outline gets rounder as it shrinks');
       assert((taper.x-capsule.x)*(taper.x-dot.x)<0,'The badge moves toward the dot while shrinking');
       const progress=(taper.x-capsule.x)/(dot.x-capsule.x);
       const bend=taper.y-(capsule.y+(dot.y-capsule.y)*progress);
-      assert((fallback?-bend:bend)>2&&Math.abs(bend)<=7.1,'The random bias produces a shallow arc in either direction');
-      assert(Math.hypot(squeeze.x-dot.x,squeeze.y-dot.y)<.25,'The rebound stays on the dot center');
-      assert(squeeze.width<dot.width&&squeeze.height>dot.height,'The drop squeezes slightly before becoming round');
-      assert.equal(dot.width,8,'The animation settles on the status dot');
-      assert.equal(dot.height,8,'The settled dot is round');
-      await page.mouse.move(0,page.viewportSize().height-1);
-      await page.keyboard.press('Escape');await panel.waitFor({state:'hidden'});
-      const reverseStart=await restartSurface.evaluate(node=>{
-        const [animation]=node.getAnimations();
-        animation.pause();animation.currentTime=0;
-        const {left,top,width,height}=node.getBoundingClientRect();
-        animation.finish();
-        return {x:left+width/2,y:top+height/2};
-      });
-      assert(Math.hypot(reverseStart.x-taper.x,reverseStart.y-taper.y)<.25,
-        'Reversing mid-arc starts at the visible position');
+      assert(bend>1&&bend<=7,'The outline follows a shallow downward arc');
+      const leadingEdge=frame=>dot.x>capsule.x?frame.left+frame.width:frame.left;
+      assert(Math.abs(leadingEdge(tail)-leadingEdge(dot))<.25&&tail.width>dot.width+.5,
+        'The near edge reaches the dot while the tail is still merging');
+      assert.equal(dot.width,7,'The round path and its stroke form an 8px dot');
+      assert.equal(dot.height,dot.width,'The settled dot is round');
+      assert(continuous&&reverseRate===-1,'Reversing mid-arc reuses the visible outline and runs backwards');
+      await panel.waitFor({state:'hidden'});
+      await waitForRestart();
       await reopenPanel();
-      await restartSurface.evaluate(node=>Promise.all(node.getAnimations().map(animation=>animation.finished)));
+      await waitForRestart();
+      const staticDot=await restartSurface.boundingBox();
+      assert(Math.hypot(dot.x-staticDot.x-staticDot.width/2,dot.y-staticDot.y-staticDot.height/2)<.25,
+        'The path settles at the center of the static dot');
       const localStart=await textLeft(localLabel);
       for(const server of await serverAddress.all()){
         assert(Math.abs(localStart-await textLeft(server))<1,'Addresses of different lengths align with the local label');
@@ -456,7 +474,7 @@ const localControls=[
       assert.equal(await page.evaluate(()=>fixture.badgeClicked),true,'The restart notice stays clickable inside the open dropdown');
       await page.emulateMedia({reducedMotion:'reduce'});
       await reopenPanel();
-      assert.equal(await restartSurface.evaluate(node=>node.getAnimations().length),0,'Reduced motion keeps the badge static');
+      assert(await restartOutline.isHidden(),'Reduced motion keeps the badge static');
       assert.equal((await restartSurface.boundingBox()).width,8,'Reduced motion keeps the final dot shape');
       await page.emulateMedia({reducedMotion:'no-preference'});
       await page.evaluate(()=>{
