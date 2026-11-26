@@ -2790,27 +2790,36 @@ function renderUpdates() {
   message.title=message.textContent;
   message.classList.toggle("error",supported&&displayedState==="error");
 }
-function wireUpdateNotesNavigation(navigation, content) {
+function wireUpdateNotesNavigation(navigation, content, dialog) {
   const links=[...navigation.children],releases=[...content.querySelectorAll(".update-release-notes")];
   const nativeTracking=CSS.supports("scroll-target-group: auto");
-  let lastPosition=0;
+  const motion=matchMedia("(prefers-reduced-motion: no-preference)");
+  let lastPosition=0,navigationRequest=0;
   const select=link=>{
     if(!link||link.hasAttribute("aria-current"))return;
     navigation.querySelector("[aria-current]")?.removeAttribute("aria-current");
     link.setAttribute("aria-current","location");
   };
   for(const [index,link] of links.entries()){
-    link.addEventListener("click",event=>{
+    link.addEventListener("click",async event=>{
       event.preventDefault();
       const release=releases[index];
-      release.focus({preventScroll:true});
-      content.scrollTop+=release.getBoundingClientRect().top-content.getBoundingClientRect().top-2;
-      lastPosition=content.scrollTop;
+      const request=++navigationRequest,invoker=document.activeElement;
+      const top=content.scrollTop+release.getBoundingClientRect().top-content.getBoundingClientRect().top-2;
+      const destination=Math.max(0,Math.min(top,content.scrollHeight-content.clientHeight));
+      lastPosition=destination;
       select(link);
+      const scroll=content.scrollTo({top:destination,behavior:motion.matches?"smooth":"instant"});
+      if(scroll){
+        await scroll;
+        if(Math.abs(content.scrollTop-destination)>1)return;
+      }
+      if(request===navigationRequest&&dialog.open&&release.isConnected&&document.activeElement===invoker)
+        release.focus({preventScroll:true});
     });
   }
   content.onscrollend=links.length<2?null:()=>{
-    if(content.scrollTop===lastPosition)return;
+    if(Math.abs(content.scrollTop-lastPosition)<=1)return;
     lastPosition=content.scrollTop;
     if(lastPosition>0&&content.scrollHeight-content.clientHeight-lastPosition<=1){
       select(links.at(-1));
@@ -2859,7 +2868,7 @@ function openUpdateNotes() {
   }
   if(!notes.length)content.append(el("p","muted",t("暂无更新内容，可重新检查更新")));
   else if(updateStatus.release_notes_complete===false)content.append(el("p","muted",t("部分版本的更新内容暂不可用")));
-  wireUpdateNotesNavigation(navigation,content);
+  wireUpdateNotesNavigation(navigation,content,dialog);
   dialog.showModal();
   navigation.scrollTo(0,0);
   content.scrollTop=0;
