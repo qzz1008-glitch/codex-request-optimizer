@@ -121,6 +121,36 @@ def changes_provider(files, edits):
                for name, raw in edits.items())
 
 
+def provider_reload_settings(files, edits):
+    def split(raw):
+        document = tomlkit.parse(raw.decode("utf-8-sig")).unwrap()
+        providers = document.get("model_providers", {})
+        retries = {}
+        if isinstance(providers, dict):
+            for name, provider in providers.items():
+                if not isinstance(provider, dict):
+                    continue
+                for key in ("stream_max_retries", "request_max_retries"):
+                    if key in provider:
+                        retries[name, key] = provider.pop(key)
+        return document, retries
+
+    settings = set()
+    for name, raw in edits.items():
+        before, before_retries = split(files[name] or b"")
+        after, after_retries = split(raw)
+        if before_retries != after_retries:
+            settings.add("capacity_retry")
+        if before != after:
+            settings.add("connection")
+    return settings
+
+
+def remember_pending_settings(record, settings):
+    pending = record.get("pending_settings", ["unrecorded"]) if record.get("reload_required") else ()
+    record.update(reload_required=True, pending_settings=sorted(set(pending) | settings))
+
+
 class TunnelHandler(RouterHandler):
     def _handle(self):
         self.connection.settimeout(600)
@@ -313,7 +343,7 @@ class RemoteRelays:
                 previous = [*record.get("image_pending", []), *record.get("image_fields", [])]
                 edit, fields, uninstall, files_changed = linux_image_edits(files["config.toml"], previous, mode, send)
                 if files_changed:
-                    record["reload_required"] = True
+                    remember_pending_settings(record, {"image_analysis_mode"})
                 if edit is not None:
                     record["image_pending"] = fields
                     self._save(key, record)
@@ -322,7 +352,8 @@ class RemoteRelays:
                     changes = {"config.toml": base64.b64encode(edit).decode("ascii")}
                     outcome = send("write", expected=expected, updates=changes)
                     files["config.toml"] = edit
-                    record["reload_required"] = bool(outcome["changed"] or record.get("reload_required"))
+                    if outcome["changed"]:
+                        remember_pending_settings(record, {"image_analysis_mode"})
                 if files_changed or edit is not None or fields or previous:
                     record["image_fields"] = fields
                     record.pop("image_pending", None)
@@ -425,7 +456,6 @@ class RemoteRelays:
                 document = tomlkit.parse((raw or b"").decode("utf-8-sig"))
                 active |= any(_get(document, field["keys"]) == (True, field["applied"])
                               for field in managed if isinstance(field["applied"], str))
-        changed = False
         warnings, migration = [], {}
         policy = self._provider_policy()
         reconcile = (action is None and active and record.get("enabled")
@@ -462,6 +492,7 @@ class RemoteRelays:
                             self._save(key, prior)
                             raise
                 if edits or aliases:
+                    settings = provider_reload_settings(files, edits)
                     expected = {name: hashlib.sha256(raw).hexdigest() if raw is not None else None
                                 for name, raw in files.items()}
                     updates = {name: base64.b64encode(raw).decode("ascii") for name, raw in edits.items()}
@@ -469,28 +500,32 @@ class RemoteRelays:
                                          api_key=snapshot.get("api_key"), provider_aliases=sorted(aliases),
                                          require_reload=changes_provider(files, edits), **account)
                     migration = outcome.get("session_migration", {})
-                    changed = bool(outcome["changed"] or migration.get("changed"))
+                    if migration.get("changed"):
+                        settings.add("connection")
+                    if outcome["changed"] or migration.get("changed"):
+                        remember_pending_settings(record, settings or {"unrecorded"})
                     files.update(edits)
                 active = bool(endpoint)
                 if endpoint:
                     waiting = bool(migration.get("waiting_for_reload") or migration.get("warnings"))
-                    record["reload_required"] = bool(changed or waiting or record.get("reload_required"))
                     record["provider_migration_waiting"] = waiting
                     if waiting:
+                        remember_pending_settings(record, {"connection"})
                         record.pop("provider_policy", None)
                     else:
                         record["provider_policy"] = policy
                 else:
-                    record.update(enabled=False, fields={}, reload_required=bool(changed or record.get("reload_required")))
+                    record.update(enabled=False, fields={})
                 record.pop("previous_fields", None)
                 self._save(key, record)
         elif active:
             self._ensure(host, key, record)
         if action != "restore":
             images = self._images(host, key, record, files, account, active, action)
+        reload_required = bool(record.get("reload_required") or active and "previous_fields" in record)
+        pending = (record.get("pending_settings") or ["unrecorded"]) if reload_required else []
         result = {"state": "connected" if active else "disconnected", "can_connect": True, "account_key": account_key,
-                  "can_disconnect": bool(active), "reload_required": bool(
-                      record.get("reload_required") or active and "previous_fields" in record)}
+                  "can_disconnect": bool(active), "reload_required": reload_required, "pending_settings": pending}
         if warnings or migration.get("warnings"):
             result["provider_warnings"] = warnings + migration.get("warnings", [])
         if migration.get("warnings"):
@@ -517,6 +552,8 @@ class RemoteRelays:
                 if "session_migration" in reconnect:
                     record.pop("provider_migration_waiting", None)
                 record["reload_required"] = result["reload_required"] = False
+                record.pop("pending_settings", None)
+                result["pending_settings"] = []
                 if active:
                     self._save(key, record)
                 else:

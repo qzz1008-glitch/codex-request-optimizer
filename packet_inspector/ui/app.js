@@ -32,6 +32,13 @@ globalThis.InspectorConnections = {
     const operationError=(row,action)=>row.error||(action==="reconnect"?row.codex_reconnect?.error:"");
     const completed=(row,action)=>action==="reconnect"?row.codex_reconnect?.state==="reloaded":row.state===desired(action);
     const needsReconnect=row=>row.reload_required&&!row.error;
+    const pendingLabels={connection:"Codex 接入",capacity_retry:"容量重试次数",image_analysis_mode:"图片解析",unrecorded:"设置项未记录"};
+    function pendingTooltip(row) {
+      if(!row.reload_required||row.id==="local")return "";
+      const pending=new Set(Array.isArray(row.pending_settings)?row.pending_settings:[]);
+      const names=Object.entries(pendingLabels).filter(([key])=>pending.has(key)).map(([,label])=>tr(label));
+      return [tr("待重连生效设置："),...(names.length?names:[tr("设置项未记录")]).map(name=>"• "+name)].join("\n");
+    }
     function stateText(row) {
       if(row.busy)return tr(row.action==="reconnect"?"正在重新连接…":row.action==="activate"?"正在接入…":row.action==="restore"?"正在断开…":"正在检查…");
       if(row.error||row.state==="error")return tr("接入异常");
@@ -39,8 +46,8 @@ globalThis.InspectorConnections = {
       if(row.reload_required)return value+" · "+tr("请重新连接远程 Codex");
       return value+(row.warning_count?" · "+tr("部分配置未完成，请检查此设备的接入详情。"):"");
     }
-    function statusIndicator(row) {
-      const reload=row.reload_required?tr("配置待生效，请点击重连图标重新加载此服务器的 Codex。"):"";
+    function statusIndicator(row,pending) {
+      const reload=pending||(row.reload_required?tr("配置待生效，请重启 ChatGPT App。"):"");
       const error=row.error||row.codex_reconnect?.error;
       if(error||row.state==="error")return {kind:"error",message:[
         tr(row.error||row.state==="error"?"接入异常":"重连结果未确认"),error?tr(error):"",reload].filter(Boolean).join("\n")};
@@ -86,7 +93,8 @@ globalThis.InspectorConnections = {
       for(const [id,value] of nodes)if(!rows.some(row=>row.id===id)){value.root.remove();nodes.delete(id);}
       for(const row of rows) {
         const value=rowNodes(row);text(value.label,row.name);
-        const indicator=statusIndicator(row);value.state.dataset.status=indicator.kind;
+        const pending=pendingTooltip(row),indicator=statusIndicator(row,pending);
+        value.state.dataset.status=indicator.kind;
         const stateLabel=row.busy?stateText(row):indicator.message;
         value.state.title=stateLabel;value.state.setAttribute("aria-label",stateLabel);
         value.root.dataset.state=row.error?"error":row.state;
@@ -101,8 +109,9 @@ globalThis.InspectorConnections = {
         value.reconnect.classList.toggle("needs-reconnect",!!row.reload_required&&!busy(row)&&!submitting);
         const reconnectLabel=tr("重连")+" Codex";
         const nativeHint=row.codex_reconnect?.error||row.codex_reconnect?.warning;
-        const description=tr(nativeHint||"重载此服务器当前账号的 Codex 后台，使配置生效。");
-        value.reconnect.title=reconnectLabel+"\n"+description;
+        const description=[pending,tr(nativeHint||"")].filter(Boolean).join("\n")
+          ||tr("重载此服务器当前账号的 Codex 后台，使配置生效。");
+        value.reconnect.title=pending?description:reconnectLabel+"\n"+description;
         value.reconnect.setAttribute("aria-label",reconnectLabel+" · "+row.name);
         value.reconnect.setAttribute("aria-description",description);
       }

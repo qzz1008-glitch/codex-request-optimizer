@@ -981,7 +981,9 @@ class WindowsRemoteRelayTests(unittest.TestCase):
         resumed.ssh = ssh
         resumed.image_settings = self.relays.image_settings
         self.assertTrue(resumed.needs_resume(self.host))
-        self.assertTrue(resumed(self.host, None)["reload_required"])
+        pending = resumed(self.host, None)
+        self.assertTrue(pending["reload_required"])
+        self.assertEqual(pending["pending_settings"], ["image_analysis_mode"])
         self.assertTrue(dict(resumed.records())[key]["reload_required"])
         self.assertEqual(len(images), 1)
         self.assertEqual(before, self.config.read_bytes())
@@ -989,6 +991,34 @@ class WindowsRemoteRelayTests(unittest.TestCase):
         self.assertNotIn("tunnel_reconnect", self.calls)
         self.assertFalse(resumed(self.host, "reconnect")["reload_required"])
         self.assertFalse(resumed(self.host, "images")["reload_required"])
+
+    def test_names_pending_retry_setting_until_remote_reconnect(self):
+        limit = 30
+        self.relays.retry_limit = lambda: limit
+        original_ssh = self.relays.ssh
+
+        def ssh(host, action, **options):
+            if action == "tunnel_reconnect":
+                return {"state": "reloaded", "codex_restart": {"supported": True}}
+            return original_ssh(host, action, **options)
+
+        self.relays.ssh = ssh
+        linked = self.relays(self.host, "activate")
+        self.assertEqual(linked["pending_settings"], ["capacity_retry", "connection"])
+        self.assertEqual(self.relays(self.host, "reconnect")["pending_settings"], [])
+        for limit in (40, 30):
+            pending = self.relays(self.host, None)
+            self.assertTrue(pending["reload_required"])
+            self.assertEqual(pending["pending_settings"], ["capacity_retry"])
+        self.assertEqual(self.relays(self.host, None)["pending_settings"], ["capacity_retry"])
+
+        key = linked["account_key"]
+        legacy = dict(self.relays.records())[key]
+        legacy.pop("pending_settings")
+        self.relays._save(key, legacy)
+        self.assertEqual(self.relays(self.host, None)["pending_settings"], ["unrecorded"])
+        self.assertEqual(self.relays(self.host, "reconnect")["pending_settings"], [])
+        self.assertNotIn("pending_settings", dict(self.relays.records())[key])
 
     def test_config_connect_restore_and_reconnect_after_optimizer_restart(self):
         linked = self.relays(self.host, "activate")

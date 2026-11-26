@@ -302,9 +302,16 @@ const localControls=[
       assert.deepEqual(await page.evaluate(()=>fixture.rows.map(row=>row.state)),beforeReconnect.states,'Daemon restart does not alter provider connection states');
       assert.equal(await page.evaluate(()=>fixture.local.profile.active),false);
       await page.locator('#devices-confirm-cancel').click();
-      await page.evaluate(()=>{fixture.reconnectError='Native restart timed out; reminder retained';fixture.rows[1].reload_required=true;});
+      await page.evaluate(()=>{
+        fixture.reconnectError='Native restart timed out; reminder retained';
+        Object.assign(fixture.rows[1],{reload_required:true,pending_settings:['capacity_retry','image_analysis_mode']});
+      });
       await page.locator('#compression-connect').hover();await panel.waitFor({state:'visible'});
       const pendingDot=panel.locator('.connection-device-state[data-status="pending"]');
+      const pendingHint='待重连生效设置：\n• 容量重试次数\n• 图片解析';
+      assert.equal(await pendingDot.getAttribute('title'),pendingHint);
+      assert.equal(await reconnect.getAttribute('title'),pendingHint);
+      assert.equal(await reconnect.getAttribute('aria-description'),pendingHint);
       assert.equal(await pendingDot.evaluate(node=>getComputedStyle(node,'::before').outlineStyle),'none',
         'The pending server dot has no outer ring');
       await reconnect.click();await page.locator('#devices-confirm-apply').click();
