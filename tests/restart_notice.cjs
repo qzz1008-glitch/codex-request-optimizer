@@ -171,6 +171,7 @@ async function run() {
   await page.locator('#restart-notice-chatgpt').click();
   await page.evaluate(()=>notice.ingest());
   assert((await page.locator('#restart-notice-message').textContent()).includes('配置又有变更'));
+  assert.equal(await page.locator('#restart-notice-message #restart-notice-chatgpt').isEnabled(),true,'the inline action remains available after a failed acknowledgement');
   assert.equal(await page.locator('.floating-feedback:not([hidden])').count(),0);cases++;
 
   for(const language of ['zh','en'])for(const width of [1120,1600]) {
@@ -180,8 +181,8 @@ async function run() {
     const before=await rects(page,ids);
     await page.evaluate(()=>{statusData.restart_notice={revision:41,items:['connection','context_tokens','compact_tokens','capacity_retry','image_analysis_mode','entry_port','sharing'].map(key=>({key,target:'chatgpt',scope:''})).concat([{key:'wsl',target:'wsl',scope:'Ubuntu'}])};notice.ingest();});
     assert.deepEqual(await rects(page,ids),before);
-    const [title,actions]=await rects(page,['restart-notice-title','restart-notice-chatgpt']);
-    assert(title[0]+title[2]<=actions[0],'the title and confirmation must not overlap');
+    const [title,wslAction]=await rects(page,['restart-notice-title','restart-notice-wsl']);
+    assert(title[0]+title[2]<=wslAction[0],'the title and WSL confirmation must not overlap');
     const overflow=await page.locator('#restart-notice').evaluate(node=>node.scrollHeight>node.clientHeight);
     assert.equal(overflow,false,'card content stays within its fixed height');
     await page.locator('.settings-content').evaluate(node=>node.scrollTop=0);
@@ -192,8 +193,9 @@ async function run() {
   await page.evaluate(()=>{noticeBusy=true;notice.render();});
   assert.equal(await page.locator('#restart-notice-chatgpt').isDisabled(),true);
   await page.evaluate(()=>{noticeBusy=false;notice.render();});
-  await page.locator('#restart-notice-chatgpt').click();
+  await page.locator('#restart-notice-chatgpt').press('Space');
   assert.equal(await page.locator('#restart-notice-open').getAttribute('data-visible'),'true','the separate WSL acknowledgement remains pending');
+  assert.equal(await page.locator('#restart-notice-chatgpt').isVisible(),false,'confirming by keyboard clears the ChatGPT action');
   await page.locator('#restart-notice-wsl').click();
   await page.evaluate(()=>notice.ingest());
   assert.equal(await page.locator('#restart-notice-open').getAttribute('data-visible'),'false');
@@ -248,10 +250,19 @@ async function run() {
   await load(page,{data_dir:'automatic-restart',connection_reload_required:true,restart_notice:{revision:1,auto_detect_supported:true,
     items:[{key:'image_analysis_mode',target:'chatgpt',scope:''},{key:'wsl',target:'wsl',scope:'Ubuntu'}]}});
   await page.locator('#restart-notice-open').click();
-  for(const language of ['zh','en']) {
+  const inlineConfirmation=page.locator('#restart-notice-message #restart-notice-chatgpt');
+  for(const language of ['zh','en'])for(const width of [420,1120]) {
+    await page.setViewportSize({width,height:900});
     await page.evaluate(language=>{uiI18n.setLanguage(language,{persist:false});notice.render();},language);
     const message=await page.locator('#restart-notice-message').textContent();
     assert(message.includes(language==='zh'?'自动清除':'automatically')&&message.includes('WSL'));
+    assert(message.includes(language==='zh'?'未检测到时可手动确认 ChatGPT 已重启。':'Select ChatGPT restarted if needed.'));
+    assert.equal(await page.locator('.restart-notice-heading #restart-notice-chatgpt').count(),0);
+    assert.equal(await inlineConfirmation.isEnabled(),true);
+    assert.equal(await inlineConfirmation.evaluate(node=>getComputedStyle(node).textDecorationLine),'underline');
+    const [text,action]=await rects(page,['restart-notice-message','restart-notice-chatgpt']);
+    assert(action[0]>=text[0]&&action[0]+action[2]<=text[0]+text[2],'the confirmation fits the message width');
+    assert(action[1]>=text[1]&&action[1]+action[3]<=text[1]+text[3],'the inline confirmation is visible within the message');
     assert.equal(await page.locator('#restart-notice').evaluate(node=>node.scrollHeight>node.clientHeight),false);
     cases++;
   }

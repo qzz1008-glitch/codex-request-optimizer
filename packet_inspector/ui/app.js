@@ -463,7 +463,13 @@ globalThis.InspectorRestartNotice = {
       badge.setAttribute("aria-label",[badge.textContent,badge.title,t(warning||failure?"打开日志目录":"查看待生效配置或接入错误")].filter(Boolean).join(" · "));
       const tags=$("restart-notice-items");tags.replaceChildren(...items.map(row=>node("li","restart-notice-tag",pendingLabel(row))));
       const message=$("restart-notice-message");
-      message.textContent=failure?t(failure):t(chatgpt&&autoDetect?wsl?"检测到 ChatGPT App 重启后自动清除对应提醒；WSL 仍需手动确认。":"检测到 ChatGPT App 重启后自动清除提醒；无法检测时可手动确认。":chatgpt||wsl?"完成上述操作后再确认；确认只清除提醒。":optimizer?"重启本软件后，状态会自动更新。":"暂无待生效项目；新请求使用已保存的配置。");
+      const [messageStart,messageEnd=""]=chatgpt
+        ?t(autoDetect&&!portPending&&!failure
+          ?"检测到 ChatGPT App 重启后自动清除提醒。未检测到时可手动确认 {confirm}。"
+          :"重启后可选择 {confirm}，清除提醒。").split("{confirm}")
+        :[t(wsl?"完成上述操作后再确认；确认只清除提醒。":optimizer?"重启本软件后，状态会自动更新。":"暂无待生效项目；新请求使用已保存的配置。")];
+      $("restart-notice-message-start").textContent=failure?t(failure)+(chatgpt?" "+messageStart:""):messageStart;
+      $("restart-notice-message-end").textContent=messageEnd+(chatgpt&&wsl&&!failure?" "+t("WSL 仍需手动确认。"):"");
       message.classList.toggle("error",!!failure);
       for(const target of ["chatgpt","wsl"]) {
         const button=$("restart-notice-"+target),needed=target==="chatgpt"?chatgpt:wsl;

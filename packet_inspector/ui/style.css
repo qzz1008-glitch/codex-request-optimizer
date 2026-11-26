@@ -1182,16 +1182,20 @@ body[data-desktop-startup] #record-count{visibility:hidden}
 .restart-notice-badge:hover{background:#ffedc9;border-color:#d6a84d}
 .restart-notice-badge[data-state="error"]{border-color:#e4abab;background:#fff1f1;color:var(--danger)}
 .restart-notice-badge[data-state="error"]:hover{background:#ffe4e4;border-color:#ce8989}
-#settings-dialog>.restart-notice{flex:none;min-block-size:112px;display:grid;grid-template-rows:auto 30px 18px;gap:5px;margin:16px var(--settings-padding) 8px;padding:10px 14px;border:1px solid var(--line);border-radius:10px;background:var(--soft);color:var(--muted)}
+#settings-dialog>.restart-notice{flex:none;min-block-size:112px;display:grid;grid-template-rows:minmax(32px,auto) 30px auto;gap:5px;margin:16px var(--settings-padding) 8px;padding:10px 14px;border:1px solid var(--line);border-radius:10px;background:var(--soft);color:var(--muted)}
 #settings-dialog>.restart-notice[data-state="pending"]{background:#fff8eb;border-color:#eac883;color:#875309}
 .restart-notice-heading{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:4px 12px;min-width:0}
 .restart-notice-heading strong{min-width:0;font-size:var(--settings-label-size);font-weight:600}
-.restart-notice-actions{display:flex;flex-wrap:wrap;gap:6px}
-#settings-dialog .restart-notice-actions button{border-color:#dfba75;background:#fff;color:#875309}
+#settings-dialog #restart-notice-wsl{border-color:#dfba75;background:#fff;color:#875309}
 .restart-notice-items{display:flex;align-items:center;gap:6px;margin:0;padding:0;min-width:0;overflow-x:auto;overflow-y:hidden;list-style:none;scrollbar-width:thin}
 #settings-dialog :is(.restart-notice-tag,.restart-notice-message){font-size:var(--settings-detail-size);line-height:1.5}
 .restart-notice-tag{flex:none;padding:1px 7px;border:1px solid #edd7ac;border-radius:5px;background:#fffdf8;white-space:nowrap}
-.restart-notice-message{margin:0;overflow:auto;white-space:nowrap;scrollbar-width:thin}
+.restart-notice-message{min-inline-size:0;max-block-size:4.5em;margin:0;overflow:auto;overflow-wrap:anywhere;scrollbar-width:thin}
+#settings-dialog #restart-notice-chatgpt{
+  display:inline;min-block-size:0;padding:0;border:0;border-radius:2px;background:none;
+  color:var(--accent);font:inherit;text-decoration:underline;text-underline-offset:.15em
+}
+#settings-dialog #restart-notice-chatgpt:focus-visible{outline-offset:-1px}
 #settings-dialog .restart-pending-field{outline:1px solid #eac883;outline-offset:5px;border-radius:5px}
 .inline-feedback .notice{position:static;inset:auto;z-index:auto;display:flex;align-items:center;gap:8px;width:100%;max-width:none;min-width:0;margin:0;padding:0;border:0;border-radius:0;background:none;box-shadow:none;color:inherit;font:inherit}
 .inline-feedback .notice>span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
