@@ -1130,7 +1130,7 @@ const uiI18n = (() => {
     "窗口上限（k）":"Context window (k)",
     "压缩阈值（k）":"Compaction threshold (k)",
     "单次请求可用的上下文上限，未设置时使用":"Maximum usable context per request. If unset, uses ",
-    "达到阈值时自动压缩会话历史，未设置时按 Codex 默认规则计算":"Compacts history at this threshold. If unset, Codex calculates it",
+    "触发会话压缩的上下文阈值，未设置时最高为原始上下文窗口的 90%":"Context threshold for automatic compaction. If unset, capped at 90% of the raw context window",
     "模型默认值":"Model defaults",
     "关闭模型默认值":"Close model defaults",
     "当前中转版本未提供模型默认值":"This relay version does not provide model defaults",
