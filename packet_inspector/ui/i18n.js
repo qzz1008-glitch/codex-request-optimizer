@@ -1138,7 +1138,7 @@ const uiI18n = (() => {
     "上传预算（字节）":"Upload budget (bytes)",
     "存储容量":"Storage capacity",
     "记录条数":"Request count",
-    "最多保留的请求记录数":"Maximum saved requests",
+    "保留的请求记录数量上限":"Maximum saved requests",
     "请求记录及详情的空间上限":"Space limit for records and details",
     "settings.unit.requests":"req.",
     "详情上限不能大于记录上限":"The detail limit cannot exceed the request limit",
