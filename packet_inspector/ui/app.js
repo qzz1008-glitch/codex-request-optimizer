@@ -499,7 +499,7 @@ globalThis.InspectorRestartNotice = {
       badge.dataset.state=warning||failure?"error":"pending";
       const badgeLabel=warning?t("接入异常"):failure?t("状态异常"):items.length?restartLabel(items,portPending):"";
       $("restart-notice-label").textContent=badgeLabel;
-      $("restart-notice-title").textContent=t(portPending?"先重启本软件，再重启 ChatGPT App":optimizer&&chatgpt?"重启本软件与 ChatGPT App 后生效":optimizer?"重启本软件后生效":chatgpt?"重启 ChatGPT App 后生效":wsl?"重新连接 WSL 会话后生效":failure?"待生效状态暂不可用":"配置生效状态");
+      $("restart-notice-title").textContent=t(portPending?"先重启本软件，再重启 ChatGPT App":optimizer&&chatgpt?"重启本软件与 ChatGPT App 后生效":optimizer?"重启本软件后生效":chatgpt?"重启 ChatGPT 后生效":wsl?"重新连接 WSL 会话后生效":failure?"待生效状态暂不可用":"配置生效状态");
       badge.title=warning||failure?[...problems.map(row=>[row.scope,t(row.reason),row.detail].filter(Boolean).join(" · ")),
         failure?t(failure):"",log?t("日志目录：{path}").replace("{path}",()=>log):"",t("点击打开日志目录")].filter(Boolean).join("\n"):
         (items.length?pendingTooltip(items,portPending):"");
@@ -508,7 +508,7 @@ globalThis.InspectorRestartNotice = {
       const message=$("restart-notice-message");
       const [messageStart,messageEnd=""]=chatgpt
         ?t(autoDetect&&!portPending&&!failure
-          ?"检测到 ChatGPT App 重启后自动清除提醒。未检测到时可手动确认 {confirm}"
+          ?"检测到 ChatGPT 重启后自动清除提醒。未检测到时可手动确认 {confirm}"
           :"重启后可选择 {confirm}，清除提醒").split("{confirm}")
         :[t(wsl?"完成上述操作后再确认；确认只清除提醒。":optimizer?"重启本软件后，状态会自动更新。":"暂无待生效项目；新请求使用已保存的配置。")];
       $("restart-notice-message-start").textContent=failure?t(failure)+(chatgpt?" "+messageStart:""):messageStart;

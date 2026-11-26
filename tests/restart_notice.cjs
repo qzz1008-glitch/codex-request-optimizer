@@ -255,11 +255,12 @@ async function run() {
   for(const language of ['zh','en'])for(const width of [320,420,1120]) {
     await page.setViewportSize({width,height:900});
     await page.evaluate(language=>{uiI18n.setLanguage(language,{persist:false});notice.render();},language);
+    assert.equal(await page.locator('#restart-notice-title').textContent(),language==='zh'
+      ?'重启 ChatGPT 后生效':'Restart ChatGPT to apply');
     const message=await page.locator('#restart-notice-message').textContent();
-    assert(message.includes(language==='zh'?'自动清除':'automatically')&&message.includes('WSL'));
-    assert(message.endsWith(language==='zh'
-      ?'未检测到时可手动确认 ChatGPT 已重启 · WSL 仍需手动确认'
-      :'Select ChatGPT restarted if needed · Confirm WSL reconnections manually'));
+    assert.equal(message,language==='zh'
+      ?'检测到 ChatGPT 重启后自动清除提醒。未检测到时可手动确认 ChatGPT 已重启 · WSL 仍需手动确认'
+      :'Restart detection clears the reminder automatically. Select ChatGPT restarted if needed · Confirm WSL reconnections manually');
     assert.equal(await page.locator('.restart-notice-heading #restart-notice-chatgpt').count(),0);
     assert.equal(await inlineConfirmation.isEnabled(),true);
     const appearance=await inlineConfirmation.evaluate(node=>{
