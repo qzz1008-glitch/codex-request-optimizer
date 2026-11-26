@@ -1816,6 +1816,7 @@ function fillSettings() {
   for(const id of ["sharing-port","exit-port"])$(id).disabled=settingsSaving||!s.sharing_settings_supported;
   $("sharing-tab-setting").hidden=!sharingTabSupported;
   sharingTab.disabled=settingsSaving||!sharingTabSupported;
+  renderSharingTabHint();
   $("start-on-login").disabled=settingsSaving||!s.start_on_login_supported;
   fillCapacityRetry();
   fillBadRequestRetry();
@@ -1827,6 +1828,10 @@ function fillSettings() {
   renderConnectionActions();
   renderCompressionMode();renderLanguageSelection();fillZstdLevel();fillStorageDirectories();fillPacketProtection();syncContextControls();
   updateSettingsSaveState(false);
+}
+function renderSharingTabHint() {
+  uiI18n.text($("sharing-tab-hint"),$("sharing-tab-enabled").checked
+    ?"显示额度与网络共享页面":"隐藏额度与网络共享页面");
 }
 function selectedProxyMode() {
   return $("proxy-mode").querySelector("input:checked")?.value??"auto";
@@ -3581,6 +3586,7 @@ function closeSettings() {
 }
 action("settings-close",closeSettings);action("settings-restore",restoreSettings);
 action("proxy-test",testProxySettings);
+$("sharing-tab-enabled").addEventListener("change",renderSharingTabHint);
 $("proxy-mode").addEventListener("change",()=>{fillProxySettings();updateSettingsSaveState();});
 $("proxy-settings").addEventListener("input",()=>setProxyTestStatus());
 action("storage-dir-open",()=>openSettingsDirectory("storage-dir"));
