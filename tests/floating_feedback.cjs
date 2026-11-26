@@ -120,7 +120,7 @@ async function run(){
    }
    if(status==='available'){
     assert(await installButton.locator('svg').evaluate(icon=>icon.getBBox().width>0),'The download icon renders');
-    assert.equal(await continuityHint.textContent(),language==='zh'?'升级期间中转服务保持运行':'Relay stays online during the update');
+    assert.equal(await continuityHint.textContent(),language==='zh'?'升级时中转服务无缝切换':'Seamless relay handover during updates');
     const hintAtEnd=await continuityHint.evaluate(node=>
      Math.abs(node.parentElement.getBoundingClientRect().right-node.getBoundingClientRect().right)<=1);
     assert(hintAtEnd,'The continuity hint is aligned to the right of the controls column');
