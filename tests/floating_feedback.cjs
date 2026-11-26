@@ -90,8 +90,9 @@ async function run(){
   const title=await heading.locator('#general-settings-title').boundingBox();
   assert(title.x+title.width<=repository[0],'The GitHub logo sits to the right of the general settings title');
   assert(Math.abs(title.y+title.height/2-repository[1]-repository[3]/2)<=1,'The logo is centered on the heading row');
-  const rightInset=await heading.evaluate(node=>node.getBoundingClientRect().right-node.querySelector('#updates-repository svg').getBoundingClientRect().right);
-  assert(Math.abs(rightInset-12)<=1,'The GitHub logo is aligned to the right edge');
+  const logo=await heading.locator('#updates-repository svg').boundingBox();
+  assert(Math.abs(logo.x-languageToggle[0])<=1,'The visible GitHub logo aligns with the language toggle');
+  assert.deepEqual([logo.width,logo.height],[20,20]);
   for(const status of ['checking','current','available','downloading','upgrading','complete','error']){
    await page.evaluate(status=>{updateStatus={state:status,current_version:'1.0.0',latest_version:'1.1.0',error:'Synthetic update error '.repeat(30)};renderUpdates();},status);
    const checking=status==='checking',installing=['downloading','upgrading'].includes(status);

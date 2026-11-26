@@ -691,10 +691,15 @@ input[type=checkbox][switch]:focus-visible{outline:2px solid var(--accent);outli
   display:grid;grid-template-columns:minmax(0,1fr);row-gap:var(--settings-row-gap)
 }
 #settings-dialog .settings-content>section{margin:0;padding:20px 0;padding-inline-start:var(--settings-section-indent);border-top:1px solid var(--line)}
-#settings-dialog .settings-content>section>:is(h3,.settings-section-heading){margin-block-end:6px;margin-inline-start:calc(-1 * var(--settings-section-indent))}
-#settings-dialog .settings-section-heading{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
-#settings-dialog .settings-section-heading h3{margin:0}
-#settings-dialog .repository-link{display:inline-flex;align-items:center;justify-content:center;flex:none;inline-size:24px;block-size:24px;margin-inline-start:auto;margin-inline-end:8px;border-radius:6px;color:var(--muted)}
+#settings-dialog .settings-content>section>:is(h3,.settings-section-heading){margin-block-end:6px}
+#settings-dialog :is(.settings-content>section,.settings-section-heading)>h3{margin-inline-start:calc(-1 * var(--settings-section-indent))}
+#settings-dialog .settings-section-heading{align-items:center}
+#settings-dialog .settings-section-heading>h3{margin-block-end:0}
+#settings-dialog .repository-link{
+  --repository-link-padding:4px;
+  display:inline-grid;place-items:center;justify-self:start;padding:var(--repository-link-padding);
+  margin-inline-start:calc(-1 * var(--repository-link-padding));border-radius:6px;color:var(--muted)
+}
 #settings-dialog .repository-link:hover{color:var(--ink);background:var(--bg)}
 #settings-dialog .repository-link:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 #settings-dialog .settings-content>section:first-child{border-top:0}
@@ -741,10 +746,11 @@ input[type=checkbox][switch]:focus-visible{outline:2px solid var(--accent);outli
   padding-inline-end:12px;text-align:end
 }
 #settings-dialog .settings-dirty{border-radius:8px;outline:2px solid var(--accent);outline-offset:3px;background-color:var(--soft)}
-#settings-dialog .settings-row{
+#settings-dialog :is(.settings-row,.settings-section-heading){
   display:grid;grid-template-columns:min(var(--settings-label-width),34%) minmax(0,1fr);
-  align-items:start;column-gap:8px;min-inline-size:0
+  column-gap:8px;min-inline-size:0
 }
+#settings-dialog .settings-row{align-items:start}
 #settings-dialog .settings-controls{display:flex;flex-wrap:wrap;align-items:center;gap:6px var(--settings-column-gap);min-inline-size:0}
 #settings-dialog .settings-switch{display:flex;align-items:center;min-block-size:var(--settings-field-height)}
 #settings-dialog :is(.language-toggle,.image-mode-pills){display:inline-flex;flex-wrap:wrap;justify-self:start;gap:2px;width:max-content;min-width:0;max-width:100%;margin:0;padding:2px;border:1px solid var(--line);border-radius:var(--settings-control-radius);background:var(--bg)}
