@@ -128,7 +128,7 @@ async function run(){
      const {borderTopWidth,backgroundColor}=getComputedStyle(node);
      return borderTopWidth==='0px'&&backgroundColor==='rgba(0, 0, 0, 0)';
     }),'Release notes look like text');
-    assert.equal(await continuityHint.textContent(),language==='zh'?'升级时中转服务无缝切换':'Seamless relay handover');
+    assert.equal(await continuityHint.textContent(),language==='zh'?'升级时中转服务平稳过渡':'Smooth relay handover');
     const hintAtEnd=await continuityHint.evaluate(node=>
      Math.abs(node.parentElement.getBoundingClientRect().right-node.getBoundingClientRect().right)<=1);
     assert(hintAtEnd,'The continuity hint is aligned to the right of the controls column');
