@@ -33,7 +33,11 @@ class Element {
 const context={document,Event:class {constructor(type){this.type=type;}},
   $:id=>{if(!elements.has(id))elements.set(id,new Element());return elements.get(id);},
   el:(...args)=>new Element(...args),t:key=>key,
+  uiI18n:{text:(node,value)=>{node.textContent=value;}},
   state:{status:{zstd_level:16,auto_zstd_level_enabled:false,auto_image_zstd_level_enabled:false}},settingsEditing:true,settingsSaving:false};
+const manualHint='自行选择 zstd 压缩等级';
+const protectionHint='自行选择 zstd 压缩等级。开启大小保护后可切换为自动';
+const autoHint='按大小保护上限动态调整压缩策略';
 vm.createContext(context);
 for(const name of ['zstdLevelEstimates','imageZstdLevelEstimates']) {
   const start=source.indexOf(`const ${name} = [`);
@@ -101,7 +105,7 @@ context.fillZstdLevel();
 assert.equal(context.$('image-zstd-level').disabled,true);
 assert.equal(context.$('image-zstd-level-open').disabled,true);
 assert.equal(context.$('image-zstd-level-value').textContent,'6级');
-assert.equal(context.$('image-zstd-level-hint').textContent,'原始正文达到大小保护上限的 90% 时尝试压缩');
+assert.equal(context.$('image-zstd-level-hint').textContent,autoHint);
 context.settingsEditing=true;
 context.$('auto-zstd-level').checked=false;
 context.fillZstdLevel();
@@ -112,7 +116,7 @@ context.fillZstdLevel();
 assert.equal(context.$('image-zstd-level').disabled,false);
 assert.equal(context.$('image-zstd-level-open').disabled,false);
 assert.equal(context.$('image-zstd-level-value').textContent,'12级');
-assert.equal(context.$('image-zstd-level-hint').textContent,'按所选等级压缩');
+assert.equal(context.$('image-zstd-level-hint').textContent,manualHint);
 context.$('image-zstd-level').value='17';
 context.$('auto-image-zstd-level').checked=true;
 context.fillZstdLevel();
@@ -163,7 +167,7 @@ Object.assign(context.state.status,{packet_size_protection_enabled:true,auto_zst
 context.fillPacketProtection();
 assert.equal(context.$('auto-zstd-level').checked,true);
 assert.equal(context.$('manual-zstd-level').checked,false);
-assert.equal(context.$('auto-zstd-level-hint').textContent,'按大小保护上限自动选档');
+assert.equal(context.$('auto-zstd-level-hint').textContent,autoHint);
 assert.equal(context.$('manual-image-zstd-level').checked,true);
 assert.equal(context.$('image-zstd-level-open').disabled,false);
 context.settingsEditing=true;
@@ -173,8 +177,8 @@ assert.equal(context.$('manual-zstd-level').checked,true);
 assert.equal(context.$('auto-zstd-level').disabled,true);
 assert.equal(context.$('manual-image-zstd-level').checked,true);
 assert.equal(context.$('auto-image-zstd-level').disabled,true);
-assert.equal(context.$('auto-zstd-level-hint').textContent,'按所选等级压缩 · 开启大小保护后可选自动');
-assert.equal(context.$('image-zstd-level-hint').textContent,'按所选等级压缩 · 开启大小保护后可选自动');
+assert.equal(context.$('auto-zstd-level-hint').textContent,protectionHint);
+assert.equal(context.$('image-zstd-level-hint').textContent,protectionHint);
 assert.equal(context.$('zstd-level-open').disabled,false);
 assert.equal(context.$('image-zstd-level-open').disabled,false);
 
@@ -184,7 +188,10 @@ context.settingsEditing=false;
 context.fillPacketProtection();
 assert.equal(context.$('auto-image-zstd-level').checked,true);
 assert.equal(context.$('auto-image-zstd-level').disabled,true);
-assert(context.$('image-zstd-level-hint').textContent.includes('更新中转后可独立选择图片模式'));
+assert.equal(context.$('image-zstd-level-hint').textContent,autoHint);
+context.state.status.auto_zstd_level_enabled=false;
+context.fillPacketProtection();
+assert.equal(context.$('image-zstd-level-hint').textContent,manualHint);
 
 const html=fs.readFileSync('packet_inspector/ui/index.html','utf8');
 assert(html.includes('scope="colgroup" colspan="2"'));
@@ -193,10 +200,11 @@ assert(!html.includes('image-upload-optimization'));
 const translations=fs.readFileSync('packet_inspector/ui/i18n.js','utf8');
 const englishStart=translations.indexOf('const english = {');
 const dictionary=vm.runInNewContext(translations.slice(englishStart,translations.indexOf('\n  };',englishStart)+5)+'\nenglish;');
-for(const label of ['原始请求＜1.5 MB','原始请求≥1.5 MB','手动','自动','按所选等级压缩','压缩耗时']) {
+for(const label of ['原始请求＜1.5 MB','原始请求≥1.5 MB','手动','自动',protectionHint,'压缩耗时']) {
   assert(html.includes(label));
   assert(dictionary[label]);
 }
+assert(dictionary[autoHint]&&dictionary[manualHint]);
 for(const label of ['对话压缩','图片压缩']) {
   assert(html.includes(`class="settings-key">${label}</span>`));
   assert(dictionary[label]);

@@ -105,6 +105,7 @@ async function run(){
   const protectionBackground=()=>protectionRow.evaluate(row=>getComputedStyle(row).backgroundColor);
   const sizeRowDimensions=()=>protectionRow.evaluate(row=>[row.offsetWidth,row.offsetHeight]);
   const dialogLevel=settings.locator('#zstd-level-open'),imageLevel=settings.locator('#image-zstd-level-open');
+  const compressionHints=settings.locator('#auto-zstd-level-hint,#image-zstd-level-hint');
   assert.equal(await manual.isChecked(),true);
   assert.equal(await automatic.isDisabled(),true);
   assert.equal(await imageManual.isChecked(),true);
@@ -137,7 +138,10 @@ async function run(){
   assert.equal(await dialogLevel.isDisabled(),false);
   assert.equal(await imageLevel.isDisabled(),true);
   assert.equal(await settings.locator('#image-zstd-level-value').textContent(),'6级');
-  assert.match(await settings.locator('#image-zstd-level-hint').textContent(),/大小保护.*90%/);
+  assert.deepEqual(await compressionHints.allTextContents(),['自行选择 zstd 压缩等级','按大小保护上限动态调整压缩策略']);
+  await page.evaluate(()=>uiI18n.setLanguage('en',{persist:false}));
+  assert.deepEqual(await compressionHints.allTextContents(),['Choose a zstd compression level','Adjusts compression based on the size protection limit']);
+  await page.evaluate(()=>uiI18n.setLanguage('zh',{persist:false}));
   assert.equal(await page.evaluate(()=>readSettingsDraft().auto_zstd_level_enabled),false);
   assert.equal(await page.evaluate(()=>readSettingsDraft().auto_image_zstd_level_enabled),true);
   await manual.press('ArrowRight');
@@ -146,6 +150,7 @@ async function run(){
   assert.equal(await imageManual.isChecked(),true);
   assert.equal(await imageLevel.isDisabled(),false);
   assert.equal(await settings.locator('#image-zstd-level-value').textContent(),'11级');
+  assert.deepEqual(await compressionHints.allTextContents(),Array(2).fill('自行选择 zstd 压缩等级。开启大小保护后可切换为自动'));
   cases++;
   const interactive='input:not([type=hidden]),select,button,a[href],[tabindex]';
   assert.deepEqual(await settings.locator('.settings-row').locator(interactive).evaluateAll(nodes=>
