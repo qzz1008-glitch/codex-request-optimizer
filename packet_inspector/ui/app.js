@@ -2088,7 +2088,7 @@ function fillZstdLevel() {
   input.disabled=settingsSaving||!supported||automatic;
   $("zstd-level-open").disabled=input.disabled;
   $("zstd-level-value").textContent=t("{level}级").replace("{level}",selected);
-  fillCompressionDescription("auto-zstd-level-hint",automatic);
+  fillCompressionDescription("auto-zstd-level-hint",automatic,"按大小保护上限动态调整对话 zstd 压缩策略");
   fillImageZstdLevel();
   if($("zstd-level-dialog").open) {
     if(zstdLevelPickerTarget().input.disabled)closeZstdLevelPicker();else renderZstdLevelRows();
@@ -2102,12 +2102,12 @@ function fillImageZstdLevel() {
   input.disabled=settingsSaving||!Number.isInteger(s.image_zstd_level)||automatic;
   $("image-zstd-level-open").disabled=input.disabled;
   $("image-zstd-level-value").textContent=t("{level}级").replace("{level}",automatic?(s.auto_image_zstd_level??6):selected);
-  fillCompressionDescription("image-zstd-level-hint",automatic);
+  fillCompressionDescription("image-zstd-level-hint",automatic,"按大小保护上限动态调整图片 zstd 压缩策略");
 }
-function fillCompressionDescription(id,automatic) {
-  let description="手动选择";
-  if(automatic)description="按大小保护上限动态调整压缩策略";
-  else if(!$("packet-size-protection").checked)description="手动选择。开启大小保护后可切换为自动";
+function fillCompressionDescription(id,automatic,autoDescription) {
+  let description="手动选择 zstd 压缩等级";
+  if(automatic)description=autoDescription;
+  else if(!$("packet-size-protection").checked)description="手动选择 zstd 压缩等级。开启大小保护后可切换为自动";
   uiI18n.text($(id),description);
 }
 function zstdLevelPickerTarget() {

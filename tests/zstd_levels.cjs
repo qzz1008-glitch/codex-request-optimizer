@@ -35,9 +35,10 @@ const context={document,Event:class {constructor(type){this.type=type;}},
   el:(...args)=>new Element(...args),t:key=>key,
   uiI18n:{text:(node,value)=>{node.textContent=value;}},
   state:{status:{zstd_level:16,auto_zstd_level_enabled:false,auto_image_zstd_level_enabled:false}},settingsEditing:true,settingsSaving:false};
-const manualHint='手动选择';
-const protectionHint='手动选择。开启大小保护后可切换为自动';
-const autoHint='按大小保护上限动态调整压缩策略';
+const manualHint='手动选择 zstd 压缩等级';
+const protectionHint='手动选择 zstd 压缩等级。开启大小保护后可切换为自动';
+const conversationAutoHint='按大小保护上限动态调整对话 zstd 压缩策略';
+const imageAutoHint='按大小保护上限动态调整图片 zstd 压缩策略';
 vm.createContext(context);
 for(const name of ['zstdLevelEstimates','imageZstdLevelEstimates']) {
   const start=source.indexOf(`const ${name} = [`);
@@ -105,7 +106,7 @@ context.fillZstdLevel();
 assert.equal(context.$('image-zstd-level').disabled,true);
 assert.equal(context.$('image-zstd-level-open').disabled,true);
 assert.equal(context.$('image-zstd-level-value').textContent,'6级');
-assert.equal(context.$('image-zstd-level-hint').textContent,autoHint);
+assert.equal(context.$('image-zstd-level-hint').textContent,imageAutoHint);
 context.settingsEditing=true;
 context.$('auto-zstd-level').checked=false;
 context.fillZstdLevel();
@@ -167,7 +168,7 @@ Object.assign(context.state.status,{packet_size_protection_enabled:true,auto_zst
 context.fillPacketProtection();
 assert.equal(context.$('auto-zstd-level').checked,true);
 assert.equal(context.$('manual-zstd-level').checked,false);
-assert.equal(context.$('auto-zstd-level-hint').textContent,autoHint);
+assert.equal(context.$('auto-zstd-level-hint').textContent,conversationAutoHint);
 assert.equal(context.$('manual-image-zstd-level').checked,true);
 assert.equal(context.$('image-zstd-level-open').disabled,false);
 context.settingsEditing=true;
@@ -188,7 +189,7 @@ context.settingsEditing=false;
 context.fillPacketProtection();
 assert.equal(context.$('auto-image-zstd-level').checked,true);
 assert.equal(context.$('auto-image-zstd-level').disabled,true);
-assert.equal(context.$('image-zstd-level-hint').textContent,autoHint);
+assert.equal(context.$('image-zstd-level-hint').textContent,imageAutoHint);
 context.state.status.auto_zstd_level_enabled=false;
 context.fillPacketProtection();
 assert.equal(context.$('image-zstd-level-hint').textContent,manualHint);
@@ -204,7 +205,7 @@ for(const label of ['原始请求＜1.5 MB','原始请求≥1.5 MB','手动','�
   assert(html.includes(label));
   assert(dictionary[label]);
 }
-assert(dictionary[autoHint]&&dictionary[manualHint]);
+assert(dictionary[conversationAutoHint]&&dictionary[imageAutoHint]&&dictionary[manualHint]);
 for(const label of ['对话压缩','图片压缩']) {
   assert(html.includes(`class="settings-key">${label}</span>`));
   assert(dictionary[label]);

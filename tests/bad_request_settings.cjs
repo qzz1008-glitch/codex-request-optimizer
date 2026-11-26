@@ -141,19 +141,20 @@ async function run(){
   assert.equal(await dialogLevel.isDisabled(),false);
   assert.equal(await imageLevel.isDisabled(),true);
   assert.equal(await settings.locator('#image-zstd-level-value').textContent(),'6级');
-  assert.deepEqual(await compressionHints.allTextContents(),['手动选择','按大小保护上限动态调整压缩策略']);
+  assert.deepEqual(await compressionHints.allTextContents(),['手动选择 zstd 压缩等级','按大小保护上限动态调整图片 zstd 压缩策略']);
   await page.evaluate(()=>uiI18n.setLanguage('en',{persist:false}));
-  assert.deepEqual(await compressionHints.allTextContents(),['Select manually','Adjusts compression based on the size protection limit']);
+  assert.deepEqual(await compressionHints.allTextContents(),['Manually select a zstd compression level','Adjusts zstd compression for images based on the size protection limit']);
   await page.evaluate(()=>uiI18n.setLanguage('zh',{persist:false}));
   assert.equal(await page.evaluate(()=>readSettingsDraft().auto_zstd_level_enabled),false);
   assert.equal(await page.evaluate(()=>readSettingsDraft().auto_image_zstd_level_enabled),true);
   await manual.press('ArrowLeft');
+  assert.deepEqual(await compressionHints.allTextContents(),['按大小保护上限动态调整对话 zstd 压缩策略','按大小保护上限动态调整图片 zstd 压缩策略']);
   await sizeProtection.uncheck();
   assert.equal(await manual.isChecked(),true);
   assert.equal(await imageManual.isChecked(),true);
   assert.equal(await imageLevel.isDisabled(),false);
   assert.equal(await settings.locator('#image-zstd-level-value').textContent(),'11级');
-  assert.deepEqual(await compressionHints.allTextContents(),Array(2).fill('手动选择。开启大小保护后可切换为自动'));
+  assert.deepEqual(await compressionHints.allTextContents(),Array(2).fill('手动选择 zstd 压缩等级。开启大小保护后可切换为自动'));
   cases++;
   const interactive='input:not([type=hidden]),select,button,a[href],[tabindex]';
   assert.deepEqual(await settings.locator('.settings-row').locator(interactive).evaluateAll(nodes=>
